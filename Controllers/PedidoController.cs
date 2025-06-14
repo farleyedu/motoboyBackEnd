@@ -11,6 +11,9 @@ namespace APIBack.Controllers
     public class PedidoController : Controller
     {
         readonly IPedidoService _pedidoService;
+
+        // Simulação de repositório em memória (trocar pelo seu contexto do EF depois)
+        private static readonly List<string> PedidosRegistrados = new();
         public PedidoController(IPedidoService pedidoService)
         {
             _pedidoService = pedidoService;
@@ -49,6 +52,7 @@ namespace APIBack.Controllers
             _pedidoService.CriarPedido();
             return CreatedAtAction(nameof(GetPedido), new { id = pedido.Id }, pedido);
         }
+
         // PUT: api/pedidos/1
         [HttpPut("{id}")]
         public IActionResult PutPedido(int id, Pedido pedido)
@@ -63,6 +67,16 @@ namespace APIBack.Controllers
             return NoContent();
         }
 
+        [HttpPost("PedidoIfood")]
+        public async Task<IActionResult> CriarPedidosIfood(PedidoCapturado pedidos)
+        {
+            if (pedidos == null)
+                return BadRequest("Lista vazia.");
+
+            await _pedidoService.CriarPedidosIfood(pedidos); // 👈 agora com await
+            return Ok(new {});
+        }
 
     }
+
 }

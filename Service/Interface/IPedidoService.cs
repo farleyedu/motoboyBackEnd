@@ -13,7 +13,7 @@ namespace APIBack.Service.Interface
         IEnumerable<Pedido> CancelarPedido();
         IEnumerable<Pedido> FinalizarPedido();
         IEnumerable<Pedido> AlteraPedido(int id, Pedido pedido);
-
+        Task CriarPedidosIfood(PedidoCapturado pedidos);
 
     }
 }

@@ -16,6 +16,12 @@ namespace APIBack.Service
         {
             return _pedidoRepository.GetPedidos();
         }
+        public async Task CriarPedidosIfood(PedidoCapturado pedidos)
+        {
+            // Pode virar async de verdade futuramente
+            _pedidoRepository.InserirPedidosIfood(pedidos);
+            await Task.CompletedTask;
+        }
 
         public IEnumerable<Pedido> GetPedidosId(int Id)
         {

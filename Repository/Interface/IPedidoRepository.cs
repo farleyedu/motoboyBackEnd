@@ -15,7 +15,6 @@ namespace APIBack.Repository.Interface
         IEnumerable<Pedido> FinalizarPedido();
         IEnumerable<Pedido> AlteraPedido(int Id, Pedido pedido);
         IEnumerable<Pedido> GetPedidosPorMotoboy(int motoboyId);
-
-
+        void InserirPedidosIfood(PedidoCapturado pedidos);
     }
 }
