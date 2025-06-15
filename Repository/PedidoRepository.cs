@@ -6,9 +6,10 @@ using Dapper;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using System.Collections.Generic;
-using System.Data.SqlClient;
 using System.Linq;
 using System.Text.Json;
+using Npgsql;
+
 
 namespace APIBack.Repository
 {
@@ -18,30 +19,30 @@ namespace APIBack.Repository
 
         public PedidoRepository(IConfiguration configuration)
         {
-            _connectionString = configuration.GetConnectionString("TemplateDB");
+            _connectionString = configuration.GetConnectionString("DefaultConnection");
         }
 
         public IEnumerable<Pedido> GetPedidos()
         {
-            using (var connection = new SqlConnection(_connectionString))
+            using var connection = new NpgsqlConnection(_connectionString);
             {
-                return connection.Query<Pedido>("SELECT * FROM Pedido").ToList();
+                return connection.Query<Pedido>("SELECT * FROM pedido").ToList();
             }
         }
 
         public IEnumerable<PedidoDTOs> GetPedidosMaps()
         {
-            using (var connection = new SqlConnection(_connectionString))
+            using var connection = new NpgsqlConnection(_connectionString);
             {
                 var sql = @"
-                          SELECT 
-                              p.Id, p.NomeCliente, p.EnderecoEntrega, p.IdIfood, p.TelefoneCliente,
-                              p.DataPedido, p.StatusPedido, p.HorarioPedido, p.PrevisaoEntrega,
-                              p.HorarioSaida, p.HorarioEntrega, p.Items, p.Value, p.Region,
-                              p.Latitude, p.Longitude,
-                              m.Id AS MotoboyId, m.Nome AS Nome, m.Avatar, m.Status
-                          FROM Pedido p
-                          LEFT JOIN Motoboy m ON m.Id = p.MotoboyResponsavel";
+    SELECT 
+        p.id, p.nome_cliente, p.endereco_entrega, p.id_ifood, p.telefone_cliente,
+        p.data_pedido, p.status_pedido, p.horario_pedido, p.previsao_entrega,
+        p.horario_saida, p.horario_entrega, p.items, p.value, p.region,
+        p.latitude, p.longitude,
+        m.id AS motoboyid, m.nome AS nome, m.avatar, m.status
+    FROM pedido p
+    LEFT JOIN motoboy m ON m.id = p.motoboy_responsavel";
 
                 return connection.Query<PedidoDTOs, MotoboyDTO, PedidoDTOs>(
                     sql,
@@ -50,15 +51,16 @@ namespace APIBack.Repository
                         pedido.MotoboyResponsavel = motoboy;
                         return pedido;
                     },
-                    splitOn: "MotoboyId"
+                    splitOn: "motoboyid"
                 );
+
             }
         }
 
 
         public IEnumerable<Pedido> GetPedidosPorMotoboy(int motoboyId)
         {
-            using (var connection = new SqlConnection(_connectionString))
+            using var connection = new NpgsqlConnection(_connectionString);
             {
                 var sql = "SELECT *  FROM Pedido WHERE MotoboyResponsavel = @MotoboyId";
                 return connection.Query<Pedido>(sql, new { MotoboyId = motoboyId }).ToList();
@@ -67,24 +69,24 @@ namespace APIBack.Repository
 
         public void InserirPedidosIfood(PedidoCapturado pedido)
         {
-            using var connection = new SqlConnection(_connectionString);
+            using var connection = new NpgsqlConnection(_connectionString);
             connection.Open(); // 👈 Importante
 
             var sql = @"
-                INSERT INTO Pedido (
-                    NomeCliente, EnderecoEntrega, IdIfood, TelefoneCliente, DataPedido, 
-                    StatusPedido, HorarioEntrega, Items, Value, Region,
-                    Latitude, Longitude, HorarioPedido, PrevisaoEntrega, HorarioSaida, Localizador,
-                    EntregaRua, EntregaNumero, EntregaBairro, EntregaCidade, EntregaEstado, EntregaCep,
-                    DocumentoCliente, TipoPagamento
-                )
-                VALUES (
-                    @NomeCliente, @EnderecoEntrega, @IdIfood, @TelefoneCliente, @DataPedido, 
-                    @StatusPedido, @HorarioEntrega, @Items, @Value, @Region,
-                    @Latitude, @Longitude, @HorarioPedido, @PrevisaoEntrega, @HorarioSaida, @Localizador,
-                    @EntregaRua, @EntregaNumero, @EntregaBairro, @EntregaCidade, @EntregaEstado, @EntregaCep,
-                    @DocumentoCliente, @TipoPagamento
-                );";
+    INSERT INTO pedido (
+        nome_cliente, endereco_entrega, id_ifood, telefone_cliente, data_pedido, 
+        status_pedido, horario_entrega, items, value, region,
+        latitude, longitude, horario_pedido, previsao_entrega, horario_saida, localizador,
+        entrega_rua, entrega_numero, entrega_bairro, entrega_cidade, entrega_estado, entrega_cep,
+        documento_cliente, tipo_pagamento
+    )
+    VALUES (
+        @NomeCliente, @EnderecoEntrega, @IdIfood, @TelefoneCliente, @DataPedido, 
+        @StatusPedido, @HorarioEntrega, @Items, @Value, @Region,
+        @Latitude, @Longitude, @HorarioPedido, @PrevisaoEntrega, @HorarioSaida, @Localizador,
+        @EntregaRua, @EntregaNumero, @EntregaBairro, @EntregaCidade, @EntregaEstado, @EntregaCep,
+        @DocumentoCliente, @TipoPagamento
+    );";
 
             try
             {
@@ -97,17 +99,17 @@ namespace APIBack.Repository
                     TelefoneCliente = pedido.Cliente.Telefone,
                     DataPedido = pedido.CriadoEm,
                     StatusPedido = StatusPedido.Pendente,
-                    //MotoboyResponsavel = (object?)pedido.mo ?? DBNull.Value, // 👈 isso aqui funciona
-                    HorarioEntrega = pedido.HorarioEntrega.HasValue && pedido.HorarioEntrega.Value > new DateTime(1753, 1, 1)
-                        ? (object)pedido.HorarioEntrega.Value
-                        : DBNull.Value,
 
-                    HorarioSaida = pedido.HorarioSaida.HasValue && pedido.HorarioSaida.Value > new DateTime(1753, 1, 1)
-                        ? (object)pedido.HorarioSaida.Value
-                        : DBNull.Value,
+                    HorarioEntrega = pedido.HorarioEntrega.HasValue
+                        ? pedido.HorarioEntrega.Value
+                        : (DateTime?)null,
+
+                    HorarioSaida = pedido.HorarioSaida.HasValue
+                        ? pedido.HorarioSaida.Value
+                        : (DateTime?)null,
 
                     Items = JsonSerializer.Serialize(pedido.Itens),
-                    Value = pedido.Itens.Sum(i => i.PrecoTotal),
+                    Value = pedido.Itens.Sum(i => i.PrecoTotal ?? 0),
                     Region = pedido.Endereco.Bairro,
                     Latitude = pedido.Coordenadas.Latitude,
                     Longitude = pedido.Coordenadas.Longitude,
@@ -121,14 +123,14 @@ namespace APIBack.Repository
                     EntregaEstado = pedido.Endereco.Estado,
                     EntregaCep = pedido.Endereco.Cep,
                     DocumentoCliente = pedido.Cliente.Documento,
-                    TipoPagamento = pedido.TipoPagamento // 👈 ADICIONADO
+                    TipoPagamento = pedido.TipoPagamento
                 });
-
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"❌ Erro ao inserir pedido {pedido.Id}: {ex.Message}");
             }
+
         }
 
 

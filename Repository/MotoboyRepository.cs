@@ -1,6 +1,7 @@
 ﻿using APIBack.Model;
 using APIBack.Repository.Interface;
 using Dapper;
+using Npgsql;
 using System.Data.Common;
 using System.Data.SqlClient;
 
@@ -12,46 +13,46 @@ namespace APIBack.Repository
 
         public MotoboyRepository(IConfiguration configuration)
         {
-            _connectionString = configuration.GetConnectionString("TemplateDB");
+            _connectionString = configuration.GetConnectionString("DefaultConnection");
         }
 
         public IEnumerable<Motoboy> GetMotoboy()
         {
-            using (var connection = new SqlConnection(_connectionString))
+            using var connection = new NpgsqlConnection(_connectionString);
             {
-                return connection.Query<Motoboy>("SELECT * FROM Motoboy").ToList();
+                return connection.Query<Motoboy>("SELECT * FROM motoboy").ToList();
             }
         }
 
         public IEnumerable<Motoboy> ConvidarMotoboy()
         {
-            using (var connection = new SqlConnection(_connectionString))
+            using var connection = new NpgsqlConnection(_connectionString);
             {
-                return connection.Query<Motoboy>("SELECT * FROM Motoboy").ToList();
+                return connection.Query<Motoboy>("SELECT * FROM motoboy").ToList();
             }
         }
         public async Task<Motoboy> ObterPorIdAsync(int id)
         {
-            using (var connection = new SqlConnection(_connectionString))
+            using var connection = new NpgsqlConnection(_connectionString);
             {
-                var sql = "SELECT Id, Nome, Avatar FROM Motoboy WHERE Id = @Id";
+                var sql = "SELECT id, nome, avatar FROM motoboy WHERE id = @Id";
                 return await connection.QueryFirstOrDefaultAsync<Motoboy>(sql, new { Id = id });
             }
         }
         public IEnumerable<Motoboy> ListarOnline()
         {
-            using (var connection = new SqlConnection(_connectionString))
+            using var connection = new NpgsqlConnection(_connectionString);
             {
-                var sql = "SELECT * FROM Motoboy WHERE Status = 1";
+                var sql = "SELECT * FROM motoboy WHERE status = 1";
                 return connection.Query<Motoboy>(sql).ToList();
             }
         }
 
         public async Task AtualizarAvatarAsync(int id, string caminhoAvatar)
         {
-            using (var connection = new SqlConnection(_connectionString))
+            using var connection = new NpgsqlConnection(_connectionString);
             {
-                var sql = "UPDATE Motoboy SET Avatar = @Avatar WHERE Id = @Id";
+                var sql = "UPDATE motoboy SET avatar = @avatar WHERE id = @Id";
                 await connection.ExecuteAsync(sql, new { Avatar = caminhoAvatar, Id = id });
             }
         }
