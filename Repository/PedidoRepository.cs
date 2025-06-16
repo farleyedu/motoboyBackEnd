@@ -62,7 +62,7 @@ namespace APIBack.Repository
         {
             using var connection = new NpgsqlConnection(_connectionString);
             {
-                var sql = "SELECT *  FROM Pedido WHERE MotoboyResponsavel = @MotoboyId";
+                var sql = "SELECT *  FROM Pedido WHERE motoboy_responsavel = @MotoboyId";
                 return connection.Query<Pedido>(sql, new { MotoboyId = motoboyId }).ToList();
             }
         }
