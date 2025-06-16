@@ -3,7 +3,6 @@ using APIBack.Repository.Interface;
 using Dapper;
 using Npgsql;
 using System.Data.Common;
-using System.Data.SqlClient;
 
 namespace APIBack.Repository
 {
