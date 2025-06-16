@@ -34,29 +34,36 @@ namespace APIBack.Service
             var motoboys = _motoboyRepository.ListarOnline();
             var result = new List<MotoboyComPedidosDTO>();
 
-            foreach (var motoboy in motoboys)
+            try
             {
-                var pedidos = _pedidoRepository.GetPedidosPorMotoboy(motoboy.Id ?? 0);
-
-                result.Add(new MotoboyComPedidosDTO
+                foreach (var motoboy in motoboys)
                 {
-                    Id = motoboy.Id ?? 0,
-                    Nome = motoboy.Nome ?? "",
-                    Avatar = motoboy.Avatar ?? "",
-                    Status = "online",
-                    Latitude = motoboy?.Latitude ?? 0,
-                    Longitude = motoboy?.Longitude ?? 0,
-                    pedidos = pedidos.Select(p => new PedidoDTO
+                    var pedidos = _pedidoRepository.GetPedidosPorMotoboy(motoboy.Id ?? 0);
+
+                    result.Add(new MotoboyComPedidosDTO
                     {
-                        Id = p.Id ?? 0,
-                        Status = p.StatusPedido?.ToString() ?? "",
-                        Address = p.EnderecoEntrega ?? "",
-                        DepartureTime = p.DataPedido.ToString("HH:mm"),
-                        Eta = "",
-                        EtaMinutes = 0,
-                        Coordinates = new[] { 0.0, 0.0 } // Substituir quando tiver coords
-                    }).ToList()
-                });
+                        Id = motoboy.Id ?? 0,
+                        Nome = motoboy.Nome ?? "",
+                        Avatar = motoboy.Avatar ?? "",
+                        Status = "online",
+                        Latitude = motoboy?.Latitude ?? 0,
+                        Longitude = motoboy?.Longitude ?? 0,
+                        pedidos = pedidos.Select(p => new PedidoDTO
+                        {
+                            Id = p.Id ?? 0,
+                            Status = p.StatusPedido?.ToString() ?? "",
+                            Address = p.EnderecoEntrega ?? "",
+                            DepartureTime = p.DataPedido.ToString("HH:mm"),
+                            Eta = "",
+                            EtaMinutes = 0,
+                            Coordinates = new[] { 0.0, 0.0 } // Substituir quando tiver coords
+                        }).ToList()
+                    });
+                }
+            }
+            catch (Exception e)
+            {
+                Console.WriteLine("erro no pedido", e);
             }
 
            return result;
