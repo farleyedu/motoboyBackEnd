@@ -35,16 +35,16 @@ namespace APIBack.Repository
             using var connection = new NpgsqlConnection(_connectionString);
             {
                 var sql = @"
-    SELECT 
-        p.id, p.nome_cliente, p.endereco_entrega, p.id_ifood, p.telefone_cliente,
-        p.data_pedido, p.status_pedido, p.horario_pedido, p.previsao_entrega,
-        p.horario_saida, p.horario_entrega, p.items, p.value, p.region,
-        p.latitude, p.longitude,
-        m.id AS motoboyid, m.nome AS nome, m.avatar, m.status
-    FROM pedido p
-    LEFT JOIN motoboy m ON m.id = p.motoboy_responsavel";
+                SELECT 
+                    p.id, p.nome_cliente, p.endereco_entrega, p.id_ifood, p.telefone_cliente,
+                    p.data_pedido, p.status_pedido, p.horario_pedido, p.previsao_entrega,
+                    p.horario_saida, p.horario_entrega, p.items, p.value, p.region,
+                    p.latitude, p.longitude,
+                    m.id AS motoboyid, m.nome AS nome, m.avatar, m.status
+                FROM pedido p
+                LEFT JOIN motoboy m ON m.id = p.motoboy_responsavel";
 
-                return connection.Query<PedidoDTOs, MotoboyDTO, PedidoDTOs>(
+                 var pedidos = connection.Query<PedidoDTOs, MotoboyDTO, PedidoDTOs>(
                     sql,
                     (pedido, motoboy) =>
                     {
@@ -53,7 +53,7 @@ namespace APIBack.Repository
                     },
                     splitOn: "motoboyid"
                 );
-
+                return pedidos;
             }
         }
 

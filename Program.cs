@@ -7,12 +7,15 @@ var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 builder.Services.AddControllers();
+builder.Services.AddHttpClient();
 builder.Services.AddScoped<IUsuarioRepository, UsuarioRepository>();
 builder.Services.AddScoped<IUsuarioService, UsuarioService>();
 builder.Services.AddScoped<IPedidoRepository, PedidoRepository>();
 builder.Services.AddScoped<IPedidoService, PedidoService>();
 builder.Services.AddScoped<IMotoboyRepository, MotoboyRepository>();
 builder.Services.AddScoped<IMotoboyService, MotoboyService>();
+builder.Services.AddScoped<ILocalizacaoService, LocalizacaoService>();
+
 
 // Configurar CORS
 builder.Services.AddCors(options =>
