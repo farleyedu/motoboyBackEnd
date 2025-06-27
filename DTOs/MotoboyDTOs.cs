@@ -34,9 +34,9 @@ namespace APIBack.DTOs
         public string Status { get; set; } = "offline";
         public string? Telefone { get; set; }
 
-        public double[] Location => new[] { Longitude, Latitude }; // 👈 aqui o array já montado
-        public double Latitude { get; set; }
-        public double Longitude { get; set; }
+        public string[] Location => new[] { Longitude, Latitude }; // 👈 aqui o array já montado
+        public string? Latitude { get; set; }
+        public string? Longitude { get; set; }
         public List<PedidoDTO> pedidos { get; set; } = new();
     }
 

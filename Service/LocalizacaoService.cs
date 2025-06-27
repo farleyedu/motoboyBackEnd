@@ -1,6 +1,7 @@
 ﻿
 using APIBack.Service.Interface;
 using Microsoft.AspNetCore.DataProtection.KeyManagement;
+using System.Globalization;
 using System.Net.Http;
 using System.Text.Json;
 
@@ -17,7 +18,7 @@ namespace APIBack.Service
             _httpClient = httpClient;
         }
 
-        public async Task<(double Latitude, double Longitude)?> ObterCoordenadasAsync(string endereco)
+        public async Task<(string Latitude, string Longitude)?> ObterCoordenadasAsync(string endereco)
         {
             var url = $"{BaseUrl}?q={Uri.EscapeDataString(endereco)}&key={ApiKey}&language=pt&limit=1";
 
@@ -31,10 +32,11 @@ namespace APIBack.Service
             if (results.GetArrayLength() == 0) return null;
 
             var geometry = results[0].GetProperty("geometry");
-            double lat = geometry.GetProperty("lat").GetDouble();
-            double lng = geometry.GetProperty("lng").GetDouble();
+            var lat = geometry.GetProperty("lat").GetDouble().ToString("F6", CultureInfo.InvariantCulture);
+            var lng = geometry.GetProperty("lng").GetDouble().ToString("F6", CultureInfo.InvariantCulture);
 
             return (lat, lng);
         }
+
     }
 }
