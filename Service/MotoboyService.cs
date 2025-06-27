@@ -46,8 +46,8 @@ namespace APIBack.Service
                         Nome = motoboy.Nome ?? "",
                         Avatar = motoboy.Avatar ?? "",
                         Status = "online",
-                        Latitude = motoboy?.Latitude ?? 0,
-                        Longitude = motoboy?.Longitude ?? 0,
+                        Latitude = motoboy?.Latitude ?? "",
+                        Longitude = motoboy?.Longitude ?? "",
                         pedidos = pedidos.Select(p => new PedidoDTO
                         {
                             Id = p.Id ?? 0,

@@ -2,6 +2,6 @@
 {
     public interface ILocalizacaoService
     {
-        Task<(double Latitude, double Longitude)?> ObterCoordenadasAsync(string endereco);
+        Task<(string Latitude, string Longitude)?> ObterCoordenadasAsync(string endereco);
     }
 }

@@ -20,10 +20,10 @@ namespace APIBack.DTOs
         public decimal? Value { get; set; }
         public string? Region { get; set; }
 
-        public double Latitude { get; set; }
-        public double Longitude { get; set; }
+        public string? Latitude { get; set; }
+        public string? Longitude { get; set; }
 
-        public double[] Coordinates => new[] { Longitude, Latitude };
+        public string[] Coordinates => new[] { Longitude, Latitude };
 
         public MotoboyDTO? MotoboyResponsavel { get; set; }
     }
@@ -65,8 +65,8 @@ namespace APIBack.DTOs
 
     public class Coordenadas
     {
-        public double Latitude { get; set; }
-        public double Longitude { get; set; }
+        public string? Latitude { get; set; }
+        public string? Longitude { get; set; }
     }
 
     public class Cliente
