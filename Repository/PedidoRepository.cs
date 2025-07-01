@@ -35,14 +35,32 @@ namespace APIBack.Repository
             using var connection = new NpgsqlConnection(_connectionString);
             {
                 var sql = @"
-                SELECT 
-                    p.id, p.nome_cliente, p.endereco_entrega, p.id_ifood, p.telefone_cliente,
-                    p.data_pedido, p.status_pedido, p.horario_pedido, p.previsao_entrega,
-                    p.horario_saida, p.horario_entrega, p.items, p.value, p.region,
-                    p.latitude, p.longitude,
-                    m.id AS motoboyid, m.nome AS nome, m.avatar, m.status
-                FROM pedido p
-                LEFT JOIN motoboy m ON m.id = p.motoboy_responsavel";
+                SELECT
+    p.id,
+    p.nome_cliente           AS ""NomeCliente"",
+    p.endereco_entrega       AS ""EnderecoEntrega"",
+    p.id_ifood               AS ""IdIfood"",
+    p.telefone_cliente       AS ""TelefoneCliente"",
+    p.data_pedido            AS ""DataPedido"",
+    p.status_pedido          AS ""StatusPedido"",   -- ⭐️ nome idêntico ao DTO
+    p.horario_pedido         AS ""HorarioPedido"",
+    p.previsao_entrega       AS ""PrevisaoEntrega"",
+    p.horario_saida          AS ""HorarioSaida"",
+    p.horario_entrega        AS ""HorarioEntrega"",
+    p.items                  AS ""Items"",
+    p.value                  AS ""Value"",
+    p.region                 AS ""Region"",
+    p.latitude               AS ""Latitude"",
+    p.longitude              AS ""Longitude"",
+
+    -- Campos do motoboy (após o splitOn)
+    m.id                     AS motoboyid,
+    m.nome                   AS nome,
+    m.avatar                 AS avatar,
+    m.status                 AS status
+FROM pedido p
+LEFT JOIN motoboy m ON m.id = p.motoboy_responsavel;
+";
 
                  var pedidos = connection.Query<PedidoDTOs, MotoboyDTO, PedidoDTOs>(
                     sql,

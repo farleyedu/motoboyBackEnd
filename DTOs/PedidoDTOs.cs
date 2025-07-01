@@ -11,7 +11,7 @@ namespace APIBack.DTOs
         public string? IdIfood { get; set; }
         public string? TelefoneCliente { get; set; }
         public DateTime DataPedido { get; set; }
-        public StatusPedido StatusPedido { get; set; } = StatusPedido.Pendente;
+        public StatusPedido StatusPedido { get; set; }
         public string? HorarioPedido { get; set; }
         public string? PrevisaoEntrega { get; set; }
         public string? HorarioSaida { get; set; }
