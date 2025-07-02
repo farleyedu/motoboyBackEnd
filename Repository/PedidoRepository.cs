@@ -176,7 +176,7 @@ LEFT JOIN motoboy m ON m.id = p.motoboy_responsavel;
             return new EnviarPedidosParaRotaDTO
             {
                 PedidosIds = tuple.Item1.Id != null ? new List<int> { tuple.Item1.Id.Value } : new List<int>(),
-                MotoboyResponsavel = tuple.Item2,
+                MotoboyResponsavel = tuple.Item2.Id,
                 StatusPedido = tuple.Item1.StatusPedido != null ? (StatusPedido)tuple.Item1.StatusPedido : StatusPedido.Pendente,
                 HorarioSaida = DateTime.UtcNow.ToString("HH:mm:ss")
             };
@@ -208,7 +208,7 @@ LEFT JOIN motoboy m ON m.id = p.motoboy_responsavel;
                 await connection.ExecuteAsync(sql, new
                 {
                     StatusPedido = (int)dto.StatusPedido,
-                    MotoboyResponsavel = dto.MotoboyResponsavel.Id,
+                    MotoboyResponsavel = dto.MotoboyResponsavel,
                     HorarioSaida = string.IsNullOrWhiteSpace(dto.HorarioSaida)
                         ? DateTime.UtcNow
                         : DateTime.Parse(dto.HorarioSaida),
