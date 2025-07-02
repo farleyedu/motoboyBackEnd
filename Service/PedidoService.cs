@@ -23,9 +23,9 @@ namespace APIBack.Service
             await Task.CompletedTask;
         }
 
-        public IEnumerable<Pedido> GetPedidosId(int Id)
+        public EnviarPedidosParaRotaDTO GetPedidosId(int Id)
         {
-            return _pedidoRepository.GetPedidosId();
+            return _pedidoRepository.GetPedidosId(Id);
         }
         public IEnumerable<PedidoDTOs> GetPedidosMaps()
         {
@@ -35,9 +35,20 @@ namespace APIBack.Service
         {
             return _pedidoRepository.CriarPedido();
         }
-        public IEnumerable<Pedido> AtribuirMotoboy()
+        public async Task AtribuirMotoboy(EnviarPedidosParaRotaDTO dto)
         {
-            return _pedidoRepository.AtribuirMotoboy();
+            foreach (var id in dto.PedidosIds)
+            {
+                var pedido = _pedidoRepository.GetPedidosId(id);
+                if (pedido == null) continue;
+
+                pedido.StatusPedido = dto.StatusPedido;
+                pedido.MotoboyResponsavel = dto.MotoboyResponsavel;
+                pedido.HorarioSaida = DateTime.UtcNow.ToString("HH:mm:ss");
+
+                await _pedidoRepository.AtribuirMotoboy(pedido);
+            }
+            await Task.CompletedTask;
         }
         public IEnumerable<Pedido> CancelarPedido()
         {
@@ -51,5 +62,6 @@ namespace APIBack.Service
         {
             return _pedidoRepository.AlteraPedido(Id,pedido);
         }
+
     }
 }

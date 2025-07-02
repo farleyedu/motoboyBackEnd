@@ -13,4 +13,5 @@ namespace APIBack.Model
         public StatusPedido? StatusPedido { get; set; }
         public int? MotoboyResponsavel { get; set; }
     }
+
 }

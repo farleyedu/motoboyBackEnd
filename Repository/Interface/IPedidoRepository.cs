@@ -7,14 +7,15 @@ namespace APIBack.Repository.Interface
     {
 
         IEnumerable<Pedido> GetPedidos();
-        IEnumerable<Pedido> GetPedidosId();
+        EnviarPedidosParaRotaDTO GetPedidosId(int id);
         IEnumerable<Pedido> CriarPedido();
         IEnumerable<PedidoDTOs> GetPedidosMaps();
-        IEnumerable<Pedido> AtribuirMotoboy();
+        Task AtribuirMotoboy(EnviarPedidosParaRotaDTO dto);
         IEnumerable<Pedido> CancelarPedido();
         IEnumerable<Pedido> FinalizarPedido();
         IEnumerable<Pedido> AlteraPedido(int Id, Pedido pedido);
         IEnumerable<Pedido> GetPedidosPorMotoboy(int motoboyId);
+        //void UpdateStatusLote(EnviarPedidosParaRotaDTO dto);
         void InserirPedidosIfood(PedidoCapturado pedidos);
     }
 }

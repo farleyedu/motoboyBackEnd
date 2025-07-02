@@ -67,6 +67,18 @@ namespace APIBack.Controllers
             return NoContent();
         }
 
+        [HttpPut("AtribuirMotoboy")]
+        public IActionResult AtribuirMotoboy([FromBody] EnviarPedidosParaRotaDTO dto)
+        {
+            if (dto.PedidosIds == null || !dto.PedidosIds.Any())
+                return BadRequest("Nenhum pedido informado.");
+
+            _pedidoService.AtribuirMotoboy(dto);
+            return NoContent();
+        }
+
+
+
         [HttpPost("PedidoIfood")]
         public async Task<IActionResult> CriarPedidosIfood(PedidoCapturado pedidos)
         {

@@ -62,15 +62,15 @@ FROM pedido p
 LEFT JOIN motoboy m ON m.id = p.motoboy_responsavel;
 ";
 
-                 var pedidos = connection.Query<PedidoDTOs, MotoboyDTO, PedidoDTOs>(
-                    sql,
-                    (pedido, motoboy) =>
-                    {
-                        pedido.MotoboyResponsavel = motoboy;
-                        return pedido;
-                    },
-                    splitOn: "motoboyid"
-                );
+                var pedidos = connection.Query<PedidoDTOs, MotoboyDTO, PedidoDTOs>(
+                   sql,
+                   (pedido, motoboy) =>
+                   {
+                       pedido.MotoboyResponsavel = motoboy;
+                       return pedido;
+                   },
+                   splitOn: "motoboyid"
+               );
                 return pedidos;
             }
         }
@@ -153,19 +153,76 @@ LEFT JOIN motoboy m ON m.id = p.motoboy_responsavel;
 
 
 
-        public IEnumerable<Pedido> GetPedidosId()
+        public EnviarPedidosParaRotaDTO? GetPedidosId(int id)
         {
-            throw new NotImplementedException();
+            using var connection = new NpgsqlConnection(_connectionString);
+
+            const string sql = @"
+        SELECT p.*, m.id as MotoboyId, m.nome as NomeMotoboy, m.avatar, m.status
+        FROM pedido p
+        LEFT JOIN motoboy m ON m.id = p.motoboy_responsavel
+        WHERE p.id = @Id";
+
+            var result = connection.Query<Pedido, MotoboyDTO, (Pedido, MotoboyDTO)>(
+                sql,
+                (pedido, motoboy) => (pedido, motoboy),
+                new { Id = id },
+                splitOn: "MotoboyId"
+            );
+
+            var tuple = result.FirstOrDefault();
+            if (tuple.Item1 == null) return null;
+
+            return new EnviarPedidosParaRotaDTO
+            {
+                PedidosIds = tuple.Item1.Id != null ? new List<int> { tuple.Item1.Id.Value } : new List<int>(),
+                MotoboyResponsavel = tuple.Item2,
+                StatusPedido = tuple.Item1.StatusPedido != null ? (StatusPedido)tuple.Item1.StatusPedido : StatusPedido.Pendente,
+                HorarioSaida = DateTime.UtcNow.ToString("HH:mm:ss")
+            };
         }
+
+
+
+
 
         public IEnumerable<Pedido> CriarPedido()
         {
             throw new NotImplementedException();
         }
-        public IEnumerable<Pedido> AtribuirMotoboy()
+        public async Task AtribuirMotoboy(EnviarPedidosParaRotaDTO dto)
         {
-            throw new NotImplementedException();
+            using var connection = new NpgsqlConnection(_connectionString);
+
+            const string sql = @"
+        UPDATE pedido
+        SET 
+            status_pedido = @StatusPedido,
+            motoboy_responsavel = @MotoboyResponsavel,
+            horario_saida = @HorarioSaida
+        WHERE id = ANY(@PedidosIds)
+    ";
+
+            try
+            {
+                await connection.ExecuteAsync(sql, new
+                {
+                    StatusPedido = (int)dto.StatusPedido,
+                    MotoboyResponsavel = dto.MotoboyResponsavel.Id,
+                    HorarioSaida = string.IsNullOrWhiteSpace(dto.HorarioSaida)
+                        ? DateTime.UtcNow
+                        : DateTime.Parse(dto.HorarioSaida),
+                    PedidosIds = dto.PedidosIds.ToArray()
+                });
+
+            }
+            catch (Exception ex)
+            {
+                // Logar o erro se necessário
+                throw;
+            }
         }
+
         public IEnumerable<Pedido> CancelarPedido()
         {
             throw new NotImplementedException();
