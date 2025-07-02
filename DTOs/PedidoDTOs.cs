@@ -98,6 +98,12 @@ namespace APIBack.DTOs
         public decimal? PrecoTotal { get; set; }
     }
 
-
+    public class EnviarPedidosParaRotaDTO
+    {
+        public List<int> PedidosIds { get; set; }
+        public MotoboyDTO MotoboyResponsavel { get; set; }
+        public StatusPedido StatusPedido { get; set; } =  StatusPedido.Pendente; // opcional
+        public string? HorarioSaida { get; set; } = DateTime.UtcNow.ToString("HH:mm:ss"); // opcional
+    }
 
 }
