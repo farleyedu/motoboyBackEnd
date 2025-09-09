@@ -1,4 +1,4 @@
-﻿using APIBack.DTOs;
+using APIBack.DTOs;
 using APIBack.Model;
 using APIBack.Repository.Interface;
 using APIBack.Service.Interface;
@@ -61,6 +61,25 @@ namespace APIBack.Service
         public IEnumerable<Pedido> AlteraPedido(int Id, Pedido pedido)
         {
             return _pedidoRepository.AlteraPedido(Id,pedido);
+        }
+
+        /// <summary>
+        /// Obtém pedido completo com todos os detalhes para o endpoint riderlink
+        /// </summary>
+        /// <param name="id">ID do pedido</param>
+        /// <returns>Dados completos do pedido ou null se não encontrado</returns>
+        public async Task<PedidoCompletoResponse?> GetPedidoCompleto(int id)
+        {
+            return await _pedidoRepository.GetPedidoCompleto(id);
+        }
+
+        /// <summary>
+        /// Obtém todos os pedidos completos com todos os detalhes
+        /// </summary>
+        /// <returns>Lista com todos os pedidos completos</returns>
+        public async Task<List<PedidoCompletoResponse>> GetTodosPedidosCompletos()
+        {
+            return await _pedidoRepository.GetTodosPedidosCompletos();
         }
 
     }
