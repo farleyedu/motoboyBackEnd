@@ -1,4 +1,4 @@
-﻿using APIBack.DTOs;
+using APIBack.DTOs;
 using APIBack.Model;
 
 namespace APIBack.Service.Interface
@@ -14,6 +14,19 @@ namespace APIBack.Service.Interface
         IEnumerable<Pedido> FinalizarPedido();
         IEnumerable<Pedido> AlteraPedido(int id, Pedido pedido);
         Task CriarPedidosIfood(PedidoCapturado pedidos);
+        
+        /// <summary>
+        /// Obtém pedido completo com todos os detalhes para o endpoint riderlink
+        /// </summary>
+        /// <param name="id">ID do pedido</param>
+        /// <returns>Dados completos do pedido ou null se não encontrado</returns>
+        Task<PedidoCompletoResponse?> GetPedidoCompleto(int id);
+
+        /// <summary>
+        /// Obtém todos os pedidos completos com todos os detalhes
+        /// </summary>
+        /// <returns>Lista com todos os pedidos completos</returns>
+        Task<List<PedidoCompletoResponse>> GetTodosPedidosCompletos();
 
     }
 }

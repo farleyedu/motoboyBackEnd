@@ -2,6 +2,7 @@ using APIBack.Repository;
 using APIBack.Service.Interface;
 using APIBack.Service;
 using APIBack.Repository.Interface;
+using motoboyBackEnd.Utils;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -15,6 +16,8 @@ builder.Services.AddScoped<IPedidoService, PedidoService>();
 builder.Services.AddScoped<IMotoboyRepository, MotoboyRepository>();
 builder.Services.AddScoped<IMotoboyService, MotoboyService>();
 builder.Services.AddScoped<ILocalizacaoService, LocalizacaoService>();
+builder.Services.AddScoped<DatabaseMigrator>(provider => 
+    new DatabaseMigrator(builder.Configuration.GetConnectionString("DefaultConnection") ?? ""));
 
 
 // Configurar CORS
