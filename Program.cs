@@ -37,7 +37,7 @@ builder.Services.AddScoped<ILocalizacaoService, LocalizacaoService>();
 // ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
 // Automation DI
 builder.Services.Configure<AutomationOptions>(builder.Configuration.GetSection("Automation"));
-builder.Services.AddSingleton<IConversationRepository, InMemoryConversationRepository>();
+builder.Services.AddScoped<IConversationRepository, SqlConversationRepository>();
 builder.Services.AddSingleton<IQueueBus, InMemoryQueueBus>();
 builder.Services.AddScoped<IWebhookSignatureValidator, WebhookSignatureValidator>();
 builder.Services.AddScoped<IWhatsappSender, WhatsappSenderStub>();
