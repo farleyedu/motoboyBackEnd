@@ -91,18 +91,10 @@ WHERE id_conversa = @IdConversa;";
         {
             const string inserirMensagemSql = @"
 INSERT INTO mensagens
-  (id_conversa, id_mensagem_wa, direcao, conteudo, metadados_midia, data_hora)
+  (id, id_conversa, direcao, tipo, status, id_provedor, codigo_erro, mensagem_erro, tentativas, criada_por, data_envio, data_entrega, data_leitura, data_criacao)
 VALUES
-  (@IdConversa, @IdMensagemWa, @Direcao, @Conteudo, CAST(@MetadadosMidia AS jsonb), @DataHora)
-ON CONFLICT (id_mensagem_wa) DO NOTHING;";
-
-            // Mantém 'conversas.atualizado_em' coerente e, se entrada, atualiza janela 24h e ultimo_usuario_em
-            const string atualizarConversaSql = @"
-UPDATE conversas
-SET atualizado_em = GREATEST(atualizado_em, @DataHora),
-    ultimo_usuario_em = CASE WHEN @Direcao = 0 THEN @DataHora ELSE ultimo_usuario_em END,
-    janela_24h_expira_em = CASE WHEN @Direcao = 0 THEN (@DataHora + INTERVAL '24 hours') ELSE janela_24h_expira_em END
-WHERE id_conversa = @IdConversa;";
+  (@Id, @IdConversa, @Direcao, @Tipo, @Status, @IdProvedor, @CodigoErro, @MensagemErro, @Tentativas, @CriadaPor, @DataEnvio, @DataEntrega, @DataLeitura, @DataCriacao)
+ON CONFLICT (id) DO NOTHING;";
 
             await using var conexao = new NpgsqlConnection(_connectionString);
             await conexao.OpenAsync();
@@ -112,19 +104,23 @@ WHERE id_conversa = @IdConversa;";
             {
                 await conexao.ExecuteAsync(inserirMensagemSql, new
                 {
+                    mensagem.Id,
                     mensagem.IdConversa,
-                    mensagem.IdMensagemWa,
-                    Direcao = mensagem.Direcao,
-                    mensagem.Conteudo,
-                    mensagem.MetadadosMidia,
-                    mensagem.DataHora
-                }, transaction: tx);
-
-                await conexao.ExecuteAsync(atualizarConversaSql, new
-                {
-                    mensagem.IdConversa,
-                    Direcao = mensagem.Direcao,
-                    mensagem.DataHora
+                    mensagem.Direcao,
+                    mensagem.Tipo,
+                    mensagem.Status,
+                    // Usa IdProvedor, caindo para IdMensagemWa quando nulo/blank
+                    IdProvedor = string.IsNullOrWhiteSpace(mensagem.IdProvedor)
+                        ? mensagem.IdMensagemWa
+                        : mensagem.IdProvedor,
+                    mensagem.CodigoErro,
+                    mensagem.MensagemErro,
+                    mensagem.Tentativas,
+                    mensagem.CriadaPor,
+                    mensagem.DataEnvio,
+                    mensagem.DataEntrega,
+                    mensagem.DataLeitura,
+                    mensagem.DataCriacao
                 }, transaction: tx);
 
                 await tx.CommitAsync();
@@ -138,7 +134,8 @@ WHERE id_conversa = @IdConversa;";
 
         public async Task<bool> ExisteIdMensagemWaAsync(string idMensagemWa)
         {
-            const string sql = "SELECT 1 FROM mensagens WHERE id_mensagem_wa = @IdMensagemWa LIMIT 1;";
+            // Usa a coluna existente id_provedor para idempotência de mensagens externas (WA)
+            const string sql = "SELECT 1 FROM mensagens WHERE id_provedor = @IdMensagemWa LIMIT 1;";
             await using var conexao = new NpgsqlConnection(_connectionString);
             var existe = await conexao.ExecuteScalarAsync<int?>(sql, new { IdMensagemWa = idMensagemWa });
             return existe.HasValue;
