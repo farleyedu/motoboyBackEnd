@@ -1,4 +1,4 @@
-﻿using APIBack.DTOs;
+using APIBack.DTOs;
 using APIBack.Model;
 using APIBack.Service;
 using APIBack.Service.Interface;
@@ -51,6 +51,107 @@ namespace APIBack.Controllers
         {
             _pedidoService.CriarPedido();
             return CreatedAtAction(nameof(GetPedido), new { id = pedido.Id }, pedido);
+        }
+
+        /// <summary>
+        /// Obtém pedido completo com todos os detalhes (endpoint riderlink)
+        /// </summary>
+        /// <param name="id">ID do pedido</param>
+        /// <returns>Dados completos do pedido</returns> 
+        [HttpGet("{id}/riderlink")]
+        public async Task<IActionResult> GetPedidoCompleto(int id)
+        {
+            try
+            {
+                // Validação básica do ID
+                if (id < 1)
+                {
+                    return BadRequest(new
+                    {
+                        success = false,
+                        error = "ID do pedido deve ser maior que zero",
+                        traceId = HttpContext.TraceIdentifier
+                    });
+                }
+
+                // Busca o pedido completo
+                var pedidoCompleto = await _pedidoService.GetPedidoCompleto(id);
+                
+                if (pedidoCompleto == null)
+                {
+                    return NotFound(new
+                    {
+                        success = false,
+                        error = $"Pedido com ID {id} não encontrado",
+                        traceId = HttpContext.TraceIdentifier
+                    });
+                }
+
+                // Retorna o pedido completo
+                return Ok(new
+                {
+                    success = true,
+                    data = pedidoCompleto,
+                    traceId = HttpContext.TraceIdentifier
+                });
+            }
+            catch (Exception ex)
+            {
+                // Log estruturado do erro
+                Console.WriteLine($"❌ Erro ao buscar pedido completo {id}: {ex.Message}");
+                
+                return StatusCode(500, new
+                {
+                    success = false,
+                    error = "Erro interno do servidor",
+                    traceId = HttpContext.TraceIdentifier
+                });
+            }
+        }
+
+        /// <summary>
+        /// Obtém o pedido completo mais recente com todos os detalhes (endpoint para motoboy)
+        /// </summary>
+        /// <returns>Dados completos do pedido</returns>
+        /// <summary>
+        /// Obtém a lista completa de pedidos com todos os detalhes (endpoint para motoboy)
+        /// </summary>
+        /// <returns>Lista de dados completos dos pedidos</returns>
+        [HttpGet("motoboy")]
+        public async Task<IActionResult> GetPedidosCompletos()
+        {
+            try
+            {
+                var pedidosCompletos = await _pedidoService.GetTodosPedidosCompletos();
+
+                if (pedidosCompletos == null || !pedidosCompletos.Any())
+                {
+                    return NotFound(new
+                    {
+                        success = false,
+                        error = "Nenhum pedido completo encontrado",
+                        traceId = HttpContext.TraceIdentifier
+                    });
+                }
+
+                return Ok(new
+                {
+                    success = true,
+                    data = pedidosCompletos,
+                    traceId = HttpContext.TraceIdentifier
+                });
+            }
+            catch (Exception ex)
+            {             
+                Console.WriteLine($"❌ Erro ao buscar lista de pedidos completos: {ex.Message}");
+
+                return StatusCode(500, new
+                {
+                    success = false,
+                    error = "Erro interno do servidor",
+                    traceId = HttpContext.TraceIdentifier
+                });
+            }
         }
 
         // PUT: api/pedidos/1
