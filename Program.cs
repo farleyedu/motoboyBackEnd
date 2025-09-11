@@ -33,6 +33,8 @@ builder.Services.AddScoped<IPedidoService, PedidoService>();
 builder.Services.AddScoped<IMotoboyRepository, MotoboyRepository>();
 builder.Services.AddScoped<IMotoboyService, MotoboyService>();
 builder.Services.AddScoped<ILocalizacaoService, LocalizacaoService>();
+builder.Services.AddScoped<DatabaseMigrator>(provider => 
+    new DatabaseMigrator(builder.Configuration.GetConnectionString("DefaultConnection") ?? ""));
 
 // ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
 // Automation DI
