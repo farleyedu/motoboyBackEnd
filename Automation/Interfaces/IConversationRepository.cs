@@ -1,4 +1,3 @@
-// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
 using System;
 using System.Threading.Tasks;
 using APIBack.Automation.Models;
@@ -11,7 +10,6 @@ namespace APIBack.Automation.Interfaces
         Task InserirOuAtualizarAsync(Conversation conversa);
         Task DefinirModoAsync(Guid id, ModoConversa modo, string? agenteDesignado);
         Task AcrescentarMensagemAsync(Message mensagem);
-        Task<bool> ExisteIdMensagemWaAsync(string idMensagemWa);
+        Task<bool> ExisteIdMensagemPorProvedorWaAsync(string idMensagemWa); // idempotência por id_provedor (wamid)
     }
 }
-// ================= ZIPPYGO AUTOMATION SECTION (END) ===================

@@ -81,7 +81,7 @@ namespace APIBack.Automation.Infra
             return Task.CompletedTask;
         }
 
-        public Task<bool> ExisteIdMensagemWaAsync(string idMensagemWa)
+        public Task<bool> ExisteIdMensagemPorProvedorWaAsync(string idMensagemWa)
         {
             var existe = _idsMensagemWa.ContainsKey(idMensagemWa);
             return Task.FromResult(existe);

@@ -36,7 +36,7 @@ namespace APIBack.Automation.Services
                 return null;
             }
 
-            if (await _repositorio.ExisteIdMensagemWaAsync(idMensagemWa))
+            if (await _repositorio.ExisteIdMensagemPorProvedorWaAsync(idMensagemWa))
             {
                 _logger.LogInformation("Ignorando duplicata de entrada IdMensagemWa={WaMessageId}", idMensagemWa);
                 return null;
@@ -124,10 +124,10 @@ namespace APIBack.Automation.Services
                 IdWa = conversa.IdWa,
                 Modo = conversa.Modo,
                 AgenteDesignado = conversa.AgenteDesignado,
-                UltimoUsuarioEm = conversa.UltimoUsuarioEm,
+                UltimoUsuarioEm = conversa.UltimoUsuarioEm ?? default(DateTime),
                 Janela24hExpiraEm = conversa.Janela24hExpiraEm,
                 CriadoEm = conversa.CriadoEm,
-                AtualizadoEm = conversa.AtualizadoEm,
+                AtualizadoEm = conversa.AtualizadoEm ?? default(DateTime),
                 Mensagens = ultimas.Select(m => new ConversationMessageView
                 {
                     IdMensagemWa = m.IdMensagemWa,
