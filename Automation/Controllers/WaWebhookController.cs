@@ -34,6 +34,26 @@ namespace APIBack.Automation.Controllers
             _fila = fila;
         }
 
+        [HttpGet("webhook")]
+        public IActionResult VerifyWebhook(
+            [FromQuery(Name = "hub.mode")] string mode,
+            [FromQuery(Name = "hub.verify_token")] string token,
+            [FromQuery(Name = "hub.challenge")] string challenge)
+        {
+            const string VERIFY_TOKEN = "zippygo123"; // mesmo que você colocar no painel do Meta
+
+            if (mode == "subscribe" && token == VERIFY_TOKEN)
+            {
+                _logger.LogInformation("Webhook verificado com sucesso pelo Meta.");
+                return Ok(challenge); // devolve o challenge
+            }
+            else
+            {
+                _logger.LogWarning("Falha na verificação do webhook. Token inválido.");
+                return Forbid(); // 403
+            }
+        }
+
         [HttpPost("webhook")]
         public async Task<IActionResult> Webhook()
         {
