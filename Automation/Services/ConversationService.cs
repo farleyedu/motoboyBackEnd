@@ -40,7 +40,7 @@ namespace APIBack.Automation.Services
             _configuration = configuration;
         }
 
-        public async Task<Message?> AcrescentarEntradaAsync(string idWa, string idMensagemWa, string conteudo, string? phoneNumberId = null)
+        public async Task<Message?> AcrescentarEntradaAsync(string idWa, string idMensagemWa, string conteudo, string? phoneNumberId = null, DateTime? dataMensagemUtc = null)
         {
             if (string.IsNullOrWhiteSpace(idMensagemWa))
             {
@@ -79,11 +79,13 @@ namespace APIBack.Automation.Services
 
             var idConversa = _waParaConversa.GetOrAdd(idWa, _ => Guid.NewGuid());
             var existente = await _repositorio.ObterPorIdAsync(idConversa);
+            var telefoneE164 = APIBack.Automation.Helpers.TelefoneHelper.ToE164(idWa);
+            var idCliente = await _repositorio.GarantirClienteAsync(telefoneE164, idEstabelecimento.Value);
             var conversa = existente ?? new Conversation
             {
                 IdConversa = idConversa,
                 IdEstabelecimento = idEstabelecimento.Value,
-                IdCliente = Guid.NewGuid(), // TODO: Implementar resolução de cliente
+                IdCliente = idCliente,
                 IdWa = idWa,
                 Modo = ModoConversa.Bot,
                 CriadoEm = DateTime.UtcNow,
@@ -109,11 +111,13 @@ namespace APIBack.Automation.Services
                 IdMensagemWa = idMensagemWa,
                 Direcao = DirecaoMensagem.Entrada,
                 Conteudo = conteudo,
-                DataHora = DateTime.UtcNow,
+                DataHora = dataMensagemUtc.HasValue
+                    ? DateTime.SpecifyKind(dataMensagemUtc.Value, DateTimeKind.Utc)
+                    : DateTime.UtcNow,
             };
 
             EnfileirarMensagem(mensagem);
-            await _repositorio.AcrescentarMensagemAsync(mensagem);
+            await _repositorio.AcrescentarMensagemAsync(mensagem, phoneNumberId, idWa);
 
             return mensagem;
         }
@@ -130,7 +134,7 @@ namespace APIBack.Automation.Services
             };
 
             EnfileirarMensagem(mensagem);
-            await _repositorio.AcrescentarMensagemAsync(mensagem);
+            await _repositorio.AcrescentarMensagemAsync(mensagem, phoneNumberId: null, idWa);
             return mensagem;
         }
 
@@ -148,7 +152,7 @@ namespace APIBack.Automation.Services
                     DataHora = DateTime.UtcNow,
                 };
                 EnfileirarMensagem(msg);
-                await _repositorio.AcrescentarMensagemAsync(msg);
+                await _repositorio.AcrescentarMensagemAsync(msg, phoneNumberId: null);
             }
         }
 
@@ -189,3 +193,5 @@ namespace APIBack.Automation.Services
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
+
+

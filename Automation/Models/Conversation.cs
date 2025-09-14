@@ -27,6 +27,8 @@ namespace APIBack.Automation.Models
         public DateTime DataPrimeiraMensagem => CriadoEm;
         public DateTime DataUltimaMensagem => AtualizadoEm ?? CriadoEm;
         public string Canal => "whatsapp";
+        public string Estado => "aberta";
+
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================

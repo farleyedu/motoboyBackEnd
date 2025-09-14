@@ -100,7 +100,7 @@ namespace APIBack.Automation.Controllers
                                 if (mudanca.Campo == "messages" && mudanca.Valor?.Mensagens != null)
                                 {
                                     // Extrair phone_number_id dos metadados
-                                    var phoneNumberId = mudanca.Valor.Metadados?.IdNumeroTelefone;
+                                    var phoneNumberId = mudanca.Valor.Metadados?.NumeroTelefoneExibicao;
                                     
                                     foreach (var mensagem in mudanca.Valor.Mensagens)
                                     {
@@ -109,7 +109,12 @@ namespace APIBack.Automation.Controllers
                                             if (mensagem.De != null && !string.IsNullOrWhiteSpace(mensagem.Id))
                                             {
                                                 var texto = mensagem.Texto?.Corpo ?? string.Empty;
-                                                var criada = await _servicoConversa.AcrescentarEntradaAsync(mensagem.De!, mensagem.Id!, texto);
+                                                DateTime? dataMsgUtc = null;
+                                                if (!string.IsNullOrWhiteSpace(mensagem.CarimboTempo) && long.TryParse(mensagem.CarimboTempo, out var unix))
+                                                {
+                                                    try { dataMsgUtc = DateTimeOffset.FromUnixTimeSeconds(unix).UtcDateTime; } catch { /* ignora parse inválido */ }
+                                                }
+                                                var criada = await _servicoConversa.AcrescentarEntradaAsync(mensagem.De!, mensagem.Id!, texto, phoneNumberId, dataMsgUtc);
 
                                                 // Lógica de detecção de handover
                                                 if (criada != null && DetectaHandover(texto))
