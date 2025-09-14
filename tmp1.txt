@@ -1,4 +1,4 @@
-﻿// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
+// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -12,8 +12,6 @@ using Microsoft.Extensions.Options;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Configuration;
-using APIBack.Automation.Models;
 
 namespace APIBack.Automation.Controllers
 {
@@ -31,8 +29,6 @@ namespace APIBack.Automation.Controllers
         private readonly IWabaPhoneRepository _wabaRepo;
         private readonly IIARegraRepository _regrasRepo;
         private readonly IIARespostaRepository _respostasRepo;
-        private readonly APIBack.Automation.Interfaces.IConversationRepository _repositorio;
-        private readonly IConfiguration _configuration;
 
         public WaWebhookController(
             ILogger<WaWebhookController> logger,
@@ -44,8 +40,6 @@ namespace APIBack.Automation.Controllers
             IWabaPhoneRepository wabaRepo,
             IIARegraRepository regrasRepo,
             IIARespostaRepository respostasRepo,
-            APIBack.Automation.Interfaces.IConversationRepository repositorio,
-            IConfiguration configuration,
             IAssistantService? ia = null)
         {
             _logger = logger;
@@ -58,8 +52,6 @@ namespace APIBack.Automation.Controllers
             _wabaRepo = wabaRepo;
             _regrasRepo = regrasRepo;
             _respostasRepo = respostasRepo;
-            _repositorio = repositorio;
-            _configuration = configuration;
         }
 
         [HttpGet("webhook")]
@@ -68,7 +60,7 @@ namespace APIBack.Automation.Controllers
             [FromQuery(Name = "hub.verify_token")] string token,
             [FromQuery(Name = "hub.challenge")] string challenge)
         {
-            const string VERIFY_TOKEN = "zippygo123"; // mesmo que vocï¿½ colocar no painel do Meta
+            const string VERIFY_TOKEN = "zippygo123"; // mesmo que voc� colocar no painel do Meta
 
             if (mode == "subscribe" && token == VERIFY_TOKEN)
             {
@@ -77,7 +69,7 @@ namespace APIBack.Automation.Controllers
             }
             else
             {
-                _logger.LogWarning("Falha na verificaÃ§Ã£o do webhook. Token invÃ¡lido.");
+                _logger.LogWarning("Falha na verificação do webhook. Token inválido.");
                 return Forbid(); // 403
             }
         }
@@ -102,7 +94,7 @@ namespace APIBack.Automation.Controllers
                 if (!_validadorAssinatura.ValidarXHubSignature256(cabecalho, corpo))
                 {
                     _logger.LogWarning("Invalid X-Hub-Signature-256");
-                    return Ok(); // Retorna 200 mesmo com assinatura invÃ¡lida
+                    return Ok(); // Retorna 200 mesmo com assinatura inválida
                 }
 
                 WebhookPayloadDto? carga = null;
@@ -116,7 +108,7 @@ namespace APIBack.Automation.Controllers
                     return Ok();
                 }
 
-                // Processar todas as entradas e mudanÃ§as
+                // Processar todas as entradas e mudanças
                 if (carga?.Entradas != null)
                 {
                     foreach (var entrada in carga.Entradas)
@@ -129,7 +121,6 @@ namespace APIBack.Automation.Controllers
                                 {
                                     // Extrair phone_number_id dos metadados
                                     var phoneNumberEstabelecimento = mudanca.Valor.Metadados?.NumeroTelefoneExibicao;
-                                    var phoneNumberwhats = mudanca.Valor.Metadados?.IdNumeroTelefone;
 
                                     foreach (var mensagem in mudanca.Valor.Mensagens)
                                     {
@@ -141,13 +132,13 @@ namespace APIBack.Automation.Controllers
                                                 DateTime? dataMsgUtc = null;
                                                 if (!string.IsNullOrWhiteSpace(mensagem.CarimboTempo) && long.TryParse(mensagem.CarimboTempo, out var unix))
                                                 {
-                                                    try { dataMsgUtc = DateTimeOffset.FromUnixTimeSeconds(unix).UtcDateTime; } catch { /* ignora parse invÃ¡lido */ }
+                                                    try { dataMsgUtc = DateTimeOffset.FromUnixTimeSeconds(unix).UtcDateTime; } catch { /* ignora parse inválido */ }
                                                 }
-                                                // Use o display number (numero exibido) como parÃ¢metro para o service,
+                                                // Use o display number (numero exibido) como parâmetro para o service,
                                                 // mantendo o phoneNumberId (WABA) intacto para usos posteriores
                                                 var criada = await _servicoConversa.AcrescentarEntradaAsync(mensagem.De!, mensagem.Id!, texto, phoneNumberEstabelecimento,  dataMsgUtc );
 
-                                                // LÃ³gica de detecÃ§Ã£o de handover
+                                                // Lógica de detecção de handover
                                                 if (criada != null && DetectaHandover(texto))
                                                 {
                                                     await ChamarHandoverEndpointAsync(criada.IdConversa, "AgenteX");
@@ -185,27 +176,13 @@ namespace APIBack.Automation.Controllers
                                                         var respostaIa = _ia != null ? await _ia.GerarRespostaAsync(texto, criada.IdConversa, contexto) : null;
                                                         if (!string.IsNullOrWhiteSpace(respostaIa) && !string.IsNullOrWhiteSpace(phoneNumberEstabelecimento) && !string.IsNullOrWhiteSpace(mensagem.De))
                                                         {
-                                                            // Grava saÃ­da da IA antes do envio
-                                                            var mensagemSaida = new Message
-                                                            {
-                                                                IdConversa = criada.IdConversa,
-                                                                IdMensagemWa = Guid.NewGuid().ToString(),
-                                                                Direcao = DirecaoMensagem.Saida,
-                                                                Conteudo = respostaIa!,
-                                                                DataHora = DateTime.UtcNow,
-                                                                CriadaPor = "ia",
-                                                                Status = "fila"
-                                                            };
-                                                            await _repositorio.AcrescentarMensagemAsync(mensagemSaida, phoneNumberEstabelecimento, mensagem.De);
-
-                                                            // Envia ao WhatsApp
-                                                            await EnviarRespostaWhatsAppAsync(phoneNumberwhats!, mensagem.De!, respostaIa!);
-                                                            _logger.LogInformation("Resposta automÃ¡tica enviada para {Destino}", mensagem.De);
+                                                            await EnviarRespostaWhatsAppAsync(phoneNumberEstabelecimento!, mensagem.De!, respostaIa!);
+                                                            _logger.LogInformation("Resposta automática enviada para {Destino}", mensagem.De);
                                                         }
                                                     }
                                                     catch (Exception exAuto)
                                                     {
-                                                        _logger.LogError(exAuto, "Falha ao gerar/enviar resposta automÃ¡tica");
+                                                        _logger.LogError(exAuto, "Falha ao gerar/enviar resposta automática");
                                                     }
                                                 }
                                             }
@@ -226,22 +203,22 @@ namespace APIBack.Automation.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Erro crÃ­tico ao processar webhook");
+                _logger.LogError(ex, "Erro crítico ao processar webhook");
                 return Ok(); // SEMPRE retorna 200 para evitar reenvios do WhatsApp
             }
         }
 
-        // Funï¿½ï¿½o para detectar intenï¿½ï¿½o de handover
+        // Fun��o para detectar inten��o de handover
         private bool DetectaHandover(string texto)
         {
             return texto.Contains("atendente", StringComparison.OrdinalIgnoreCase)
                 || texto.Contains("humano", StringComparison.OrdinalIgnoreCase)
                 || texto.Contains("pessoa", StringComparison.OrdinalIgnoreCase)
                 || texto.Contains("gente", StringComparison.OrdinalIgnoreCase)
-                || texto.Contains("falar com alguï¿½m", StringComparison.OrdinalIgnoreCase);
+                || texto.Contains("falar com algu�m", StringComparison.OrdinalIgnoreCase);
         }
 
-        // Funï¿½ï¿½o para chamar o endpoint de handover
+        // Fun��o para chamar o endpoint de handover
         private async Task ChamarHandoverEndpointAsync(Guid idConversa, string agenteDesignado)
         {
             using var httpClient = new HttpClient();
@@ -256,10 +233,10 @@ namespace APIBack.Automation.Controllers
         {
             try
             {
-                var token = _configuration["WhatsApp:AccessToken"];
+                var token = _opcoes.Value.Meta?.AccessToken;
                 if (string.IsNullOrWhiteSpace(token))
                 {
-                    _logger.LogWarning("Token do WhatsApp (WhatsApp:AccessToken) não configurado");
+                    _logger.LogWarning("Token do WhatsApp (Meta.AccessToken) não configurado");
                     return;
                 }
 
@@ -282,17 +259,3 @@ namespace APIBack.Automation.Controllers
                 {
                     var body = await resp.Content.ReadAsStringAsync();
                     _logger.LogWarning("Falha ao enviar resposta WA: {Status} {Body}", (int)resp.StatusCode, body);
-                }
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Erro ao enviar resposta para WhatsApp");
-            }
-        }
-    }
-}
-// ================= ZIPPYGO AUTOMATION SECTION (END) ===================
-
-
-
-

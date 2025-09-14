@@ -8,6 +8,7 @@ using Serilog;
 using APIBack.Automation.Interfaces;
 using APIBack.Automation.Infra;
 using APIBack.Automation.Services;
+using APIBack.Automation.Infra.Config;
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
 using System.Net;
 using Microsoft.AspNetCore.Hosting.Server;
@@ -41,6 +42,7 @@ builder.Services.AddScoped<ILocalizacaoService, LocalizacaoService>();
 // ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
 // Automation DI
 builder.Services.Configure<AutomationOptions>(builder.Configuration.GetSection("Automation"));
+builder.Services.Configure<OpenAIOptions>(builder.Configuration.GetSection("OpenAI"));
 builder.Services.AddScoped<IConversationRepository, SqlConversationRepository>();
 builder.Services.AddScoped<IWabaPhoneRepository, SqlWabaPhoneRepository>();
 builder.Services.AddScoped<IIARegraRepository, SqlIARegraRepository>();
@@ -49,9 +51,9 @@ builder.Services.AddScoped<IClienteRepository, SqlClienteRepository>();
 builder.Services.AddSingleton<IQueueBus, InMemoryQueueBus>();
 builder.Services.AddScoped<IWebhookSignatureValidator, WebhookSignatureValidator>();
 builder.Services.AddScoped<IWhatsappSender, WhatsappSenderStub>();
-builder.Services.AddScoped<IAssistantService, AssistantService>();
+// IA real via OpenAI
+builder.Services.AddScoped<IAssistantService, OpenAIAssistantService>();
 builder.Services.AddScoped<IAlertSender, AlertSenderTelegramStub>();
-builder.Services.AddScoped<IAssistantService, AssistantServiceStub>();
 builder.Services.AddScoped<ConversationService>();
 builder.Services.AddScoped<HandoverService>();
 builder.Services.AddScoped<AutomationHealthService>();
