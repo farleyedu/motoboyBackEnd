@@ -8,6 +8,7 @@ using APIBack.Automation.Dtos;
 using APIBack.Automation.Interfaces;
 using APIBack.Automation.Models;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Configuration;
 
 namespace APIBack.Automation.Services
 {
@@ -15,6 +16,9 @@ namespace APIBack.Automation.Services
     {
         private readonly IConversationRepository _repositorio;
         private readonly ILogger<ConversationService> _logger;
+        private readonly IQueueBus _queueBus;
+        private readonly IWabaPhoneRepository _wabaPhoneRepository;
+        private readonly IConfiguration _configuration;
 
         // mapeia waId -> conversationId (in-memory)
         private readonly ConcurrentDictionary<string, Guid> _waParaConversa = new(StringComparer.OrdinalIgnoreCase);
@@ -22,13 +26,21 @@ namespace APIBack.Automation.Services
         // armazenamento in-memory de mensagens por conversa
         private readonly ConcurrentDictionary<Guid, ConcurrentQueue<Message>> _mensagens = new();
 
-        public ConversationService(IConversationRepository repo, ILogger<ConversationService> logger)
+        public ConversationService(
+            IConversationRepository repo, 
+            ILogger<ConversationService> logger,
+            IQueueBus queueBus,
+            IWabaPhoneRepository wabaPhoneRepository,
+            IConfiguration configuration)
         {
             _repositorio = repo;
             _logger = logger;
+            _queueBus = queueBus;
+            _wabaPhoneRepository = wabaPhoneRepository;
+            _configuration = configuration;
         }
 
-        public async Task<Message?> AcrescentarEntradaAsync(string idWa, string idMensagemWa, string conteudo)
+        public async Task<Message?> AcrescentarEntradaAsync(string idWa, string idMensagemWa, string conteudo, string? phoneNumberId = null)
         {
             if (string.IsNullOrWhiteSpace(idMensagemWa))
             {
@@ -42,20 +54,50 @@ namespace APIBack.Automation.Services
                 return null;
             }
 
+            // Resolve o id_estabelecimento usando o phone_number_id
+            Guid? idEstabelecimento = null;
+            if (!string.IsNullOrWhiteSpace(phoneNumberId))
+            {
+                idEstabelecimento = await _wabaPhoneRepository.ObterIdEstabelecimentoPorPhoneNumberIdAsync(phoneNumberId);
+            }
+
+            // Fallback para estabelecimento padrão se não encontrar
+            if (idEstabelecimento == null || idEstabelecimento == Guid.Empty)
+            {
+                var fallbackEstabelecimentoId = _configuration.GetValue<string>("WhatsApp:FallbackEstabelecimentoId");
+                if (!string.IsNullOrWhiteSpace(fallbackEstabelecimentoId) && Guid.TryParse(fallbackEstabelecimentoId, out var fallbackGuid))
+                {
+                    idEstabelecimento = fallbackGuid;
+                    _logger.LogWarning("Usando estabelecimento fallback {IdEstabelecimento} para phone_number_id {PhoneNumberId}", idEstabelecimento, phoneNumberId);
+                }
+                else
+                {
+                    _logger.LogError("Não foi possível resolver id_estabelecimento para phone_number_id {PhoneNumberId} e não há fallback configurado", phoneNumberId);
+                    throw new InvalidOperationException($"Não foi possível resolver id_estabelecimento para phone_number_id {phoneNumberId}");
+                }
+            }
+
             var idConversa = _waParaConversa.GetOrAdd(idWa, _ => Guid.NewGuid());
             var existente = await _repositorio.ObterPorIdAsync(idConversa);
             var conversa = existente ?? new Conversation
             {
                 IdConversa = idConversa,
+                IdEstabelecimento = idEstabelecimento.Value,
+                IdCliente = Guid.NewGuid(), // TODO: Implementar resolução de cliente
                 IdWa = idWa,
                 Modo = ModoConversa.Bot,
                 CriadoEm = DateTime.UtcNow,
                 AtualizadoEm = DateTime.UtcNow,
+                MessageIdWhatsapp = idMensagemWa
             };
 
             // Garante WaId salvo
             conversa.IdWa = idWa;
-            await _repositorio.InserirOuAtualizarAsync(conversa);
+            var conversaInserida = await _repositorio.InserirOuAtualizarAsync(conversa);
+            if (!conversaInserida)
+            {
+                _logger.LogError("Falha ao inserir/atualizar conversa {IdConversa}", idConversa);
+            }
             if (existente == null)
             {
                 _logger.LogInformation("[Automation] Nova conversa criada: {ConversationId} para WaId={WaId}", idConversa, idWa);

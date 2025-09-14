@@ -1,14 +1,15 @@
-﻿public class ConfirmarEntregaRequest
+public class ConfirmarEntregaRequest
 {
-    public string Localizador { get; set; }
-    public string CodigoCliente { get; set; }
+    public string Localizador { get; set; } = string.Empty;
+    public string CodigoCliente { get; set; } = string.Empty;
 }
 
 public class IfoodLocalizadorResponse
 {
-    public string orderId { get; set; }
-    public string customerName { get; set; }
-    public string shortId { get; set; }
-    public string deliveryMethod { get; set; }
-    public string storeType { get; set; }
+    public string orderId { get; set; } = string.Empty;
+    public string customerName { get; set; } = string.Empty;
+    public string shortId { get; set; } = string.Empty;
+    public string deliveryMethod { get; set; } = string.Empty;
+    public string storeType { get; set; } = string.Empty;
 }
+

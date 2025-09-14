@@ -39,6 +39,7 @@ builder.Services.AddScoped<ILocalizacaoService, LocalizacaoService>();
 // Automation DI
 builder.Services.Configure<AutomationOptions>(builder.Configuration.GetSection("Automation"));
 builder.Services.AddScoped<IConversationRepository, SqlConversationRepository>();
+builder.Services.AddScoped<IWabaPhoneRepository, SqlWabaPhoneRepository>();
 builder.Services.AddSingleton<IQueueBus, InMemoryQueueBus>();
 builder.Services.AddScoped<IWebhookSignatureValidator, WebhookSignatureValidator>();
 builder.Services.AddScoped<IWhatsappSender, WhatsappSenderStub>();

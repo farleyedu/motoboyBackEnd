@@ -76,8 +76,14 @@ WHERE id = @Id;";
             return conv;
         }
 
-        public async Task InserirOuAtualizarAsync(Conversation conversa)
+        public async Task<bool> InserirOuAtualizarAsync(Conversation conversa)
         {
+            // Validação obrigatória do id_estabelecimento
+            if (conversa.IdEstabelecimento == Guid.Empty)
+            {
+                throw new ArgumentException("id_estabelecimento é obrigatório para criar/atualizar conversa", nameof(conversa));
+            }
+
             var criado     = conversa.CriadoEm != default ? DateTime.SpecifyKind(conversa.CriadoEm, DateTimeKind.Utc) : DateTime.UtcNow;
             var atualizado = conversa.AtualizadoEm.HasValue && conversa.AtualizadoEm.Value != default
                                 ? DateTime.SpecifyKind(conversa.AtualizadoEm.Value, DateTimeKind.Utc)
@@ -85,22 +91,36 @@ WHERE id = @Id;";
 
             const string sql = @"
 INSERT INTO conversas
-  (id, canal, data_primeira_mensagem, data_ultima_mensagem, data_criacao, data_atualizacao)
+  (id, id_estabelecimento, id_cliente, canal, data_primeira_mensagem, data_ultima_mensagem, data_criacao, data_atualizacao, message_id_whatsapp)
 VALUES
-  (@Id, 'whatsapp', @PrimeiraMsg, @UltimaMsg, @CriadoEm, @AtualizadoEm)
+  (@Id, @IdEstabelecimento, @IdCliente, 'whatsapp', @PrimeiraMsg, @UltimaMsg, @CriadoEm, @AtualizadoEm, @MessageIdWhatsapp)
 ON CONFLICT (id) DO UPDATE SET
   data_ultima_mensagem = GREATEST(conversas.data_ultima_mensagem, EXCLUDED.data_ultima_mensagem),
-  data_atualizacao     = EXCLUDED.data_atualizacao;";
+  data_atualizacao     = EXCLUDED.data_atualizacao,
+  message_id_whatsapp  = COALESCE(EXCLUDED.message_id_whatsapp, conversas.message_id_whatsapp);";
 
-            await using var cx = new NpgsqlConnection(_connectionString);
-            await cx.ExecuteAsync(sql, new
+            try
             {
-                Id           = conversa.IdConversa,
-                PrimeiraMsg  = criado,
-                UltimaMsg    = atualizado,
-                CriadoEm     = criado,
-                AtualizadoEm = atualizado
-            });
+                await using var cx = new NpgsqlConnection(_connectionString);
+                var rowsAffected = await cx.ExecuteAsync(sql, new
+                {
+                    Id                = conversa.IdConversa,
+                    IdEstabelecimento = conversa.IdEstabelecimento,
+                    IdCliente         = conversa.IdCliente,
+                    PrimeiraMsg       = criado,
+                    UltimaMsg         = atualizado,
+                    CriadoEm          = criado,
+                    AtualizadoEm      = atualizado,
+                    MessageIdWhatsapp = (object?)conversa.MessageIdWhatsapp ?? DBNull.Value
+                });
+                return rowsAffected > 0;
+            }
+            catch (Exception ex)
+            {
+                // Log error but don't break webhook flow
+                Console.WriteLine($"Erro ao inserir/atualizar conversa {conversa.IdConversa}: {ex.Message}");
+                return false;
+            }
         }
 
         public async Task DefinirModoAsync(Guid id, ModoConversa modo, string? agenteDesignado)

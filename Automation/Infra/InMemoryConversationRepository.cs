@@ -18,11 +18,11 @@ namespace APIBack.Automation.Infra
             return Task.FromResult(conversa);
         }
 
-        public Task InserirOuAtualizarAsync(Conversation conversa)
+        public Task<bool> InserirOuAtualizarAsync(Conversation conversa)
         {
             conversa.AtualizadoEm = DateTime.UtcNow;
             _conversas.AddOrUpdate(conversa.IdConversa, conversa, (_, __) => conversa);
-            return Task.CompletedTask;
+            return Task.FromResult(true);
         }
 
         public Task DefinirModoAsync(Guid id, ModoConversa modo, string? agenteDesignado)
