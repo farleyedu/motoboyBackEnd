@@ -27,6 +27,8 @@ public class EntregasController : Controller
 
             var json = await response.Content.ReadAsStringAsync();
             var result = JsonSerializer.Deserialize<IfoodLocalizadorResponse>(json);
+            if (result is null || string.IsNullOrWhiteSpace(result.orderId))
+                return BadRequest("Localizador inválido ou resposta inesperada do iFood.");
 
             // 2. Confirmar com o handshakeCode
             var payload = new

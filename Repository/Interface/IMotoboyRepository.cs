@@ -1,6 +1,4 @@
-﻿using APIBack.Controllers;
 using APIBack.Model;
-using Motoboy = APIBack.Model.Motoboy;
 
 namespace APIBack.Repository.Interface
 {
