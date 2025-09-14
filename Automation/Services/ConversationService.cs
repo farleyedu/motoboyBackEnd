@@ -16,8 +16,9 @@ namespace APIBack.Automation.Services
     {
         private readonly IConversationRepository _repositorio;
         private readonly ILogger<ConversationService> _logger;
-        private readonly IQueueBus _queueBus;
-        private readonly IWabaPhoneRepository _wabaPhoneRepository;
+        private readonly IQueueBus _queueBus;  
+            private readonly IClienteRepository _repositorioClientes;
+            private readonly IWabaPhoneRepository _wabaPhoneRepository;
         private readonly IConfiguration _configuration;
 
         // mapeia waId -> conversationId (in-memory)
@@ -29,18 +30,19 @@ namespace APIBack.Automation.Services
         public ConversationService(
             IConversationRepository repo, 
             ILogger<ConversationService> logger,
-            IQueueBus queueBus,
+            IQueueBus queueBus,           IClienteRepository repositorioClientes,
             IWabaPhoneRepository wabaPhoneRepository,
             IConfiguration configuration)
         {
             _repositorio = repo;
             _logger = logger;
             _queueBus = queueBus;
+            _repositorioClientes = repositorioClientes;
             _wabaPhoneRepository = wabaPhoneRepository;
             _configuration = configuration;
         }
 
-        public async Task<Message?> AcrescentarEntradaAsync(string idWa, string idMensagemWa, string conteudo, string phoneNumberCliente, DateTime? dataMensagemUtc = null)
+        public async Task<Message?> AcrescentarEntradaAsync(string idWa, string idMensagemWa, string conteudo, string phoneNumberId, DateTime? dataMensagemUtc = null)
         {
             if (string.IsNullOrWhiteSpace(idMensagemWa))
             {
@@ -56,9 +58,9 @@ namespace APIBack.Automation.Services
 
             // Resolve o id_estabelecimento usando o phone_number_id
             Guid? idEstabelecimento = null;
-            if (!string.IsNullOrWhiteSpace(idWa))
+            if (!string.IsNullOrWhiteSpace(phoneNumberId))
             {
-                idEstabelecimento = await _wabaPhoneRepository.ObterIdEstabelecimentoPorPhoneNumberIdAsync(phoneNumberCliente);
+                idEstabelecimento = await _wabaPhoneRepository.ObterIdEstabelecimentoPorPhoneNumberIdAsync(phoneNumberId);
             }
 
             // Fallback para estabelecimento padrão se não encontrar
@@ -68,22 +70,26 @@ namespace APIBack.Automation.Services
                 if (!string.IsNullOrWhiteSpace(fallbackEstabelecimentoId) && Guid.TryParse(fallbackEstabelecimentoId, out var fallbackGuid))
                 {
                     idEstabelecimento = fallbackGuid;
-                    _logger.LogWarning("Usando estabelecimento fallback {IdEstabelecimento} para phone_number_id {PhoneNumberId}", idEstabelecimento, idWa);
+                    _logger.LogWarning("Usando estabelecimento fallback {IdEstabelecimento} para phone_number_id {PhoneNumberId}", idEstabelecimento, phoneNumberId);
                 }
                 else
                 {
-                    _logger.LogError("Não foi possível resolver id_estabelecimento para phone_number_id {PhoneNumberId} e não há fallback configurado", idWa);
-                    throw new InvalidOperationException($"Não foi possível resolver id_estabelecimento para phone_number_id {idWa}");
+                    _logger.LogError("Não foi possível resolver id_estabelecimento para phone_number_id {PhoneNumberId} e não há fallback configurado", phoneNumberId);
+                    throw new InvalidOperationException($"Não foi possível resolver id_estabelecimento para phone_number_id {phoneNumberId}");
                 }
             }
 
-            var idConversa = _waParaConversa.GetOrAdd(idWa, _ => Guid.NewGuid());
+            var telefoneE164 = APIBack.Automation.Helpers.TelefoneHelper.ToE164(idWa);
+            var idCliente = await _repositorioClientes.GarantirClienteAsync(telefoneE164, idEstabelecimento.Value);
+            var idConversa = await _repositorio.ObterIdConversaPorClienteAsync(idCliente, idEstabelecimento.Value);
+            if (idConversa == Guid.Empty) idConversa = Guid.NewGuid();
+            _waParaConversa[idWa] = idConversa; // cache auxiliar
             var existente = await _repositorio.ObterPorIdAsync(idConversa);
             var conversa = existente ?? new Conversation
             {
                 IdConversa = idConversa,
                 IdEstabelecimento = idEstabelecimento.Value,
-                IdCliente = Guid.NewGuid(), // TODO: Implementar resolução de cliente
+                IdCliente = idCliente,
                 IdWa = idWa,
                 Modo = ModoConversa.Bot,
                 CriadoEm = DateTime.UtcNow,
@@ -115,7 +121,7 @@ namespace APIBack.Automation.Services
             };
 
             EnfileirarMensagem(mensagem);
-            await _repositorio.AcrescentarMensagemAsync(mensagem, phoneNumberCliente, idWa);
+            await _repositorio.AcrescentarMensagemAsync(mensagem, phoneNumberId, idWa);
 
             return mensagem;
         }
@@ -192,3 +198,7 @@ namespace APIBack.Automation.Services
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
+
+
+
+

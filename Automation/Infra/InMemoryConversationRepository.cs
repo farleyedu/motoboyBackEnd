@@ -96,6 +96,11 @@ namespace APIBack.Automation.Infra
             var existe = _idsMensagemWa.ContainsKey(idMensagemWa);
             return Task.FromResult(existe);
         }
+
+        public Task<Guid> ObterIdConversaPorClienteAsync(Guid idCliente, Guid idEstabelecimento)
+        {
+            throw new NotImplementedException();
+        }
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================

@@ -481,6 +481,19 @@ UPDATE conversas
             var existe = await cx.ExecuteScalarAsync<int?>(sql, new { IdMensagemWa = idMensagemWa });
             return existe.HasValue;
         }
+
+        public async Task<Guid> ObterIdConversaPorClienteAsync(Guid idCliente, Guid idEstabelecimento)
+        {
+            const string sql = @"SELECT id
+                                   FROM conversas
+                                  WHERE id_cliente = @IdCliente
+                                    AND id_estabelecimento = @IdEstabelecimento
+                                  ORDER BY data_criacao DESC
+                                  LIMIT 1;";
+            await using var cx = new NpgsqlConnection(_connectionString);
+            var found = await cx.ExecuteScalarAsync<Guid?>(sql, new { IdCliente = idCliente, IdEstabelecimento = idEstabelecimento });
+            return found ?? Guid.Empty;
+        }
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) =================
