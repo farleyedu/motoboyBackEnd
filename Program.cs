@@ -47,6 +47,7 @@ builder.Services.AddSingleton<IQueueBus, InMemoryQueueBus>();
 builder.Services.AddScoped<IWebhookSignatureValidator, WebhookSignatureValidator>();
 builder.Services.AddScoped<IWhatsappSender, WhatsappSenderStub>();
 builder.Services.AddScoped<IAlertSender, AlertSenderTelegramStub>();
+builder.Services.AddScoped<IAssistantService, AssistantServiceStub>();
 builder.Services.AddScoped<ConversationService>();
 builder.Services.AddScoped<HandoverService>();
 builder.Services.AddScoped<AutomationHealthService>();
