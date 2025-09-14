@@ -9,6 +9,9 @@ using APIBack.Automation.Interfaces;
 using APIBack.Automation.Infra;
 using APIBack.Automation.Services;
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
+using System.Net;
+using Microsoft.AspNetCore.Hosting.Server;
+using Microsoft.AspNetCore.Hosting.Server.Features;
 
 var builder = WebApplication.CreateBuilder(args);
 // ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
@@ -65,6 +68,13 @@ builder.Services.AddCors(options =>
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
+// Explicit Kestrel binding: HTTP on port 7137
+builder.WebHost.ConfigureKestrel(options =>
+{
+    // Listen on all network interfaces (IPv4/IPv6) on port 7137 using HTTP
+    options.ListenAnyIP(7137);
+});
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.
@@ -75,7 +85,7 @@ if (app.Environment.IsDevelopment() || app.Environment.IsProduction())
 }
 
 
-app.UseHttpsRedirection();
+// Do not force HTTPS redirection; webhook expects HTTP on port 7137
 
 // Usar o middleware de CORS
 app.UseCors("AllowAll");
@@ -83,5 +93,22 @@ app.UseCors("AllowAll");
 app.UseAuthorization();
 
 app.MapControllers();
+
+// Log bound URLs at startup
+app.Lifetime.ApplicationStarted.Register(() =>
+{
+    try
+    {
+        var server = app.Services.GetRequiredService<IServer>();
+        var feature = server.Features.Get<IServerAddressesFeature>();
+        var addresses = feature?.Addresses ?? new List<string>();
+        app.Logger.LogInformation("Environment: {Env}", app.Environment.EnvironmentName);
+        app.Logger.LogInformation("Listening on: {Addresses}", string.Join(", ", addresses));
+    }
+    catch (Exception ex)
+    {
+        app.Logger.LogWarning(ex, "Unable to enumerate server addresses");
+    }
+});
 
 app.Run();

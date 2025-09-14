@@ -11,6 +11,7 @@ namespace APIBack.Automation.Infra
     {
         private readonly ConcurrentDictionary<Guid, Conversation> _conversas = new();
         private readonly ConcurrentDictionary<string, byte> _idsMensagemWa = new(StringComparer.OrdinalIgnoreCase);
+        private readonly ConcurrentDictionary<(Guid Estab, string Tel), Guid> _clientes = new();
 
         public Task<Conversation?> ObterPorIdAsync(Guid id)
         {
@@ -47,7 +48,7 @@ namespace APIBack.Automation.Infra
             return Task.CompletedTask;
         }
 
-        public Task AcrescentarMensagemAsync(Message mensagem)
+        public Task AcrescentarMensagemAsync(Message mensagem, string? phoneNumberId, string idWa = null)
         {
             // Idempotencia por IdMensagemWa
             if (!string.IsNullOrWhiteSpace(mensagem.IdMensagemWa))
@@ -79,6 +80,15 @@ namespace APIBack.Automation.Infra
                 });
 
             return Task.CompletedTask;
+        }
+
+        public Task<Guid> GarantirClienteAsync(string telefoneE164, Guid idEstabelecimento)
+        {
+            if (idEstabelecimento == Guid.Empty) throw new ArgumentException("idEstabelecimento obrigatório", nameof(idEstabelecimento));
+            telefoneE164 ??= string.Empty;
+            var key = (idEstabelecimento, telefoneE164);
+            var id = _clientes.GetOrAdd(key, _ => Guid.NewGuid());
+            return Task.FromResult(id);
         }
 
         public Task<bool> ExisteIdMensagemPorProvedorWaAsync(string idMensagemWa)
