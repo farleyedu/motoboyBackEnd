@@ -11,7 +11,7 @@ namespace APIBack.Automation.Infra
     public class MetaOptions
     {
         public string AppSecret { get; set; } = "<TODO>";
-        public string AccessToken { get; set; } = "EAAJSsCDzZCQwBPcaWN9JRs0bdGZBVHWvqRDM0L5ZBCqzxQAu7r4gbrQdHwXeCZCi9YzGsWAYMaKbBIJWL0viWxCIDZA1V47jPREKiXxJaGrZBvJhfPFQZCXDniHDRF2ZB3JWjZCIBvZCm9OWsviOxrEMX3b29lToNEuX0paxLD65M4yTKWFFEtYIdFQkHUHHunhPZAvcVENszPRh64vkWwksvdfG8LBKYQtOZBCHpEeoLMjQ75ss4yZC4zgVfPWnwmWlPfAZDZD";
+        public string AccessToken { get; set; } = "EAAJSsCDzZCQwBPQi7ZBWKUPZAArWy9lzBMFlxtfdnxDHUXNjnqCV7ZBUZBym1ryXGxtlBRAQLicjsEnd3mIMiwnbj1dswxfZAshXjWEiaDWmsbLiLmxwQYkcQcvkVPpvDbkjYvNlmkolvYRolXI64LEHnqaQtKeqqHlIv1hS6MWxQmJPeJB29weHZAzfgPu5iIZBtLfC8AsPqW0aTB8VElYRo4MFaUFaqZBc6daZCJYEcwwYQ2m0CMYNL9uCisF1eI4QZDZD";
         public string PhoneNumberId { get; set; } = "<TODO>";
     }
 

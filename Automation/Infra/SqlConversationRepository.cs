@@ -337,33 +337,6 @@ UPDATE conversas
                 {
                     string? wabaPhoneNumberId = phoneNumberId;
                     string? telefoneCliente = idWa;
-                    //if (!string.IsNullOrWhiteSpace(mensagem.MetadadosMidia))
-                    //{
-                    //    try
-                    //    {
-                    //        using var doc = System.Text.Json.JsonDocument.Parse(mensagem.MetadadosMidia);
-                    //        var root = doc.RootElement;
-                    //        string? TryProp(System.Text.Json.JsonElement el, string name)
-                    //        {
-                    //            return el.TryGetProperty(name, out var p) && p.ValueKind == System.Text.Json.JsonValueKind.String
-                    //                ? p.GetString()
-                    //                : null;
-                    //        }
-                    //        wabaPhoneNumberId =
-                    //            TryProp(root, "waba_phone_number_id") ??
-                    //            TryProp(root, "phone_number_id") ??
-                    //            TryProp(root, "wabaPhoneNumberId") ??
-                    //            TryProp(root, "wabaPhoneId");
-
-                    //        telefoneCliente =
-                    //            TryProp(root, "from") ??
-                    //            TryProp(root, "de") ??
-                    //            TryProp(root, "wa_id") ??
-                    //            TryProp(root, "telefone") ??
-                    //            TryProp(root, "phone");
-                    //    }
-                    //    catch { /* Metadados malformados: será validado abaixo */ }
-                    //}
 
                     if (string.IsNullOrWhiteSpace(wabaPhoneNumberId)) wabaPhoneNumberId = phoneNumberId;// Resolve IdEstabelecimento via waba_phone
                     const string sqlWaba = "SELECT id_estabelecimento FROM waba_phone WHERE phone_number_id = @PhoneNumberId LIMIT 1;";

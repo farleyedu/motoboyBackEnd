@@ -26,6 +26,9 @@ namespace APIBack.Automation.Controllers
         private readonly IAssistantService? _ia;
         private readonly IHttpClientFactory _httpFactory;
         private readonly IOptions<AutomationOptions> _opcoes;
+        private readonly IWabaPhoneRepository _wabaRepo;
+        private readonly IIARegraRepository _regrasRepo;
+        private readonly IIARespostaRepository _respostasRepo;
 
         public WaWebhookController(
             ILogger<WaWebhookController> logger,
@@ -34,6 +37,9 @@ namespace APIBack.Automation.Controllers
             IQueueBus fila,
             IHttpClientFactory httpFactory,
             IOptions<AutomationOptions> opcoes,
+            IWabaPhoneRepository wabaRepo,
+            IIARegraRepository regrasRepo,
+            IIARespostaRepository respostasRepo,
             IAssistantService? ia = null)
         {
             _logger = logger;
@@ -43,6 +49,9 @@ namespace APIBack.Automation.Controllers
             _httpFactory = httpFactory;
             _opcoes = opcoes;
             _ia = ia;
+            _wabaRepo = wabaRepo;
+            _regrasRepo = regrasRepo;
+            _respostasRepo = respostasRepo;
         }
 
         [HttpGet("webhook")]
@@ -111,8 +120,7 @@ namespace APIBack.Automation.Controllers
                                 if (mudanca.Campo == "messages" && mudanca.Valor?.Mensagens != null)
                                 {
                                     // Extrair phone_number_id dos metadados
-                                    var phoneNumberId = mudanca.Valor.Metadados?.IdNumeroTelefone;
-                                    var phoneNumberCliente = mudanca.Valor.Metadados?.NumeroTelefoneExibicao;
+                                    var phoneNumberEstabelecimento = mudanca.Valor.Metadados?.NumeroTelefoneExibicao;
 
                                     foreach (var mensagem in mudanca.Valor.Mensagens)
                                     {
@@ -126,7 +134,9 @@ namespace APIBack.Automation.Controllers
                                                 {
                                                     try { dataMsgUtc = DateTimeOffset.FromUnixTimeSeconds(unix).UtcDateTime; } catch { /* ignora parse inválido */ }
                                                 }
-                                                var criada = await _servicoConversa.AcrescentarEntradaAsync(mensagem.De!, mensagem.Id!, texto, phoneNumberCliente,  dataMsgUtc );
+                                                // Use o display number (numero exibido) como parâmetro para o service,
+                                                // mantendo o phoneNumberId (WABA) intacto para usos posteriores
+                                                var criada = await _servicoConversa.AcrescentarEntradaAsync(mensagem.De!, mensagem.Id!, texto, phoneNumberEstabelecimento,  dataMsgUtc );
 
                                                 // Lógica de detecção de handover
                                                 if (criada != null && DetectaHandover(texto))
@@ -139,10 +149,34 @@ namespace APIBack.Automation.Controllers
                                                     await _fila.PublicarEntradaAsync(criada);
                                                     try
                                                     {
-                                                        var respostaIa = _ia != null ? await _ia.GerarRespostaAsync(texto, criada.IdConversa) : null;
-                                                        if (!string.IsNullOrWhiteSpace(respostaIa) && !string.IsNullOrWhiteSpace(phoneNumberId) && !string.IsNullOrWhiteSpace(mensagem.De))
+                                                        Guid? idEstab = null;
+                                                        if (!string.IsNullOrWhiteSpace(phoneNumberEstabelecimento))
+                                                            idEstab = await _wabaRepo.ObterIdEstabelecimentoPorPhoneNumberIdAsync(phoneNumberEstabelecimento);
+
+                                                        Guid? idRegraAplicada = null;
+                                                        string? contexto = null;
+                                                        if (idEstab.HasValue && idEstab.Value != Guid.Empty)
                                                         {
-                                                            await EnviarRespostaWhatsAppAsync(phoneNumberId!, mensagem.De!, respostaIa!);
+                                                            var regras = await _regrasRepo.ListaregrasAsync(idEstab.Value);
+                                                            var ativa = regras?.Where(r => r.Ativo)
+                                                                               .OrderByDescending(r => r.DataAtualizacao)
+                                                                               .ThenByDescending(r => r.DataCriacao)
+                                                                               .FirstOrDefault();
+                                                            if (ativa != null)
+                                                            {
+                                                                idRegraAplicada = ativa.Id;
+                                                                contexto = ativa.Contexto;
+                                                            }
+                                                            else
+                                                            {
+                                                                contexto = await _regrasRepo.ObterContextoAtivoAsync(idEstab.Value);
+                                                            }
+                                                        }
+
+                                                        var respostaIa = _ia != null ? await _ia.GerarRespostaAsync(texto, criada.IdConversa, contexto) : null;
+                                                        if (!string.IsNullOrWhiteSpace(respostaIa) && !string.IsNullOrWhiteSpace(phoneNumberEstabelecimento) && !string.IsNullOrWhiteSpace(mensagem.De))
+                                                        {
+                                                            await EnviarRespostaWhatsAppAsync(phoneNumberEstabelecimento!, mensagem.De!, respostaIa!);
                                                             _logger.LogInformation("Resposta automática enviada para {Destino}", mensagem.De);
                                                         }
                                                     }
@@ -235,3 +269,6 @@ namespace APIBack.Automation.Controllers
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
+
+
+
