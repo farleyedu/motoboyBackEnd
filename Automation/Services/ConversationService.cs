@@ -40,7 +40,7 @@ namespace APIBack.Automation.Services
             _configuration = configuration;
         }
 
-        public async Task<Message?> AcrescentarEntradaAsync(string idWa, string idMensagemWa, string conteudo, string? phoneNumberId = null, DateTime? dataMensagemUtc = null)
+        public async Task<Message?> AcrescentarEntradaAsync(string idWa, string idMensagemWa, string conteudo, string phoneNumberCliente, DateTime? dataMensagemUtc = null)
         {
             if (string.IsNullOrWhiteSpace(idMensagemWa))
             {
@@ -56,9 +56,9 @@ namespace APIBack.Automation.Services
 
             // Resolve o id_estabelecimento usando o phone_number_id
             Guid? idEstabelecimento = null;
-            if (!string.IsNullOrWhiteSpace(phoneNumberId))
+            if (!string.IsNullOrWhiteSpace(idWa))
             {
-                idEstabelecimento = await _wabaPhoneRepository.ObterIdEstabelecimentoPorPhoneNumberIdAsync(phoneNumberId);
+                idEstabelecimento = await _wabaPhoneRepository.ObterIdEstabelecimentoPorPhoneNumberIdAsync(phoneNumberCliente);
             }
 
             // Fallback para estabelecimento padrão se não encontrar
@@ -68,24 +68,22 @@ namespace APIBack.Automation.Services
                 if (!string.IsNullOrWhiteSpace(fallbackEstabelecimentoId) && Guid.TryParse(fallbackEstabelecimentoId, out var fallbackGuid))
                 {
                     idEstabelecimento = fallbackGuid;
-                    _logger.LogWarning("Usando estabelecimento fallback {IdEstabelecimento} para phone_number_id {PhoneNumberId}", idEstabelecimento, phoneNumberId);
+                    _logger.LogWarning("Usando estabelecimento fallback {IdEstabelecimento} para phone_number_id {PhoneNumberId}", idEstabelecimento, idWa);
                 }
                 else
                 {
-                    _logger.LogError("Não foi possível resolver id_estabelecimento para phone_number_id {PhoneNumberId} e não há fallback configurado", phoneNumberId);
-                    throw new InvalidOperationException($"Não foi possível resolver id_estabelecimento para phone_number_id {phoneNumberId}");
+                    _logger.LogError("Não foi possível resolver id_estabelecimento para phone_number_id {PhoneNumberId} e não há fallback configurado", idWa);
+                    throw new InvalidOperationException($"Não foi possível resolver id_estabelecimento para phone_number_id {idWa}");
                 }
             }
 
             var idConversa = _waParaConversa.GetOrAdd(idWa, _ => Guid.NewGuid());
             var existente = await _repositorio.ObterPorIdAsync(idConversa);
-            var telefoneE164 = APIBack.Automation.Helpers.TelefoneHelper.ToE164(idWa);
-            var idCliente = await _repositorio.GarantirClienteAsync(telefoneE164, idEstabelecimento.Value);
             var conversa = existente ?? new Conversation
             {
                 IdConversa = idConversa,
                 IdEstabelecimento = idEstabelecimento.Value,
-                IdCliente = idCliente,
+                IdCliente = Guid.NewGuid(), // TODO: Implementar resolução de cliente
                 IdWa = idWa,
                 Modo = ModoConversa.Bot,
                 CriadoEm = DateTime.UtcNow,
@@ -117,10 +115,11 @@ namespace APIBack.Automation.Services
             };
 
             EnfileirarMensagem(mensagem);
-            await _repositorio.AcrescentarMensagemAsync(mensagem, phoneNumberId, idWa);
+            await _repositorio.AcrescentarMensagemAsync(mensagem, phoneNumberCliente, idWa);
 
             return mensagem;
         }
+
 
         public async Task<Message> AcrescentarSaidaAsync(Guid idConversa, string idWa, string conteudo)
         {
@@ -193,5 +192,3 @@ namespace APIBack.Automation.Services
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
-
-
