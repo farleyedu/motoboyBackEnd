@@ -14,6 +14,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Configuration;
 using APIBack.Automation.Models;
+using APIBack.Automation.Helpers; // Adicionado para normalização de telefone no envio
 
 namespace APIBack.Automation.Controllers
 {
@@ -267,10 +268,13 @@ namespace APIBack.Automation.Controllers
                 client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
 
                 var endpoint = $"https://graph.facebook.com/v17.0/{phoneNumberId}/messages";
+                // Normalização solicitada para números brasileiros: se começar com "55" e tiver 12 dígitos, inserir '9' após o DDD (índice 4).
+                // Ex.: 553491480112 -> 5534991480112
+                var numeroDestinoNormalizado = TelefoneHelper.NormalizeBrazilianForWhatsappTo(numeroDestino);
                 var payload = new
                 {
                     messaging_product = "whatsapp",
-                    to = numeroDestino,
+                    to = numeroDestinoNormalizado, // utiliza o número normalizado
                     type = "text",
                     text = new { body = textoResposta }
                 };
