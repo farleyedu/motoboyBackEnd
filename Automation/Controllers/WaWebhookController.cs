@@ -34,6 +34,7 @@ namespace APIBack.Automation.Controllers
         private readonly IIARespostaRepository _respostasRepo;
         private readonly APIBack.Automation.Interfaces.IConversationRepository _repositorio;
         private readonly IConfiguration _configuration;
+        private readonly IWhatsAppTokenProvider _waTokenProvider;
 
         public WaWebhookController(
             ILogger<WaWebhookController> logger,
@@ -47,6 +48,7 @@ namespace APIBack.Automation.Controllers
             IIARespostaRepository respostasRepo,
             APIBack.Automation.Interfaces.IConversationRepository repositorio,
             IConfiguration configuration,
+            IWhatsAppTokenProvider waTokenProvider,
             IAssistantService? ia = null)
         {
             _logger = logger;
@@ -61,6 +63,7 @@ namespace APIBack.Automation.Controllers
             _respostasRepo = respostasRepo;
             _repositorio = repositorio;
             _configuration = configuration;
+            _waTokenProvider = waTokenProvider;
         }
 
         [HttpGet("webhook")]
@@ -257,7 +260,8 @@ namespace APIBack.Automation.Controllers
         {
             try
             {
-                var token = _configuration["WhatsApp:AccessToken"];
+                // Obtém token do provedor em memória; se não houver, cai no appsettings.
+                var token = _waTokenProvider.GetAccessToken();
                 if (string.IsNullOrWhiteSpace(token))
                 {
                     _logger.LogWarning("Token do WhatsApp (WhatsApp:AccessToken) não configurado");
@@ -292,6 +296,25 @@ namespace APIBack.Automation.Controllers
             {
                 _logger.LogError(ex, "Erro ao enviar resposta para WhatsApp");
             }
+        }
+
+        // Endpoint para atualizar o Access Token do WhatsApp em tempo de execução (uso em testes/desenvolvimento)
+        [HttpPost("token")]
+        public IActionResult AtualizarAccessToken([FromBody] UpdateWhatsAppTokenRequest req)
+        {
+            if (req == null || string.IsNullOrWhiteSpace(req.AccessToken))
+            {
+                return BadRequest(new { error = "AccessToken obrigatório" });
+            }
+
+            _waTokenProvider.SetAccessToken(req.AccessToken);
+            _logger.LogInformation("Token do WhatsApp atualizado via endpoint em {When}", DateTimeOffset.UtcNow);
+
+            return Ok(new
+            {
+                message = "Token atualizado com sucesso (apenas em memória).",
+                updated_at_utc = _waTokenProvider.LastUpdatedUtc?.ToString("o")
+            });
         }
     }
 }
