@@ -200,12 +200,12 @@ namespace APIBack.Automation.Controllers
 
                                                             // Envia ao WhatsApp
                                                             await EnviarRespostaWhatsAppAsync(phoneNumberwhats!, mensagem.De!, respostaIa!);
-                                                            _logger.LogInformation("Resposta automÃ¡tica enviada para {Destino}", mensagem.De);
+                                                            _logger.LogInformation("Resposta automatica enviada para {Destino}", mensagem.De);
                                                         }
                                                     }
                                                     catch (Exception exAuto)
                                                     {
-                                                        _logger.LogError(exAuto, "Falha ao gerar/enviar resposta automÃ¡tica");
+                                                        _logger.LogError(exAuto, "Falha ao gerar/enviar resposta automatica");
                                                     }
                                                 }
                                             }
@@ -226,7 +226,7 @@ namespace APIBack.Automation.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Erro crÃ­tico ao processar webhook");
+                _logger.LogError(ex, "Erro cri­tico ao processar webhook");
                 return Ok(); // SEMPRE retorna 200 para evitar reenvios do WhatsApp
             }
         }
