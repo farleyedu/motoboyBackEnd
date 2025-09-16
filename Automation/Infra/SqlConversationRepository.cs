@@ -104,11 +104,11 @@ WHERE id = @Id;";
 
             // Datas derivadas (nunca nulas), todas em UTC
             var dataPrimeiraMensagem = criado;
-            var dataUltimaMensagem   = criado; // na criação, igual à primeira
-            var dataUltimaEntrada    = criado; // inicializa com criado
-            var dataUltimaSaida      = dataUltimaMensagem; // inicialmente igual à última mensagem
-            var janela24hInicio      = dataPrimeiraMensagem; // na criação, igual à primeira
-            var janela24hFim         = janela24hInicio.AddHours(24); // sempre 24h após o início
+            var dataUltimaMensagem = criado; // na criação, igual à primeira
+            var dataUltimaEntrada = criado; // inicializa com criado
+            var dataUltimaSaida = dataUltimaMensagem; // inicialmente igual à última mensagem
+            var janela24hInicio = dataPrimeiraMensagem; // na criação, igual à primeira
+            var janela24hFim = janela24hInicio.AddHours(24); // sempre 24h após o início
 
             const string sqlConversas = @"
 INSERT INTO conversas
@@ -203,19 +203,20 @@ ON CONFLICT (id) DO UPDATE SET
             if (modo == ModoConversa.Humano)
             {
                 sql = @"
-UPDATE conversas
-   SET id_agente_atribuido = @AgenteId,
-       data_atualizacao     = NOW()
- WHERE id = @Id;";
+                      UPDATE conversas
+                         SET id_agente_atribuido = '3a67c679-855c-4f93-9580-8ed08b54cf2d', --modificar depois para agenteId
+                             data_atualizacao     = NOW()
+
+                       WHERE id = @Id;";
                 param = new { Id = id, AgenteId = (object?)agenteId };
             }
             else
             {
                 sql = @"
-UPDATE conversas
-   SET id_agente_atribuido = NULL,
-       data_atualizacao     = NOW()
- WHERE id = @Id;";
+                      UPDATE conversas
+                         SET id_agente_atribuido = NULL,
+                             data_atualizacao     = NOW()
+                       WHERE id = @Id;";
                 param = new { Id = id };
             }
 
