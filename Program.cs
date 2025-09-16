@@ -57,6 +57,7 @@ builder.Services.AddSingleton<IWhatsAppTokenProvider, InMemoryWhatsAppTokenProvi
 builder.Services.AddScoped<IAssistantService, OpenAIAssistantService>();
 builder.Services.AddScoped<IAlertSender, AlertSenderTelegramStub>();
 builder.Services.AddScoped<ConversationService>();
+builder.Services.AddScoped<IMessageService, MessageService>();
 builder.Services.AddScoped<HandoverService>();
 builder.Services.AddScoped<AutomationHealthService>();
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================

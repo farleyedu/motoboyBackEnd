@@ -17,8 +17,9 @@ namespace APIBack.Automation.Services
         private readonly IConversationRepository _repositorio;
         private readonly ILogger<ConversationService> _logger;
         private readonly IQueueBus _queueBus;  
-            private readonly IClienteRepository _repositorioClientes;
-            private readonly IWabaPhoneRepository _wabaPhoneRepository;
+        private readonly IClienteRepository _repositorioClientes;
+        private readonly IWabaPhoneRepository _wabaPhoneRepository;
+        private readonly IMessageService _mensagemService;
         private readonly IConfiguration _configuration;
 
         // mapeia waId -> conversationId (in-memory)
@@ -32,7 +33,8 @@ namespace APIBack.Automation.Services
             ILogger<ConversationService> logger,
             IQueueBus queueBus,           IClienteRepository repositorioClientes,
             IWabaPhoneRepository wabaPhoneRepository,
-            IConfiguration configuration)
+            IConfiguration configuration,
+            IMessageService mensagemService)
         {
             _repositorio = repo;
             _logger = logger;
@@ -40,6 +42,7 @@ namespace APIBack.Automation.Services
             _repositorioClientes = repositorioClientes;
             _wabaPhoneRepository = wabaPhoneRepository;
             _configuration = configuration;
+            _mensagemService = mensagemService;
         }
 
         public async Task<Message?> AcrescentarEntradaAsync(string idWa, string idMensagemWa, string conteudo, string phoneNumberId, DateTime? dataMensagemUtc = null)
@@ -121,7 +124,7 @@ namespace APIBack.Automation.Services
             };
 
             EnfileirarMensagem(mensagem);
-            await _repositorio.AcrescentarMensagemAsync(mensagem, phoneNumberId, idWa);
+            await _mensagemService.AdicionarMensagemAsync(mensagem, phoneNumberId, idWa);
 
             return mensagem;
         }
@@ -139,7 +142,7 @@ namespace APIBack.Automation.Services
             };
 
             EnfileirarMensagem(mensagem);
-            await _repositorio.AcrescentarMensagemAsync(mensagem, phoneNumberId: null, idWa);
+            await _mensagemService.AdicionarMensagemAsync(mensagem, phoneNumberId: null, idWa);
             return mensagem;
         }
 
@@ -157,8 +160,8 @@ namespace APIBack.Automation.Services
                     DataHora = DateTime.UtcNow,
                 };
                 EnfileirarMensagem(msg);
-                await _repositorio.AcrescentarMensagemAsync(msg, phoneNumberId: null);
-            }
+                await _mensagemService.AdicionarMensagemAsync(msg, phoneNumberId: null, idWa: null);
+        }
         }
 
         public async Task<ConversationResponse?> ObterConversaRespostaAsync(Guid idConversa, int ultimasN = 20)

@@ -335,25 +335,25 @@ UPDATE conversas
                 var convExists = await cx.ExecuteScalarAsync<int?>(checkConv, new { Id = mensagem.IdConversa }, transaction: tx);
                 if (!convExists.HasValue)
                 {
+                    // Conversa não existe -> garantir criação
                     string? wabaPhoneNumberId = phoneNumberId;
-                    string? telefoneCliente = idWa;
+                    string? telefoneClienteRaw = idWa;
 
-                    if (string.IsNullOrWhiteSpace(wabaPhoneNumberId)) wabaPhoneNumberId = phoneNumberId;// Resolve IdEstabelecimento via waba_phone
+                    // Resolve IdEstabelecimento via waba_phone
                     const string sqlWaba = "SELECT id_estabelecimento FROM waba_phone WHERE phone_number_id = @PhoneNumberId LIMIT 1;";
                     var idEstabelecimento = await cx.ExecuteScalarAsync<Guid?>(sqlWaba, new { PhoneNumberId = wabaPhoneNumberId }, transaction: tx);
                     if (!idEstabelecimento.HasValue || idEstabelecimento.Value == Guid.Empty)
                         throw new InvalidOperationException("Estabelecimento não encontrado para este WABA");
 
-                    // Resolve IdCliente por telefone (cria se não existir)
+                    // Resolve IdCliente por telefone normalizado (cria se não existir)
+                    var telefoneE164 = APIBack.Automation.Helpers.TelefoneHelper.ToE164(telefoneClienteRaw ?? string.Empty);
                     const string sqlCliSel = "SELECT id FROM clientes WHERE telefone_e164 = @Tel LIMIT 1;";
-
-                    var idCliente = await cx.ExecuteScalarAsync<Guid?>(sqlCliSel, new { Tel = telefoneCliente }, transaction: tx);
+                    var idCliente = await cx.ExecuteScalarAsync<Guid?>(sqlCliSel, new { Tel = telefoneE164 }, transaction: tx);
 
                     if (!idCliente.HasValue || idCliente.Value == Guid.Empty)
                     {
                         var novoClienteId = Guid.NewGuid();
                         var agora = DateTime.UtcNow;
-
                         const string sqlCliIns = @"
         INSERT INTO clientes (id, id_estabelecimento, telefone_e164, data_criacao, data_atualizacao)
         SELECT @Id, @IdEstabelecimento, @Telefone, @CriadoEm, @AtualizadoEm
@@ -364,14 +364,13 @@ UPDATE conversas
         )
         RETURNING id;";
 
-                        // **Execute o INSERT**, não o SELECT:
                         var insertedId = await cx.ExecuteScalarAsync<Guid?>(
                             sqlCliIns,
                             new
                             {
                                 Id = novoClienteId,
                                 IdEstabelecimento = idEstabelecimento,
-                                Telefone = APIBack.Automation.Helpers.TelefoneHelper.ToE164(telefoneCliente ?? string.Empty),   // normaliza para E.164
+                                Telefone = telefoneE164,
                                 CriadoEm = agora,
                                 AtualizadoEm = agora
                             },
@@ -381,63 +380,53 @@ UPDATE conversas
                         if (insertedId.HasValue) idCliente = insertedId;
                         else
                         {
-                            // alguém inseriu concorrente; reconsulta pelo telefone
-                            idCliente = await cx.ExecuteScalarAsync<Guid?>(
-                                sqlCliSel, new { Tel = telefoneCliente }, transaction: tx
-                            );
+                            idCliente = await cx.ExecuteScalarAsync<Guid?>(sqlCliSel, new { Tel = telefoneE164 }, transaction: tx);
                         }
 
                         if (!idCliente.HasValue || idCliente.Value == Guid.Empty)
                             throw new InvalidOperationException("Falha ao criar cliente");
                     }
 
-
-                    // Verifica/Cria conversa com IDs válidos
-                    if (!convExists.HasValue)
-                    {
-                        var agoraUtc = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Utc);
-                        await InserirOuAtualizarAsync(new Conversation
-                        {
-                            IdConversa = mensagem.IdConversa,
-                            IdEstabelecimento = idEstabelecimento.Value,
-                            IdCliente = idCliente.Value,
-                            CriadoEm = agoraUtc,
-                            AtualizadoEm = agoraUtc
-                        });
-
-                        // Re-check de existência na mesma transação
-                        convExists = await cx.ExecuteScalarAsync<int?>(checkConv, new { Id = mensagem.IdConversa }, transaction: tx);
-                        if (!convExists.HasValue)
-                            throw new InvalidOperationException("Falha ao criar conversa antes de inserir mensagem.");
-                    }
-                    await cx.ExecuteAsync(insertMsg, new
-                    {
-                        Id = idMsg,
-                        IdConversa = mensagem.IdConversa,
-                        Direcao = direcao,
-                        Tipo = tipo,
-                        Status = status,
-                        IdProvedor = (object?)idProv,
-                        Conteudo = mensagem.Conteudo,
-                        CodigoErro = (string?)mensagem.CodigoErro,
-                        MensagemErro = (string?)mensagem.MensagemErro,
-                        Tentativas = mensagem.Tentativas,
-                        CriadaPor = criadaPor,
-                        DataEnvio = dataEnvio,
-                        DataEntrega = dataEntrega,
-                        DataLeitura = dataLeitura,
-                        DataCriacao = quandoUtc
-                    }, transaction: tx);
-
-                    await cx.ExecuteAsync(updConv, new
+                    // Cria conversa com IDs válidos
+                    var agoraUtc = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Utc);
+                    await InserirOuAtualizarAsync(new Conversation
                     {
                         IdConversa = mensagem.IdConversa,
-                        Quando = quandoUtc,
-                        Direcao = direcao
-                    }, transaction: tx);
-
-                    await tx.CommitAsync();
+                        IdEstabelecimento = idEstabelecimento.Value,
+                        IdCliente = idCliente.Value,
+                        CriadoEm = agoraUtc,
+                        AtualizadoEm = agoraUtc
+                    });
                 }
+
+                // Insere a mensagem (idempotente via índice único em id_provedor) e atualiza a conversa
+                await cx.ExecuteAsync(insertMsg, new
+                {
+                    Id = idMsg,
+                    IdConversa = mensagem.IdConversa,
+                    Direcao = direcao,
+                    Tipo = tipo,
+                    Status = status,
+                    IdProvedor = (object?)idProv,
+                    Conteudo = mensagem.Conteudo,
+                    CodigoErro = (string?)mensagem.CodigoErro,
+                    MensagemErro = (string?)mensagem.MensagemErro,
+                    Tentativas = mensagem.Tentativas,
+                    CriadaPor = criadaPor,
+                    DataEnvio = dataEnvio,
+                    DataEntrega = dataEntrega,
+                    DataLeitura = dataLeitura,
+                    DataCriacao = quandoUtc
+                }, transaction: tx);
+
+                await cx.ExecuteAsync(updConv, new
+                {
+                    IdConversa = mensagem.IdConversa,
+                    Quando = quandoUtc,
+                    Direcao = direcao
+                }, transaction: tx);
+
+                await tx.CommitAsync();
             }
             catch
             {
@@ -461,6 +450,7 @@ UPDATE conversas
                                    FROM conversas
                                   WHERE id_cliente = @IdCliente
                                     AND id_estabelecimento = @IdEstabelecimento
+                                    AND motivo_fechamento IS NULL -- apenas conversas abertas
                                   ORDER BY data_criacao DESC
                                   LIMIT 1;";
             await using var cx = new NpgsqlConnection(_connectionString);
