@@ -148,7 +148,6 @@ namespace APIBack.Automation.Controllers
                                                     try { dataMsgUtc = DateTimeOffset.FromUnixTimeSeconds(unix).UtcDateTime; } catch { /* ignora parse invÃ¡lido */ }
                                                 }
                                                 // Use o display number (numero exibido) como parÃ¢metro para o service,
-                                                // mantendo o phoneNumberId (WABA) intacto para usos posteriores
                                                 var criada = await _servicoConversa.AcrescentarEntradaAsync(mensagem.De!, mensagem.Id!, texto, phoneNumberEstabelecimento,  dataMsgUtc );
 
                                                 // LÃ³gica de detecÃ§Ã£o de handover
