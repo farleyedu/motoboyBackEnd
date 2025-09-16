@@ -7,6 +7,8 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using APIBack.Automation.Interfaces;
 using Microsoft.Extensions.Logging;
+using System.Collections.Generic;
+using APIBack.Automation.Dtos;
 
 namespace APIBack.Automation.Services
 {
@@ -70,7 +72,12 @@ namespace APIBack.Automation.Services
                 return "Desculpe, ocorreu um erro ao gerar a resposta.";
             }
         }
+
+        public Task<string> GerarRespostaComHistoricoAsync(Guid idConversa, string textoUsuario, IEnumerable<AssistantChatTurn> historico, object? contexto = null)
+        {
+            // Implementação simples: reutiliza o método existente, ignorando o histórico neste stub.
+            return GerarRespostaAsync(textoUsuario, idConversa, contexto);
+        }
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
-

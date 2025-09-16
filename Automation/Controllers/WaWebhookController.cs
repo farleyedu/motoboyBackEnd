@@ -15,6 +15,8 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Configuration;
 using APIBack.Automation.Models;
 using APIBack.Automation.Helpers; // Adicionado para normalização de telefone no envio
+using System.Collections.Generic;
+using APIBack.Automation.Dtos;
 
 namespace APIBack.Automation.Controllers
 {
@@ -34,6 +36,7 @@ namespace APIBack.Automation.Controllers
         private readonly IIARespostaRepository _respostasRepo;
         private readonly APIBack.Automation.Interfaces.IConversationRepository _repositorio;
         private readonly IMessageService _mensagemService;
+        private readonly IMessageRepository _mensagemRepository;
         private readonly IConfiguration _configuration;
         private readonly IWhatsAppTokenProvider _waTokenProvider;
 
@@ -51,6 +54,7 @@ namespace APIBack.Automation.Controllers
             IConfiguration configuration,
             IWhatsAppTokenProvider waTokenProvider,
             IMessageService mensagemService,
+            IMessageRepository mensagemRepository,
             IAssistantService? ia = null)
         {
             _logger = logger;
@@ -67,6 +71,7 @@ namespace APIBack.Automation.Controllers
             _configuration = configuration;
             _waTokenProvider = waTokenProvider;
             _mensagemService = mensagemService;
+            _mensagemRepository = mensagemRepository;
         }
 
         [HttpGet("webhook")]
@@ -188,7 +193,21 @@ namespace APIBack.Automation.Controllers
                                                             }
                                                         }
 
-                                                        var respostaIa = _ia != null ? await _ia.GerarRespostaAsync(texto, criada.IdConversa, contexto) : null;
+                                                        // Carrega histórico da conversa ABERTA (limitado) e chama IA com histórico
+                                                        var historico = await _mensagemRepository.GetByConversationAsync(criada.IdConversa, limit: 200, onlyWhenOpen: true);
+                                                        var turns = new List<AssistantChatTurn>();
+                                                        foreach (var m in historico)
+                                                        {
+                                                            if (string.IsNullOrWhiteSpace(m.Conteudo)) continue;
+                                                            var role = m.Direcao == DirecaoMensagem.Entrada ? "user" : "assistant";
+                                                            turns.Add(new AssistantChatTurn
+                                                            {
+                                                                Role = role,
+                                                                Content = m.Conteudo,
+                                                                Timestamp = m.DataCriacao ?? m.DataEnvio ?? m.DataEntrega
+                                                            });
+                                                        }
+                                                        var respostaIa = _ia != null ? await _ia.GerarRespostaComHistoricoAsync(criada.IdConversa, texto, turns, contexto) : null;
                                                         if (!string.IsNullOrWhiteSpace(respostaIa) && !string.IsNullOrWhiteSpace(phoneNumberEstabelecimento) && !string.IsNullOrWhiteSpace(mensagem.De))
                                                         {
                                                             // Grava saÃ­da da IA antes do envio
