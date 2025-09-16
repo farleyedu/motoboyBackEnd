@@ -33,6 +33,7 @@ namespace APIBack.Automation.Controllers
         private readonly IIARegraRepository _regrasRepo;
         private readonly IIARespostaRepository _respostasRepo;
         private readonly APIBack.Automation.Interfaces.IConversationRepository _repositorio;
+        private readonly IMessageService _mensagemService;
         private readonly IConfiguration _configuration;
         private readonly IWhatsAppTokenProvider _waTokenProvider;
 
@@ -49,6 +50,7 @@ namespace APIBack.Automation.Controllers
             APIBack.Automation.Interfaces.IConversationRepository repositorio,
             IConfiguration configuration,
             IWhatsAppTokenProvider waTokenProvider,
+            IMessageService mensagemService,
             IAssistantService? ia = null)
         {
             _logger = logger;
@@ -64,6 +66,7 @@ namespace APIBack.Automation.Controllers
             _repositorio = repositorio;
             _configuration = configuration;
             _waTokenProvider = waTokenProvider;
+            _mensagemService = mensagemService;
         }
 
         [HttpGet("webhook")]
@@ -199,7 +202,8 @@ namespace APIBack.Automation.Controllers
                                                                 CriadaPor = "ia",
                                                                 Status = "fila"
                                                             };
-                                                            await _repositorio.AcrescentarMensagemAsync(mensagemSaida, phoneNumberEstabelecimento, mensagem.De);
+                                                            // Usa o serviço de mensagens para deduplicação e persistência correta
+                                                            await _mensagemService.AdicionarMensagemAsync(mensagemSaida, phoneNumberEstabelecimento, mensagem.De);
 
                                                             // Envia ao WhatsApp
                                                             await EnviarRespostaWhatsAppAsync(phoneNumberwhats!, mensagem.De!, respostaIa!);
