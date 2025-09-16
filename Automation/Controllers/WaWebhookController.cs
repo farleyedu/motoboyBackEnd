@@ -158,12 +158,6 @@ namespace APIBack.Automation.Controllers
                                                 // Use o display number (numero exibido) como parÃ¢metro para o service,
                                                 var criada = await _servicoConversa.AcrescentarEntradaAsync(mensagem.De!, mensagem.Id!, texto, phoneNumberEstabelecimento,  dataMsgUtc );
 
-                                                // LÃ³gica de detecÃ§Ã£o de handover
-                                                if (criada != null && DetectaHandover(texto))
-                                                {
-                                                    await ChamarHandoverEndpointAsync(criada.IdConversa, "AgenteX");
-                                                }
-
                                                 if (criada != null)
                                                 {
                                                     await _fila.PublicarEntradaAsync(criada);
@@ -177,15 +171,17 @@ namespace APIBack.Automation.Controllers
                                                         string? contexto = null;
                                                         if (idEstab.HasValue && idEstab.Value != Guid.Empty)
                                                         {
+                                                            // Combina todas as regras ativas (ordem: mais recentes primeiro)
                                                             var regras = await _regrasRepo.ListaregrasAsync(idEstab.Value);
-                                                            var ativa = regras?.Where(r => r.Ativo)
-                                                                               .OrderByDescending(r => r.DataAtualizacao)
-                                                                               .ThenByDescending(r => r.DataCriacao)
-                                                                               .FirstOrDefault();
-                                                            if (ativa != null)
+                                                            var ativas = regras?
+                                                                .Where(r => r.Ativo && !string.IsNullOrWhiteSpace(r.Contexto))
+                                                                .OrderByDescending(r => r.DataAtualizacao)
+                                                                .ThenByDescending(r => r.DataCriacao)
+                                                                .ToList();
+                                                            if (ativas != null && ativas.Count > 0)
                                                             {
-                                                                idRegraAplicada = ativa.Id;
-                                                                contexto = ativa.Contexto;
+                                                                idRegraAplicada = ativas.First().Id;
+                                                                contexto = string.Join("\n\n", ativas.Select(r => r.Contexto));
                                                             }
                                                             else
                                                             {
@@ -207,26 +203,97 @@ namespace APIBack.Automation.Controllers
                                                                 Timestamp = m.DataCriacao ?? m.DataEnvio ?? m.DataEntrega
                                                             });
                                                         }
+                                                        // Usa apenas o contexto vindo do banco (todas regras ativas combinadas)
                                                         var respostaIa = _ia != null ? await _ia.GerarRespostaComHistoricoAsync(criada.IdConversa, texto, turns, contexto) : null;
                                                         if (!string.IsNullOrWhiteSpace(respostaIa) && !string.IsNullOrWhiteSpace(phoneNumberEstabelecimento) && !string.IsNullOrWhiteSpace(mensagem.De))
                                                         {
-                                                            // Grava saÃ­da da IA antes do envio
-                                                            var mensagemSaida = new Message
+                                                            // Tenta interpretar a decisão da IA
+                                                            string conteudoFinal = respostaIa!;
+                                                            string? handoverAcao = null;
+                                                            string? agentPrompt = null;
+                                                            try
                                                             {
-                                                                IdConversa = criada.IdConversa,
-                                                                IdMensagemWa = Guid.NewGuid().ToString(),
-                                                                Direcao = DirecaoMensagem.Saida,
-                                                                Conteudo = respostaIa!,
-                                                                DataHora = DateTime.UtcNow,
-                                                                CriadaPor = "ia",
-                                                                Status = "fila"
-                                                            };
-                                                            // Usa o serviço de mensagens para deduplicação e persistência correta
-                                                            await _mensagemService.AdicionarMensagemAsync(mensagemSaida, phoneNumberEstabelecimento, mensagem.De);
+                                                                var decisao = JsonSerializer.Deserialize<AssistantDecisionDto>(respostaIa!);
+                                                                if (decisao != null)
+                                                                {
+                                                                    if (!string.IsNullOrWhiteSpace(decisao.reply)) conteudoFinal = decisao.reply!;
+                                                                    handoverAcao = decisao.handover?.Trim().ToLowerInvariant();
+                                                                    agentPrompt = decisao.agent_prompt;
+                                                                }
+                                                            }
+                                                            catch { /* se não for JSON válido, segue com texto bruto */ }
 
-                                                            // Envia ao WhatsApp
-                                                            await EnviarRespostaWhatsAppAsync(phoneNumberwhats!, mensagem.De!, respostaIa!);
-                                                            _logger.LogInformation("Resposta automatica enviada para {Destino}", mensagem.De);
+                                                            if (handoverAcao == "confirm")
+                                                            {
+                                                                // Aciona handoff e envia mensagem fixa única ao usuário
+                                                                await ChamarHandoverEndpointAsync(criada.IdConversa, "AgenteX");
+                                                                var handoffMsg = "Vou te encaminhar para um atendente humano para continuar o atendimento. Um momento, por favor.";
+                                                                var msgHandoff = new Message
+                                                                {
+                                                                    IdConversa = criada.IdConversa,
+                                                                    IdMensagemWa = Guid.NewGuid().ToString(),
+                                                                    Direcao = DirecaoMensagem.Saida,
+                                                                    Conteudo = handoffMsg,
+                                                                    DataHora = DateTime.UtcNow,
+                                                                    CriadaPor = "ia",
+                                                                    Status = "fila"
+                                                                };
+                                                                await _mensagemService.AdicionarMensagemAsync(msgHandoff, phoneNumberwhats!, mensagem.De);
+                                                                await EnviarRespostaWhatsAppAsync(phoneNumberwhats!, mensagem.De!, handoffMsg);
+                                                                _logger.LogInformation("Mensagem de handoff enviada para {Destino}", mensagem.De);
+                                                            }
+                                                            else if (handoverAcao == "ask")
+                                                            {
+                                                                // Envia a resposta principal
+                                                                var mensagemSaida = new Message
+                                                                {
+                                                                    IdConversa = criada.IdConversa,
+                                                                    IdMensagemWa = Guid.NewGuid().ToString(),
+                                                                    Direcao = DirecaoMensagem.Saida,
+                                                                    Conteudo = conteudoFinal,
+                                                                    DataHora = DateTime.UtcNow,
+                                                                    CriadaPor = "ia",
+                                                                    Status = "fila"
+                                                                };
+                                                                await _mensagemService.AdicionarMensagemAsync(mensagemSaida, phoneNumberEstabelecimento, mensagem.De);
+                                                                await EnviarRespostaWhatsAppAsync(phoneNumberwhats!, mensagem.De!, conteudoFinal);
+                                                                _logger.LogInformation("Resposta automatica enviada para {Destino}", mensagem.De);
+
+                                                                // Envia pergunta de confirmação de handover
+                                                                var pergunta = string.IsNullOrWhiteSpace(agentPrompt)
+                                                                    ? "Deseja que eu chame um atendente humano para ajudar você?"
+                                                                    : agentPrompt!;
+                                                                var msgPergunta = new Message
+                                                                {
+                                                                    IdConversa = criada.IdConversa,
+                                                                    IdMensagemWa = Guid.NewGuid().ToString(),
+                                                                    Direcao = DirecaoMensagem.Saida,
+                                                                    Conteudo = pergunta,
+                                                                    DataHora = DateTime.UtcNow,
+                                                                    CriadaPor = "ia",
+                                                                    Status = "fila"
+                                                                };
+                                                                await _mensagemService.AdicionarMensagemAsync(msgPergunta, phoneNumberwhats!, mensagem.De);
+                                                                await EnviarRespostaWhatsAppAsync(phoneNumberwhats!, mensagem.De!, pergunta);
+                                                                _logger.LogInformation("Pergunta de handover enviada para {Destino}", mensagem.De);
+                                                            }
+                                                            else
+                                                            {
+                                                                // Sem handover: envia apenas a resposta normal da IA
+                                                                var mensagemSaida = new Message
+                                                                {
+                                                                    IdConversa = criada.IdConversa,
+                                                                    IdMensagemWa = Guid.NewGuid().ToString(),
+                                                                    Direcao = DirecaoMensagem.Saida,
+                                                                    Conteudo = conteudoFinal,
+                                                                    DataHora = DateTime.UtcNow,
+                                                                    CriadaPor = "ia",
+                                                                    Status = "fila"
+                                                                };
+                                                                await _mensagemService.AdicionarMensagemAsync(mensagemSaida, phoneNumberEstabelecimento, mensagem.De);
+                                                                await EnviarRespostaWhatsAppAsync(phoneNumberwhats!, mensagem.De!, conteudoFinal);
+                                                                _logger.LogInformation("Resposta automatica enviada para {Destino}", mensagem.De);
+                                                            }
                                                         }
                                                     }
                                                     catch (Exception exAuto)
@@ -271,7 +338,7 @@ namespace APIBack.Automation.Controllers
         private async Task ChamarHandoverEndpointAsync(Guid idConversa, string agenteDesignado)
         {
             using var httpClient = new HttpClient();
-            var url = $"https://seuservidor/api/automation/conversation/{idConversa}/handover";
+            var url = $"http://127.0.0.1:7137/automation/conversation/{idConversa}/handover";
             var body = JsonSerializer.Serialize(new { AgenteDesignado = agenteDesignado });
             var content = new StringContent(body, Encoding.UTF8, "application/json");
             await httpClient.PostAsync(url, content);
