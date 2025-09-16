@@ -5,6 +5,7 @@ using APIBack.Automation.Interfaces;
 using APIBack.Automation.Models;
 using Dapper;
 using Npgsql;
+using System.Collections.Generic;
 
 namespace APIBack.Automation.Infra
 {
@@ -215,7 +216,29 @@ ON CONFLICT DO NOTHING;";
 
             await tx.CommitAsync();
         }
+
+        public async Task<IReadOnlyList<Message>> GetByConversationAsync(Guid idConversa, int limit = 200, bool onlyWhenOpen = true)
+        {
+            const string sql = @"
+SELECT m.id, m.id_conversa, m.direcao, m.tipo, m.status, m.id_provedor, m.codigo_erro, m.mensagem_erro, m.tentativas, m.criada_por,
+       m.data_envio, m.data_entrega, m.data_leitura, m.data_criacao, m.conteudo
+  FROM mensagens m
+  JOIN conversas c ON c.id = m.id_conversa
+ WHERE m.id_conversa = @IdConversa
+   AND (@OnlyOpen = FALSE OR c.estado = @Estado::estado_conversa_enum)
+ ORDER BY m.data_criacao ASC
+ LIMIT @Limit;";
+
+            await using var cx = new NpgsqlConnection(_connectionString);
+            var list = await cx.QueryAsync<Message>(sql, new
+            {
+                IdConversa = idConversa,
+                Limit = limit,
+                OnlyOpen = onlyWhenOpen,
+                Estado = "aberta"
+            });
+            return list.AsList();
+        }
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
-

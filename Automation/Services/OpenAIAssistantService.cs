@@ -9,6 +9,8 @@ using APIBack.Automation.Infra.Config;
 using APIBack.Automation.Interfaces;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using System.Collections.Generic;
+using APIBack.Automation.Dtos;
 
 namespace APIBack.Automation.Services
 {
@@ -81,7 +83,64 @@ namespace APIBack.Automation.Services
                 return "Desculpe, ocorreu um erro ao gerar a resposta.";
             }
         }
+
+        public async Task<string> GerarRespostaComHistoricoAsync(Guid idConversa, string textoUsuario, IEnumerable<AssistantChatTurn> historico, object? contexto = null)
+        {
+            var apiKey = _options.Value.ApiKey;
+            var model = string.IsNullOrWhiteSpace(_options.Value.Model) ? "gpt-4o-mini" : _options.Value.Model;
+
+            if (string.IsNullOrWhiteSpace(apiKey))
+            {
+                _logger.LogWarning("OpenAI ApiKey nula; retornando resposta padrão (historico ignorado)");
+                return string.IsNullOrWhiteSpace(textoUsuario) ? "Poderia repetir?" : $"Você disse: '{textoUsuario}'.";
+            }
+
+            var client = _httpFactory.CreateClient();
+            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+
+            var contextoStr = contexto as string ?? "Você é um assistente útil.";
+            var sys = contextoStr + "\n\nINSTRUÇÃO: A seguir há o HISTÓRICO da conversa. Use-o apenas como contexto. Não responda ao histórico nem repita. Responda somente à ÚLTIMA mensagem do usuário no final.";
+
+            var messages = new List<object> { new { role = "system", content = sys } };
+
+            if (historico != null)
+            {
+                foreach (var h in historico)
+                {
+                    if (string.IsNullOrWhiteSpace(h.Content)) continue;
+                    var role = (h.Role?.Trim().ToLowerInvariant()) == "assistant" ? "assistant" : "user";
+                    messages.Add(new { role, content = "[HISTÓRICO] " + h.Content });
+                }
+            }
+
+            messages.Add(new { role = "user", content = textoUsuario });
+
+            var payload = new { model, messages = messages.ToArray() };
+            var json = JsonSerializer.Serialize(payload);
+            using var contentObj = new StringContent(json, Encoding.UTF8, "application/json");
+
+            try
+            {
+                var resp = await client.PostAsync("https://api.openai.com/v1/chat/completions", contentObj);
+                var body = await resp.Content.ReadAsStringAsync();
+                if (!resp.IsSuccessStatusCode)
+                {
+                    _logger.LogWarning("OpenAI falhou: {Status} {Body}", (int)resp.StatusCode, body);
+                    return "Desculpe, não consegui formular uma resposta agora.";
+                }
+
+                using var doc = JsonDocument.Parse(body);
+                var choices = doc.RootElement.GetProperty("choices");
+                if (choices.GetArrayLength() == 0) return string.Empty;
+                var msg = choices[0].GetProperty("message").GetProperty("content").GetString();
+                return msg ?? string.Empty;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao chamar OpenAI (histórico) para conversa {Conversa}", idConversa);
+                return "Desculpe, ocorreu um erro ao gerar a resposta.";
+            }
+        }
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
-

@@ -53,11 +53,38 @@ namespace APIBack.Automation.Services
                 return null;
             }
 
-            if (await _repositorio.ExisteIdMensagemPorProvedorWaAsync(idMensagemWa))
+
+            ///voltar depois
+            //if (await _repositorio.ExisteIdMensagemPorProvedorWaAsync(idMensagemWa))
+            //{
+            //    _logger.LogInformation("Ignorando duplicata de entrada IdMensagemWa={WaMessageId}", idMensagemWa);
+            //    return null;
+            //}
+
+            //////////////////////////////////////////////////
+            ///
+            // Em desenvolvimento, não bloqueia duplicatas para facilitar testes.
+            var ambiente = _configuration.GetValue<string>("ASPNETCORE_ENVIRONMENT");
+            var isDev = string.Equals(ambiente, "Development", StringComparison.OrdinalIgnoreCase);
+
+            // Verifica duplicidade apenas uma vez
+            var duplicata = await _repositorio.ExisteIdMensagemPorProvedorWaAsync(idMensagemWa);
+            if (duplicata)
             {
-                _logger.LogInformation("Ignorando duplicata de entrada IdMensagemWa={WaMessageId}", idMensagemWa);
-                return null;
+                if (isDev)
+                {
+                    _logger.LogWarning("DEV: Duplicata detectada IdMensagemWa={WaMessageId}, processamento continuará para testes.", idMensagemWa);
+                    // segue o fluxo em DEV
+                }
+                else
+                {
+                    _logger.LogInformation("Ignorando duplicata de entrada IdMensagemWa={WaMessageId}", idMensagemWa);
+                    return null; // bloqueia fora de DEV
+                }
             }
+            //////////////////////////////////////////////////////////////////////////////
+            ///
+
 
             // Resolve o id_estabelecimento usando o phone_number_id
             Guid? idEstabelecimento = null;
