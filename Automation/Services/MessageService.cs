@@ -8,10 +8,10 @@ namespace APIBack.Automation.Services
 {
     public class MessageService : IMessageService
     {
-        private readonly IConversationRepository _repo;
+        private readonly IMessageRepository _repo;
         private readonly ILogger<MessageService> _logger;
 
-        public MessageService(IConversationRepository repo, ILogger<MessageService> logger)
+        public MessageService(IMessageRepository repo, ILogger<MessageService> logger)
         {
             _repo = repo;
             _logger = logger;
@@ -24,7 +24,7 @@ namespace APIBack.Automation.Services
 
             if (!string.IsNullOrWhiteSpace(idProv))
             {
-                var existe = await _repo.ExisteIdMensagemPorProvedorWaAsync(idProv);
+                var existe = await _repo.ExistsByProviderIdAsync(idProv);
                 if (existe)
                 {
                     _logger.LogInformation("Ignorando mensagem duplicada (id_provedor={IdProv}) para conversa {Conversa}", idProv, mensagem.IdConversa);
@@ -32,10 +32,9 @@ namespace APIBack.Automation.Services
                 }
             }
 
-            await _repo.AcrescentarMensagemAsync(mensagem, phoneNumberId, idWa ?? string.Empty);
+            await _repo.AddMessageAsync(mensagem, phoneNumberId, idWa ?? string.Empty);
             return mensagem;
         }
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
-

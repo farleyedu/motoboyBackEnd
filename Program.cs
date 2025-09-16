@@ -44,6 +44,7 @@ builder.Services.AddScoped<ILocalizacaoService, LocalizacaoService>();
 builder.Services.Configure<AutomationOptions>(builder.Configuration.GetSection("Automation"));
 builder.Services.Configure<OpenAIOptions>(builder.Configuration.GetSection("OpenAI"));
 builder.Services.AddScoped<IConversationRepository, SqlConversationRepository>();
+builder.Services.AddScoped<IMessageRepository, SqlMessageRepository>();
 builder.Services.AddScoped<IWabaPhoneRepository, SqlWabaPhoneRepository>();
 builder.Services.AddScoped<IIARegraRepository, SqlIARegraRepository>();
 builder.Services.AddScoped<IIARespostaRepository, SqlIARespostaRepository>();
