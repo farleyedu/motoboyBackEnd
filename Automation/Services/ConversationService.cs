@@ -175,7 +175,7 @@ namespace APIBack.Automation.Services
 
         public async Task DefinirModoBotAsync(Guid idConversa, string? mensagemTransicao = null)
         {
-            await _repositorio.DefinirModoAsync(idConversa, ModoConversa.Bot, agenteDesignado: null);
+            await _repositorio.DefinirModoAsync(idConversa, ModoConversa.Bot, agenteId: null);
             if (!string.IsNullOrWhiteSpace(mensagemTransicao))
             {
                 var msg = new Message

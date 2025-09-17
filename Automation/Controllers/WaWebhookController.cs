@@ -80,9 +80,8 @@ namespace APIBack.Automation.Controllers
             [FromQuery(Name = "hub.verify_token")] string token,
             [FromQuery(Name = "hub.challenge")] string challenge)
         {
-            const string VERIFY_TOKEN = "zippygo123"; // mesmo que vocï¿½ colocar no painel do Meta
-
-            if (mode == "subscribe" && token == VERIFY_TOKEN)
+            var verifyToken = _opcoes.Value?.VerifyToken ?? "zippygo123"; // configurável em appsettings
+            if (mode == "subscribe" && token == verifyToken)
             {
                 _logger.LogInformation("Webhook verificado com sucesso pelo Meta.");
                 return Ok(challenge); // devolve o challenge
@@ -225,8 +224,39 @@ namespace APIBack.Automation.Controllers
 
                                                             if (handoverAcao == "confirm")
                                                             {
+                                                                //
+                                                                //
+                                                                //
                                                                 // Aciona handoff e envia mensagem fixa única ao usuário
-                                                                await ChamarHandoverEndpointAsync(criada.IdConversa, "AgenteX");
+                                                                        var agenteDesignadoId = 4;
+                                                                //nessa seção eu vou definir qual agente chamar de com o contexto da conversa, eu quero que IA decida qual o 
+                                                                //melhor agente para chamar, baseado no contexto da conversa. //Exemplo: se a conversa for sobre Agendamento,
+                                                                //chamar o agente de Agendamento, se for sobre Suporte, chamar o agente de Suporte.
+                                                                //
+                                                                //
+
+
+                                                                var clienteNome = mudanca.Valor?.Contatos?.FirstOrDefault()?.Perfil?.Nome;
+                                                                var historicoResumo = turns
+                                                                    .TakeLast(10)
+                                                                    .Select(t => $"{(t.Role == "user" ? "Cliente" : "Assistente")}: {t.Content}")
+                                                                    .ToList();
+                                                                var handoverDetalhes = new HandoverContextDto
+                                                                {
+                                                                    ClienteNome = clienteNome,
+                                                                    Telefone = mensagem.De,
+                                                                    QueixaPrincipal = texto,
+                                                                    Contexto = contexto,
+                                                                    Historico = historicoResumo
+                                                                };
+                                                                var reservaConfirmada = false;
+
+                                                                if (agenteDesignadoId > 0)
+                                                                            {
+                                                                                var agente = new HandoverAgentDto { Id = agenteDesignadoId };
+                                                                                await ChamarHandoverEndpointAsync(criada.IdConversa, reservaConfirmada, agente, handoverDetalhes);
+                                                                            }
+
                                                                 var handoffMsg = "Vou te encaminhar para um atendente humano para continuar o atendimento. Um momento, por favor.";
                                                                 var msgHandoff = new Message
                                                                 {
@@ -335,11 +365,12 @@ namespace APIBack.Automation.Controllers
         }
 
         // Funï¿½ï¿½o para chamar o endpoint de handover
-        private async Task ChamarHandoverEndpointAsync(Guid idConversa, string agenteDesignado)
+        private async Task ChamarHandoverEndpointAsync(Guid idConversa, bool reservaConfirmada, HandoverAgentDto agente, HandoverContextDto detalhes)
         {
             using var httpClient = new HttpClient();
-            var url = $"http://127.0.0.1:7137/automation/conversation/{idConversa}/handover";
-            var body = JsonSerializer.Serialize(new { AgenteDesignado = agenteDesignado });
+            var baseUrl = _opcoes.Value?.Handover?.BaseUrl ?? "http://127.0.0.1:7137/automation";
+            var url = $"{baseUrl.TrimEnd('/')}/conversation/{idConversa}/handover";
+            var body = JsonSerializer.Serialize(new { Agente = agente, ReservaConfirmada = reservaConfirmada, Detalhes = detalhes });
             var content = new StringContent(body, Encoding.UTF8, "application/json");
             await httpClient.PostAsync(url, content);
         }
@@ -360,7 +391,8 @@ namespace APIBack.Automation.Controllers
                 var client = _httpFactory.CreateClient();
                 client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
 
-                var endpoint = $"https://graph.facebook.com/v17.0/{phoneNumberId}/messages";
+                var graphVersion = _configuration["WhatsApp:GraphApiVersion"] ?? "v17.0";
+                var endpoint = $"https://graph.facebook.com/{graphVersion}/{phoneNumberId}/messages";
                 // Normalização solicitada para números brasileiros: se começar com "55" e tiver 12 dígitos, inserir '9' após o DDD (índice 4).
                 // Ex.: 553491480112 -> 5534991480112
                 var numeroDestinoNormalizado = TelefoneHelper.NormalizeBrazilianForWhatsappTo(numeroDestino);

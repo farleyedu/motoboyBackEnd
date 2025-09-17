@@ -8,7 +8,7 @@ namespace APIBack.Automation.Interfaces
     {
         Task<Conversation?> ObterPorIdAsync(Guid id);
         Task<bool> InserirOuAtualizarAsync(Conversation conversa);
-        Task DefinirModoAsync(Guid id, ModoConversa modo, string? agenteDesignado);
+        Task DefinirModoAsync(Guid id, ModoConversa modo, int? agenteId);
         Task AcrescentarMensagemAsync(Message mensagem, string? phoneNumberId, string idWa = null);
         Task<bool> ExisteIdMensagemPorProvedorWaAsync(string idMensagemWa);
         Task<Guid> GarantirClienteAsync(string telefoneE164, Guid idEstabelecimento);

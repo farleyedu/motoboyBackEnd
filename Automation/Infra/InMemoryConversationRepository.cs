@@ -26,7 +26,7 @@ namespace APIBack.Automation.Infra
             return Task.FromResult(true);
         }
 
-        public Task DefinirModoAsync(Guid id, ModoConversa modo, string? agenteDesignado)
+        public Task DefinirModoAsync(Guid id, ModoConversa modo, int? agenteId)
         {
             _conversas.AddOrUpdate(
                 id,
@@ -34,14 +34,14 @@ namespace APIBack.Automation.Infra
                 {
                     IdConversa = id,
                     Modo = modo,
-                    AgenteDesignado = agenteDesignado,
+                    AgenteDesignado = agenteId?.ToString(),
                     CriadoEm = DateTime.UtcNow,
                     AtualizadoEm = DateTime.UtcNow,
                 },
                 (_, atual) =>
                 {
                     atual.Modo = modo;
-                    atual.AgenteDesignado = agenteDesignado;
+                    atual.AgenteDesignado = agenteId?.ToString();
                     atual.AtualizadoEm = DateTime.UtcNow;
                     return atual;
                 });
