@@ -4,8 +4,10 @@ namespace APIBack.Automation.Infra
     public class AutomationOptions
     {
         public bool StrictSignatureValidation { get; set; } = false;
+        public string VerifyToken { get; set; } = "<TODO>";
         public MetaOptions Meta { get; set; } = new();
         public TelegramOptions Telegram { get; set; } = new();
+        public HandoverOptions Handover { get; set; } = new();
     }
 
     public class MetaOptions
@@ -19,6 +21,14 @@ namespace APIBack.Automation.Infra
     {
         public string BotToken { get; set; } = "<TODO>";
         public string ChatId { get; set; } = "<TODO>";
+    }
+
+    public class HandoverOptions
+    {
+        // Base da API interna para acionar handover (ex.: http://127.0.0.1:7137/automation)
+        public string BaseUrl { get; set; } = "http://127.0.0.1:7137/automation";
+        // ID padrão do agente humano (tabela agentes.id)
+        public int? DefaultAgentId { get; set; }
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================

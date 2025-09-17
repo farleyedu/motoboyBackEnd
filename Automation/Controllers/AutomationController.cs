@@ -39,14 +39,14 @@ namespace APIBack.Automation.Controllers
             _repositorio = repositorio;
         }
 
-        [HttpPost("conversation/{id:guid}/handover")]
-        public async Task<IActionResult> EncaminharParaHumano(Guid id, [FromBody] HandoverRequest req)
+        [HttpPost("conversation/{idConversa:guid}/handover")]
+        public async Task<IActionResult> EncaminharParaHumano(Guid idConversa, [FromBody] HandoverRequest req)
         {
-            await _servicoHandover.DefinirHumanoAsync(id, req.AgenteDesignado);
+            await _servicoHandover.DefinirHumanoAsync(idConversa, req.Agente, req.ReservaConfirmada, req.Detalhes);
             return Ok();
         }
 
-        [HttpPost("conversation/{id:guid}/back-to-bot")]
+        [HttpPost("conversation/{idConversa:guid}/back-to-bot")]
         public async Task<IActionResult> VoltarParaBot(Guid id)
         {
             await _servicoConversa.DefinirModoBotAsync(id, "Transição para bot");
@@ -77,7 +77,7 @@ namespace APIBack.Automation.Controllers
             return Ok();
         }
 
-        [HttpGet("conversation/{id:guid}")]
+        [HttpGet("conversation/{idConversa:guid}")]
         public async Task<IActionResult> ObterConversa(Guid id, [FromQuery] int ultimas = 20)
         {
             if (ultimas <= 0) ultimas = 20;

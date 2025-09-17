@@ -70,7 +70,7 @@ FROM conversas
 WHERE id = @Id;";
 
             await using var cx = new NpgsqlConnection(_connectionString);
-            var row = await cx.QueryFirstOrDefaultAsync<(Guid Id, Guid IdEstabelecimento, Guid IdCliente, string? Canal, string? Estado, Guid? IdAgenteAtribuido, DateTime? DataPrimeiraMensagem, DateTime? DataUltimaMensagem, DateTime? DataUltimaEntrada, DateTime? DataUltimaSaida, DateTime? Janela24hInicio, DateTime? Janela24hFim, int QtdNaoLidas, string? MotivoFechamento, DateTime DataCriacao, DateTime DataAtualizacao)>(sql, new { Id = id });
+            var row = await cx.QueryFirstOrDefaultAsync<(Guid Id, Guid IdEstabelecimento, Guid IdCliente, string? Canal, string? Estado, int? IdAgenteAtribuido, DateTime? DataPrimeiraMensagem, DateTime? DataUltimaMensagem, DateTime? DataUltimaEntrada, DateTime? DataUltimaSaida, DateTime? Janela24hInicio, DateTime? Janela24hFim, int QtdNaoLidas, string? MotivoFechamento, DateTime DataCriacao, DateTime DataAtualizacao)>(sql, new { Id = id });
             if (row.Equals(default((Guid, Guid, Guid, string?, string?, Guid?, DateTime?, DateTime?, DateTime?, DateTime?, DateTime?, DateTime?, int, string?, DateTime, DateTime)))) return null;
 
             var conv = new Conversation
@@ -191,12 +191,8 @@ ON CONFLICT (id) DO UPDATE SET
             return idFinal ?? novoId;
         }
 
-        public async Task DefinirModoAsync(Guid id, ModoConversa modo, string? agenteDesignado)
+        public async Task DefinirModoAsync(Guid id, ModoConversa modo, int? agenteId)
         {
-            Guid? agenteId = null;
-            if (!string.IsNullOrWhiteSpace(agenteDesignado) && Guid.TryParse(agenteDesignado, out var g))
-                agenteId = g;
-
             string sql;
             object param;
 
@@ -204,9 +200,9 @@ ON CONFLICT (id) DO UPDATE SET
             {
                 sql = @"
                       UPDATE conversas
-                         SET id_agente_atribuido = '3a67c679-855c-4f93-9580-8ed08b54cf2d', --modificar depois para agenteId
+                         SET id_agente_atribuido = @AgenteId,
+                             estado               = 'agente'::estado_conversa_enum,
                              data_atualizacao     = NOW()
-
                        WHERE id = @Id;";
                 param = new { Id = id, AgenteId = (object?)agenteId };
             }
@@ -215,6 +211,7 @@ ON CONFLICT (id) DO UPDATE SET
                 sql = @"
                       UPDATE conversas
                          SET id_agente_atribuido = NULL,
+                             estado               = 'aberta'::estado_conversa_enum,
                              data_atualizacao     = NOW()
                        WHERE id = @Id;";
                 param = new { Id = id };

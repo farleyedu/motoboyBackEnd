@@ -56,7 +56,10 @@ builder.Services.AddScoped<IWhatsappSender, WhatsappSenderStub>();
 builder.Services.AddSingleton<IWhatsAppTokenProvider, InMemoryWhatsAppTokenProvider>();
 // IA real via OpenAI
 builder.Services.AddScoped<IAssistantService, OpenAIAssistantService>();
-builder.Services.AddScoped<IAlertSender, AlertSenderTelegramStub>();
+// Envio real de alertas para Telegram
+builder.Services.AddScoped<IAlertSender, AlertSenderTelegram>();
+builder.Services.AddScoped<IAgenteRepository, SqlAgenteRepository>();
+builder.Services.AddScoped<AgenteService>();
 builder.Services.AddScoped<ConversationService>();
 builder.Services.AddScoped<IMessageService, MessageService>();
 builder.Services.AddScoped<HandoverService>();

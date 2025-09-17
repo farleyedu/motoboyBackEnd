@@ -3,9 +3,10 @@ using System.Threading.Tasks;
 
 namespace APIBack.Automation.Interfaces
 {
-    public interface IAlertSender
+    public interface IAgenteRepository
     {
-        Task EnviarAlertaAsync(string mensagem, string? chatIdOverride = null);
+        Task<long?> ObterTelegramChatIdPorAgenteIdAsync(int agenteId);
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
+
