@@ -239,13 +239,24 @@ namespace APIBack.Automation.Controllers
                                                                 var clienteNome = mudanca.Valor?.Contatos?.FirstOrDefault()?.Perfil?.Nome;
                                                                 var historicoResumo = turns
                                                                     .TakeLast(10)
-                                                                    .Select(t => $"{(t.Role == "user" ? "Cliente" : "Assistente")}: {t.Content}")
+                                                                    .Select(t =>
+                                                                    {
+                                                                        var textoTurno = new string((t.Content ?? string.Empty)
+                                                                            .Select(ch => ch == (char)13 || ch == (char)10 ? ' ' : ch)
+                                                                            .ToArray()).Trim();
+                                                                        return $"{(t.Role == "user" ? "Cliente" : "Assistente")}: {textoTurno}";
+                                                                    })
+                                                                    .Where(linha => !string.IsNullOrWhiteSpace(linha))
                                                                     .ToList();
+                                                                var motivo = string.IsNullOrWhiteSpace(texto)
+                                                                    ? "Cliente solicitou atendimento humano."
+                                                                    : texto.Trim();
                                                                 var handoverDetalhes = new HandoverContextDto
                                                                 {
                                                                     ClienteNome = clienteNome,
                                                                     Telefone = mensagem.De,
-                                                                    QueixaPrincipal = texto,
+                                                                    Motivo = motivo,
+                                                                    QueixaPrincipal = motivo,
                                                                     Contexto = contexto,
                                                                     Historico = historicoResumo
                                                                 };
