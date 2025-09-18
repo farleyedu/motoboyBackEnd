@@ -75,29 +75,42 @@ namespace APIBack.Automation.Services
 
             if (reservaConfirmada)
             {
-                builder.AppendLine("✅ Reserva confirmada! Seguem os detalhes:");
-                builder.AppendLine($"• 👤 Cliente: {ValorOuNaoInformado(detalhes?.ClienteNome)}");
-                builder.AppendLine($"• 📅 Dia: {ValorOuNaoInformado(detalhes?.Dia)}");
-                builder.AppendLine($"• ⏰ Horário: {ValorOuNaoInformado(detalhes?.Horario)}");
-                builder.AppendLine($"• ☎️ Telefone: {ValorOuNaoInformado(detalhes?.Telefone)}");
-                builder.AppendLine($"• 🆔 Conversa: {idConversa}");
+                builder.AppendLine("✅ Formulário de reserva recebido:");
+
+                void AppendLinha(string titulo, string? valor)
+                {
+                    if (!string.IsNullOrWhiteSpace(valor))
+                    {
+                        builder.AppendLine($"{titulo}: {valor.Trim()}");
+                    }
+                }
+
+                AppendLinha("Nome", detalhes?.ClienteNome);
+                AppendLinha("Número de pessoas", detalhes?.NumeroPessoas);
+                AppendLinha("Dia", detalhes?.Dia);
+                AppendLinha("Horário", detalhes?.Horario);
+                AppendLinha("Contato", detalhes?.Telefone);
+                builder.AppendLine($"Conversa: {idConversa}");
             }
             else
             {
                 builder.AppendLine("⚠️ O cliente solicitou atendimento humano. Veja o resumo:");
                 builder.AppendLine($"• 🆔 Conversa: {idConversa}");
-                builder.AppendLine($"• 👤 Cliente: {ValorOuNaoInformado(detalhes?.ClienteNome)}");
 
-                var queixa = string.IsNullOrWhiteSpace(detalhes?.QueixaPrincipal)
-                    ? "Cliente não quis informar"
-                    : detalhes!.QueixaPrincipal!.Trim();
-                builder.AppendLine($"• 📌 Queixa: {queixa}");
-
-                if (!string.IsNullOrWhiteSpace(detalhes?.Contexto))
+                if (!string.IsNullOrWhiteSpace(detalhes?.ClienteNome))
                 {
-                    builder.AppendLine("• 🧠 Contexto:");
-                    builder.AppendLine($"  {detalhes.Contexto.Trim()}");
+                    builder.AppendLine($"• 👤 Cliente: {detalhes.ClienteNome.Trim()}");
                 }
+
+                if (!string.IsNullOrWhiteSpace(detalhes?.Telefone))
+                {
+                    builder.AppendLine($"• ☎️ Contato: {detalhes.Telefone.Trim()}");
+                }
+
+                var motivo = string.IsNullOrWhiteSpace(detalhes?.Motivo)
+                    ? (string.IsNullOrWhiteSpace(detalhes?.QueixaPrincipal) ? "Solicitação do cliente." : detalhes!.QueixaPrincipal!.Trim())
+                    : detalhes.Motivo.Trim();
+                builder.AppendLine($"• 📌 Motivo: {motivo}");
 
                 var historico = detalhes?.Historico?
                     .Where(item => !string.IsNullOrWhiteSpace(item))
@@ -115,9 +128,6 @@ namespace APIBack.Automation.Services
             }
 
             return builder.ToString().TrimEnd();
-
-            static string ValorOuNaoInformado(string? valor)
-                => string.IsNullOrWhiteSpace(valor) ? "Não informado" : valor.Trim();
         }
     }
 }
