@@ -130,7 +130,10 @@ ON CONFLICT (id) DO UPDATE SET
                     IdCliente = conversa.IdCliente,
                     Canal = conversa.Canal,
                     Estado = conversa.Estado,
-                    IdAgenteAtribuido = conversa.Modo == ModoConversa.Humano && !string.IsNullOrWhiteSpace(conversa.AgenteDesignado) && Guid.TryParse(conversa.AgenteDesignado, out var agenteGuid) ? (Guid?)agenteGuid : null,
+                    IdAgenteAtribuido = conversa.Modo == ModoConversa.Humano
+                    && int.TryParse(conversa.AgenteDesignado, out var agenteInt)
+                        ? (int?)agenteInt
+                        : null,
                     DataPrimeiraMensagem = dataPrimeiraMensagem,
                     DataUltimaMensagem = dataUltimaMensagem,
                     DataUltimaEntrada = dataUltimaEntrada,
