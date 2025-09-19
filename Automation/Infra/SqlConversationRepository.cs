@@ -348,8 +348,8 @@ UPDATE conversas
 
                     // Resolve IdCliente por telefone normalizado (cria se não existir)
                     var telefoneE164 = APIBack.Automation.Helpers.TelefoneHelper.ToE164(telefoneClienteRaw ?? string.Empty);
-                    const string sqlCliSel = "SELECT id FROM clientes WHERE telefone_e164 = @Tel LIMIT 1;";
-                    var idCliente = await cx.ExecuteScalarAsync<Guid?>(sqlCliSel, new { Tel = telefoneE164 }, transaction: tx);
+                    const string sqlCliSel = "SELECT id FROM clientes WHERE telefone_e164 = @Tel AND id_estabelecimento = @IdEstabelecimento LIMIT 1;";
+                    var idCliente = await cx.ExecuteScalarAsync<Guid?>(sqlCliSel, new { Tel = telefoneE164, IdEstabelecimento = idEstabelecimento }, transaction: tx);
 
                     if (!idCliente.HasValue || idCliente.Value == Guid.Empty)
                     {
@@ -381,7 +381,7 @@ UPDATE conversas
                         if (insertedId.HasValue) idCliente = insertedId;
                         else
                         {
-                            idCliente = await cx.ExecuteScalarAsync<Guid?>(sqlCliSel, new { Tel = telefoneE164 }, transaction: tx);
+                            idCliente = await cx.ExecuteScalarAsync<Guid?>(sqlCliSel, new { Tel = telefoneE164, IdEstabelecimento = idEstabelecimento }, transaction: tx);
                         }
 
                         if (!idCliente.HasValue || idCliente.Value == Guid.Empty)
@@ -461,6 +461,7 @@ UPDATE conversas
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) =================
+
 
 
 
