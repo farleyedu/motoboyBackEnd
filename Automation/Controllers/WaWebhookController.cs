@@ -430,24 +430,6 @@ namespace APIBack.Automation.Controllers
             }
         }
 
-        // Endpoint para atualizar o Access Token do WhatsApp em tempo de execução (uso em testes/desenvolvimento)
-        [HttpPost("token")]
-        public IActionResult AtualizarAccessToken([FromBody] UpdateWhatsAppTokenRequest req)
-        {
-            if (req == null || string.IsNullOrWhiteSpace(req.AccessToken))
-            {
-                return BadRequest(new { error = "AccessToken obrigatório" });
-            }
-
-            _waTokenProvider.SetAccessToken(req.AccessToken);
-            _logger.LogInformation("Token do WhatsApp atualizado via endpoint em {When}", DateTimeOffset.UtcNow);
-
-            return Ok(new
-            {
-                message = "Token atualizado com sucesso (apenas em memória).",
-                updated_at_utc = _waTokenProvider.LastUpdatedUtc?.ToString("o")
-            });
-        }
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
