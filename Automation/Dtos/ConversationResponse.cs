@@ -10,7 +10,7 @@ namespace APIBack.Automation.Dtos
         public Guid IdConversa { get; set; }
         public string IdWa { get; set; } = string.Empty;
         public ModoConversa Modo { get; set; }
-        public string? AgenteDesignado { get; set; }
+        public int? AgenteDesignadoId { get; set; }
         public DateTime UltimoUsuarioEm { get; set; }
         public DateTime? Janela24hExpiraEm { get; set; }
         public DateTime CriadoEm { get; set; }
@@ -28,3 +28,4 @@ namespace APIBack.Automation.Dtos
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
+

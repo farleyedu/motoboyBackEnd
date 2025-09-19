@@ -16,19 +16,19 @@ namespace APIBack.Automation.Models
         public Guid IdCliente { get; set; }
         public string IdWa { get; set; } = string.Empty;
         public ModoConversa Modo { get; set; } = ModoConversa.Bot;
-        public string? AgenteDesignado { get; set; }
+        public int? AgenteDesignadoId { get; set; }
         public DateTime? UltimoUsuarioEm { get; set; }
         public DateTime? Janela24hExpiraEm { get; set; }
         public DateTime CriadoEm { get; set; } = DateTime.UtcNow;
         public DateTime? AtualizadoEm { get; set; } = DateTime.UtcNow;
         public string? MessageIdWhatsapp { get; set; }
-        
+
         // Propriedades para compatibilidade com SqlConversationRepository
         public DateTime DataPrimeiraMensagem => CriadoEm;
         public DateTime DataUltimaMensagem => AtualizadoEm ?? CriadoEm;
         public string Canal => "whatsapp";
         public string Estado => "aberta";
-
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
+

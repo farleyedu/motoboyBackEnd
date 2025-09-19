@@ -205,7 +205,7 @@ namespace APIBack.Automation.Services
                 IdConversa = conversa.IdConversa,
                 IdWa = conversa.IdWa,
                 Modo = conversa.Modo,
-                AgenteDesignado = conversa.AgenteDesignado,
+                AgenteDesignadoId = conversa.AgenteDesignadoId,
                 UltimoUsuarioEm = conversa.UltimoUsuarioEm ?? default(DateTime),
                 Janela24hExpiraEm = conversa.Janela24hExpiraEm,
                 CriadoEm = conversa.CriadoEm,
