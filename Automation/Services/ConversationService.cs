@@ -129,6 +129,7 @@ namespace APIBack.Automation.Services
 
             // Garante WaId salvo
             conversa.IdWa = idWa;
+            conversa.IdEstabelecimento = idEstabelecimento.Value;
             var conversaInserida = await _repositorio.InserirOuAtualizarAsync(conversa);
             if (!conversaInserida)
             {
