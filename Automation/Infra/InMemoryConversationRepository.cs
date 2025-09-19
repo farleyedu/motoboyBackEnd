@@ -34,14 +34,14 @@ namespace APIBack.Automation.Infra
                 {
                     IdConversa = id,
                     Modo = modo,
-                    AgenteDesignado = agenteId?.ToString(),
+                    AgenteDesignadoId = agenteId,
                     CriadoEm = DateTime.UtcNow,
                     AtualizadoEm = DateTime.UtcNow,
                 },
                 (_, atual) =>
                 {
                     atual.Modo = modo;
-                    atual.AgenteDesignado = agenteId?.ToString();
+                    atual.AgenteDesignadoId = agenteId;
                     atual.AtualizadoEm = DateTime.UtcNow;
                     return atual;
                 });
@@ -84,7 +84,7 @@ namespace APIBack.Automation.Infra
 
         public Task<Guid> GarantirClienteAsync(string telefoneE164, Guid idEstabelecimento)
         {
-            if (idEstabelecimento == Guid.Empty) throw new ArgumentException("idEstabelecimento obrigatÃ³rio", nameof(idEstabelecimento));
+            if (idEstabelecimento == Guid.Empty) throw new ArgumentException("idEstabelecimento obrigatório", nameof(idEstabelecimento));
             telefoneE164 ??= string.Empty;
             var key = (idEstabelecimento, telefoneE164);
             var id = _clientes.GetOrAdd(key, _ => Guid.NewGuid());
@@ -104,3 +104,4 @@ namespace APIBack.Automation.Infra
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
+

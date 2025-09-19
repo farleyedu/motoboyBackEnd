@@ -71,7 +71,7 @@ WHERE id = @Id;";
 
             await using var cx = new NpgsqlConnection(_connectionString);
             var row = await cx.QueryFirstOrDefaultAsync<(Guid Id, Guid IdEstabelecimento, Guid IdCliente, string? Canal, string? Estado, int? IdAgenteAtribuido, DateTime? DataPrimeiraMensagem, DateTime? DataUltimaMensagem, DateTime? DataUltimaEntrada, DateTime? DataUltimaSaida, DateTime? Janela24hInicio, DateTime? Janela24hFim, int QtdNaoLidas, string? MotivoFechamento, DateTime DataCriacao, DateTime DataAtualizacao)>(sql, new { Id = id });
-            if (row.Equals(default((Guid, Guid, Guid, string?, string?, Guid?, DateTime?, DateTime?, DateTime?, DateTime?, DateTime?, DateTime?, int, string?, DateTime, DateTime)))) return null;
+            if (row.Equals(default((Guid, Guid, Guid, string?, string?, int?, DateTime?, DateTime?, DateTime?, DateTime?, DateTime?, DateTime?, int, string?, DateTime, DateTime)))) return null;
 
             var conv = new Conversation
             {
@@ -80,7 +80,7 @@ WHERE id = @Id;";
                 IdCliente = row.IdCliente,
                 IdWa = string.Empty, // não existe no schema
                 Modo = row.IdAgenteAtribuido == null ? ModoConversa.Bot : ModoConversa.Humano,
-                AgenteDesignado = row.IdAgenteAtribuido?.ToString(),
+                AgenteDesignadoId = row.IdAgenteAtribuido,
                 UltimoUsuarioEm = ToUtc(row.DataUltimaEntrada) ?? default,
                 Janela24hExpiraEm = ToUtc(row.Janela24hFim),
                 CriadoEm = ToUtcNonNull(row.DataCriacao),
@@ -131,8 +131,7 @@ ON CONFLICT (id) DO UPDATE SET
                     Canal = conversa.Canal,
                     Estado = conversa.Estado,
                     IdAgenteAtribuido = conversa.Modo == ModoConversa.Humano
-                    && int.TryParse(conversa.AgenteDesignado, out var agenteInt)
-                        ? (int?)agenteInt
+                        ? conversa.AgenteDesignadoId
                         : null,
                     DataPrimeiraMensagem = dataPrimeiraMensagem,
                     DataUltimaMensagem = dataUltimaMensagem,
@@ -461,6 +460,7 @@ UPDATE conversas
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) =================
+
 
 
 
