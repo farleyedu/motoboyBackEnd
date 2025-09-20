@@ -35,7 +35,7 @@ namespace APIBack.Automation.Services
                 : "Olá, agente!";
 
             var destinoTelegram = telegramChatIdOverride ?? agente?.TelegramChatId;
-            var mensagemAlerta = MontarMensagemTelegram(idConversa, saudacao, reservaConfirmada, detalhes);
+            var mensagemAlerta = MontarMensagemTelegram(reservaConfirmada, saudacao, detalhes);
 
             _logger.LogInformation(mensagemAlerta);
 
@@ -67,7 +67,7 @@ namespace APIBack.Automation.Services
             await ProcessarHandoverAsync(idConversa, agente, reservaConfirmada, detalhes, chatId);
         }
 
-        private static string MontarMensagemTelegram(Guid idConversa, string saudacao, bool reservaConfirmada, HandoverContextDto? detalhes)
+        private static string MontarMensagemTelegram(bool reservaConfirmada, string saudacao, HandoverContextDto? detalhes)
         {
             var builder = new StringBuilder();
             builder.AppendLine(saudacao);
@@ -75,42 +75,38 @@ namespace APIBack.Automation.Services
 
             if (reservaConfirmada)
             {
-                builder.AppendLine("✅ Formulário de reserva recebido:");
+                builder.AppendLine("✅ Nova reserva confirmada!");
+                builder.AppendLine($"🧑 Nome: {TextoOuNaoInformado(detalhes?.ClienteNome)}");
+                builder.AppendLine($"📞 Telefone: {TextoOuNaoInformado(detalhes?.Telefone)}");
+                builder.AppendLine($"👥 Pessoas: {TextoOuNaoInformado(detalhes?.NumeroPessoas)}");
 
-                void AppendLinha(string titulo, string? valor)
+                var possuiDia = !string.IsNullOrWhiteSpace(detalhes?.Dia);
+                var possuiHorario = !string.IsNullOrWhiteSpace(detalhes?.Horario);
+                if (possuiDia && possuiHorario)
                 {
-                    if (!string.IsNullOrWhiteSpace(valor))
-                    {
-                        builder.AppendLine($"{titulo}: {valor.Trim()}");
-                    }
+                    builder.AppendLine($"📅 Data: {detalhes!.Dia!.Trim()} às {detalhes.Horario!.Trim()}");
+                }
+                else if (possuiDia)
+                {
+                    builder.AppendLine($"📅 Data: {detalhes!.Dia!.Trim()}");
+                }
+                else if (possuiHorario)
+                {
+                    builder.AppendLine($"📅 Horário: {detalhes!.Horario!.Trim()}");
+                }
+                else
+                {
+                    builder.AppendLine("📅 Data: Não informado");
                 }
 
-                AppendLinha("Nome", detalhes?.ClienteNome);
-                AppendLinha("Número de pessoas", detalhes?.NumeroPessoas);
-                AppendLinha("Dia", detalhes?.Dia);
-                AppendLinha("Horário", detalhes?.Horario);
-                AppendLinha("Contato", detalhes?.Telefone);
-                builder.AppendLine($"Conversa: {idConversa}");
+                builder.AppendLine("👉 Para mais informações, acesse nosso site: zippygo.com");
             }
             else
             {
-                builder.AppendLine("⚠️ O cliente solicitou atendimento humano. Veja o resumo:");
-                builder.AppendLine($"• 🆔 Conversa: {idConversa}");
-
-                if (!string.IsNullOrWhiteSpace(detalhes?.ClienteNome))
-                {
-                    builder.AppendLine($"• 👤 Cliente: {detalhes.ClienteNome.Trim()}");
-                }
-
-                if (!string.IsNullOrWhiteSpace(detalhes?.Telefone))
-                {
-                    builder.AppendLine($"• ☎️ Contato: {detalhes.Telefone.Trim()}");
-                }
-
-                var motivo = string.IsNullOrWhiteSpace(detalhes?.Motivo)
-                    ? (string.IsNullOrWhiteSpace(detalhes?.QueixaPrincipal) ? "Solicitação do cliente." : detalhes!.QueixaPrincipal!.Trim())
-                    : detalhes.Motivo.Trim();
-                builder.AppendLine($"• 📌 Motivo: {motivo}");
+                builder.AppendLine("❓ Cliente pediu atendimento humano.");
+                builder.AppendLine($"📝 Motivo: {TextoOuNaoInformado(detalhes?.Motivo ?? detalhes?.QueixaPrincipal)}");
+                builder.AppendLine();
+                builder.AppendLine("📖 Histórico da conversa:");
 
                 var historico = detalhes?.Historico?
                     .Where(item => !string.IsNullOrWhiteSpace(item))
@@ -119,16 +115,22 @@ namespace APIBack.Automation.Services
 
                 if (historico != null && historico.Count > 0)
                 {
-                    builder.AppendLine("• 📜 Histórico:");
                     foreach (var item in historico)
                     {
-                        builder.AppendLine($"  - {item.Trim()}");
+                        builder.AppendLine(item.Trim());
                     }
+                }
+                else
+                {
+                    builder.AppendLine("(Histórico indisponível)");
                 }
             }
 
             return builder.ToString().TrimEnd();
         }
+
+        private static string TextoOuNaoInformado(string? valor)
+            => string.IsNullOrWhiteSpace(valor) ? "Não informado" : valor.Trim();
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
