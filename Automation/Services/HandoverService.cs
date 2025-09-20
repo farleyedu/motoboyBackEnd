@@ -1,5 +1,6 @@
 // ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
 using System;
+using System.Collections.Concurrent;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -12,6 +13,11 @@ namespace APIBack.Automation.Services
 {
     public class HandoverService
     {
+        private static readonly TimeSpan JanelaSupressao = TimeSpan.FromMinutes(2);
+        private static readonly ConcurrentDictionary<Guid, AlertaRecente> AlertasRecentes = new();
+
+        private readonly record struct AlertaRecente(string Mensagem, DateTime EnviadoEm);
+
         private readonly IConversationRepository _repositorio;
         private readonly IAlertSender _alertas;
         private readonly AgenteService _agentes;
@@ -36,6 +42,17 @@ namespace APIBack.Automation.Services
 
             var destinoTelegram = telegramChatIdOverride ?? agente?.TelegramChatId;
             var mensagemAlerta = MontarMensagemTelegram(reservaConfirmada, saudacao, detalhes);
+            var agora = DateTime.UtcNow;
+
+            if (AlertasRecentes.TryGetValue(idConversa, out var ultimo)
+                && string.Equals(ultimo.Mensagem, mensagemAlerta, StringComparison.Ordinal)
+                && (agora - ultimo.EnviadoEm) < JanelaSupressao)
+            {
+                _logger.LogInformation("[Handover] Alerta duplicado suprimido para {Conversa}", idConversa);
+                return;
+            }
+
+            AlertasRecentes[idConversa] = new AlertaRecente(mensagemAlerta, agora);
 
             _logger.LogInformation(mensagemAlerta);
 
