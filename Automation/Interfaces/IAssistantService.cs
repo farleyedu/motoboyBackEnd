@@ -8,8 +8,8 @@ namespace APIBack.Automation.Interfaces
 {
     public interface IAssistantService
     {
-        Task<string> GerarRespostaAsync(string textoUsuario, Guid idConversa, object? contexto = null);
-        Task<string> GerarRespostaComHistoricoAsync(Guid idConversa, string textoUsuario, IEnumerable<AssistantChatTurn> historico, object? contexto = null);
+        Task<AssistantDecision> GerarDecisaoAsync(string textoUsuario, Guid idConversa, object? contexto = null);
+        Task<AssistantDecision> GerarDecisaoComHistoricoAsync(Guid idConversa, string textoUsuario, IEnumerable<AssistantChatTurn> historico, object? contexto = null);
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================

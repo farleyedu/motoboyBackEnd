@@ -1,4 +1,5 @@
 // ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
+using System;
 using System.Collections.Generic;
 
 namespace APIBack.Automation.Dtos
@@ -13,7 +14,8 @@ namespace APIBack.Automation.Dtos
         public string? Motivo { get; set; }
         public string? QueixaPrincipal { get; set; }
         public string? Contexto { get; set; }
-        public IReadOnlyList<string>? Historico { get; set; }
+        public IReadOnlyList<string>? Historico { get; set; } = Array.Empty<string>();
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
+

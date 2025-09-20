@@ -1,21 +1,23 @@
 // ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
 using System;
+using System.Collections.Generic;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
+using APIBack.Automation.Dtos;
 using APIBack.Automation.Infra.Config;
 using APIBack.Automation.Interfaces;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using System.Collections.Generic;
-using APIBack.Automation.Dtos;
 
 namespace APIBack.Automation.Services
 {
     public class OpenAIAssistantService : IAssistantService
     {
+        private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
         private readonly IHttpClientFactory _httpFactory;
         private readonly IOptions<OpenAIOptions> _options;
         private readonly ILogger<OpenAIAssistantService> _logger;
@@ -30,116 +32,96 @@ namespace APIBack.Automation.Services
             _logger = logger;
         }
 
-        public async Task<string> GerarRespostaAsync(string textoUsuario, Guid idConversa, object? contexto = null)
+        public Task<AssistantDecision> GerarDecisaoAsync(string textoUsuario, Guid idConversa, object? contexto = null)
+            => GerarDecisaoInternoAsync(textoUsuario, idConversa, contexto, historico: null);
+
+        public Task<AssistantDecision> GerarDecisaoComHistoricoAsync(Guid idConversa, string textoUsuario, IEnumerable<AssistantChatTurn> historico, object? contexto = null)
+            => GerarDecisaoInternoAsync(textoUsuario, idConversa, contexto, historico);
+
+        private async Task<AssistantDecision> GerarDecisaoInternoAsync(string textoUsuario, Guid idConversa, object? contexto, IEnumerable<AssistantChatTurn>? historico)
         {
             var apiKey = _options.Value.ApiKey;
             var model = string.IsNullOrWhiteSpace(_options.Value.Model) ? "gpt-4o-mini" : _options.Value.Model;
 
             if (string.IsNullOrWhiteSpace(apiKey))
             {
-                _logger.LogWarning("OpenAI ApiKey nula; retornando resposta padrão");
-                return string.IsNullOrWhiteSpace(textoUsuario) ? "Poderia repetir?" : $"Você disse: '{textoUsuario}'.";
+                _logger.LogWarning("[Conversa={Conversa}] OpenAI ApiKey n�o configurada; usando decis�o padr�o", idConversa);
+                return new AssistantDecision(
+                    Reply: string.IsNullOrWhiteSpace(textoUsuario) ? "Poderia repetir?" : $"Voc� disse: '{textoUsuario}'.",
+                    HandoverAction: "none",
+                    AgentPrompt: null,
+                    ReservaConfirmada: false,
+                    Detalhes: null);
             }
 
             var client = _httpFactory.CreateClient();
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
 
-            var sys = contexto as string ?? "Você é um assistente útil.";
-            var payload = new
-            {
-                model,
-                messages = new object[]
-                {
-                    new { role = "system", content = sys },
-                    new { role = "user", content = textoUsuario }
-                }
-            };
-
-            var json = JsonSerializer.Serialize(payload);
-            using var content = new StringContent(json, Encoding.UTF8, "application/json");
-
-            try
-            {
-                var resp = await client.PostAsync("https://api.openai.com/v1/chat/completions", content);
-                var body = await resp.Content.ReadAsStringAsync();
-                if (!resp.IsSuccessStatusCode)
-                {
-                    _logger.LogWarning("OpenAI falhou: {Status} {Body}", (int)resp.StatusCode, body);
-                    return "Desculpe, não consegui formular uma resposta agora.";
-                }
-
-                using var doc = JsonDocument.Parse(body);
-                var choices = doc.RootElement.GetProperty("choices");
-                if (choices.GetArrayLength() == 0)
-                {
-                    return string.Empty;
-                }
-                var msg = choices[0].GetProperty("message").GetProperty("content").GetString();
-                return msg ?? string.Empty;
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Erro ao chamar OpenAI para conversa {Conversa}", idConversa);
-                return "Desculpe, ocorreu um erro ao gerar a resposta.";
-            }
-        }
-
-        public async Task<string> GerarRespostaComHistoricoAsync(Guid idConversa, string textoUsuario, IEnumerable<AssistantChatTurn> historico, object? contexto = null)
-        {
-            var apiKey = _options.Value.ApiKey;
-            var model = string.IsNullOrWhiteSpace(_options.Value.Model) ? "gpt-4o-mini" : _options.Value.Model;
-
-            if (string.IsNullOrWhiteSpace(apiKey))
-            {
-                _logger.LogWarning("OpenAI ApiKey nula; retornando resposta padrão (historico ignorado)");
-                return string.IsNullOrWhiteSpace(textoUsuario) ? "Poderia repetir?" : $"Você disse: '{textoUsuario}'.";
-            }
-
-            var client = _httpFactory.CreateClient();
-            client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
-
-            var contextoStr = contexto as string ?? "Você é um assistente útil.";
-            var sys = contextoStr + "\n\nINSTRUÇÃO: A seguir há o HISTÓRICO da conversa. Use-o apenas como contexto. Não responda ao histórico nem repita. Responda somente à ÚLTIMA mensagem do usuário no final.";
-
-            var messages = new List<object> { new { role = "system", content = sys } };
+            var systemPrompt = contexto as string ?? "Voc� � um assistente �til.";
+            var messages = new List<object> { new { role = "system", content = systemPrompt } };
 
             if (historico != null)
             {
-                foreach (var h in historico)
+                foreach (var turn in historico)
                 {
-                    if (string.IsNullOrWhiteSpace(h.Content)) continue;
-                    var role = (h.Role?.Trim().ToLowerInvariant()) == "assistant" ? "assistant" : "user";
-                    messages.Add(new { role, content = "[HISTÓRICO] " + h.Content });
+                    if (string.IsNullOrWhiteSpace(turn.Content)) continue;
+                    var role = string.Equals(turn.Role, "assistant", StringComparison.OrdinalIgnoreCase) ? "assistant" : "user";
+                    messages.Add(new { role, content = turn.Content });
                 }
             }
 
             messages.Add(new { role = "user", content = textoUsuario });
 
             var payload = new { model, messages = messages.ToArray() };
-            var json = JsonSerializer.Serialize(payload);
-            using var contentObj = new StringContent(json, Encoding.UTF8, "application/json");
+            var json = JsonSerializer.Serialize(payload, JsonOptions);
+            using var content = new StringContent(json, Encoding.UTF8, "application/json");
 
             try
             {
-                var resp = await client.PostAsync("https://api.openai.com/v1/chat/completions", contentObj);
-                var body = await resp.Content.ReadAsStringAsync();
-                if (!resp.IsSuccessStatusCode)
+                var response = await client.PostAsync("https://api.openai.com/v1/chat/completions", content);
+                var body = await response.Content.ReadAsStringAsync();
+                if (!response.IsSuccessStatusCode)
                 {
-                    _logger.LogWarning("OpenAI falhou: {Status} {Body}", (int)resp.StatusCode, body);
-                    return "Desculpe, não consegui formular uma resposta agora.";
+                    _logger.LogWarning("[Conversa={Conversa}] OpenAI falhou: {Status} {Body}", idConversa, (int)response.StatusCode, body);
+                    return new AssistantDecision("Desculpe, n�o consegui formular uma resposta agora.", "none", null, false, null);
                 }
 
                 using var doc = JsonDocument.Parse(body);
-                var choices = doc.RootElement.GetProperty("choices");
-                if (choices.GetArrayLength() == 0) return string.Empty;
-                var msg = choices[0].GetProperty("message").GetProperty("content").GetString();
-                return msg ?? string.Empty;
+                var message = doc.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString();
+                return InterpretarResposta(message, idConversa);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Erro ao chamar OpenAI (histórico) para conversa {Conversa}", idConversa);
-                return "Desculpe, ocorreu um erro ao gerar a resposta.";
+                _logger.LogError(ex, "[Conversa={Conversa}] Erro ao chamar OpenAI", idConversa);
+                return new AssistantDecision("Desculpe, ocorreu um erro ao gerar a resposta.", "none", null, false, null);
             }
+        }
+
+        private static AssistantDecision InterpretarResposta(string? conteudo, Guid idConversa)
+        {
+            if (string.IsNullOrWhiteSpace(conteudo))
+            {
+                return new AssistantDecision(string.Empty, "none", null, false, null);
+            }
+
+            try
+            {
+                var dto = JsonSerializer.Deserialize<AssistantDecisionDto>(conteudo, JsonOptions);
+                if (dto != null)
+                {
+                    var reply = dto.reply ?? string.Empty;
+                    var action = string.IsNullOrWhiteSpace(dto.handover) ? "none" : dto.handover!.Trim().ToLowerInvariant();
+                    var agentPrompt = string.IsNullOrWhiteSpace(dto.agent_prompt) ? null : dto.agent_prompt!.Trim();
+                    var confirmada = dto.reserva_confirmada ?? false;
+                    return new AssistantDecision(reply, action, agentPrompt, confirmada, dto.detalhes);
+                }
+            }
+            catch
+            {
+                // Conte�do n�o era JSON estruturado; segue fallback textual
+            }
+
+            return new AssistantDecision(conteudo, "none", null, false, null);
         }
     }
 }

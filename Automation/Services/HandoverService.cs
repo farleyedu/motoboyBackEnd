@@ -3,6 +3,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using APIBack.Automation.Dtos;
 using APIBack.Automation.Interfaces;
@@ -14,7 +15,20 @@ namespace APIBack.Automation.Services
     public class HandoverService
     {
         private static readonly TimeSpan JanelaSupressao = TimeSpan.FromMinutes(2);
+        private static readonly TimeSpan JanelaLimpeza = TimeSpan.FromMinutes(5);
         private static readonly ConcurrentDictionary<Guid, AlertaRecente> AlertasRecentes = new();
+        private static DateTime _ultimaLimpeza = DateTime.UtcNow;
+        private static long _contadorConfirmados;
+        private static long _contadorAsk;
+        private static long _contadorSuprimidos;
+
+        private static (long confirmados, long ask, long suprimidos) LerMetricas()
+        {
+            return (
+                confirmados: Interlocked.Read(ref _contadorConfirmados),
+                ask: Interlocked.Read(ref _contadorAsk),
+                suprimidos: Interlocked.Read(ref _contadorSuprimidos));
+        }
 
         private readonly record struct AlertaRecente(string Mensagem, DateTime EnviadoEm);
 
@@ -31,30 +45,42 @@ namespace APIBack.Automation.Services
             _agentes = agentes;
         }
 
-        // Novo fluxo principal: notifica no Telegram e ativa modo humano, atualizando estado para 'agente'
         public async Task ProcessarHandoverAsync(Guid idConversa, HandoverAgentDto? agente, bool reservaConfirmada, HandoverContextDto? detalhes, long? telegramChatIdOverride = null)
         {
             await _repositorio.DefinirModoAsync(idConversa, ModoConversa.Humano, agente?.Id);
 
             var saudacao = !string.IsNullOrWhiteSpace(agente?.Nome)
-                ? $"Ol√°, {agente.Nome}!"
-                : "Ol√°, agente!";
+                ? $"Ol·, {agente.Nome}!"
+                : "Ol·, agente!";
 
             var destinoTelegram = telegramChatIdOverride ?? agente?.TelegramChatId;
-            var mensagemAlerta = MontarMensagemTelegram(reservaConfirmada, saudacao, detalhes);
+            var mensagemAlerta = MontarMensagemTelegram(idConversa, reservaConfirmada, saudacao, detalhes);
             var agora = DateTime.UtcNow;
 
             if (AlertasRecentes.TryGetValue(idConversa, out var ultimo)
                 && string.Equals(ultimo.Mensagem, mensagemAlerta, StringComparison.Ordinal)
                 && (agora - ultimo.EnviadoEm) < JanelaSupressao)
             {
-                _logger.LogInformation("[Handover] Alerta duplicado suprimido para {Conversa}", idConversa);
+                Interlocked.Increment(ref _contadorSuprimidos);
+                var metricas = LerMetricas();
+                _logger.LogInformation("[Conversa={Conversa}] Alerta duplicado suprimido | mÈtricas => confirmados={Confirmados}, ask={Ask}, suprimidos={Suprimidos}", idConversa, metricas.confirmados, metricas.ask, metricas.suprimidos);
                 return;
             }
 
             AlertasRecentes[idConversa] = new AlertaRecente(mensagemAlerta, agora);
+            LimparAlertasAntigos(agora);
 
-            _logger.LogInformation(mensagemAlerta);
+            if (reservaConfirmada)
+            {
+                Interlocked.Increment(ref _contadorConfirmados);
+            }
+            else
+            {
+                Interlocked.Increment(ref _contadorAsk);
+            }
+
+            var metricasAtuais = LerMetricas();
+            _logger.LogInformation("[Conversa={Conversa}] {Mensagem} | mÈtricas => confirmados={Confirmados}, ask={Ask}, suprimidos={Suprimidos}", idConversa, mensagemAlerta, metricasAtuais.confirmados, metricasAtuais.ask, metricasAtuais.suprimidos);
 
             try
             {
@@ -62,11 +88,10 @@ namespace APIBack.Automation.Services
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Falha ao enviar alerta Telegram para handover (conversa {Conversa})", idConversa);
+                _logger.LogWarning(ex, "[Conversa={Conversa}] Falha ao enviar alerta Telegram para handover", idConversa);
             }
         }
 
-        // Mant√©m o m√©todo anterior por compatibilidade; delega para o novo com reservaConfirmada=false
         public async Task DefinirHumanoAsync(Guid idConversa, HandoverAgentDto? agente, bool reservaConfirmada = false, HandoverContextDto? detalhes = null)
         {
             long? chatId = agente?.TelegramChatId;
@@ -84,7 +109,7 @@ namespace APIBack.Automation.Services
             await ProcessarHandoverAsync(idConversa, agente, reservaConfirmada, detalhes, chatId);
         }
 
-        private static string MontarMensagemTelegram(bool reservaConfirmada, string saudacao, HandoverContextDto? detalhes)
+        private static string MontarMensagemTelegram(Guid idConversa, bool reservaConfirmada, string saudacao, HandoverContextDto? detalhes)
         {
             var builder = new StringBuilder();
             builder.AppendLine(saudacao);
@@ -92,38 +117,38 @@ namespace APIBack.Automation.Services
 
             if (reservaConfirmada)
             {
-                builder.AppendLine("‚úÖ Nova reserva confirmada!");
-                builder.AppendLine($"üßë Nome: {TextoOuNaoInformado(detalhes?.ClienteNome)}");
-                builder.AppendLine($"üìû Telefone: {TextoOuNaoInformado(detalhes?.Telefone)}");
-                builder.AppendLine($"üë• Pessoas: {TextoOuNaoInformado(detalhes?.NumeroPessoas)}");
+                builder.AppendLine("? Nova reserva confirmada!");
+                builder.AppendLine($"?? Nome: {TextoOuNaoInformado(detalhes?.ClienteNome)}");
+                builder.AppendLine($"?? Telefone: {TextoOuNaoInformado(detalhes?.Telefone)}");
+                builder.AppendLine($"?? Pessoas: {TextoOuNaoInformado(detalhes?.NumeroPessoas)}");
 
                 var possuiDia = !string.IsNullOrWhiteSpace(detalhes?.Dia);
                 var possuiHorario = !string.IsNullOrWhiteSpace(detalhes?.Horario);
                 if (possuiDia && possuiHorario)
                 {
-                    builder.AppendLine($"üìÖ Data: {detalhes!.Dia!.Trim()} √†s {detalhes.Horario!.Trim()}");
+                    builder.AppendLine($"?? Data: {detalhes!.Dia!.Trim()} ‡s {detalhes.Horario!.Trim()}");
                 }
                 else if (possuiDia)
                 {
-                    builder.AppendLine($"üìÖ Data: {detalhes!.Dia!.Trim()}");
+                    builder.AppendLine($"?? Data: {detalhes!.Dia!.Trim()}");
                 }
                 else if (possuiHorario)
                 {
-                    builder.AppendLine($"üìÖ Hor√°rio: {detalhes!.Horario!.Trim()}");
+                    builder.AppendLine($"?? Hor·rio: {detalhes!.Horario!.Trim()}");
                 }
                 else
                 {
-                    builder.AppendLine("üìÖ Data: N√£o informado");
+                    builder.AppendLine("?? Data: N„o informado");
                 }
 
-                builder.AppendLine("üëâ Para mais informa√ß√µes, acesse nosso site: zippygo.com");
+                builder.AppendLine("?? Para mais informaÁıes, acesse nosso site: zippygo.com");
             }
             else
             {
-                builder.AppendLine("‚ùì Cliente pediu atendimento humano.");
-                builder.AppendLine($"üìù Motivo: {TextoOuNaoInformado(detalhes?.Motivo ?? detalhes?.QueixaPrincipal)}");
+                builder.AppendLine("? Cliente pediu atendimento humano.");
+                builder.AppendLine($"?? Motivo: {TextoOuNaoInformado(detalhes?.Motivo ?? detalhes?.QueixaPrincipal)}");
                 builder.AppendLine();
-                builder.AppendLine("üìñ Hist√≥rico da conversa:");
+                builder.AppendLine("?? HistÛrico da conversa:");
 
                 var historico = detalhes?.Historico?
                     .Where(item => !string.IsNullOrWhiteSpace(item))
@@ -139,15 +164,37 @@ namespace APIBack.Automation.Services
                 }
                 else
                 {
-                    builder.AppendLine("(Hist√≥rico indispon√≠vel)");
+                    builder.AppendLine("(HistÛrico indisponÌvel)");
                 }
             }
 
+            builder.AppendLine();
+            builder.AppendLine($"Conversa={idConversa}");
             return builder.ToString().TrimEnd();
         }
 
         private static string TextoOuNaoInformado(string? valor)
-            => string.IsNullOrWhiteSpace(valor) ? "N√£o informado" : valor.Trim();
+            => string.IsNullOrWhiteSpace(valor) ? "N„o informado" : valor.Trim();
+
+        private static void LimparAlertasAntigos(DateTime agora)
+        {
+            if ((agora - _ultimaLimpeza) < JanelaLimpeza)
+            {
+                return;
+            }
+
+            foreach (var par in AlertasRecentes.ToArray())
+            {
+                if ((agora - par.Value.EnviadoEm) > JanelaLimpeza)
+                {
+                    AlertasRecentes.TryRemove(par.Key, out _);
+                }
+            }
+
+            _ultimaLimpeza = agora;
+        }
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
+
+
