@@ -50,8 +50,8 @@ namespace APIBack.Automation.Services
             await _repositorio.DefinirModoAsync(idConversa, ModoConversa.Humano, agente?.Id);
 
             var saudacao = !string.IsNullOrWhiteSpace(agente?.Nome)
-                ? $"Olá, {agente.Nome}!"
-                : "Olá, agente!";
+                ? $"OlÃƒÂ¡, {agente.Nome}!"
+                : "OlÃƒÂ¡, agente!";
 
             var destinoTelegram = telegramChatIdOverride ?? agente?.TelegramChatId;
             var mensagemAlerta = MontarMensagemTelegram(idConversa, reservaConfirmada, saudacao, detalhes);
@@ -63,7 +63,7 @@ namespace APIBack.Automation.Services
             {
                 Interlocked.Increment(ref _contadorSuprimidos);
                 var metricas = LerMetricas();
-                _logger.LogInformation("[Conversa={Conversa}] Alerta duplicado suprimido | métricas => confirmados={Confirmados}, ask={Ask}, suprimidos={Suprimidos}", idConversa, metricas.confirmados, metricas.ask, metricas.suprimidos);
+                _logger.LogInformation("[Conversa={Conversa}] Alerta duplicado suprimido | mÃƒÂ©tricas => confirmados={Confirmados}, ask={Ask}, suprimidos={Suprimidos}", idConversa, metricas.confirmados, metricas.ask, metricas.suprimidos);
                 return;
             }
 
@@ -80,7 +80,7 @@ namespace APIBack.Automation.Services
             }
 
             var metricasAtuais = LerMetricas();
-            _logger.LogInformation("[Conversa={Conversa}] {Mensagem} | métricas => confirmados={Confirmados}, ask={Ask}, suprimidos={Suprimidos}", idConversa, mensagemAlerta, metricasAtuais.confirmados, metricasAtuais.ask, metricasAtuais.suprimidos);
+            _logger.LogInformation("[Conversa={Conversa}] {Mensagem} | mÃƒÂ©tricas => confirmados={Confirmados}, ask={Ask}, suprimidos={Suprimidos}", idConversa, mensagemAlerta, metricasAtuais.confirmados, metricasAtuais.ask, metricasAtuais.suprimidos);
 
             try
             {
@@ -112,43 +112,26 @@ namespace APIBack.Automation.Services
         private static string MontarMensagemTelegram(Guid idConversa, bool reservaConfirmada, string saudacao, HandoverContextDto? detalhes)
         {
             var builder = new StringBuilder();
-            builder.AppendLine(saudacao);
-            builder.AppendLine();
 
             if (reservaConfirmada)
             {
-                builder.AppendLine("? Nova reserva confirmada!");
-                builder.AppendLine($"?? Nome: {TextoOuNaoInformado(detalhes?.ClienteNome)}");
-                builder.AppendLine($"?? Telefone: {TextoOuNaoInformado(detalhes?.Telefone)}");
-                builder.AppendLine($"?? Pessoas: {TextoOuNaoInformado(detalhes?.NumeroPessoas)}");
-
-                var possuiDia = !string.IsNullOrWhiteSpace(detalhes?.Dia);
-                var possuiHorario = !string.IsNullOrWhiteSpace(detalhes?.Horario);
-                if (possuiDia && possuiHorario)
-                {
-                    builder.AppendLine($"?? Data: {detalhes!.Dia!.Trim()} às {detalhes.Horario!.Trim()}");
-                }
-                else if (possuiDia)
-                {
-                    builder.AppendLine($"?? Data: {detalhes!.Dia!.Trim()}");
-                }
-                else if (possuiHorario)
-                {
-                    builder.AppendLine($"?? Horário: {detalhes!.Horario!.Trim()}");
-                }
-                else
-                {
-                    builder.AppendLine("?? Data: Não informado");
-                }
-
-                builder.AppendLine("?? Para mais informações, acesse nosso site: zippygo.com");
+                builder.AppendLine("ðŸ“¢ Nova reserva confirmada!");
+                builder.AppendLine();
+                builder.AppendLine($"ðŸ‘¤ Nome: {TextoOuNaoInformado(detalhes?.ClienteNome)}");
+                builder.AppendLine($"ðŸ“ž Telefone: {TextoOuNaoInformado(detalhes?.Telefone)}");
+                builder.AppendLine($"ðŸ‘¥ Pessoas: {TextoOuNaoInformado(detalhes?.NumeroPessoas)}");
+                builder.AppendLine($"ðŸ“… Data: {MontarDescricaoData(detalhes)}");
+                builder.AppendLine();
+                builder.AppendLine("ðŸ”— Mais detalhes: zippygo.com");
             }
             else
             {
-                builder.AppendLine("? Cliente pediu atendimento humano.");
-                builder.AppendLine($"?? Motivo: {TextoOuNaoInformado(detalhes?.Motivo ?? detalhes?.QueixaPrincipal)}");
+                builder.AppendLine(saudacao);
                 builder.AppendLine();
-                builder.AppendLine("?? Histórico da conversa:");
+                builder.AppendLine("Cliente pediu atendimento humano.");
+                builder.AppendLine($"Motivo: {TextoOuNaoInformado(detalhes?.Motivo ?? detalhes?.QueixaPrincipal)}");
+                builder.AppendLine();
+                builder.AppendLine("HistÃ³rico da conversa:");
 
                 var historico = detalhes?.Historico?
                     .Where(item => !string.IsNullOrWhiteSpace(item))
@@ -164,7 +147,7 @@ namespace APIBack.Automation.Services
                 }
                 else
                 {
-                    builder.AppendLine("(Histórico indisponível)");
+                    builder.AppendLine("(HistÃ³rico indisponÃ­vel)");
                 }
             }
 
@@ -173,8 +156,31 @@ namespace APIBack.Automation.Services
             return builder.ToString().TrimEnd();
         }
 
+private static string MontarDescricaoData(HandoverContextDto? detalhes)
+        {
+            var possuiDia = !string.IsNullOrWhiteSpace(detalhes?.Dia);
+            var possuiHorario = !string.IsNullOrWhiteSpace(detalhes?.Horario);
+
+            if (possuiDia && possuiHorario)
+            {
+                return $"{detalhes!.Dia!.Trim()} ÃƒÂ s {detalhes.Horario!.Trim()}";
+            }
+
+            if (possuiDia)
+            {
+                return detalhes!.Dia!.Trim();
+            }
+
+            if (possuiHorario)
+            {
+                return detalhes!.Horario!.Trim();
+            }
+
+            return "NÃƒÂ£o informado";
+        }
+
         private static string TextoOuNaoInformado(string? valor)
-            => string.IsNullOrWhiteSpace(valor) ? "Não informado" : valor.Trim();
+            => string.IsNullOrWhiteSpace(valor) ? "NÃƒÂ£o informado" : valor.Trim();
 
         private static void LimparAlertasAntigos(DateTime agora)
         {

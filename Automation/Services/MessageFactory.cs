@@ -6,9 +6,10 @@ namespace APIBack.Automation.Services
 {
     public static class MessageFactory
     {
-        public static Message CreateMessage(Guid idConversa, string conteudo, DirecaoMensagem direcao, string criadaPor, string? idMensagemWa = null)
+        public static Message CreateMessage(Guid idConversa, string conteudo, DirecaoMensagem direcao, string criadaPor, string? idMensagemWa = null, string? tipoOrigem = null)
         {
             var agora = DateTime.UtcNow;
+            var tipoBanco = MessageTypeMapper.MapType(tipoOrigem, direcao, criadaPor);
             var message = new Message
             {
                 IdConversa = idConversa,
@@ -19,7 +20,8 @@ namespace APIBack.Automation.Services
                 DataCriacao = agora,
                 Status = direcao == DirecaoMensagem.Entrada ? "recebida" : "fila",
                 IdMensagemWa = idMensagemWa ?? $"local-{Guid.NewGuid():N}",
-                Tipo = "text"
+                Tipo = tipoBanco,
+                TipoOriginal = tipoOrigem
             };
 
             if (direcao == DirecaoMensagem.Saida)
@@ -32,4 +34,3 @@ namespace APIBack.Automation.Services
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
-

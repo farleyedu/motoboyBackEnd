@@ -45,7 +45,7 @@ namespace APIBack.Automation.Services
             _mensagemService = mensagemService;
         }
 
-        public async Task<Message?> AcrescentarEntradaAsync(string idWa, string idMensagemWa, string conteudo, string phoneNumberId, DateTime? dataMensagemUtc = null)
+        public async Task<Message?> AcrescentarEntradaAsync(string idWa, string idMensagemWa, string conteudo, string phoneNumberId, DateTime? dataMensagemUtc = null, string? tipoOrigem = null)
         {
             if (string.IsNullOrWhiteSpace(idMensagemWa))
             {
@@ -63,7 +63,7 @@ namespace APIBack.Automation.Services
 
             //////////////////////////////////////////////////
             ///
-            // Em desenvolvimento, n√£o bloqueia duplicatas para facilitar testes.
+            // Em desenvolvimento, n„o bloqueia duplicatas para facilitar testes.
             var ambiente = _configuration.GetValue<string>("ASPNETCORE_ENVIRONMENT");
             var isDev = string.Equals(ambiente, "Development", StringComparison.OrdinalIgnoreCase);
 
@@ -73,7 +73,7 @@ namespace APIBack.Automation.Services
             {
                 if (isDev)
                 {
-                    _logger.LogWarning("DEV: Duplicata detectada IdMensagemWa={WaMessageId}, processamento continuar√° para testes.", idMensagemWa);
+                    _logger.LogWarning("DEV: Duplicata detectada IdMensagemWa={WaMessageId}, processamento continuar· para testes.", idMensagemWa);
                     // segue o fluxo em DEV
                 }
                 else
@@ -93,7 +93,7 @@ namespace APIBack.Automation.Services
                 idEstabelecimento = await _wabaPhoneRepository.ObterIdEstabelecimentoPorPhoneNumberIdAsync(phoneNumberId);
             }
 
-            // Fallback para estabelecimento padr√£o se n√£o encontrar
+            // Fallback para estabelecimento padr„o se n„o encontrar
             if (idEstabelecimento == null || idEstabelecimento == Guid.Empty)
             {
                 var fallbackEstabelecimentoId = _configuration.GetValue<string>("WhatsApp:FallbackEstabelecimentoId");
@@ -104,8 +104,8 @@ namespace APIBack.Automation.Services
                 }
                 else
                 {
-                    _logger.LogError("N√£o foi poss√≠vel resolver id_estabelecimento para phone_number_id {PhoneNumberId} e n√£o h√° fallback configurado", phoneNumberId);
-                    throw new InvalidOperationException($"N√£o foi poss√≠vel resolver id_estabelecimento para phone_number_id {phoneNumberId}");
+                    _logger.LogError("N„o foi possÌvel resolver id_estabelecimento para phone_number_id {PhoneNumberId} e n„o h· fallback configurado", phoneNumberId);
+                    throw new InvalidOperationException($"N„o foi possÌvel resolver id_estabelecimento para phone_number_id {phoneNumberId}");
                 }
             }
 
@@ -140,15 +140,23 @@ namespace APIBack.Automation.Services
                 _logger.LogInformation("[Automation] Nova conversa criada: {ConversationId} para WaId={WaId}", idConversa, idWa);
             }
 
+            const string criador = "cliente";
+            var dataMensagem = dataMensagemUtc.HasValue
+                ? DateTime.SpecifyKind(dataMensagemUtc.Value, DateTimeKind.Utc)
+                : DateTime.UtcNow;
+            var tipoMapeado = MessageTypeMapper.MapType(tipoOrigem, DirecaoMensagem.Entrada, criador);
+
             var mensagem = new Message
             {
                 IdConversa = idConversa,
                 IdMensagemWa = idMensagemWa,
                 Direcao = DirecaoMensagem.Entrada,
                 Conteudo = conteudo,
-                DataHora = dataMensagemUtc.HasValue
-                    ? DateTime.SpecifyKind(dataMensagemUtc.Value, DateTimeKind.Utc)
-                    : DateTime.UtcNow,
+                DataHora = dataMensagem,
+                DataCriacao = dataMensagem,
+                CriadaPor = criador,
+                TipoOriginal = tipoOrigem,
+                Tipo = tipoMapeado,
             };
 
             EnfileirarMensagem(mensagem);
@@ -157,16 +165,25 @@ namespace APIBack.Automation.Services
             return mensagem;
         }
 
-
         public async Task<Message> AcrescentarSaidaAsync(Guid idConversa, string idWa, string conteudo)
         {
+            const string criador = "sistema";
+            const string tipoOriginal = "text";
+            var dataMensagem = DateTime.UtcNow;
+            var tipoMapeado = MessageTypeMapper.MapType(tipoOriginal, DirecaoMensagem.Saida, criador);
+
             var mensagem = new Message
             {
                 IdConversa = idConversa,
                 IdMensagemWa = $"local-{Guid.NewGuid():N}",
                 Direcao = DirecaoMensagem.Saida,
                 Conteudo = conteudo,
-                DataHora = DateTime.UtcNow,
+                DataHora = dataMensagem,
+                DataCriacao = dataMensagem,
+                DataEnvio = dataMensagem,
+                CriadaPor = criador,
+                TipoOriginal = tipoOriginal,
+                Tipo = tipoMapeado,
             };
 
             EnfileirarMensagem(mensagem);
@@ -179,18 +196,29 @@ namespace APIBack.Automation.Services
             await _repositorio.DefinirModoAsync(idConversa, ModoConversa.Bot, agenteId: null);
             if (!string.IsNullOrWhiteSpace(mensagemTransicao))
             {
+                const string criador = "sistema";
+                const string tipoOriginal = "text";
+                var dataMensagem = DateTime.UtcNow;
+                var tipoMapeado = MessageTypeMapper.MapType(tipoOriginal, DirecaoMensagem.Saida, criador);
+
                 var msg = new Message
                 {
                     IdConversa = idConversa,
                     IdMensagemWa = $"local-{Guid.NewGuid():N}",
                     Direcao = DirecaoMensagem.Saida,
                     Conteudo = mensagemTransicao,
-                    DataHora = DateTime.UtcNow,
+                    DataHora = dataMensagem,
+                    DataCriacao = dataMensagem,
+                    DataEnvio = dataMensagem,
+                    CriadaPor = criador,
+                    TipoOriginal = tipoOriginal,
+                    Tipo = tipoMapeado,
                 };
                 EnfileirarMensagem(msg);
                 await _mensagemService.AdicionarMensagemAsync(msg, phoneNumberId: null, idWa: null);
+            }
         }
-        }
+
 
         public async Task<ConversationResponse?> ObterConversaRespostaAsync(Guid idConversa, int ultimasN = 20)
         {
@@ -229,8 +257,3 @@ namespace APIBack.Automation.Services
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
-
-
-
-
-

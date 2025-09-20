@@ -32,20 +32,6 @@ namespace APIBack.Automation.Infra
             return await cx.ExecuteScalarAsync<string?>(sql, new { IdEstabelecimento = idEstabelecimento });
         }
 
-        public async Task<IEnumerable<IARegra>> ListarAsync(Guid idEstabelecimento)
-        {
-            const string sql = @"SELECT id                 AS ""Id"",
-                                         id_estabelecimento AS ""IdEstabelecimento"",
-                                         contexto           AS ""Contexto"",
-                                         ativo              AS ""Ativo"",
-                                         data_criacao       AS ""DataCriacao"",
-                                         data_atualizacao   AS ""DataAtualizacao""
-                                    FROM ia_regras
-                                   WHERE id_estabelecimento = @IdEstabelecimento
-                                   ORDER BY data_atualizacao DESC, data_criacao DESC;";
-            await using var cx = new NpgsqlConnection(_connectionString);
-            return await cx.QueryAsync<IARegra>(sql, new { IdEstabelecimento = idEstabelecimento });
-        }
 
         public async Task<Guid> CriarAsync(Guid idEstabelecimento, string contexto)
         {

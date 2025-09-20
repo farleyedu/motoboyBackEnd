@@ -1,4 +1,4 @@
-// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
+ï»¿// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
 using System;
 using System.Text.Json;
 using System.Diagnostics;
@@ -58,7 +58,7 @@ namespace APIBack.Automation.Controllers
                 return Ok(challenge);
             }
 
-            _logger.LogWarning("Falha na verificação do webhook. Token inválido.");
+            _logger.LogWarning("Falha na verificaï¿½ï¿½o do webhook. Token invï¿½lido.");
             return Forbid();
         }
 
@@ -89,7 +89,7 @@ namespace APIBack.Automation.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Payload inválido recebido do WhatsApp");
+                _logger.LogWarning(ex, "Payload invï¿½lido recebido do WhatsApp");
                 return Ok();
             }
 
@@ -159,7 +159,7 @@ namespace APIBack.Automation.Controllers
                                     ReservaConfirmada: false,
                                     Detalhes: null);
                             stopwatch.Stop();
-                            _logger.LogInformation("[Conversa={Conversa}] Latência IA: {Latency} ms", idConversa, stopwatch.ElapsedMilliseconds);
+                            _logger.LogInformation("[Conversa={Conversa}] Latencia IA: {Latency} ms", idConversa, stopwatch.ElapsedMilliseconds);
 
                             await _iaResponseHandler.HandleAsync(decision, processamento);
                         }
@@ -179,7 +179,7 @@ namespace APIBack.Automation.Controllers
         {
             if (req == null || string.IsNullOrWhiteSpace(req.AccessToken))
             {
-                return BadRequest(new { error = "AccessToken obrigatório" });
+                return BadRequest(new { error = "AccessToken obrigatï¿½rio" });
             }
 
             _waTokenProvider.SetAccessToken(req.AccessToken);
@@ -187,7 +187,7 @@ namespace APIBack.Automation.Controllers
 
             return Ok(new
             {
-                message = "Token atualizado com sucesso (apenas em memória).",
+                message = "Token atualizado com sucesso (apenas em memï¿½ria).",
                 updated_at_utc = _waTokenProvider.LastUpdatedUtc?.ToString("o")
             });
         }

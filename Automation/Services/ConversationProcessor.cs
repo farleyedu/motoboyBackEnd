@@ -49,7 +49,8 @@ namespace APIBack.Automation.Services
                 idMensagemWa: input.Mensagem.Id!,
                 conteudo: input.Texto,
                 phoneNumberId: input.PhoneNumberDisplay ?? string.Empty,
-                dataMensagemUtc: input.DataMensagemUtc);
+                dataMensagemUtc: input.DataMensagemUtc,
+                tipoOrigem: input.Mensagem.Tipo);
 
             if (criada == null)
             {
@@ -60,7 +61,7 @@ namespace APIBack.Automation.Services
             criada.CriadaPor ??= "cliente";
             await _fila.PublicarEntradaAsync(criada);
 
-            var contexto = await ObterContextoAsync(criada.IdConversa, input.PhoneNumberId);
+            var contexto = await ObterContextoAsync(criada.IdConversa, input.PhoneNumberDisplay);
             var historico = await ObterHistoricoAsync(criada.IdConversa);
             var handoverDetalhes = MontarHandoverDetalhes(input, criada, historico, contexto);
 
@@ -153,7 +154,7 @@ namespace APIBack.Automation.Services
         {
             try
             {
-                var historico = await _mensagemRepository.GetByConversationAsync(idConversa, limit: 200, onlyWhenOpen: true);
+                var historico = await _mensagemRepository.GetByConversationAsync(idConversa, limit: 200);
                 return historico
                     .Where(m => !string.IsNullOrWhiteSpace(m.Conteudo))
                     .Select(m => new AssistantChatTurn
@@ -189,10 +190,4 @@ namespace APIBack.Automation.Services
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
-
-
-
-
-
-
 

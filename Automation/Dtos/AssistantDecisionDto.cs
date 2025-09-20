@@ -6,6 +6,8 @@ namespace APIBack.Automation.Dtos
     {
         public string? reply { get; set; }
         public string? handover { get; set; } // none | ask | confirm
+        public string? handoverAction { get; set; }
+        public string? handover_action { get; set; }
         public string? agent_prompt { get; set; }
         public bool? reserva_confirmada { get; set; }
         public HandoverContextDto? detalhes { get; set; }
