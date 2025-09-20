@@ -64,6 +64,10 @@ builder.Services.AddScoped<ConversationService>();
 builder.Services.AddScoped<IMessageService, MessageService>();
 builder.Services.AddScoped<HandoverService>();
 builder.Services.AddScoped<AutomationHealthService>();
+builder.Services.AddScoped<WebhookValidatorService>();
+builder.Services.AddScoped<ConversationProcessor>();
+builder.Services.AddScoped<IAResponseHandler>();
+builder.Services.AddScoped<WhatsAppSender>();
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
 
 
@@ -126,5 +130,6 @@ app.Lifetime.ApplicationStarted.Register(() =>
 });
 
 app.Run();
+
 
 
