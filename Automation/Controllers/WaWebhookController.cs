@@ -224,11 +224,13 @@ namespace APIBack.Automation.Controllers
 
                                                             if (handoverAcao == "confirm")
                                                             {
+                                                                _logger.LogInformation("🚨 Entrou no fluxo CONFIRM (handover) para conversa {ConversaId}", criada.IdConversa);
+
                                                                 //
                                                                 //
                                                                 //
                                                                 // Aciona handoff e envia mensagem fixa única ao usuário
-                                                                        var agenteDesignadoId = 4;
+                                                                var agenteDesignadoId = 4;
                                                                 //nessa seção eu vou definir qual agente chamar de com o contexto da conversa, eu quero que IA decida qual o 
                                                                 //melhor agente para chamar, baseado no contexto da conversa. //Exemplo: se a conversa for sobre Agendamento,
                                                                 //chamar o agente de Agendamento, se for sobre Suporte, chamar o agente de Suporte.
@@ -285,6 +287,8 @@ namespace APIBack.Automation.Controllers
                                                             }
                                                             else if (handoverAcao == "ask")
                                                             {
+                                                                _logger.LogInformation("❓ Entrou no fluxo ASK (pergunta de handover) para conversa {ConversaId}", criada.IdConversa);
+
                                                                 // Envia a resposta principal
                                                                 var mensagemSaida = new Message
                                                                 {
@@ -320,6 +324,8 @@ namespace APIBack.Automation.Controllers
                                                             }
                                                             else
                                                             {
+                                                                _logger.LogInformation("💬 Entrou no fluxo NORMAL (sem handover) para conversa {ConversaId}. handoverAcao='{Acao}'", criada.IdConversa, handoverAcao ?? "<null>");
+
                                                                 // Sem handover: envia apenas a resposta normal da IA
                                                                 var mensagemSaida = new Message
                                                                 {
