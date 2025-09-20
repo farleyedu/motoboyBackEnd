@@ -11,7 +11,7 @@ using Microsoft.Extensions.Options;
 
 namespace APIBack.Automation.Services
 {
-    // Envia alertas reais via Telegram Bot API usando configuraÃ§Ãµes em Automation:Telegram
+    // Envia alertas reais via Telegram Bot API usando configurações em Automation:Telegram
     public class AlertSenderTelegram : IAlertSender
     {
         private const int TelegramMaxLength = 4096;
@@ -32,56 +32,93 @@ namespace APIBack.Automation.Services
 
         public async Task EnviarAlertaAsync(string mensagem, string? chatIdOverride = null)
         {
-            try
+            if (string.IsNullOrWhiteSpace(mensagem)) return;
+
+            var conversationId = ExtrairIdentificadorConversa(mensagem);
+            var cfg = _options.Value?.Telegram;
+            var token = cfg?.BotToken;
+            var chatId = string.IsNullOrWhiteSpace(chatIdOverride) ? cfg?.ChatId : chatIdOverride;
+
+            if (string.IsNullOrWhiteSpace(token) || token == "<TODO>" || string.IsNullOrWhiteSpace(chatId) || chatId == "<TODO>")
             {
-                if (string.IsNullOrWhiteSpace(mensagem)) return;
+                _logger.LogWarning("[Conversa={Conversa}] Telegram BotToken/ChatId não configurados. Alerta não enviado.", conversationId);
+                return;
+            }
 
-                var cfg = _options.Value?.Telegram;
-                var token = cfg?.BotToken;
-                var chatId = string.IsNullOrWhiteSpace(chatIdOverride) ? cfg?.ChatId : chatIdOverride;
+            var endpoint = $"https://api.telegram.org/bot{token}/sendMessage";
+            var client = _httpFactory.CreateClient();
+            var delays = new[] { TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(5) };
 
-                if (string.IsNullOrWhiteSpace(token) || token == "<TODO>" || string.IsNullOrWhiteSpace(chatId) || chatId == "<TODO>")
+            int idx = 0;
+            while (idx < mensagem.Length)
+            {
+                var restante = mensagem.Length - idx;
+                var take = Math.Min(TelegramMaxLength, restante);
+                var trecho = mensagem.Substring(idx, take);
+                idx += take;
+
+                var payload = new
                 {
-                    _logger.LogWarning("Telegram BotToken/ChatId nÃ£o configurados. Alerta nÃ£o enviado.");
-                    return;
-                }
+                    chat_id = chatId,
+                    text = trecho,
+                    disable_web_page_preview = true,
+                    allow_sending_without_reply = true
+                };
 
-                var endpoint = $"https://api.telegram.org/bot{token}/sendMessage";
-                var client = _httpFactory.CreateClient();
+                var json = JsonSerializer.Serialize(payload);
 
-                // Envia em partes caso exceda limite do Telegram
-                int idx = 0;
-                while (idx < mensagem.Length)
+                var enviado = false;
+                for (var tentativa = 0; tentativa < delays.Length; tentativa++)
                 {
-                    var restante = mensagem.Length - idx;
-                    var take = Math.Min(TelegramMaxLength, restante);
-                    var trecho = mensagem.Substring(idx, take);
-                    idx += take;
-
-                    var payload = new
+                    try
                     {
-                        chat_id = chatId,
-                        text = trecho,
-                        disable_web_page_preview = true,
-                        allow_sending_without_reply = true
-                    };
+                        using var content = new StringContent(json, Encoding.UTF8, "application/json");
+                        var resp = await client.PostAsync(endpoint, content);
+                        if (resp.IsSuccessStatusCode)
+                        {
+                            enviado = true;
+                            break;
+                        }
 
-                    var json = JsonSerializer.Serialize(payload);
-                    using var content = new StringContent(json, Encoding.UTF8, "application/json");
-                    var resp = await client.PostAsync(endpoint, content);
-                    if (!resp.IsSuccessStatusCode)
-                    {
                         var body = await resp.Content.ReadAsStringAsync();
-                        _logger.LogWarning("Falha ao enviar alerta Telegram: {Status} {Body}", (int)resp.StatusCode, body);
-                        // NÃ£o interrompe loop para partes seguintes
+                        _logger.LogWarning("[Conversa={Conversa}] Falha ao enviar alerta Telegram (tentativa {Tentativa}): {Status} {Body}", conversationId, tentativa + 1, (int)resp.StatusCode, body);
                     }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "[Conversa={Conversa}] Erro ao enviar alerta Telegram (tentativa {Tentativa})", conversationId, tentativa + 1);
+                    }
+
+                    await Task.Delay(delays[tentativa]);
+                }
+
+                if (!enviado)
+                {
+                    _logger.LogError("[Conversa={Conversa}] Falha definitiva ao enviar alerta Telegram", conversationId);
+                    break;
                 }
             }
-            catch (Exception ex)
+        }
+
+        private static Guid? ExtrairIdentificadorConversa(string mensagem)
+        {
+            const string marcador = "Conversa=";
+            var idx = mensagem.LastIndexOf(marcador, StringComparison.OrdinalIgnoreCase);
+            if (idx < 0) return null;
+
+            var inicio = idx + marcador.Length;
+            if (inicio >= mensagem.Length) return null;
+
+            var trecho = mensagem.Substring(inicio).Trim();
+            var fim = trecho.IndexOfAny(new[] { '\r', '\n', ' ' });
+            if (fim >= 0)
             {
-                _logger.LogError(ex, "Erro ao enviar alerta para Telegram");
+                trecho = trecho.Substring(0, fim);
             }
+
+            return Guid.TryParse(trecho, out var guid) ? guid : (Guid?)null;
         }
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
+
+

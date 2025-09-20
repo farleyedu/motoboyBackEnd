@@ -1,19 +1,21 @@
 // ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
 using System;
+using System.Collections.Generic;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
+using APIBack.Automation.Dtos;
 using APIBack.Automation.Interfaces;
 using Microsoft.Extensions.Logging;
-using System.Collections.Generic;
-using APIBack.Automation.Dtos;
 
 namespace APIBack.Automation.Services
 {
     public class AssistantService : IAssistantService
     {
+        private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+
         private readonly IHttpClientFactory _httpFactory;
         private readonly ILogger<AssistantService> _logger;
 
@@ -23,60 +25,100 @@ namespace APIBack.Automation.Services
             _logger = logger;
         }
 
-        public async Task<string> GerarRespostaAsync(string textoUsuario, Guid idConversa, object? contexto = null)
+        public Task<AssistantDecision> GerarDecisaoAsync(string textoUsuario, Guid idConversa, object? contexto = null)
+            => GerarDecisaoInternoAsync(textoUsuario, idConversa, contexto, historico: null);
+
+        public Task<AssistantDecision> GerarDecisaoComHistoricoAsync(Guid idConversa, string textoUsuario, IEnumerable<AssistantChatTurn> historico, object? contexto = null)
+            => GerarDecisaoInternoAsync(textoUsuario, idConversa, contexto, historico);
+
+        private async Task<AssistantDecision> GerarDecisaoInternoAsync(string textoUsuario, Guid idConversa, object? contexto, IEnumerable<AssistantChatTurn>? historico)
         {
             var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY");
             var model = Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-3.5-turbo";
 
             if (string.IsNullOrWhiteSpace(apiKey))
             {
-                _logger.LogWarning("OPENAI_API_KEY nÃ£o configurada; retornando resposta stub");
-                return string.IsNullOrWhiteSpace(textoUsuario)
-                    ? "Poderia repetir?"
-                    : $"VocÃª disse: '{textoUsuario}'.";
+                _logger.LogWarning("[Conversa={Conversa}] OPENAI_API_KEY não configurada; usando decisão padrão", idConversa);
+                return new AssistantDecision(
+                    Reply: string.IsNullOrWhiteSpace(textoUsuario) ? "Poderia repetir?" : $"Você disse: '{textoUsuario}'.",
+                    HandoverAction: "none",
+                    AgentPrompt: null,
+                    ReservaConfirmada: false,
+                    Detalhes: null);
             }
 
             var client = _httpFactory.CreateClient();
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
 
-            var sys = contexto as string ?? "VocÃª Ã© um assistente Ãºtil.";
+            var systemPrompt = contexto as string ?? "Você é um assistente útil.";
+            var messages = new List<object> { new { role = "system", content = systemPrompt } };
+
+            if (historico != null)
+            {
+                foreach (var turn in historico)
+                {
+                    if (string.IsNullOrWhiteSpace(turn.Content)) continue;
+                    var role = string.Equals(turn.Role, "assistant", StringComparison.OrdinalIgnoreCase) ? "assistant" : "user";
+                    messages.Add(new { role, content = turn.Content });
+                }
+            }
+
+            messages.Add(new { role = "user", content = textoUsuario });
+
             var payload = new
             {
                 model,
-                messages = new object[]
-                {
-                    new { role = "system", content = sys },
-                    new { role = "user", content = textoUsuario }
-                }
+                messages = messages.ToArray()
             };
 
-            var json = JsonSerializer.Serialize(payload);
+            var json = JsonSerializer.Serialize(payload, JsonOptions);
             using var content = new StringContent(json, Encoding.UTF8, "application/json");
             try
             {
-                var resp = await client.PostAsync("https://api.openai.com/v1/chat/completions", content);
-                var body = await resp.Content.ReadAsStringAsync();
-                if (!resp.IsSuccessStatusCode)
+                var response = await client.PostAsync("https://api.openai.com/v1/chat/completions", content);
+                var body = await response.Content.ReadAsStringAsync();
+                if (!response.IsSuccessStatusCode)
                 {
-                    _logger.LogWarning("OpenAI falhou: {Status} {Body}", (int)resp.StatusCode, body);
-                    return "Desculpe, nÃ£o consegui formular uma resposta agora.";
+                    _logger.LogWarning("[Conversa={Conversa}] OpenAI falhou: {Status} {Body}", idConversa, (int)response.StatusCode, body);
+                    return new AssistantDecision("Desculpe, não consegui formular uma resposta agora.", "none", null, false, null);
                 }
 
                 using var doc = JsonDocument.Parse(body);
-                var msg = doc.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString();
-                return msg ?? "";
+                var message = doc.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString();
+                return InterpretarResposta(message, idConversa);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Erro ao chamar OpenAI para conversa {Conversa}", idConversa);
-                return "Desculpe, ocorreu um erro ao gerar a resposta.";
+                _logger.LogError(ex, "[Conversa={Conversa}] Erro ao chamar OpenAI", idConversa);
+                return new AssistantDecision("Desculpe, ocorreu um erro ao gerar a resposta.", "none", null, false, null);
             }
         }
 
-        public Task<string> GerarRespostaComHistoricoAsync(Guid idConversa, string textoUsuario, IEnumerable<AssistantChatTurn> historico, object? contexto = null)
+        private static AssistantDecision InterpretarResposta(string? conteudo, Guid idConversa)
         {
-            // ImplementaÃ§Ã£o simples: reutiliza o mÃ©todo existente, ignorando o histÃ³rico neste stub.
-            return GerarRespostaAsync(textoUsuario, idConversa, contexto);
+            if (string.IsNullOrWhiteSpace(conteudo))
+            {
+                return new AssistantDecision(string.Empty, "none", null, false, null);
+            }
+
+            try
+            {
+                var dto = JsonSerializer.Deserialize<AssistantDecisionDto>(conteudo, JsonOptions);
+                if (dto != null)
+                {
+                    var reply = dto.reply ?? string.Empty;
+                    var action = string.IsNullOrWhiteSpace(dto.handover) ? "none" : dto.handover!.Trim().ToLowerInvariant();
+                    var agentPrompt = string.IsNullOrWhiteSpace(dto.agent_prompt) ? null : dto.agent_prompt!.Trim();
+                    var confirmada = dto.reserva_confirmada ?? false;
+                    return new AssistantDecision(reply, action, agentPrompt, confirmada, dto.detalhes);
+                }
+            }
+            catch
+            {
+                // Conteúdo não era JSON; segue fallback textual
+            }
+
+            return new AssistantDecision(conteudo, "none", null, false, null);
         }
     }
 }

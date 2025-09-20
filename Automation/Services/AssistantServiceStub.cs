@@ -1,35 +1,26 @@
-//// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
-//using System;
-//using System.Threading.Tasks;
-//using APIBack.Automation.Dtos;
-//using APIBack.Automation.Interfaces;
-//using Microsoft.Extensions.Logging;
+// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using APIBack.Automation.Dtos;
+using APIBack.Automation.Interfaces;
 
-//namespace APIBack.Automation.Services
-//{
-//    // Stub simples de serviÃ§o de IA para respostas automÃ¡ticas
-//    public class AssistantServiceStub : IAssistantService
-//    {
-//        private readonly ILogger<AssistantServiceStub> _logger;
-//        public AssistantServiceStub(ILogger<AssistantServiceStub> logger)
-//        {
-//            _logger = logger;
-//        }
+namespace APIBack.Automation.Services
+{
+    // Stub usado em cenários de teste/desenvolvimento sem chamada real à IA
+    public class AssistantServiceStub : IAssistantService
+    {
+        public Task<AssistantDecision> GerarDecisaoAsync(string textoUsuario, Guid idConversa, object? contexto = null)
+        {
+            var reply = string.IsNullOrWhiteSpace(textoUsuario)
+                ? "Poderia repetir?"
+                : $"[STUB] Você disse: '{textoUsuario}'.";
 
-//        public Task<string> GerarRespostaAsync(string textoUsuario, Guid idConversa, object? contexto = null)
-//        {
-//            _logger.LogInformation("[Automation] IA stub acionada para conversa {Id}", idConversa);
-//            var resposta = string.IsNullOrWhiteSpace(textoUsuario)
-//                ? "Poderia repetir? NÃ£o consegui ler sua mensagem."
-//                : $"VocÃª disse: '{textoUsuario}'. Como posso ajudar?";
-//            return Task.FromResult(resposta);
-//        }
+            return Task.FromResult(new AssistantDecision(reply, "none", null, false, null));
+        }
 
-//        public Task<string> GerarRespostaComHistoricoAsync(Guid idConversa, string textoUsuario, IEnumerable<AssistantChatTurn> historico, object? contexto = null)
-//        {
-//            throw new NotImplementedException();
-//        }
-//    }
-//}
-//// ================= ZIPPYGO AUTOMATION SECTION (END) ===================
-
+        public Task<AssistantDecision> GerarDecisaoComHistoricoAsync(Guid idConversa, string textoUsuario, IEnumerable<AssistantChatTurn> historico, object? contexto = null)
+            => GerarDecisaoAsync(textoUsuario, idConversa, contexto);
+    }
+}
+// ================= ZIPPYGO AUTOMATION SECTION (END) ===================

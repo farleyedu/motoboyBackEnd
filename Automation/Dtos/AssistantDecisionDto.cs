@@ -1,13 +1,14 @@
 // ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
 namespace APIBack.Automation.Dtos
 {
-    // Estrutura de decisão retornada pela IA para handover
+    // Estrutura utilizada para desserializar respostas da IA quando em JSON
     public class AssistantDecisionDto
     {
         public string? reply { get; set; }
         public string? handover { get; set; } // none | ask | confirm
         public string? agent_prompt { get; set; }
+        public bool? reserva_confirmada { get; set; }
+        public HandoverContextDto? detalhes { get; set; }
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
-
