@@ -225,10 +225,7 @@ namespace APIBack.Automation.Controllers
                                                             if (handoverAcao == "confirm")
                                                             {
                                                                 _logger.LogInformation("🚨 Entrou no fluxo CONFIRM (handover) para conversa {ConversaId}", criada.IdConversa);
-
-                                                                //
-                                                                //
-                                                                //
+                                                                
                                                                 // Aciona handoff e envia mensagem fixa única ao usuário
                                                                 var agenteDesignadoId = 4;
                                                                 //nessa seção eu vou definir qual agente chamar de com o contexto da conversa, eu quero que IA decida qual o 
