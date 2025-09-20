@@ -6,21 +6,25 @@ using APIBack.Automation.Models;
 using Dapper;
 using Npgsql;
 using System.Collections.Generic;
+using Microsoft.Extensions.Logging;
+using APIBack.Automation.Services;
 
 namespace APIBack.Automation.Infra
 {
     public class SqlMessageRepository : IMessageRepository
     {
         private readonly string _connectionString;
+        private readonly ILogger<SqlMessageRepository> _logger;
         private static bool _indexesEnsured;
 
-        public SqlMessageRepository(Microsoft.Extensions.Configuration.IConfiguration config)
+        public SqlMessageRepository(Microsoft.Extensions.Configuration.IConfiguration config, ILogger<SqlMessageRepository> logger)
         {
             _connectionString = config.GetConnectionString("DefaultConnection")
                                  ?? config["ConnectionStrings:DefaultConnection"]
-                                 ?? throw new InvalidOperationException("Connection string 'DefaultConnection' nÃ£o encontrada.");
+                                 ?? throw new InvalidOperationException("Connection string 'DefaultConnection' nuo encontrada.");
+            _logger = logger;
 
-            // Garante Ã­ndice Ãºnico de id_provedor
+            // Garante índice único de id_provedor
             if (!_indexesEnsured)
             {
                 try
@@ -29,7 +33,9 @@ namespace APIBack.Automation.Infra
                     cx.Execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_mensagens_id_provedor ON mensagens (id_provedor);");
                     _indexesEnsured = true;
                 }
-                catch { }
+                catch
+                {
+                }
             }
         }
 
@@ -56,14 +62,21 @@ namespace APIBack.Automation.Infra
 
             var idMsg = mensagem.Id != Guid.Empty ? mensagem.Id : Guid.NewGuid();
             var direcao = mensagem.Direcao == DirecaoMensagem.Entrada ? "entrada" : "saida";
-            var tipo = string.IsNullOrWhiteSpace(mensagem.Tipo) ? "texto" : mensagem.Tipo!;
+            var tipoOrigemWa = string.IsNullOrWhiteSpace(mensagem.TipoOriginal) ? mensagem.Tipo : mensagem.TipoOriginal;
+            var criadaPor = string.IsNullOrWhiteSpace(mensagem.CriadaPor)
+                            ? (mensagem.Direcao == DirecaoMensagem.Entrada ? "bot" : "agente:1")
+                            : mensagem.CriadaPor!;
+            var tipoMapeado = MessageTypeMapper.MapType(tipoOrigemWa, mensagem.Direcao, criadaPor);
+            var tipo = string.IsNullOrWhiteSpace(tipoMapeado) ? "texto" : tipoMapeado;
+            mensagem.Tipo = tipo;
+            mensagem.TipoOriginal ??= tipoOrigemWa;
+            mensagem.CriadaPor = criadaPor;
+            var tipoOriginalLog = string.IsNullOrWhiteSpace(tipoOrigemWa) ? "(indefinido)" : tipoOrigemWa.Trim();
+            _logger.LogInformation("[Conversa={Conversa}] [Mensagem={Mensagem}] Tipo WA={TipoWa} -> Tipo Banco={TipoBanco}", mensagem.IdConversa, idMsg, tipoOriginalLog, tipo);
             var status = string.IsNullOrWhiteSpace(mensagem.Status)
                           ? (mensagem.Direcao == DirecaoMensagem.Entrada ? "entregue" : "fila")
                           : mensagem.Status!;
             var idProv = !string.IsNullOrWhiteSpace(mensagem.IdProvedor) ? mensagem.IdProvedor : mensagem.IdMensagemWa;
-            var criadaPor = string.IsNullOrWhiteSpace(mensagem.CriadaPor)
-                            ? (mensagem.Direcao == DirecaoMensagem.Entrada ? "bot" : "agente:1")
-                            : mensagem.CriadaPor!;
 
             // timestamps derivadas
             DateTime? dataEnvio = null, dataEntrega = null, dataLeitura = null;
@@ -217,15 +230,13 @@ ON CONFLICT DO NOTHING;";
             await tx.CommitAsync();
         }
 
-        public async Task<IReadOnlyList<Message>> GetByConversationAsync(Guid idConversa, int limit = 200, bool onlyWhenOpen = true)
+                public async Task<IReadOnlyList<Message>> GetByConversationAsync(Guid idConversa, int limit = 200)
         {
             const string sql = @"
 SELECT m.id, m.id_conversa, m.direcao, m.tipo, m.status, m.id_provedor, m.codigo_erro, m.mensagem_erro, m.tentativas, m.criada_por,
        m.data_envio, m.data_entrega, m.data_leitura, m.data_criacao, m.conteudo
   FROM mensagens m
-  JOIN conversas c ON c.id = m.id_conversa
  WHERE m.id_conversa = @IdConversa
-   AND (@OnlyOpen = FALSE OR c.estado = @Estado::estado_conversa_enum)
  ORDER BY m.data_criacao ASC
  LIMIT @Limit;";
 
@@ -233,12 +244,14 @@ SELECT m.id, m.id_conversa, m.direcao, m.tipo, m.status, m.id_provedor, m.codigo
             var list = await cx.QueryAsync<Message>(sql, new
             {
                 IdConversa = idConversa,
-                Limit = limit,
-                OnlyOpen = onlyWhenOpen,
-                Estado = "aberta"
+                Limit = limit
             });
             return list.AsList();
         }
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
+
+
+
+

@@ -6,7 +6,9 @@ using APIBack.Automation.Models;
 using Dapper;
 using APIBack.Automation.Helpers;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Npgsql;
+using APIBack.Automation.Services;
 
 namespace APIBack.Automation.Infra
 {
@@ -14,16 +16,19 @@ namespace APIBack.Automation.Infra
     {
         private readonly string _connectionString;
         private readonly Microsoft.Extensions.Configuration.IConfiguration _configuration;
+        private readonly ILogger<SqlConversationRepository> _logger;
         private readonly IWabaPhoneRepository? _wabaPhoneRepository;
         private static bool _indexesEnsured;
 
-        public SqlConversationRepository(IConfiguration config)
+        public SqlConversationRepository(IConfiguration config, ILogger<SqlConversationRepository> logger)
         {
             _connectionString = config.GetConnectionString("DefaultConnection")
                                  ?? config["ConnectionStrings:DefaultConnection"]
-                                 ?? throw new InvalidOperationException("Connection string 'DefaultConnection' nÃ£o encontrada.");
+                                 ?? throw new InvalidOperationException("Connection string 'DefaultConnection' nuo encontrada.");
+            _configuration = config;
+            _logger = logger;
 
-            // Garante Ã­ndice Ãºnico de idempotÃªncia (executa uma vez por processo)
+            // Garante índice único de idempotência (executa uma vez por processo)
             if (!_indexesEnsured)
             {
                 try
@@ -34,7 +39,7 @@ namespace APIBack.Automation.Infra
                 }
                 catch
                 {
-                    // NÃ£o interrompe a aplicaÃ§Ã£o em caso de erro ao criar Ã­ndice.
+                    // Não interrompe a aplicação em caso de erro ao criar índice.
                 }
             }
         }
@@ -239,14 +244,21 @@ ON CONFLICT (id) DO UPDATE SET
 
             var idMsg = mensagem.Id != Guid.Empty ? mensagem.Id : Guid.NewGuid();
             var direcao = mensagem.Direcao == DirecaoMensagem.Entrada ? "entrada" : "saida";
-            var tipo = string.IsNullOrWhiteSpace(mensagem.Tipo) ? "texto" : mensagem.Tipo!;
+            var tipoOrigemWa = string.IsNullOrWhiteSpace(mensagem.TipoOriginal) ? mensagem.Tipo : mensagem.TipoOriginal;
+            var criadaPor = string.IsNullOrWhiteSpace(mensagem.CriadaPor)
+                            ? (mensagem.Direcao == DirecaoMensagem.Entrada ? "bot" : "agente:1")
+                            : mensagem.CriadaPor!;
+            var tipoMapeado = MessageTypeMapper.MapType(tipoOrigemWa, mensagem.Direcao, criadaPor);
+            var tipo = string.IsNullOrWhiteSpace(tipoMapeado) ? "texto" : tipoMapeado;
+            mensagem.Tipo = tipo;
+            mensagem.TipoOriginal ??= tipoOrigemWa;
+            mensagem.CriadaPor = criadaPor;
+            var tipoOriginalLog = string.IsNullOrWhiteSpace(tipoOrigemWa) ? "(indefinido)" : tipoOrigemWa.Trim();
+            _logger.LogInformation("[Conversa={Conversa}] [Mensagem={Mensagem}] Tipo WA={TipoWa} -> Tipo Banco={TipoBanco}", mensagem.IdConversa, idMsg, tipoOriginalLog, tipo);
             var status = string.IsNullOrWhiteSpace(mensagem.Status)
                           ? (mensagem.Direcao == DirecaoMensagem.Entrada ? "entregue" : "fila")
                           : mensagem.Status!;
             var idProv = !string.IsNullOrWhiteSpace(mensagem.IdProvedor) ? mensagem.IdProvedor : mensagem.IdMensagemWa;
-            var criadaPor = string.IsNullOrWhiteSpace(mensagem.CriadaPor)
-                            ? (mensagem.Direcao == DirecaoMensagem.Entrada ? "bot" : "agente:1")
-                            : mensagem.CriadaPor!;
 
             // ===== timestamps por regra =====
             DateTime? dataEnvio = null, dataEntrega = null, dataLeitura = null;
@@ -460,9 +472,6 @@ UPDATE conversas
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) =================
-
-
-
 
 
 

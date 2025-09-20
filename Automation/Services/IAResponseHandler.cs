@@ -16,6 +16,7 @@ namespace APIBack.Automation.Services
         private readonly IMessageService _mensagemService;
         private readonly IQueueBus _fila;
         private readonly WhatsAppSender _whatsAppSender;
+        private readonly AgenteService _agenteService;
         private readonly ILogger<IAResponseHandler> _logger;
 
         public IAResponseHandler(
@@ -23,12 +24,14 @@ namespace APIBack.Automation.Services
             IMessageService mensagemService,
             IQueueBus fila,
             WhatsAppSender whatsAppSender,
+            AgenteService agenteService,
             ILogger<IAResponseHandler> logger)
         {
             _handoverService = handoverService;
             _mensagemService = mensagemService;
             _fila = fila;
             _whatsAppSender = whatsAppSender;
+            _agenteService = agenteService;
             _logger = logger;
         }
 
@@ -73,8 +76,22 @@ namespace APIBack.Automation.Services
 
         private async Task ExecutarConfirmAsync(Guid idConversa, AssistantDecision decision, HandoverContextDto detalhes)
         {
-            var agente = new HandoverAgentDto { Id = 4, Nome = "Agente" };
-            await _handoverService.ProcessarHandoverAsync(idConversa, agente, decision.ReservaConfirmada || string.Equals(decision.HandoverAction, "confirm", StringComparison.OrdinalIgnoreCase), detalhes, telegramChatIdOverride: null);
+            var agente = await _agenteService.ObterAgenteSuporteAsync();
+            if (agente == null)
+            {
+                _logger.LogWarning("[Conversa={Conversa}] Nenhum agente de suporte configurado; utilizando fallback padrão", idConversa);
+                agente = new HandoverAgentDto
+                {
+                    Id = 0,
+                    Nome = "Agente de suporte"
+                };
+            }
+            else if (string.IsNullOrWhiteSpace(agente.Nome))
+            {
+                agente.Nome = "Agente de suporte";
+            }
+
+            await _handoverService.ProcessarHandoverAsync(idConversa, agente, decision.ReservaConfirmada || string.Equals(decision.HandoverAction, "confirm", StringComparison.OrdinalIgnoreCase), detalhes, telegramChatIdOverride: agente.TelegramChatId);
         }
 
         private async Task EnviarMensagemAoClienteAsync(Guid idConversa, string? phoneNumberId, string? numeroDestino, string? texto)
@@ -86,7 +103,7 @@ namespace APIBack.Automation.Services
                 return;
             }
 
-            var mensagem = MessageFactory.CreateMessage(idConversa, texto!, DirecaoMensagem.Saida, "ia");
+            var mensagem = MessageFactory.CreateMessage(idConversa, texto!, DirecaoMensagem.Saida, "ia", tipoOrigem: "text");
             await _mensagemService.AdicionarMensagemAsync(mensagem, phoneNumberId, numeroDestino);
             await _fila.PublicarSaidaAsync(mensagem);
 

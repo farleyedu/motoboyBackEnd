@@ -97,32 +97,35 @@ namespace APIBack.Automation.Services
             }
         }
 
-        private static AssistantDecision InterpretarResposta(string? conteudo, Guid idConversa)
+        private AssistantDecision InterpretarResposta(string? conteudo, Guid idConversa)
         {
-            if (string.IsNullOrWhiteSpace(conteudo))
+            if (AssistantDecisionParser.TryParse(conteudo, JsonOptions, out var decision, out var rawJson))
             {
-                return new AssistantDecision(string.Empty, "none", null, false, null);
+                return decision;
             }
 
-            try
+            if (!string.IsNullOrWhiteSpace(rawJson))
             {
-                var dto = JsonSerializer.Deserialize<AssistantDecisionDto>(conteudo, JsonOptions);
-                if (dto != null)
-                {
-                    var reply = dto.reply ?? string.Empty;
-                    var action = string.IsNullOrWhiteSpace(dto.handover) ? "none" : dto.handover!.Trim().ToLowerInvariant();
-                    var agentPrompt = string.IsNullOrWhiteSpace(dto.agent_prompt) ? null : dto.agent_prompt!.Trim();
-                    var confirmada = dto.reserva_confirmada ?? false;
-                    return new AssistantDecision(reply, action, agentPrompt, confirmada, dto.detalhes);
-                }
+                _logger.LogWarning("[Conversa={Conversa}] JSON retornado pela IA não pôde ser interpretado: {Json}", idConversa, rawJson);
             }
-            catch
+            else if (!string.IsNullOrWhiteSpace(conteudo))
             {
-                // Conteúdo não era JSON estruturado; segue fallback textual
+                _logger.LogWarning("[Conversa={Conversa}] Resposta da IA fora do formato JSON esperado. Prévia: {Preview}", idConversa, TruncarConteudo(conteudo));
             }
 
-            return new AssistantDecision(conteudo, "none", null, false, null);
+            return new AssistantDecision(conteudo ?? string.Empty, "none", null, false, null);
+        }
+
+        private static string TruncarConteudo(string? texto, int maxLength = 300)
+        {
+            if (string.IsNullOrEmpty(texto))
+            {
+                return string.Empty;
+            }
+
+            return texto!.Length <= maxLength ? texto : texto.Substring(0, maxLength) + "...";
         }
     }
 }
+
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
