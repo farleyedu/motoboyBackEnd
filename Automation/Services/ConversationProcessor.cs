@@ -17,7 +17,9 @@ namespace APIBack.Automation.Services
         private readonly IQueueBus _fila;
         private readonly IWabaPhoneRepository _wabaRepo;
         private readonly IIARegraRepository _regrasRepo;
+        private readonly IEstabelecimentoRepository _estabelecimentoRepo;
         private readonly IMessageRepository _mensagemRepository;
+        private readonly PromptAssembler _promptAssembler;
         private readonly ILogger<ConversationProcessor> _logger;
 
         public ConversationProcessor(
@@ -25,14 +27,18 @@ namespace APIBack.Automation.Services
             IQueueBus fila,
             IWabaPhoneRepository wabaRepo,
             IIARegraRepository regrasRepo,
+            IEstabelecimentoRepository estabelecimentoRepo,
             IMessageRepository mensagemRepository,
+            PromptAssembler promptAssembler,
             ILogger<ConversationProcessor> logger)
         {
             _conversationService = conversationService;
             _fila = fila;
             _wabaRepo = wabaRepo;
             _regrasRepo = regrasRepo;
+            _estabelecimentoRepo = estabelecimentoRepo;
             _mensagemRepository = mensagemRepository;
+            _promptAssembler = promptAssembler;
             _logger = logger;
         }
 
@@ -40,7 +46,7 @@ namespace APIBack.Automation.Services
         {
             if (MensagemDoSistema(input))
             {
-                _logger.LogInformation("[Webhook] Ignorando mensagem automática do sistema (from={From})", input.Mensagem.De);
+                _logger.LogInformation("[Webhook] Ignorando mensagem automatica do sistema (from={From})", input.Mensagem.De);
                 return new ConversationProcessingResult(true, null, null, Array.Empty<AssistantChatTurn>(), null, new HandoverContextDto(), input.Texto, input.PhoneNumberDisplay, input.PhoneNumberId);
             }
 
@@ -48,13 +54,13 @@ namespace APIBack.Automation.Services
                 idWa: input.Mensagem.De!,
                 idMensagemWa: input.Mensagem.Id!,
                 conteudo: input.Texto,
-                phoneNumberId: input.PhoneNumberDisplay ?? string.Empty,
+                phonedisplay: input.PhoneNumberDisplay ?? string.Empty,
                 dataMensagemUtc: input.DataMensagemUtc,
                 tipoOrigem: input.Mensagem.Tipo);
 
             if (criada == null)
             {
-                _logger.LogInformation("[Webhook] Entrada ignorada após verificação de duplicidade. From={From}", input.Mensagem.De);
+                _logger.LogInformation("[Webhook] Entrada ignorada apos verificacao de duplicidade. From={From}", input.Mensagem.De);
                 return new ConversationProcessingResult(true, null, null, Array.Empty<AssistantChatTurn>(), null, new HandoverContextDto(), input.Texto, input.PhoneNumberDisplay, input.PhoneNumberId);
             }
 
@@ -77,7 +83,7 @@ namespace APIBack.Automation.Services
                 NumeroWhatsappId: input.PhoneNumberId);
         }
 
-                        private bool MensagemDoSistema(ConversationProcessingInput input)
+        private bool MensagemDoSistema(ConversationProcessingInput input)
         {
             if (input.Mensagem == null) return true;
             if (string.IsNullOrWhiteSpace(input.Mensagem.De)) return true;
@@ -114,34 +120,19 @@ namespace APIBack.Automation.Services
             return builder.ToString();
         }
 
-        private async Task<string?> ObterContextoAsync(Guid idConversa, string? phoneNumberId)
+        private async Task<string?> ObterContextoAsync(Guid idConversa, string? phoneNumberDisplay)
         {
             try
             {
-                Guid? idEstab = null;
-                if (!string.IsNullOrWhiteSpace(phoneNumberId))
-                {
-                    idEstab = await _wabaRepo.ObterIdEstabelecimentoPorPhoneNumberIdAsync(phoneNumberId);
-                }
-
-                if (!idEstab.HasValue || idEstab == Guid.Empty)
+                var idEstabelecimento = await ResolverEstabelecimentoAsync(phoneNumberDisplay);
+                if (!idEstabelecimento.HasValue)
                 {
                     return null;
                 }
 
-                var regras = await _regrasRepo.ListaregrasAsync(idEstab.Value);
-                var ativas = regras?
-                    .Where(r => r.Ativo && !string.IsNullOrWhiteSpace(r.Contexto))
-                    .OrderByDescending(r => r.DataAtualizacao)
-                    .ThenByDescending(r => r.DataCriacao)
-                    .ToList();
-
-                if (ativas != null && ativas.Count > 0)
-                {
-                    return string.Join("\n\n", ativas.Select(r => r.Contexto));
-                }
-
-                return await _regrasRepo.ObterContextoAtivoAsync(idEstab.Value);
+                var modulosAtivos = await DeterminarModulosAtivosAsync(idEstabelecimento.Value);
+                var prompts = await _regrasRepo.ObterPromptsCompostosAsync(idEstabelecimento.Value, modulosAtivos);
+                return _promptAssembler.Assemble(prompts);
             }
             catch (Exception ex)
             {
@@ -149,6 +140,56 @@ namespace APIBack.Automation.Services
                 return null;
             }
         }
+
+        private async Task<IReadOnlyCollection<string>> DeterminarModulosAtivosAsync(Guid idEstabelecimento)
+        {
+            try
+            {
+                // Busca os mÃ³dulos ativos diretamente da tabela estabelecimentos
+                var modulosAtivos = await _estabelecimentoRepo.ObterModulosAtivosAsync(idEstabelecimento);
+                
+                if (modulosAtivos.Count == 0)
+                {
+                    _logger.LogWarning("Nenhum mÃ³dulo ativo encontrado para estabelecimento {Estabelecimento}", idEstabelecimento);
+                    return Array.Empty<string>();
+                }
+
+                _logger.LogDebug("MÃ³dulos ativos encontrados para estabelecimento {Estabelecimento}: {Modulos}", 
+                    idEstabelecimento, string.Join(", ", modulosAtivos));
+                
+                return modulosAtivos;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Falha ao determinar modulos ativos para estabelecimento {Estabelecimento}", idEstabelecimento);
+                return Array.Empty<string>();
+            }
+        }
+
+        private async Task<Guid?> ResolverEstabelecimentoAsync(string? phoneNumberDisplay)
+        {
+            if (string.IsNullOrWhiteSpace(phoneNumberDisplay))
+            {
+                return null;
+            }
+
+            var sanitized = SanitizarNumero(phoneNumberDisplay);
+            Guid? idEstabelecimento = null;
+
+            if (!string.IsNullOrWhiteSpace(sanitized))
+            {
+                idEstabelecimento = await _wabaRepo.ObterIdEstabelecimentoPorPhoneNumberIdAsync(sanitized);
+            }
+
+            if (!idEstabelecimento.HasValue || idEstabelecimento == Guid.Empty)
+            {
+                idEstabelecimento = await _wabaRepo.ObterIdEstabelecimentoPorPhoneNumberIdAsync(phoneNumberDisplay);
+            }
+
+            return (idEstabelecimento.HasValue && idEstabelecimento != Guid.Empty) ? idEstabelecimento : null;
+        }
+
+
 
         private async Task<IReadOnlyList<AssistantChatTurn>> ObterHistoricoAsync(Guid idConversa)
         {
@@ -167,7 +208,7 @@ namespace APIBack.Automation.Services
             }
             catch (Exception ex)
             {
-                _logger.LogWarning(ex, "Falha ao carregar histórico para conversa {Conversa}", idConversa);
+                _logger.LogWarning(ex, "Falha ao carregar historico para conversa {Conversa}", idConversa);
                 return Array.Empty<AssistantChatTurn>();
             }
         }

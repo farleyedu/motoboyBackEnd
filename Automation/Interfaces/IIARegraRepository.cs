@@ -10,9 +10,9 @@ namespace APIBack.Automation.Interfaces
     {
         Task<string?> ObterContextoAtivoAsync(Guid idEstabelecimento);
         Task<IEnumerable<IARegra>> ListaregrasAsync(Guid idEstabelecimento);
-        Task<Guid> CriarAsync(Guid idEstabelecimento, string contexto);
+        Task<(IReadOnlyList<string> Gerais, IReadOnlyList<string> Modulos, IReadOnlyList<string> Estabelecimento)> ObterPromptsCompostosAsync(Guid idEstabelecimento, IReadOnlyCollection<string>? modulosAtivos);
+        Task<int> CriarAsync(Guid idEstabelecimento, string contexto);
         Task<bool> ExcluirAsync(Guid id);
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
-

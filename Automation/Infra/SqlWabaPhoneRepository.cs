@@ -1,5 +1,6 @@
 // ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
 using System;
+using System.Linq;
 using System.Threading.Tasks;
 using APIBack.Automation.Interfaces;
 using APIBack.Automation.Models;
@@ -10,15 +11,11 @@ using Npgsql;
 
 namespace APIBack.Automation.Infra
 {
-    /// <summary>
-    /// Implementacao SQL do repositorio para mapeamento de WhatsApp Business API phone numbers
-    /// </summary>
     public class SqlWabaPhoneRepository : IWabaPhoneRepository
     {
         private readonly string _connectionString;
         private readonly ILogger<SqlWabaPhoneRepository>? _logger;
 
-        // Mantem o construtor existente para compatibilidade com testes
         public SqlWabaPhoneRepository(IConfiguration configuration)
         {
             _connectionString = configuration.GetConnectionString("DefaultConnection")
@@ -26,7 +23,6 @@ namespace APIBack.Automation.Infra
                 ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
         }
 
-        // Construtor opcional com ILogger para logs estruturados
         public SqlWabaPhoneRepository(IConfiguration configuration, ILogger<SqlWabaPhoneRepository> logger) : this(configuration)
         {
             _logger = logger;
@@ -37,16 +33,22 @@ namespace APIBack.Automation.Infra
             if (string.IsNullOrWhiteSpace(phoneNumberId))
                 return null;
 
+            var digitsOnly = new string(phoneNumberId.Where(char.IsDigit).ToArray());
+
             const string sql = @"SELECT id_estabelecimento
                                   FROM waba_phone
-                                  WHERE phone_number_id = @phoneNumberId
-                                    AND ativo = TRUE
+                                  WHERE ativo = TRUE
+                                    AND (
+                                         phone_number_id = @Raw
+                                         OR regexp_replace(phone_number_id, '[^0-9]', '', 'g') = @Digits
+                                        )
+                                  ORDER BY data_atualizacao DESC
                                   LIMIT 1;";
 
             try
             {
                 await using var connection = new NpgsqlConnection(_connectionString);
-                var result = await connection.ExecuteScalarAsync<Guid?>(sql, new { phoneNumberId });
+                var result = await connection.ExecuteScalarAsync<Guid?>(sql, new { Raw = phoneNumberId, Digits = digitsOnly });
                 return result;
             }
             catch (Exception ex)
@@ -91,12 +93,11 @@ namespace APIBack.Automation.Infra
             if (wabaPhone == null || string.IsNullOrWhiteSpace(wabaPhone.PhoneNumberId))
                 return false;
 
-            var id = wabaPhone.Id == Guid.Empty ? Guid.NewGuid() : wabaPhone.Id;
             var criado = wabaPhone.DataCriacao != default ? DateTime.SpecifyKind(wabaPhone.DataCriacao, DateTimeKind.Utc) : DateTime.UtcNow;
             var atualizado = DateTime.UtcNow;
 
-            const string sql = @"INSERT INTO waba_phone (id, phone_number_id, id_estabelecimento, ativo, descricao, data_criacao, data_atualizacao)
-                                 VALUES (@Id, @PhoneNumberId, @IdEstabelecimento, @Ativo, @Descricao, @DataCriacao, @DataAtualizacao)
+            const string sql = @"INSERT INTO waba_phone (phone_number_id, id_estabelecimento, ativo, descricao, data_criacao, data_atualizacao)
+                                 VALUES (@PhoneNumberId, @IdEstabelecimento, @Ativo, @Descricao, @DataCriacao, @DataAtualizacao)
                                  ON CONFLICT (phone_number_id)
                                  DO UPDATE SET
                                    id_estabelecimento = EXCLUDED.id_estabelecimento,
@@ -109,7 +110,6 @@ namespace APIBack.Automation.Infra
                 await using var connection = new NpgsqlConnection(_connectionString);
                 var rows = await connection.ExecuteAsync(sql, new
                 {
-                    Id = id,
                     PhoneNumberId = wabaPhone.PhoneNumberId,
                     IdEstabelecimento = wabaPhone.IdEstabelecimento,
                     Ativo = wabaPhone.Ativo,
@@ -131,16 +131,21 @@ namespace APIBack.Automation.Infra
             if (string.IsNullOrWhiteSpace(phoneNumberId))
                 return false;
 
+            var digitsOnly = new string(phoneNumberId.Where(char.IsDigit).ToArray());
+
             const string sql = @"SELECT 1
                                   FROM waba_phone
-                                  WHERE phone_number_id = @phoneNumberId
-                                    AND ativo = TRUE
+                                  WHERE ativo = TRUE
+                                    AND (
+                                         phone_number_id = @Raw
+                                         OR regexp_replace(phone_number_id, '[^0-9]', '', 'g') = @Digits
+                                        )
                                   LIMIT 1;";
 
             try
             {
                 await using var connection = new NpgsqlConnection(_connectionString);
-                var existe = await connection.ExecuteScalarAsync<int?>(sql, new { phoneNumberId });
+                var existe = await connection.ExecuteScalarAsync<int?>(sql, new { Raw = phoneNumberId, Digits = digitsOnly });
                 return existe.HasValue;
             }
             catch (Exception ex)
@@ -152,4 +157,3 @@ namespace APIBack.Automation.Infra
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
-

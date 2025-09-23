@@ -2,7 +2,6 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
-using APIBack.Automation.Interfaces;
 using APIBack.Automation.Infra;
 using APIBack.Automation.Models;
 using Microsoft.Extensions.Configuration;
@@ -18,7 +17,7 @@ namespace APIBack.Tests.Unit
         public WabaPhoneRepositoryTests()
         {
             _connectionString = "Host=localhost;Database=test;Username=test;Password=test";
-            
+
             var configurationBuilder = new ConfigurationBuilder();
             configurationBuilder.AddInMemoryCollection(new Dictionary<string, string?>
             {
@@ -30,10 +29,7 @@ namespace APIBack.Tests.Unit
         [Fact]
         public void Constructor_ShouldInitializeWithConnectionString()
         {
-            // Arrange & Act
             var repository = new SqlWabaPhoneRepository(_configuration);
-
-            // Assert
             Assert.NotNull(repository);
         }
 
@@ -41,16 +37,10 @@ namespace APIBack.Tests.Unit
         [InlineData(null)]
         [InlineData("")]
         [InlineData("   ")]
-        public async Task ObterIdEstabelecimentoPorPhoneNumberIdAsync_WithInvalidPhoneNumberId_ShouldReturnNull(
-            string phoneNumberId)
+        public async Task ObterIdEstabelecimentoPorPhoneNumberIdAsync_WithInvalidPhoneNumberId_ShouldReturnNull(string phoneNumberId)
         {
-            // Arrange
             var repository = new SqlWabaPhoneRepository(_configuration);
-
-            // Act
             var result = await repository.ObterIdEstabelecimentoPorPhoneNumberIdAsync(phoneNumberId);
-
-            // Assert
             Assert.Null(result);
         }
 
@@ -58,48 +48,33 @@ namespace APIBack.Tests.Unit
         [InlineData(null)]
         [InlineData("")]
         [InlineData("   ")]
-        public async Task ObterPorPhoneNumberIdAsync_WithInvalidPhoneNumberId_ShouldReturnNull(
-            string phoneNumberId)
+        public async Task ObterPorPhoneNumberIdAsync_WithInvalidPhoneNumberId_ShouldReturnNull(string phoneNumberId)
         {
-            // Arrange
             var repository = new SqlWabaPhoneRepository(_configuration);
-
-            // Act
             var result = await repository.ObterPorPhoneNumberIdAsync(phoneNumberId);
-
-            // Assert
             Assert.Null(result);
         }
 
         [Fact]
         public async Task InserirOuAtualizarAsync_WithNullWabaPhone_ShouldReturnFalse()
         {
-            // Arrange
             var repository = new SqlWabaPhoneRepository(_configuration);
-
-            // Act
-            var result = await repository.InserirOuAtualizarAsync(null);
-
-            // Assert
+            var result = await repository.InserirOuAtualizarAsync(null!);
             Assert.False(result);
         }
 
         [Fact]
         public async Task InserirOuAtualizarAsync_WithEmptyPhoneNumberId_ShouldReturnFalse()
         {
-            // Arrange
             var repository = new SqlWabaPhoneRepository(_configuration);
             var wabaPhone = new WabaPhone
             {
-                PhoneNumberId = "",
+                PhoneNumberId = string.Empty,
                 IdEstabelecimento = Guid.NewGuid(),
                 Ativo = true
             };
 
-            // Act
             var result = await repository.InserirOuAtualizarAsync(wabaPhone);
-
-            // Assert
             Assert.False(result);
         }
 
@@ -107,23 +82,16 @@ namespace APIBack.Tests.Unit
         [InlineData(null)]
         [InlineData("")]
         [InlineData("   ")]
-        public async Task ExisteAtivoAsync_WithInvalidPhoneNumberId_ShouldReturnFalse(
-            string phoneNumberId)
+        public async Task ExisteAtivoAsync_WithInvalidPhoneNumberId_ShouldReturnFalse(string phoneNumberId)
         {
-            // Arrange
             var repository = new SqlWabaPhoneRepository(_configuration);
-
-            // Act
             var result = await repository.ExisteAtivoAsync(phoneNumberId);
-
-            // Assert
             Assert.False(result);
         }
 
         [Fact]
         public void WabaPhone_ShouldHaveCorrectProperties()
         {
-            // Arrange
             var id = Guid.NewGuid();
             var phoneNumberId = "123456789";
             var idEstabelecimento = Guid.NewGuid();
@@ -131,7 +99,6 @@ namespace APIBack.Tests.Unit
             var dataCriacao = DateTime.UtcNow;
             var dataAtualizacao = DateTime.UtcNow;
 
-            // Act
             var wabaPhone = new WabaPhone
             {
                 Id = id,
@@ -143,7 +110,6 @@ namespace APIBack.Tests.Unit
                 DataAtualizacao = dataAtualizacao
             };
 
-            // Assert
             Assert.Equal(id, wabaPhone.Id);
             Assert.Equal(phoneNumberId, wabaPhone.PhoneNumberId);
             Assert.Equal(idEstabelecimento, wabaPhone.IdEstabelecimento);
@@ -156,14 +122,12 @@ namespace APIBack.Tests.Unit
         [Fact]
         public void WabaPhone_DefaultValues_ShouldBeCorrect()
         {
-            // Act
             var wabaPhone = new WabaPhone();
 
-            // Assert
             Assert.Equal(Guid.Empty, wabaPhone.Id);
-            Assert.Equal(string.Empty, wabaPhone.PhoneNumberId); // Default is string.Empty, not null
+            Assert.Equal(string.Empty, wabaPhone.PhoneNumberId);
             Assert.Equal(Guid.Empty, wabaPhone.IdEstabelecimento);
-            Assert.True(wabaPhone.Ativo); // Default is true according to model
+            Assert.True(wabaPhone.Ativo);
             Assert.Null(wabaPhone.Descricao);
         }
     }

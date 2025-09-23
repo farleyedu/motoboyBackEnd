@@ -45,7 +45,7 @@ namespace APIBack.DTOs
         [JsonPropertyName("pedidoIdIfood")]
         public string PedidoIdIfood { get; set; }
 
-        public string DisplayId { get; set; }
+        public string DisplayId { get; set; } = "";
         public string? Localizador { get; set; }
 
         public DateTime? CriadoEm { get; set; }
