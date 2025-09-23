@@ -1,16 +1,27 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.Json;
 using APIBack.Automation.Dtos;
+using Microsoft.Extensions.Logging;
 
 namespace APIBack.Automation.Services
 {
     internal static class AssistantDecisionParser
     {
-        public static bool TryParse(string? rawContent, JsonSerializerOptions options, out AssistantDecision decision, out string? extractedJson)
+        public static bool TryParse(string? rawContent, JsonSerializerOptions options, out AssistantDecision decision, out string? extractedJson, ILogger? logger = null, Guid? idConversa = null)
         {
             decision = default!;
+            
+            // LOG 1: Conteúdo bruto da OpenAI
+            logger?.LogInformation("[Conversa={Conversa}] [DEBUG] Conteúdo bruto da OpenAI: {RawContent}", 
+                idConversa, rawContent ?? "NULL");
+            
             extractedJson = ExtractJsonPayload(rawContent);
+            
+            // LOG 2: JSON extraído
+            logger?.LogInformation("[Conversa={Conversa}] [DEBUG] JSON extraído: {ExtractedJson}", 
+                idConversa, extractedJson ?? "NULL");
 
             if (!string.IsNullOrWhiteSpace(extractedJson))
             {
@@ -19,23 +30,75 @@ namespace APIBack.Automation.Services
                     var dto = JsonSerializer.Deserialize<AssistantDecisionDto>(extractedJson, options);
                     if (dto != null)
                     {
+                        // LOG 3: Verificação de campos alternativos para handoverAction
+                        LogHandoverActionAnalysis(dto, logger, idConversa);
+                        
                         decision = BuildDecisionFromDto(dto);
+                        
+                        // LOG 4: Objeto desserializado final
+                        logger?.LogInformation("[Conversa={Conversa}] [DEBUG] AssistantDecision desserializado - Reply: '{Reply}', HandoverAction: '{HandoverAction}', AgentPrompt: '{AgentPrompt}', ReservaConfirmada: {ReservaConfirmada}", 
+                            idConversa, decision.Reply, decision.HandoverAction, decision.AgentPrompt ?? "NULL", decision.ReservaConfirmada);
+                        
                         return true;
                     }
                 }
-                catch (JsonException)
+                catch (JsonException ex)
                 {
+                    logger?.LogWarning(ex, "[Conversa={Conversa}] [DEBUG] Erro ao desserializar JSON: {JsonError}", idConversa, ex.Message);
                     // segue para heurísticas
                 }
             }
 
             if (TryInferFromPlainText(rawContent, out decision))
             {
+                logger?.LogInformation("[Conversa={Conversa}] [DEBUG] Decisão inferida do texto plano - Reply: '{Reply}', HandoverAction: '{HandoverAction}'", 
+                    idConversa, decision.Reply, decision.HandoverAction);
                 extractedJson = null;
                 return true;
             }
 
+            logger?.LogWarning("[Conversa={Conversa}] [DEBUG] Falha ao interpretar resposta da OpenAI", idConversa);
             return false;
+        }
+        
+        private static void LogHandoverActionAnalysis(AssistantDecisionDto dto, ILogger? logger, Guid? idConversa)
+        {
+            if (logger == null) return;
+            
+            // Analisa todos os possíveis campos de handover
+            var handoverFields = new Dictionary<string, string?>
+            {
+                ["handover"] = dto.handover,
+                ["handoverAction"] = dto.handoverAction,
+                ["handover_action"] = dto.handover_action
+            };
+            
+            logger.LogInformation("[Conversa={Conversa}] [DEBUG] Análise de campos handover no DTO:", idConversa);
+            
+            foreach (var field in handoverFields)
+            {
+                logger.LogInformation("[Conversa={Conversa}] [DEBUG] - {FieldName}: '{FieldValue}'", 
+                    idConversa, field.Key, field.Value ?? "NULL");
+            }
+            
+            // Verifica se há outros campos que possam ser handoverAction com nomes diferentes
+            var allProperties = typeof(AssistantDecisionDto).GetProperties();
+            var knownHandoverFields = new[] { "handover", "handoverAction", "handover_action" };
+            
+            logger.LogInformation("[Conversa={Conversa}] [DEBUG] Todos os campos do DTO:", idConversa);
+            foreach (var prop in allProperties)
+            {
+                var value = prop.GetValue(dto)?.ToString();
+                var isHandoverField = knownHandoverFields.Contains(prop.Name);
+                logger.LogInformation("[Conversa={Conversa}] [DEBUG] - {PropertyName}: '{PropertyValue}' {IsHandoverField}", 
+                    idConversa, prop.Name, value ?? "NULL", isHandoverField ? "(CAMPO HANDOVER)" : "");
+            }
+            
+            // Verifica se o JSON bruto contém campos handover não mapeados
+            // Isso seria útil se houvesse campos como "handover", "handover_action" etc. não capturados
+            var finalAction = NormalizeHandoverAction(dto);
+            logger.LogInformation("[Conversa={Conversa}] [DEBUG] HandoverAction final normalizado: '{FinalAction}'", 
+                idConversa, finalAction);
         }
 
         private static AssistantDecision BuildDecisionFromDto(AssistantDecisionDto dto)

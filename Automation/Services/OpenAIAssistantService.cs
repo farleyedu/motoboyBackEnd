@@ -45,9 +45,9 @@ namespace APIBack.Automation.Services
 
             if (string.IsNullOrWhiteSpace(apiKey))
             {
-                _logger.LogWarning("[Conversa={Conversa}] OpenAI ApiKey não configurada; usando decisão padrão", idConversa);
+                _logger.LogWarning("[Conversa={Conversa}] OpenAI ApiKey nï¿½o configurada; usando decisï¿½o padrï¿½o", idConversa);
                 return new AssistantDecision(
-                    Reply: string.IsNullOrWhiteSpace(textoUsuario) ? "Poderia repetir?" : $"Você disse: '{textoUsuario}'.",
+                    Reply: string.IsNullOrWhiteSpace(textoUsuario) ? "Poderia repetir?" : $"Vocï¿½ disse: '{textoUsuario}'.",
                     HandoverAction: "none",
                     AgentPrompt: null,
                     ReservaConfirmada: false,
@@ -57,7 +57,7 @@ namespace APIBack.Automation.Services
             var client = _httpFactory.CreateClient();
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
 
-            var systemPrompt = contexto as string ?? "Você é um assistente útil.";
+            var systemPrompt = contexto as string ?? "Vocï¿½ ï¿½ um assistente ï¿½til.";
             var messages = new List<object> { new { role = "system", content = systemPrompt } };
 
             if (historico != null)
@@ -72,7 +72,12 @@ namespace APIBack.Automation.Services
 
             messages.Add(new { role = "user", content = textoUsuario });
 
-            var payload = new { model, messages = messages.ToArray() };
+            var payload = new
+            {
+                model,
+                messages = messages.ToArray(),
+                response_format = new { type = "json_object" }
+            };
             var json = JsonSerializer.Serialize(payload, JsonOptions);
             using var content = new StringContent(json, Encoding.UTF8, "application/json");
 
@@ -83,7 +88,7 @@ namespace APIBack.Automation.Services
                 if (!response.IsSuccessStatusCode)
                 {
                     _logger.LogWarning("[Conversa={Conversa}] OpenAI falhou: {Status} {Body}", idConversa, (int)response.StatusCode, body);
-                    return new AssistantDecision("Desculpe, não consegui formular uma resposta agora.", "none", null, false, null);
+                    return new AssistantDecision("Desculpe, nï¿½o consegui formular uma resposta agora.", "none", null, false, null);
                 }
 
                 using var doc = JsonDocument.Parse(body);
@@ -99,18 +104,18 @@ namespace APIBack.Automation.Services
 
         private AssistantDecision InterpretarResposta(string? conteudo, Guid idConversa)
         {
-            if (AssistantDecisionParser.TryParse(conteudo, JsonOptions, out var decision, out var rawJson))
+            if (AssistantDecisionParser.TryParse(conteudo, JsonOptions, out var decision, out var rawJson, _logger, idConversa))
             {
                 return decision;
             }
 
             if (!string.IsNullOrWhiteSpace(rawJson))
             {
-                _logger.LogWarning("[Conversa={Conversa}] JSON retornado pela IA não pôde ser interpretado: {Json}", idConversa, rawJson);
+                _logger.LogWarning("[Conversa={Conversa}] JSON retornado pela IA nï¿½o pï¿½de ser interpretado: {Json}", idConversa, rawJson);
             }
             else if (!string.IsNullOrWhiteSpace(conteudo))
             {
-                _logger.LogWarning("[Conversa={Conversa}] Resposta da IA fora do formato JSON esperado. Prévia: {Preview}", idConversa, TruncarConteudo(conteudo));
+                _logger.LogWarning("[Conversa={Conversa}] Resposta da IA fora do formato JSON esperado. Prï¿½via: {Preview}", idConversa, TruncarConteudo(conteudo));
             }
 
             return new AssistantDecision(conteudo ?? string.Empty, "none", null, false, null);

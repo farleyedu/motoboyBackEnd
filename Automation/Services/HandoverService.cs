@@ -50,8 +50,8 @@ namespace APIBack.Automation.Services
             await _repositorio.DefinirModoAsync(idConversa, ModoConversa.Humano, agente?.Id);
 
             var saudacao = !string.IsNullOrWhiteSpace(agente?.Nome)
-                ? $"OlÃ¡, {agente.Nome}!"
-                : "OlÃ¡, agente!";
+                ? $"Olá¡, {agente.Nome}!"
+                : "Olá¡, agente!";
 
             var destinoTelegram = telegramChatIdOverride ?? agente?.TelegramChatId;
             var mensagemAlerta = MontarMensagemTelegram(idConversa, reservaConfirmada, saudacao, detalhes);
@@ -129,7 +129,6 @@ namespace APIBack.Automation.Services
                 builder.AppendLine(saudacao);
                 builder.AppendLine();
                 builder.AppendLine("Cliente pediu atendimento humano.");
-                builder.AppendLine($"Motivo: {TextoOuNaoInformado(detalhes?.Motivo ?? detalhes?.QueixaPrincipal)}");
                 builder.AppendLine();
                 builder.AppendLine("Histórico da conversa:");
 
@@ -152,7 +151,6 @@ namespace APIBack.Automation.Services
             }
 
             builder.AppendLine();
-            builder.AppendLine($"Conversa={idConversa}");
             return builder.ToString().TrimEnd();
         }
 
