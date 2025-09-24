@@ -1,4 +1,4 @@
-// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
+﻿// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
 using System;
 using System.Threading.Tasks;
 using APIBack.Automation.Dtos;
@@ -55,16 +55,17 @@ namespace APIBack.Automation.Services
             {
                 case "confirm":
                     await _conversationRepository.AtualizarEstadoAsync(idConversa, EstadoConversa.FechadoAutomaticamente);
+                    await ExecutarHandoverAsync(idConversa, decision, handoverDetalhes);
                     if (!string.IsNullOrWhiteSpace(decision.Reply))
                     {
                         await EnviarMensagemAoClienteAsync(idConversa, phoneNumberId, numeroDestino, decision.Reply);
                     }
+
                     break;
 
                 case "ask":
                     await _conversationRepository.AtualizarEstadoAsync(idConversa, EstadoConversa.EmAtendimento);
                     await ExecutarHandoverAsync(idConversa, decision, handoverDetalhes);
-
                     var mensagemAsk = string.IsNullOrWhiteSpace(decision.Reply)
                         ? "Vou te encaminhar para um atendente humano. Um momento, por favor."
                         : decision.Reply;
@@ -100,7 +101,7 @@ namespace APIBack.Automation.Services
                 agente.Nome = "Agente de suporte";
             }
 
-            await _handoverService.ProcessarHandoverAsync(idConversa, agente, decision.ReservaConfirmada || string.Equals(decision.HandoverAction, "confirm", StringComparison.OrdinalIgnoreCase), detalhes, telegramChatIdOverride: agente.TelegramChatId);
+            await _handoverService.ProcessarMensagensTelegramAsync(idConversa, agente, decision.ReservaConfirmada || string.Equals(decision.HandoverAction, "confirm", StringComparison.OrdinalIgnoreCase), detalhes, telegramChatIdOverride: agente.TelegramChatId);
         }
 
         private async Task EnviarMensagemAoClienteAsync(Guid idConversa, string? phoneNumberId, string? numeroDestino, string? texto)
