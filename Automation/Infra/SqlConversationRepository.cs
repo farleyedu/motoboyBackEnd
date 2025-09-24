@@ -1,4 +1,4 @@
-// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
+﻿// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
 using System;
 using System.Threading.Tasks;
 using APIBack.Automation.Interfaces;
@@ -28,7 +28,7 @@ namespace APIBack.Automation.Infra
             _configuration = config;
             _logger = logger;
 
-            // Garante �ndice �nico de idempot�ncia (executa uma vez por processo)
+            // Garante índice único de idempotência (executa uma vez por processo)
             if (!_indexesEnsured)
             {
                 try
@@ -39,17 +39,47 @@ namespace APIBack.Automation.Infra
                 }
                 catch
                 {
-                    // N�o interrompe a aplica��o em caso de erro ao criar �ndice.
+                    // Não interrompe a aplicação em caso de erro ao criar índice.
                 }
             }
         }
 
-        // Helpers de conversão para DateTime (UTC-safe)
+        // Helpers de conversÃ£o para DateTime (UTC-safe)
         private static DateTime? ToUtc(DateTime? dt)
             => dt.HasValue ? DateTime.SpecifyKind(dt.Value, DateTimeKind.Utc) : (DateTime?)null;
 
         private static DateTime ToUtcNonNull(DateTime dt)
             => DateTime.SpecifyKind(dt, DateTimeKind.Utc);
+        private static string MapEstadoToDatabase(EstadoConversa estado) => estado switch
+        {
+            EstadoConversa.Aberto => "aberto",
+            EstadoConversa.FechadoAutomaticamente => "fechado_automaticamente",
+            EstadoConversa.FechadoAgente => "fechado_agente",
+            EstadoConversa.Arquivada => "arquivada",
+            EstadoConversa.EmAtendimento => "em_atendimento",
+            _ => "aberto"
+        };
+
+        private static EstadoConversa MapEstadoFromDatabase(string? valor)
+        {
+            if (string.IsNullOrWhiteSpace(valor))
+            {
+                return EstadoConversa.Aberto;
+            }
+
+            var normalized = valor.Trim().ToLowerInvariant();
+
+            return normalized switch
+            {
+                "aberto" => EstadoConversa.Aberto,
+                "fechado_automaticamente" or "fechadoautomaticamente" => EstadoConversa.FechadoAutomaticamente,
+                "fechado_agente" or "fechadoagente" => EstadoConversa.FechadoAgente,
+                "arquivada" => EstadoConversa.Arquivada,
+                "em_atendimento" or "ematendimento" => EstadoConversa.EmAtendimento,
+                _ => Enum.TryParse<EstadoConversa>(valor, true, out var parsed) ? parsed : EstadoConversa.Aberto
+            };
+        }
+
 
         public async Task<Conversation?> ObterPorIdAsync(Guid id)
         {
@@ -83,23 +113,24 @@ WHERE id = @Id;";
                 IdConversa = row.Id,
                 IdEstabelecimento = row.IdEstabelecimento,
                 IdCliente = row.IdCliente,
-                IdWa = string.Empty, // não existe no schema
+                IdWa = string.Empty, // nÃ£o existe no schema
                 Modo = row.IdAgenteAtribuido == null ? ModoConversa.Bot : ModoConversa.Humano,
                 AgenteDesignadoId = row.IdAgenteAtribuido,
                 UltimoUsuarioEm = ToUtc(row.DataUltimaEntrada) ?? default,
                 Janela24hExpiraEm = ToUtc(row.Janela24hFim),
                 CriadoEm = ToUtcNonNull(row.DataCriacao),
-                AtualizadoEm = ToUtcNonNull(row.DataAtualizacao)
+                AtualizadoEm = ToUtcNonNull(row.DataAtualizacao),
+                Estado = MapEstadoFromDatabase(row.Estado)
             };
             return conv;
         }
 
         public async Task<bool> InserirOuAtualizarAsync(Conversation conversa)
         {
-            // Validação obrigatória do id_estabelecimento
+            // ValidaÃ§Ã£o obrigatÃ³ria do id_estabelecimento
             if (conversa.IdEstabelecimento == Guid.Empty)
             {
-                throw new ArgumentException("id_estabelecimento é obrigatório para criar/atualizar conversa", nameof(conversa));
+                throw new ArgumentException("id_estabelecimento Ã© obrigatÃ³rio para criar/atualizar conversa", nameof(conversa));
             }
 
             var criado = conversa.CriadoEm != default ? DateTime.SpecifyKind(conversa.CriadoEm, DateTimeKind.Utc) : DateTime.UtcNow;
@@ -109,11 +140,11 @@ WHERE id = @Id;";
 
             // Datas derivadas (nunca nulas), todas em UTC
             var dataPrimeiraMensagem = criado;
-            var dataUltimaMensagem = criado; // na criação, igual à primeira
+            var dataUltimaMensagem = criado; // na criaÃ§Ã£o, igual Ã  primeira
             var dataUltimaEntrada = criado; // inicializa com criado
-            var dataUltimaSaida = dataUltimaMensagem; // inicialmente igual à última mensagem
-            var janela24hInicio = dataPrimeiraMensagem; // na criação, igual à primeira
-            var janela24hFim = janela24hInicio.AddHours(24); // sempre 24h após o início
+            var dataUltimaSaida = dataUltimaMensagem; // inicialmente igual Ã  Ãºltima mensagem
+            var janela24hInicio = dataPrimeiraMensagem; // na criaÃ§Ã£o, igual Ã  primeira
+            var janela24hFim = janela24hInicio.AddHours(24); // sempre 24h apÃ³s o inÃ­cio
 
             const string sqlConversas = @"
 INSERT INTO conversas
@@ -134,7 +165,7 @@ ON CONFLICT (id) DO UPDATE SET
                     IdEstabelecimento = conversa.IdEstabelecimento,
                     IdCliente = conversa.IdCliente,
                     Canal = conversa.Canal,
-                    Estado = conversa.Estado,
+                    Estado = MapEstadoToDatabase(conversa.Estado),
                     IdAgenteAtribuido = conversa.Modo == ModoConversa.Humano
                         ? conversa.AgenteDesignadoId
                         : null,
@@ -162,9 +193,9 @@ ON CONFLICT (id) DO UPDATE SET
         public async Task<Guid> GarantirClienteAsync(string telefoneE164, Guid idEstabelecimento)
         {
             if (string.IsNullOrWhiteSpace(telefoneE164))
-                throw new ArgumentException("telefoneE164 obrigatório", nameof(telefoneE164));
+                throw new ArgumentException("telefoneE164 obrigatÃ³rio", nameof(telefoneE164));
             if (idEstabelecimento == Guid.Empty)
-                throw new ArgumentException("idEstabelecimento obrigatório", nameof(idEstabelecimento));
+                throw new ArgumentException("idEstabelecimento obrigatÃ³rio", nameof(idEstabelecimento));
 
             const string sqlSel = @"SELECT id FROM clientes
                                      WHERE id_estabelecimento = @IdEstabelecimento
@@ -198,34 +229,31 @@ ON CONFLICT (id) DO UPDATE SET
             return idFinal ?? novoId;
         }
 
+
         public async Task DefinirModoAsync(Guid id, ModoConversa modo, int? agenteId)
         {
-            string sql;
-            object param;
-
-            if (modo == ModoConversa.Humano)
-            {
-                sql = @"
+            const string sqlHumano = @"
                       UPDATE conversas
                          SET id_agente_atribuido = @AgenteId,
-                             estado               = 'agente'::estado_conversa_enum,
+                             estado               = @Estado::estado_conversa_enum,
                              data_atualizacao     = NOW()
                        WHERE id = @Id;";
-                param = new { Id = id, AgenteId = (object?)agenteId };
-            }
-            else
-            {
-                sql = @"
+
+            const string sqlBot = @"
                       UPDATE conversas
                          SET id_agente_atribuido = NULL,
-                             estado               = 'aberta'::estado_conversa_enum,
+                             estado               = @Estado::estado_conversa_enum,
                              data_atualizacao     = NOW()
                        WHERE id = @Id;";
-                param = new { Id = id };
-            }
+
+            object parametros = modo == ModoConversa.Humano
+                ? new { Id = id, AgenteId = (object?)agenteId, Estado = MapEstadoToDatabase(EstadoConversa.EmAtendimento) }
+                : new { Id = id, Estado = MapEstadoToDatabase(EstadoConversa.Aberto) };
+
+            var sql = modo == ModoConversa.Humano ? sqlHumano : sqlBot;
 
             await using var cx = new NpgsqlConnection(_connectionString);
-            await cx.ExecuteAsync(sql, param);
+            await cx.ExecuteAsync(sql, parametros);
         }
 
         public async Task AcrescentarMensagemAsync(Message mensagem, string? phoneNumberId, string idWa = null)
@@ -239,7 +267,7 @@ ON CONFLICT (id) DO UPDATE SET
             else if (mensagem.DataHora.Kind == DateTimeKind.Local)
                 quandoUtc = mensagem.DataHora.ToUniversalTime();
             else
-                // Unspecified: trate como UTC para não aplicar offset errado
+                // Unspecified: trate como UTC para nÃ£o aplicar offset errado
                 quandoUtc = DateTime.SpecifyKind(mensagem.DataHora, DateTimeKind.Utc);
 
             var idMsg = mensagem.Id != Guid.Empty ? mensagem.Id : Guid.NewGuid();
@@ -266,7 +294,7 @@ ON CONFLICT (id) DO UPDATE SET
 
             if (direcao == "entrada")
             {
-                // Entrada "chega" já enviada/entregue ao bot
+                // Entrada "chega" jÃ¡ enviada/entregue ao bot
                 dataEnvio = quandoUtc;
                 dataEntrega = quandoUtc;
                 dataLeitura = null;
@@ -292,7 +320,7 @@ ON CONFLICT (id) DO UPDATE SET
                         dataLeitura = quandoUtc;
                         break;
                     default:
-                        // mantém só data_criacao
+                        // mantÃ©m sÃ³ data_criacao
                         break;
                 }
             }
@@ -337,17 +365,17 @@ UPDATE conversas
 
             try
             {
-                // Garante que a conversa existe antes de inserir a mensagem (mesma transação) SEM usar Guid.Empty
+                // Garante que a conversa existe antes de inserir a mensagem (mesma transaÃ§Ã£o) SEM usar Guid.Empty
                 if (mensagem.IdConversa == Guid.Empty)
-                    throw new ArgumentException("IdConversa obrigatório", nameof(mensagem));
+                    throw new ArgumentException("IdConversa obrigatÃ³rio", nameof(mensagem));
 
-                // Extrai WABA phone e telefone do cliente de MetadadosMidia (JSON), caso disponíveis
-                // Verifica/Cria conversa apenas se ainda não existir
+                // Extrai WABA phone e telefone do cliente de MetadadosMidia (JSON), caso disponÃ­veis
+                // Verifica/Cria conversa apenas se ainda nÃ£o existir
                 const string checkConv = "SELECT 1 FROM conversas WHERE id = @Id LIMIT 1;";
                 var convExists = await cx.ExecuteScalarAsync<int?>(checkConv, new { Id = mensagem.IdConversa }, transaction: tx);
                 if (!convExists.HasValue)
                 {
-                    // Conversa não existe -> garantir criação
+                    // Conversa nÃ£o existe -> garantir criaÃ§Ã£o
                     string? wabaPhoneNumberId = phoneNumberId;
                     string? telefoneClienteRaw = idWa;
 
@@ -355,9 +383,9 @@ UPDATE conversas
                     const string sqlWaba = "SELECT id_estabelecimento FROM waba_phone WHERE phone_number_id = @PhoneNumberId LIMIT 1;";
                     var idEstabelecimento = await cx.ExecuteScalarAsync<Guid?>(sqlWaba, new { PhoneNumberId = wabaPhoneNumberId }, transaction: tx);
                     if (!idEstabelecimento.HasValue || idEstabelecimento.Value == Guid.Empty)
-                        throw new InvalidOperationException("Estabelecimento não encontrado para este WABA");
+                        throw new InvalidOperationException("Estabelecimento nÃ£o encontrado para este WABA");
 
-                    // Resolve IdCliente por telefone normalizado (cria se não existir)
+                    // Resolve IdCliente por telefone normalizado (cria se nÃ£o existir)
                     var telefoneE164 = APIBack.Automation.Helpers.TelefoneHelper.ToE164(telefoneClienteRaw ?? string.Empty);
                     const string sqlCliSel = "SELECT id FROM clientes WHERE telefone_e164 = @Tel AND id_estabelecimento = @IdEstabelecimento LIMIT 1;";
                     var idCliente = await cx.ExecuteScalarAsync<Guid?>(sqlCliSel, new { Tel = telefoneE164, IdEstabelecimento = idEstabelecimento }, transaction: tx);
@@ -399,7 +427,7 @@ UPDATE conversas
                             throw new InvalidOperationException("Falha ao criar cliente");
                     }
 
-                    // Cria conversa com IDs válidos
+                    // Cria conversa com IDs vÃ¡lidos
                     var agoraUtc = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Utc);
                     await InserirOuAtualizarAsync(new Conversation
                     {
@@ -411,7 +439,7 @@ UPDATE conversas
                     });
                 }
 
-                // Insere a mensagem (idempotente via índice único em id_provedor) e atualiza a conversa
+                // Insere a mensagem (idempotente via Ã­ndice Ãºnico em id_provedor) e atualiza a conversa
                 await cx.ExecuteAsync(insertMsg, new
                 {
                     Id = idMsg,
@@ -463,15 +491,38 @@ UPDATE conversas
                                   WHERE id_cliente = @IdCliente
                                     AND id_estabelecimento = @IdEstabelecimento
                                     AND motivo_fechamento IS NULL -- apenas conversas abertas
+                                    AND estado <> 'fechado_automaticamente'::estado_conversa_enum
+                                    AND estado <> 'fechado_agente'::estado_conversa_enum
+                                    AND estado <> 'arquivada'::estado_conversa_enum
                                   ORDER BY data_criacao DESC
                                   LIMIT 1;";
             await using var cx = new NpgsqlConnection(_connectionString);
             var found = await cx.ExecuteScalarAsync<Guid?>(sql, new { IdCliente = idCliente, IdEstabelecimento = idEstabelecimento });
             return found ?? Guid.Empty;
         }
+
+        public async Task AtualizarEstadoAsync(Guid idConversa, EstadoConversa novoEstado)
+        {
+            const string sql = @"
+                UPDATE conversas
+                   SET estado = @NovoEstado::estado_conversa_enum,
+                       data_atualizacao = NOW()
+                 WHERE id = @IdConversa;";
+
+            await using var cx = new NpgsqlConnection(_connectionString);
+            await cx.ExecuteAsync(sql, new { IdConversa = idConversa, NovoEstado = MapEstadoToDatabase(novoEstado) });
+        }
+
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) =================
+
+
+
+
+
+
+
 
 
 

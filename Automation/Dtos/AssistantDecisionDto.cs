@@ -10,6 +10,10 @@ namespace APIBack.Automation.Dtos
         public string? handover_action { get; set; }
         public string? agent_prompt { get; set; }
         public bool? reserva_confirmada { get; set; }
+        public string? nome_completo { get; set; }
+        public int? qtd_pessoas { get; set; }
+        public string? data { get; set; }
+        public string? hora { get; set; }
         public HandoverContextDto? detalhes { get; set; }
     }
 }

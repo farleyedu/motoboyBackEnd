@@ -1,4 +1,4 @@
-﻿// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
+// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
 using System;
 using System.Threading.Tasks;
 using APIBack.Automation.Dtos;
@@ -17,6 +17,7 @@ namespace APIBack.Automation.Services
         private readonly IQueueBus _fila;
         private readonly WhatsAppSender _whatsAppSender;
         private readonly AgenteService _agenteService;
+        private readonly IConversationRepository _conversationRepository;
         private readonly ILogger<IAResponseHandler> _logger;
 
         public IAResponseHandler(
@@ -25,6 +26,7 @@ namespace APIBack.Automation.Services
             IQueueBus fila,
             WhatsAppSender whatsAppSender,
             AgenteService agenteService,
+            IConversationRepository conversationRepository,
             ILogger<IAResponseHandler> logger)
         {
             _handoverService = handoverService;
@@ -32,6 +34,7 @@ namespace APIBack.Automation.Services
             _fila = fila;
             _whatsAppSender = whatsAppSender;
             _agenteService = agenteService;
+            _conversationRepository = conversationRepository;
             _logger = logger;
         }
 
@@ -39,37 +42,34 @@ namespace APIBack.Automation.Services
         {
             if (processamento.IdConversa is null || processamento.MensagemRegistrada is null)
             {
-                _logger.LogWarning("[Webhook] Resultado de processamento inválido, não há conversa registrada");
+                _logger.LogWarning("[Webhook] Resultado de processamento invÃ¡lido, nÃ£o hÃ¡ conversa registrada");
                 return;
             }
 
             var idConversa = processamento.IdConversa.Value;
             var handoverDetalhes = decision.Detalhes ?? processamento.HandoverDetalhes;
-            var numeroDestino = handoverDetalhes.Telefone;
+            var numeroDestino = processamento.HandoverDetalhes.Telefone;
             var phoneNumberId = processamento.NumeroWhatsappId;
 
             switch (decision.HandoverAction.ToLowerInvariant())
             {
                 case "confirm":
-                    // Reserva confirmada
-                    await ExecutarHandoverAsync(idConversa, decision, handoverDetalhes);
-                    await EnviarMensagemAoClienteAsync(
-                        idConversa,
-                        phoneNumberId,
-                        numeroDestino,
-                        "✅ Sua reserva foi confirmada! Esperamos por você no Seu Eurico 🍻"
-                    );
+                    await _conversationRepository.AtualizarEstadoAsync(idConversa, EstadoConversa.FechadoAutomaticamente);
+                    if (!string.IsNullOrWhiteSpace(decision.Reply))
+                    {
+                        await EnviarMensagemAoClienteAsync(idConversa, phoneNumberId, numeroDestino, decision.Reply);
+                    }
                     break;
 
                 case "ask":
-                    // Encaminhar para um atendente humano
+                    await _conversationRepository.AtualizarEstadoAsync(idConversa, EstadoConversa.EmAtendimento);
                     await ExecutarHandoverAsync(idConversa, decision, handoverDetalhes);
-                    await EnviarMensagemAoClienteAsync(
-                        idConversa,
-                        phoneNumberId,
-                        numeroDestino,
-                        "Vou te encaminhar para um atendente humano. Um momento, por favor."
-                    );
+
+                    var mensagemAsk = string.IsNullOrWhiteSpace(decision.Reply)
+                        ? "Vou te encaminhar para um atendente humano. Um momento, por favor."
+                        : decision.Reply;
+
+                    await EnviarMensagemAoClienteAsync(idConversa, phoneNumberId, numeroDestino, mensagemAsk);
                     break;
 
                 default:
@@ -79,6 +79,7 @@ namespace APIBack.Automation.Services
                     }
                     break;
             }
+
         }
 
 
@@ -87,7 +88,7 @@ namespace APIBack.Automation.Services
             var agente = await _agenteService.ObterAgenteSuporteAsync();
             if (agente == null)
             {
-                _logger.LogWarning("[Conversa={Conversa}] Nenhum agente de suporte configurado; utilizando fallback padrão", idConversa);
+                _logger.LogWarning("[Conversa={Conversa}] Nenhum agente de suporte configurado; utilizando fallback padrÃ£o", idConversa);
                 agente = new HandoverAgentDto
                 {
                     Id = 0,
@@ -107,7 +108,7 @@ namespace APIBack.Automation.Services
             if (string.IsNullOrWhiteSpace(texto)) return;
             if (string.IsNullOrWhiteSpace(phoneNumberId) || string.IsNullOrWhiteSpace(numeroDestino))
             {
-                _logger.LogWarning("[Conversa={Conversa}] Não foi possível enviar mensagem ao cliente: phoneNumberId ou destino ausente", idConversa);
+                _logger.LogWarning("[Conversa={Conversa}] NÃ£o foi possÃ­vel enviar mensagem ao cliente: phoneNumberId ou destino ausente", idConversa);
                 return;
             }
 
