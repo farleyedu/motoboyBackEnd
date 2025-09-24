@@ -232,15 +232,35 @@ ON CONFLICT (id) DO UPDATE SET
             await tx.CommitAsync();
         }
 
-                public async Task<IReadOnlyList<Message>> GetByConversationAsync(Guid idConversa, int limit = 200)
+        public async Task<IReadOnlyList<Message>> GetByConversationAsync(Guid idConversa, int limit = 200)
         {
-            const string sql = @"
-SELECT m.id, m.id_conversa, m.direcao, m.tipo, m.status, m.id_provedor, m.codigo_erro, m.mensagem_erro, m.tentativas, m.criada_por,
-       m.data_envio, m.data_entrega, m.data_leitura, m.data_criacao, m.conteudo
-  FROM mensagens m
- WHERE m.id_conversa = @IdConversa
- ORDER BY m.data_criacao ASC
- LIMIT @Limit;";
+            const string sql = @"SELECT 
+    m.id,
+    m.id_conversa,
+    m.direcao,
+    m.tipo,
+    m.status,
+    m.id_provedor,
+    m.codigo_erro,
+    m.mensagem_erro,
+    m.tentativas,
+    m.criada_por,
+    m.data_envio,
+    m.data_entrega,
+    m.data_leitura,
+    m.data_criacao,
+    m.conteudo
+FROM mensagens m
+JOIN conversas c ON c.id = m.id_conversa
+WHERE m.id_conversa = @IdConversa
+  AND c.estado NOT IN (
+        'fechado_automaticamente'::estado_conversa_enum,
+        'fechado_agente'::estado_conversa_enum,
+        'arquivada'::estado_conversa_enum
+  )
+ORDER BY m.data_criacao ASC
+LIMIT @Limit;
+";
 
             await using var cx = new NpgsqlConnection(_connectionString);
             var list = await cx.QueryAsync<Message>(sql, new
