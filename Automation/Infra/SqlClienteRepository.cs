@@ -51,6 +51,22 @@ namespace APIBack.Automation.Infra
 
             return novoId;
         }
+
+        public async Task<string?> ObterTelefoneClienteAsync(Guid idCliente, Guid idEstabelecimento)
+        {
+            if (idCliente == Guid.Empty)
+                throw new ArgumentException("idCliente obrigatório", nameof(idCliente));
+            if (idEstabelecimento == Guid.Empty)
+                throw new ArgumentException("idEstabelecimento obrigatório", nameof(idEstabelecimento));
+
+            const string sql = @"SELECT telefone_e164 FROM clientes
+                                 WHERE id = @IdCliente
+                                   AND id_estabelecimento = @IdEstabelecimento
+                                 LIMIT 1;";
+
+            await using var cx = new NpgsqlConnection(_connectionString);
+            return await cx.ExecuteScalarAsync<string?>(sql, new { IdCliente = idCliente, IdEstabelecimento = idEstabelecimento });
+        }
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================

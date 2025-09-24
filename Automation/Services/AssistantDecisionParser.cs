@@ -4,20 +4,22 @@ using System.Linq;
 using System.Text.Json;
 using APIBack.Automation.Dtos;
 using Microsoft.Extensions.Logging;
+using APIBack.Automation.Interfaces;
+using APIBack.Automation.Models;
 
 namespace APIBack.Automation.Services
 {
     internal static class AssistantDecisionParser
     {
-        public static bool TryParse(string? rawContent, JsonSerializerOptions options, out AssistantDecision decision, out string? extractedJson, ILogger? logger = null, Guid? idConversa = null)
+        public record AssistantDecisionParseResult(bool Success, AssistantDecision Decision, string? ExtractedJson);
+
+        public static async Task<AssistantDecisionParseResult> TryParse(string? rawContent, JsonSerializerOptions options, ILogger? logger = null, Guid? idConversa = null, IMessageRepository? messageRepository = null)
         {
-            decision = default!;
-            
             // LOG 1: Conteúdo bruto da OpenAI
             logger?.LogInformation("[Conversa={Conversa}] [DEBUG] Conteúdo bruto da OpenAI: {RawContent}", 
                 idConversa, rawContent ?? "NULL");
             
-            extractedJson = ExtractJsonPayload(rawContent);
+            var extractedJson = ExtractJsonPayload(rawContent);
             
             // LOG 2: JSON extraído
             logger?.LogInformation("[Conversa={Conversa}] [DEBUG] JSON extraído: {ExtractedJson}", 
@@ -33,13 +35,13 @@ namespace APIBack.Automation.Services
                         // LOG 3: Verificação de campos alternativos para handoverAction
                         LogHandoverActionAnalysis(dto, logger, idConversa);
                         
-                        decision = BuildDecisionFromDto(dto);
+                        var decision = await BuildDecisionFromDto(dto, messageRepository, idConversa);
                         
                         // LOG 4: Objeto desserializado final
                         logger?.LogInformation("[Conversa={Conversa}] [DEBUG] AssistantDecision desserializado - Reply: '{Reply}', HandoverAction: '{HandoverAction}', AgentPrompt: '{AgentPrompt}', ReservaConfirmada: {ReservaConfirmada}", 
                             idConversa, decision.Reply, decision.HandoverAction, decision.AgentPrompt ?? "NULL", decision.ReservaConfirmada);
                         
-                        return true;
+                        return new AssistantDecisionParseResult(true, decision, extractedJson);
                     }
                 }
                 catch (JsonException ex)
@@ -49,16 +51,15 @@ namespace APIBack.Automation.Services
                 }
             }
 
-            if (TryInferFromPlainText(rawContent, out decision))
+            if (TryInferFromPlainText(rawContent, out var inferredDecision))
             {
                 logger?.LogInformation("[Conversa={Conversa}] [DEBUG] Decisão inferida do texto plano - Reply: '{Reply}', HandoverAction: '{HandoverAction}'", 
-                    idConversa, decision.Reply, decision.HandoverAction);
-                extractedJson = null;
-                return true;
+                    idConversa, inferredDecision.Reply, inferredDecision.HandoverAction);
+                return new AssistantDecisionParseResult(true, inferredDecision, null);
             }
 
             logger?.LogWarning("[Conversa={Conversa}] [DEBUG] Falha ao interpretar resposta da OpenAI", idConversa);
-            return false;
+            return new AssistantDecisionParseResult(false, default!, null);
         }
         
         private static void LogHandoverActionAnalysis(AssistantDecisionDto dto, ILogger? logger, Guid? idConversa)
@@ -81,6 +82,13 @@ namespace APIBack.Automation.Services
                     idConversa, field.Key, field.Value ?? "NULL");
             }
             
+            // Log dos novos campos
+            logger.LogInformation("[Conversa={Conversa}] [DEBUG] Novos campos capturados:", idConversa);
+            logger.LogInformation("[Conversa={Conversa}] [DEBUG] - nome_completo: '{NomeCompleto}'", idConversa, dto.nome_completo ?? "NULL");
+            logger.LogInformation("[Conversa={Conversa}] [DEBUG] - qtd_pessoas: '{QtdPessoas}'", idConversa, dto.qtd_pessoas.HasValue ? dto.qtd_pessoas.Value.ToString() : "NULL");
+            logger.LogInformation("[Conversa={Conversa}] [DEBUG] - data: '{Data}'", idConversa, dto.data ?? "NULL");
+            logger.LogInformation("[Conversa={Conversa}] [DEBUG] - hora: '{Hora}'", idConversa, dto.hora ?? "NULL");
+            
             // Verifica se há outros campos que possam ser handoverAction com nomes diferentes
             var allProperties = typeof(AssistantDecisionDto).GetProperties();
             var knownHandoverFields = new[] { "handover", "handoverAction", "handover_action" };
@@ -101,13 +109,34 @@ namespace APIBack.Automation.Services
                 idConversa, finalAction);
         }
 
-        private static AssistantDecision BuildDecisionFromDto(AssistantDecisionDto dto)
+        private static async Task<AssistantDecision> BuildDecisionFromDto(AssistantDecisionDto dto, IMessageRepository? messageRepository, Guid? idConversa)
         {
-            var reply = dto.reply ?? string.Empty;
-            var action = NormalizeHandoverAction(dto);
-            var agentPrompt = string.IsNullOrWhiteSpace(dto.agent_prompt) ? null : dto.agent_prompt.Trim();
-            var confirmada = dto.reserva_confirmada ?? false;
-            return new AssistantDecision(reply, action, agentPrompt, confirmada, dto.detalhes);
+            var handoverContext = new HandoverContextDto
+            {
+                ClienteNome = dto.nome_completo,
+                NumeroPessoas = dto.qtd_pessoas.HasValue ? dto.qtd_pessoas.Value.ToString() : null,
+                Dia = dto.data,
+                Horario = dto.hora,
+                Telefone = dto?.detalhes?.Telefone,
+                Historico = null // Initialize as null, will be populated if messages are found
+            };
+
+            if (messageRepository is not null && idConversa is not null)
+            {
+                var messages = await messageRepository.GetByConversationAsync(idConversa.Value);
+                handoverContext.Historico = messages
+                    .OrderBy(m => m.DataHora)
+                    .Select(m => $"{(m.Direcao == DirecaoMensagem.Entrada ? "Cliente" : "Assistente")}: {m.Conteudo}")
+                    .ToList();
+            }
+
+            return new AssistantDecision(
+                dto?.reply ?? string.Empty,
+                NormalizeHandoverAction(dto),
+                string.IsNullOrWhiteSpace(dto.agent_prompt) ? null : dto.agent_prompt.Trim(),
+                dto.reserva_confirmada ?? false,
+                handoverContext
+            );
         }
 
         private static string? ExtractJsonPayload(string? rawContent)

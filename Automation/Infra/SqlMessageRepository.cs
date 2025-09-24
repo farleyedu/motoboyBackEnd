@@ -24,7 +24,7 @@ namespace APIBack.Automation.Infra
                                  ?? throw new InvalidOperationException("Connection string 'DefaultConnection' nuo encontrada.");
             _logger = logger;
 
-            // Garante índice único de id_provedor
+            // Garante ï¿½ndice ï¿½nico de id_provedor
             if (!_indexesEnsured)
             {
                 try
@@ -184,14 +184,16 @@ RETURNING id;";
 
                 // Cria conversa
                 var agoraUtc = DateTime.UtcNow;
-                const string insertConv = @"
+                const string sqlConv = @"
 INSERT INTO conversas
   (id, id_estabelecimento, id_cliente, canal, estado, id_agente_atribuido, data_primeira_mensagem, data_ultima_mensagem, data_ultima_entrada, data_ultima_saida, janela_24h_inicio, janela_24h_fim, qtd_nao_lidas, motivo_fechamento, data_criacao, data_atualizacao)
 VALUES
-  (@Id, @IdEstabelecimento, @IdCliente, 'whatsapp', 'aberta', NULL, @Quando, @Quando, @Quando, NULL, @Quando, @Quando + interval '24 hour', 1, NULL, @Quando, @Quando)
-ON CONFLICT DO NOTHING;";
+  (@Id, @IdEstabelecimento, @IdCliente, 'whatsapp', 'aberto'::estado_conversa_enum, NULL, @Quando, @Quando, @Quando, NULL, @Quando, @Quando + interval '24 hour', 1, NULL, @Quando, @Quando)
+ON CONFLICT (id) DO UPDATE SET
+  data_ultima_mensagem = EXCLUDED.data_ultima_mensagem,
+  data_atualizacao     = EXCLUDED.data_atualizacao;";
 
-                await cx.ExecuteAsync(insertConv, new
+                await cx.ExecuteAsync(sqlConv, new
                 {
                     Id = mensagem.IdConversa,
                     IdEstabelecimento = idEstabelecimento.Value,

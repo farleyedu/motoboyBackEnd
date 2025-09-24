@@ -21,15 +21,18 @@ namespace APIBack.Automation.Services
         private readonly IHttpClientFactory _httpFactory;
         private readonly IOptions<OpenAIOptions> _options;
         private readonly ILogger<OpenAIAssistantService> _logger;
+        private readonly IMessageRepository _messageRepository;
 
         public OpenAIAssistantService(
             IHttpClientFactory httpFactory,
             IOptions<OpenAIOptions> options,
-            ILogger<OpenAIAssistantService> logger)
+            ILogger<OpenAIAssistantService> logger,
+            IMessageRepository messageRepository)
         {
             _httpFactory = httpFactory;
             _options = options;
             _logger = logger;
+            _messageRepository = messageRepository;
         }
 
         public Task<AssistantDecision> GerarDecisaoAsync(string textoUsuario, Guid idConversa, object? contexto = null)
@@ -57,7 +60,7 @@ namespace APIBack.Automation.Services
             var client = _httpFactory.CreateClient();
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
 
-            var systemPrompt = contexto as string ?? "Voc� � um assistente �til.";
+            var systemPrompt = contexto as string ?? "Vocé é um assistente útil.";
             var messages = new List<object> { new { role = "system", content = systemPrompt } };
 
             if (historico != null)
@@ -93,7 +96,7 @@ namespace APIBack.Automation.Services
 
                 using var doc = JsonDocument.Parse(body);
                 var message = doc.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString();
-                return InterpretarResposta(message, idConversa);
+                return await InterpretarResposta(message, idConversa);
             }
             catch (Exception ex)
             {
@@ -102,20 +105,22 @@ namespace APIBack.Automation.Services
             }
         }
 
-        private AssistantDecision InterpretarResposta(string? conteudo, Guid idConversa)
+        private async Task<AssistantDecision> InterpretarResposta(string? conteudo, Guid idConversa)
         {
-            if (AssistantDecisionParser.TryParse(conteudo, JsonOptions, out var decision, out var rawJson, _logger, idConversa))
+            var parseResult = await AssistantDecisionParser.TryParse(conteudo, JsonOptions, _logger, idConversa, _messageRepository);
+
+            if (parseResult.Success)
             {
-                return decision;
+                return parseResult.Decision;
             }
 
-            if (!string.IsNullOrWhiteSpace(rawJson))
+            if (!string.IsNullOrWhiteSpace(parseResult.ExtractedJson))
             {
-                _logger.LogWarning("[Conversa={Conversa}] JSON retornado pela IA n�o p�de ser interpretado: {Json}", idConversa, rawJson);
+                _logger.LogWarning("[Conversa={Conversa}] JSON retornado pela IA não pôde ser interpretado: {Json}", idConversa, parseResult.ExtractedJson);
             }
             else if (!string.IsNullOrWhiteSpace(conteudo))
             {
-                _logger.LogWarning("[Conversa={Conversa}] Resposta da IA fora do formato JSON esperado. Pr�via: {Preview}", idConversa, TruncarConteudo(conteudo));
+                _logger.LogWarning("[Conversa={Conversa}] Resposta da IA fora do formato JSON esperado. Prévia: {Preview}", idConversa, TruncarConteudo(conteudo));
             }
 
             return new AssistantDecision(conteudo ?? string.Empty, "none", null, false, null);

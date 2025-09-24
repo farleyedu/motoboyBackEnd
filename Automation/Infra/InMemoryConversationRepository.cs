@@ -1,4 +1,4 @@
-// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
+﻿// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
 using System;
 using System.Collections.Concurrent;
 using System.Threading.Tasks;
@@ -84,7 +84,7 @@ namespace APIBack.Automation.Infra
 
         public Task<Guid> GarantirClienteAsync(string telefoneE164, Guid idEstabelecimento)
         {
-            if (idEstabelecimento == Guid.Empty) throw new ArgumentException("idEstabelecimento obrigat�rio", nameof(idEstabelecimento));
+            if (idEstabelecimento == Guid.Empty) throw new ArgumentException("idEstabelecimento obrigatÃƒÆ’Ã‚Â³rio", nameof(idEstabelecimento));
             telefoneE164 ??= string.Empty;
             var key = (idEstabelecimento, telefoneE164);
             var id = _clientes.GetOrAdd(key, _ => Guid.NewGuid());
@@ -101,7 +101,31 @@ namespace APIBack.Automation.Infra
         {
             throw new NotImplementedException();
         }
+
+        public Task AtualizarEstadoAsync(Guid idConversa, EstadoConversa novoEstado)
+        {
+            _conversas.AddOrUpdate(
+                idConversa,
+                _ => new Conversation
+                {
+                    IdConversa = idConversa,
+                    Estado = novoEstado,
+                    CriadoEm = DateTime.UtcNow,
+                    AtualizadoEm = DateTime.UtcNow
+                },
+                (_, atual) =>
+                {
+                    atual.Estado = novoEstado;
+                    atual.AtualizadoEm = DateTime.UtcNow;
+                    return atual;
+                });
+
+            return Task.CompletedTask;
+        }
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
+
+
+
 

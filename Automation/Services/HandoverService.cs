@@ -36,13 +36,15 @@ namespace APIBack.Automation.Services
         private readonly IAlertSender _alertas;
         private readonly AgenteService _agentes;
         private readonly ILogger<HandoverService> _logger;
+        private readonly IClienteRepository _clienteRepository;
 
-        public HandoverService(IConversationRepository repo, IAlertSender alerts, ILogger<HandoverService> logger, AgenteService agentes)
+        public HandoverService(IConversationRepository repo, IAlertSender alerts, ILogger<HandoverService> logger, AgenteService agentes, IClienteRepository clienteRepository)
         {
             _repositorio = repo;
             _alertas = alerts;
             _logger = logger;
             _agentes = agentes;
+            _clienteRepository = clienteRepository;
         }
 
         public async Task ProcessarHandoverAsync(Guid idConversa, HandoverAgentDto? agente, bool reservaConfirmada, HandoverContextDto? detalhes, long? telegramChatIdOverride = null)
@@ -50,11 +52,20 @@ namespace APIBack.Automation.Services
             await _repositorio.DefinirModoAsync(idConversa, ModoConversa.Humano, agente?.Id);
 
             var saudacao = !string.IsNullOrWhiteSpace(agente?.Nome)
-                ? $"Olá¡, {agente.Nome}!"
-                : "Olá¡, agente!";
+                ? $"Olá, {agente.Nome}!"
+                : "Olá, agente!";
 
             var destinoTelegram = telegramChatIdOverride ?? agente?.TelegramChatId;
-            var mensagemAlerta = MontarMensagemTelegram(idConversa, reservaConfirmada, saudacao, detalhes);
+            
+            // Obter informações da conversa para pegar o telefone do cliente
+            var conversa = await _repositorio.ObterPorIdAsync(idConversa);
+            string? telefoneCliente = null;
+            if (conversa != null && conversa.IdCliente != Guid.Empty && conversa.IdEstabelecimento != Guid.Empty)
+            {
+                telefoneCliente = await _clienteRepository.ObterTelefoneClienteAsync(conversa.IdCliente, conversa.IdEstabelecimento);
+            }
+
+            var mensagemAlerta = MontarMensagemTelegram(idConversa, reservaConfirmada, saudacao, detalhes, telefoneCliente);
             var agora = DateTime.UtcNow;
 
             if (AlertasRecentes.TryGetValue(idConversa, out var ultimo)
@@ -109,7 +120,7 @@ namespace APIBack.Automation.Services
             await ProcessarHandoverAsync(idConversa, agente, reservaConfirmada, detalhes, chatId);
         }
 
-        private static string MontarMensagemTelegram(Guid idConversa, bool reservaConfirmada, string saudacao, HandoverContextDto? detalhes)
+        private static string MontarMensagemTelegram(Guid idConversa, bool reservaConfirmada, string saudacao, HandoverContextDto? detalhes, string? telefoneCliente)
         {
             var builder = new StringBuilder();
 
@@ -118,7 +129,7 @@ namespace APIBack.Automation.Services
                 builder.AppendLine("📢 Nova reserva confirmada!");
                 builder.AppendLine();
                 builder.AppendLine($"👤 Nome: {TextoOuNaoInformado(detalhes?.ClienteNome)}");
-                builder.AppendLine($"📞 Telefone: {TextoOuNaoInformado(detalhes?.Telefone)}");
+                builder.AppendLine($"📞 Telefone: {TextoOuNaoInformado(telefoneCliente)}");
                 builder.AppendLine($"👥 Pessoas: {TextoOuNaoInformado(detalhes?.NumeroPessoas)}");
                 builder.AppendLine($"📅 Data: {MontarDescricaoData(detalhes)}");
                 builder.AppendLine();
@@ -161,7 +172,7 @@ private static string MontarDescricaoData(HandoverContextDto? detalhes)
 
             if (possuiDia && possuiHorario)
             {
-                return $"{detalhes!.Dia!.Trim()} Ã s {detalhes.Horario!.Trim()}";
+                return $"{detalhes!.Dia!.Trim()} às {detalhes.Horario!.Trim()}";
             }
 
             if (possuiDia)
@@ -174,7 +185,7 @@ private static string MontarDescricaoData(HandoverContextDto? detalhes)
                 return detalhes!.Horario!.Trim();
             }
 
-            return "NÃ£o informado";
+            return "Não informado";
         }
 
         private static string TextoOuNaoInformado(string? valor)
