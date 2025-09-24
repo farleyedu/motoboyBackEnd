@@ -47,7 +47,7 @@ namespace APIBack.Automation.Services
             _clienteRepository = clienteRepository;
         }
 
-        public async Task ProcessarHandoverAsync(Guid idConversa, HandoverAgentDto? agente, bool reservaConfirmada, HandoverContextDto? detalhes, long? telegramChatIdOverride = null)
+        public async Task ProcessarMensagensTelegramAsync(Guid idConversa, HandoverAgentDto? agente, bool reservaConfirmada, HandoverContextDto? detalhes, long? telegramChatIdOverride = null)
         {
             await _repositorio.DefinirModoAsync(idConversa, ModoConversa.Humano, agente?.Id);
 
@@ -117,7 +117,7 @@ namespace APIBack.Automation.Services
                 }
             }
 
-            await ProcessarHandoverAsync(idConversa, agente, reservaConfirmada, detalhes, chatId);
+            await ProcessarMensagensTelegramAsync(idConversa, agente, reservaConfirmada, detalhes, chatId);
         }
 
         private static string MontarMensagemTelegram(Guid idConversa, bool reservaConfirmada, string saudacao, HandoverContextDto? detalhes, string? telefoneCliente)
