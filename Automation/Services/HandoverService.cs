@@ -1,4 +1,4 @@
-// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
+﻿// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
 using System;
 using System.Collections.Concurrent;
 using System.Linq;
@@ -49,15 +49,18 @@ namespace APIBack.Automation.Services
 
         public async Task ProcessarMensagensTelegramAsync(Guid idConversa, HandoverAgentDto? agente, bool reservaConfirmada, HandoverContextDto? detalhes, long? telegramChatIdOverride = null)
         {
-            await _repositorio.DefinirModoAsync(idConversa, ModoConversa.Humano, agente?.Id);
+            if (!reservaConfirmada)
+            {
+                await _repositorio.DefinirModoAsync(idConversa, ModoConversa.Humano, agente?.Id);
+            }
 
             var saudacao = !string.IsNullOrWhiteSpace(agente?.Nome)
-                ? $"Olá, {agente.Nome}!"
-                : "Olá, agente!";
+                ? $"OlÃ¡, {agente.Nome}!"
+                : "OlÃ¡, agente!";
 
             var destinoTelegram = telegramChatIdOverride ?? agente?.TelegramChatId;
             
-            // Obter informações da conversa para pegar o telefone do cliente
+            // Obter informaÃ§Ãµes da conversa para pegar o telefone do cliente
             var conversa = await _repositorio.ObterPorIdAsync(idConversa);
             string? telefoneCliente = null;
             if (conversa != null && conversa.IdCliente != Guid.Empty && conversa.IdEstabelecimento != Guid.Empty)
@@ -74,7 +77,7 @@ namespace APIBack.Automation.Services
             {
                 Interlocked.Increment(ref _contadorSuprimidos);
                 var metricas = LerMetricas();
-                _logger.LogInformation("[Conversa={Conversa}] Alerta duplicado suprimido | mÃ©tricas => confirmados={Confirmados}, ask={Ask}, suprimidos={Suprimidos}", idConversa, metricas.confirmados, metricas.ask, metricas.suprimidos);
+                _logger.LogInformation("[Conversa={Conversa}] Alerta duplicado suprimido | mÃƒÂ©tricas => confirmados={Confirmados}, ask={Ask}, suprimidos={Suprimidos}", idConversa, metricas.confirmados, metricas.ask, metricas.suprimidos);
                 return;
             }
 
@@ -91,7 +94,7 @@ namespace APIBack.Automation.Services
             }
 
             var metricasAtuais = LerMetricas();
-            _logger.LogInformation("[Conversa={Conversa}] {Mensagem} | mÃ©tricas => confirmados={Confirmados}, ask={Ask}, suprimidos={Suprimidos}", idConversa, mensagemAlerta, metricasAtuais.confirmados, metricasAtuais.ask, metricasAtuais.suprimidos);
+            _logger.LogInformation("[Conversa={Conversa}] {Mensagem} | mÃƒÂ©tricas => confirmados={Confirmados}, ask={Ask}, suprimidos={Suprimidos}", idConversa, mensagemAlerta, metricasAtuais.confirmados, metricasAtuais.ask, metricasAtuais.suprimidos);
 
             try
             {
@@ -126,14 +129,14 @@ namespace APIBack.Automation.Services
 
             if (reservaConfirmada)
             {
-                builder.AppendLine("📢 Nova reserva confirmada!");
+                builder.AppendLine("ðŸ“¢ Nova reserva confirmada!");
                 builder.AppendLine();
-                builder.AppendLine($"👤 Nome: {TextoOuNaoInformado(detalhes?.ClienteNome)}");
-                builder.AppendLine($"📞 Telefone: {TextoOuNaoInformado(telefoneCliente)}");
-                builder.AppendLine($"👥 Pessoas: {TextoOuNaoInformado(detalhes?.NumeroPessoas)}");
-                builder.AppendLine($"📅 Data: {MontarDescricaoData(detalhes)}");
+                builder.AppendLine($"ðŸ‘¤ Nome: {TextoOuNaoInformado(detalhes?.ClienteNome)}");
+                builder.AppendLine($"ðŸ“ž Telefone: {TextoOuNaoInformado(telefoneCliente)}");
+                builder.AppendLine($"ðŸ‘¥ Pessoas: {TextoOuNaoInformado(detalhes?.NumeroPessoas)}");
+                builder.AppendLine($"ðŸ“… Data: {MontarDescricaoData(detalhes)}");
                 builder.AppendLine();
-                builder.AppendLine("🔗 Mais detalhes: zippygo.com");
+                builder.AppendLine("ðŸ”— Mais detalhes: zippygo.com");
             }
             else
             {
@@ -141,7 +144,7 @@ namespace APIBack.Automation.Services
                 builder.AppendLine();
                 builder.AppendLine("Cliente pediu atendimento humano.");
                 builder.AppendLine();
-                builder.AppendLine("Histórico da conversa:");
+                builder.AppendLine("HistÃ³rico da conversa:");
 
                 var historico = detalhes?.Historico?
                     .Where(item => !string.IsNullOrWhiteSpace(item))
@@ -157,7 +160,7 @@ namespace APIBack.Automation.Services
                 }
                 else
                 {
-                    builder.AppendLine("(Histórico indisponível)");
+                    builder.AppendLine("(HistÃ³rico indisponÃ­vel)");
                 }
             }
 
@@ -172,7 +175,7 @@ private static string MontarDescricaoData(HandoverContextDto? detalhes)
 
             if (possuiDia && possuiHorario)
             {
-                return $"{detalhes!.Dia!.Trim()} às {detalhes.Horario!.Trim()}";
+                return $"{detalhes!.Dia!.Trim()} Ã s {detalhes.Horario!.Trim()}";
             }
 
             if (possuiDia)
@@ -185,11 +188,11 @@ private static string MontarDescricaoData(HandoverContextDto? detalhes)
                 return detalhes!.Horario!.Trim();
             }
 
-            return "Não informado";
+            return "NÃ£o informado";
         }
 
         private static string TextoOuNaoInformado(string? valor)
-            => string.IsNullOrWhiteSpace(valor) ? "NÃ£o informado" : valor.Trim();
+            => string.IsNullOrWhiteSpace(valor) ? "NÃƒÂ£o informado" : valor.Trim();
 
         private static void LimparAlertasAntigos(DateTime agora)
         {

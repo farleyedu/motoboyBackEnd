@@ -509,15 +509,8 @@ UPDATE conversas
                        data_atualizacao = NOW()
                  WHERE id = @IdConversa
                    AND NOT (
-                       estado IN (
-                           ''fechado_automaticamente''::estado_conversa_enum,
-                           ''fechado_agente''::estado_conversa_enum,
-                           ''arquivada''::estado_conversa_enum
-                       )
-                       AND @NovoEstado::estado_conversa_enum IN (
-                           ''aberto''::estado_conversa_enum,
-                           ''em_atendimento''::estado_conversa_enum
-                       )
+                       estado = ANY ('{fechado_automaticamente,fechado_agente,arquivada}'::estado_conversa_enum[])
+                       AND @NovoEstado::estado_conversa_enum = ANY ('{aberto,em_atendimento}'::estado_conversa_enum[])
                    );";
 
             await using var cx = new NpgsqlConnection(_connectionString);
