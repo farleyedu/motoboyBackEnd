@@ -1,4 +1,4 @@
-﻿// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
+// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
 using System;
 using System.Threading.Tasks;
 using APIBack.Automation.Interfaces;
@@ -28,7 +28,7 @@ namespace APIBack.Automation.Infra
             _configuration = config;
             _logger = logger;
 
-            // Garante índice único de idempotência (executa uma vez por processo)
+            // Garante �ndice �nico de idempot�ncia (executa uma vez por processo)
             if (!_indexesEnsured)
             {
                 try
@@ -39,12 +39,12 @@ namespace APIBack.Automation.Infra
                 }
                 catch
                 {
-                    // Não interrompe a aplicação em caso de erro ao criar índice.
+                    // N�o interrompe a aplica��o em caso de erro ao criar �ndice.
                 }
             }
         }
 
-        // Helpers de conversÃ£o para DateTime (UTC-safe)
+        // Helpers de conversão para DateTime (UTC-safe)
         private static DateTime? ToUtc(DateTime? dt)
             => dt.HasValue ? DateTime.SpecifyKind(dt.Value, DateTimeKind.Utc) : (DateTime?)null;
 
@@ -113,7 +113,7 @@ WHERE id = @Id;";
                 IdConversa = row.Id,
                 IdEstabelecimento = row.IdEstabelecimento,
                 IdCliente = row.IdCliente,
-                IdWa = string.Empty, // nÃ£o existe no schema
+                IdWa = string.Empty, // não existe no schema
                 Modo = row.IdAgenteAtribuido == null ? ModoConversa.Bot : ModoConversa.Humano,
                 AgenteDesignadoId = row.IdAgenteAtribuido,
                 UltimoUsuarioEm = ToUtc(row.DataUltimaEntrada) ?? default,
@@ -127,10 +127,10 @@ WHERE id = @Id;";
 
         public async Task<bool> InserirOuAtualizarAsync(Conversation conversa)
         {
-            // ValidaÃ§Ã£o obrigatÃ³ria do id_estabelecimento
+            // Validação obrigatória do id_estabelecimento
             if (conversa.IdEstabelecimento == Guid.Empty)
             {
-                throw new ArgumentException("id_estabelecimento Ã© obrigatÃ³rio para criar/atualizar conversa", nameof(conversa));
+                throw new ArgumentException("id_estabelecimento é obrigatório para criar/atualizar conversa", nameof(conversa));
             }
 
             var criado = conversa.CriadoEm != default ? DateTime.SpecifyKind(conversa.CriadoEm, DateTimeKind.Utc) : DateTime.UtcNow;
@@ -140,11 +140,11 @@ WHERE id = @Id;";
 
             // Datas derivadas (nunca nulas), todas em UTC
             var dataPrimeiraMensagem = criado;
-            var dataUltimaMensagem = criado; // na criaÃ§Ã£o, igual Ã  primeira
+            var dataUltimaMensagem = criado; // na criação, igual à primeira
             var dataUltimaEntrada = criado; // inicializa com criado
-            var dataUltimaSaida = dataUltimaMensagem; // inicialmente igual Ã  Ãºltima mensagem
-            var janela24hInicio = dataPrimeiraMensagem; // na criaÃ§Ã£o, igual Ã  primeira
-            var janela24hFim = janela24hInicio.AddHours(24); // sempre 24h apÃ³s o inÃ­cio
+            var dataUltimaSaida = dataUltimaMensagem; // inicialmente igual à última mensagem
+            var janela24hInicio = dataPrimeiraMensagem; // na criação, igual à primeira
+            var janela24hFim = janela24hInicio.AddHours(24); // sempre 24h após o início
 
             const string sqlConversas = @"
 INSERT INTO conversas
@@ -193,9 +193,9 @@ ON CONFLICT (id) DO UPDATE SET
         public async Task<Guid> GarantirClienteAsync(string telefoneE164, Guid idEstabelecimento)
         {
             if (string.IsNullOrWhiteSpace(telefoneE164))
-                throw new ArgumentException("telefoneE164 obrigatÃ³rio", nameof(telefoneE164));
+                throw new ArgumentException("telefoneE164 obrigatório", nameof(telefoneE164));
             if (idEstabelecimento == Guid.Empty)
-                throw new ArgumentException("idEstabelecimento obrigatÃ³rio", nameof(idEstabelecimento));
+                throw new ArgumentException("idEstabelecimento obrigatório", nameof(idEstabelecimento));
 
             const string sqlSel = @"SELECT id FROM clientes
                                      WHERE id_estabelecimento = @IdEstabelecimento
@@ -267,7 +267,7 @@ ON CONFLICT (id) DO UPDATE SET
             else if (mensagem.DataHora.Kind == DateTimeKind.Local)
                 quandoUtc = mensagem.DataHora.ToUniversalTime();
             else
-                // Unspecified: trate como UTC para nÃ£o aplicar offset errado
+                // Unspecified: trate como UTC para não aplicar offset errado
                 quandoUtc = DateTime.SpecifyKind(mensagem.DataHora, DateTimeKind.Utc);
 
             var idMsg = mensagem.Id != Guid.Empty ? mensagem.Id : Guid.NewGuid();
@@ -294,7 +294,7 @@ ON CONFLICT (id) DO UPDATE SET
 
             if (direcao == "entrada")
             {
-                // Entrada "chega" jÃ¡ enviada/entregue ao bot
+                // Entrada "chega" já enviada/entregue ao bot
                 dataEnvio = quandoUtc;
                 dataEntrega = quandoUtc;
                 dataLeitura = null;
@@ -320,7 +320,7 @@ ON CONFLICT (id) DO UPDATE SET
                         dataLeitura = quandoUtc;
                         break;
                     default:
-                        // mantÃ©m sÃ³ data_criacao
+                        // mantém só data_criacao
                         break;
                 }
             }
@@ -365,17 +365,17 @@ UPDATE conversas
 
             try
             {
-                // Garante que a conversa existe antes de inserir a mensagem (mesma transaÃ§Ã£o) SEM usar Guid.Empty
+                // Garante que a conversa existe antes de inserir a mensagem (mesma transação) SEM usar Guid.Empty
                 if (mensagem.IdConversa == Guid.Empty)
-                    throw new ArgumentException("IdConversa obrigatÃ³rio", nameof(mensagem));
+                    throw new ArgumentException("IdConversa obrigatório", nameof(mensagem));
 
-                // Extrai WABA phone e telefone do cliente de MetadadosMidia (JSON), caso disponÃ­veis
-                // Verifica/Cria conversa apenas se ainda nÃ£o existir
+                // Extrai WABA phone e telefone do cliente de MetadadosMidia (JSON), caso disponíveis
+                // Verifica/Cria conversa apenas se ainda não existir
                 const string checkConv = "SELECT 1 FROM conversas WHERE id = @Id LIMIT 1;";
                 var convExists = await cx.ExecuteScalarAsync<int?>(checkConv, new { Id = mensagem.IdConversa }, transaction: tx);
                 if (!convExists.HasValue)
                 {
-                    // Conversa nÃ£o existe -> garantir criaÃ§Ã£o
+                    // Conversa não existe -> garantir criação
                     string? wabaPhoneNumberId = phoneNumberId;
                     string? telefoneClienteRaw = idWa;
 
@@ -383,9 +383,9 @@ UPDATE conversas
                     const string sqlWaba = "SELECT id_estabelecimento FROM waba_phone WHERE phone_number_id = @PhoneNumberId LIMIT 1;";
                     var idEstabelecimento = await cx.ExecuteScalarAsync<Guid?>(sqlWaba, new { PhoneNumberId = wabaPhoneNumberId }, transaction: tx);
                     if (!idEstabelecimento.HasValue || idEstabelecimento.Value == Guid.Empty)
-                        throw new InvalidOperationException("Estabelecimento nÃ£o encontrado para este WABA");
+                        throw new InvalidOperationException("Estabelecimento não encontrado para este WABA");
 
-                    // Resolve IdCliente por telefone normalizado (cria se nÃ£o existir)
+                    // Resolve IdCliente por telefone normalizado (cria se não existir)
                     var telefoneE164 = APIBack.Automation.Helpers.TelefoneHelper.ToE164(telefoneClienteRaw ?? string.Empty);
                     const string sqlCliSel = "SELECT id FROM clientes WHERE telefone_e164 = @Tel AND id_estabelecimento = @IdEstabelecimento LIMIT 1;";
                     var idCliente = await cx.ExecuteScalarAsync<Guid?>(sqlCliSel, new { Tel = telefoneE164, IdEstabelecimento = idEstabelecimento }, transaction: tx);
@@ -427,7 +427,7 @@ UPDATE conversas
                             throw new InvalidOperationException("Falha ao criar cliente");
                     }
 
-                    // Cria conversa com IDs vÃ¡lidos
+                    // Cria conversa com IDs válidos
                     var agoraUtc = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Utc);
                     await InserirOuAtualizarAsync(new Conversation
                     {
@@ -439,7 +439,7 @@ UPDATE conversas
                     });
                 }
 
-                // Insere a mensagem (idempotente via Ã­ndice Ãºnico em id_provedor) e atualiza a conversa
+                // Insere a mensagem (idempotente via índice único em id_provedor) e atualiza a conversa
                 await cx.ExecuteAsync(insertMsg, new
                 {
                     Id = idMsg,
@@ -507,7 +507,18 @@ UPDATE conversas
                 UPDATE conversas
                    SET estado = @NovoEstado::estado_conversa_enum,
                        data_atualizacao = NOW()
-                 WHERE id = @IdConversa;";
+                 WHERE id = @IdConversa
+                   AND NOT (
+                       estado IN (
+                           ''fechado_automaticamente''::estado_conversa_enum,
+                           ''fechado_agente''::estado_conversa_enum,
+                           ''arquivada''::estado_conversa_enum
+                       )
+                       AND @NovoEstado::estado_conversa_enum IN (
+                           ''aberto''::estado_conversa_enum,
+                           ''em_atendimento''::estado_conversa_enum
+                       )
+                   );";
 
             await using var cx = new NpgsqlConnection(_connectionString);
             await cx.ExecuteAsync(sql, new { IdConversa = idConversa, NovoEstado = MapEstadoToDatabase(novoEstado) });
@@ -516,6 +527,7 @@ UPDATE conversas
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) =================
+
 
 
 
