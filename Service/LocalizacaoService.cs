@@ -10,7 +10,7 @@ namespace APIBack.Service
     public class LocalizacaoService : ILocalizacaoService
     {
         private readonly HttpClient _httpClient;
-        private const string ApiKey = "e06d2404dc444be9bf285259a1d41ed0";
+        private const string ApiKey = "c7b85ab37cf640f2bc03a7b75e5f9bd4";
         private const string BaseUrl = "https://api.opencagedata.com/geocode/v1/json";
 
         public LocalizacaoService(HttpClient httpClient)
