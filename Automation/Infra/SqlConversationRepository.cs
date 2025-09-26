@@ -1,6 +1,10 @@
 // ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
 using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
+using APIBack.Automation.Dtos;
 using APIBack.Automation.Interfaces;
 using APIBack.Automation.Models;
 using Dapper;
@@ -19,6 +23,22 @@ namespace APIBack.Automation.Infra
         private readonly ILogger<SqlConversationRepository> _logger;
         private readonly IWabaPhoneRepository? _wabaPhoneRepository;
         private static bool _indexesEnsured;
+        private const string ConversationDetailsSql = @"SELECT
+  c.id                    AS Id,
+  c.id_cliente            AS IdCliente,
+  NULL::text              AS ClienteNome,
+  c.estado::text          AS Estado,
+  c.id_agente_atribuido   AS IdAgenteAtribuido,
+  c.data_primeira_mensagem AS DataPrimeiraMensagem,
+  c.data_ultima_mensagem  AS DataUltimaMensagem,
+  c.data_criacao          AS DataCriacao,
+  c.data_atualizacao      AS DataAtualizacao,
+  c.data_fechamento       AS DataFechamento,
+  c.fechado_por_id        AS FechadoPorId,
+  c.motivo_fechamento     AS MotivoFechamento
+FROM conversas c
+WHERE c.id = @Id
+LIMIT 1;";
 
         public SqlConversationRepository(IConfiguration config, ILogger<SqlConversationRepository> logger)
         {
@@ -72,14 +92,40 @@ namespace APIBack.Automation.Infra
             return normalized switch
             {
                 "aberto" => EstadoConversa.Aberto,
-                "fechado_automaticamente" or "fechadoautomaticamente" => EstadoConversa.FechadoAutomaticamente,
-                "fechado_agente" or "fechadoagente" => EstadoConversa.FechadoAgente,
-                "arquivada" => EstadoConversa.Arquivada,
+                "aguardando_atendimento" or "aguardandoatendimento" => EstadoConversa.EmAtendimento,
                 "em_atendimento" or "ematendimento" => EstadoConversa.EmAtendimento,
+                "fechado_automaticamente" or "fechadoautomaticamente" => EstadoConversa.FechadoAutomaticamente,
+                "fechado_bot" or "fechadobot" => EstadoConversa.FechadoAutomaticamente,
+                "fechado_agente" or "fechadoagente" => EstadoConversa.FechadoAgente,
+                "arquivado" or "arquivada" => EstadoConversa.Arquivada,
                 _ => Enum.TryParse<EstadoConversa>(valor, true, out var parsed) ? parsed : EstadoConversa.Aberto
             };
         }
 
+        private static string MapEstadoDbToApi(string? valor)
+        {
+            if (string.IsNullOrWhiteSpace(valor))
+            {
+                return "aberto";
+            }
+
+            return valor.Trim().ToLowerInvariant() switch
+            {
+                "fechado_automaticamente" => "fechado_bot",
+                _ => valor.Trim().ToLowerInvariant()
+            };
+        }
+
+        private static string NormalizeEstadoFiltro(string estado)
+        {
+            var normalized = estado.Trim().ToLowerInvariant();
+            return normalized switch
+            {
+                "fechado_bot" => "fechado_automaticamente",
+                "arquivado" => "arquivada",
+                _ => normalized
+            };
+        }
 
         public async Task<Conversation?> ObterPorIdAsync(Guid id)
         {
@@ -99,13 +145,15 @@ SELECT
   janela_24h_fim             AS Janela24hFim,
   qtd_nao_lidas              AS QtdNaoLidas,
   motivo_fechamento          AS MotivoFechamento,
+  fechado_por_id             AS FechadoPorId,
+  data_fechamento            AS DataFechamento,
   data_criacao               AS DataCriacao,
   data_atualizacao           AS DataAtualizacao
 FROM conversas
 WHERE id = @Id;";
 
             await using var cx = new NpgsqlConnection(_connectionString);
-            var row = await cx.QueryFirstOrDefaultAsync<(Guid Id, Guid IdEstabelecimento, Guid IdCliente, string? Canal, string? Estado, int? IdAgenteAtribuido, DateTime? DataPrimeiraMensagem, DateTime? DataUltimaMensagem, DateTime? DataUltimaEntrada, DateTime? DataUltimaSaida, DateTime? Janela24hInicio, DateTime? Janela24hFim, int QtdNaoLidas, string? MotivoFechamento, DateTime DataCriacao, DateTime DataAtualizacao)>(sql, new { Id = id });
+            var row = await cx.QueryFirstOrDefaultAsync<(Guid Id, Guid IdEstabelecimento, Guid IdCliente, string? Canal, string? Estado, int? IdAgenteAtribuido, DateTime? DataPrimeiraMensagem, DateTime? DataUltimaMensagem, DateTime? DataUltimaEntrada, DateTime? DataUltimaSaida, DateTime? Janela24hInicio, DateTime? Janela24hFim, int QtdNaoLidas, string? MotivoFechamento, int? FechadoPorId, DateTime? DataFechamento, DateTime DataCriacao, DateTime DataAtualizacao)>(sql, new { Id = id });
             if (row.Equals(default((Guid, Guid, Guid, string?, string?, int?, DateTime?, DateTime?, DateTime?, DateTime?, DateTime?, DateTime?, int, string?, DateTime, DateTime)))) return null;
 
             var conv = new Conversation
@@ -120,7 +168,10 @@ WHERE id = @Id;";
                 Janela24hExpiraEm = ToUtc(row.Janela24hFim),
                 CriadoEm = ToUtcNonNull(row.DataCriacao),
                 AtualizadoEm = ToUtcNonNull(row.DataAtualizacao),
-                Estado = MapEstadoFromDatabase(row.Estado)
+                Estado = MapEstadoFromDatabase(row.Estado),
+                MotivoFechamento = row.MotivoFechamento,
+                FechadoPorId = row.FechadoPorId,
+                DataFechamento = ToUtc(row.DataFechamento)
             };
             return conv;
         }
@@ -148,9 +199,9 @@ WHERE id = @Id;";
 
             const string sqlConversas = @"
 INSERT INTO conversas
-  (id, id_estabelecimento, id_cliente, canal, estado, id_agente_atribuido, data_primeira_mensagem, data_ultima_mensagem, data_ultima_entrada, data_ultima_saida, janela_24h_inicio, janela_24h_fim, qtd_nao_lidas, motivo_fechamento, data_criacao, data_atualizacao)
+  (id, id_estabelecimento, id_cliente, canal, estado, id_agente_atribuido, data_primeira_mensagem, data_ultima_mensagem, data_ultima_entrada, data_ultima_saida, janela_24h_inicio, janela_24h_fim, qtd_nao_lidas, motivo_fechamento, fechado_por_id, data_fechamento, data_criacao, data_atualizacao)
 VALUES
-  (@Id, @IdEstabelecimento, @IdCliente, @Canal::canal_chat_enum, @Estado::estado_conversa_enum, @IdAgenteAtribuido, @DataPrimeiraMensagem, @DataUltimaMensagem, @DataUltimaEntrada, @DataUltimaSaida, @Janela24hInicio, @Janela24hFim, @QtdNaoLidas, @MotivoFechamento, @DataCriacao, @DataAtualizacao)
+  (@Id, @IdEstabelecimento, @IdCliente, @Canal::canal_chat_enum, @Estado::estado_conversa_enum, @IdAgenteAtribuido, @DataPrimeiraMensagem, @DataUltimaMensagem, @DataUltimaEntrada, @DataUltimaSaida, @Janela24hInicio, @Janela24hFim, @QtdNaoLidas, @MotivoFechamento, @FechadoPorId, @DataFechamento, @DataCriacao, @DataAtualizacao)
 ON CONFLICT (id) DO UPDATE SET
   data_ultima_mensagem = GREATEST(conversas.data_ultima_mensagem, EXCLUDED.data_ultima_mensagem),
   data_atualizacao     = EXCLUDED.data_atualizacao,
@@ -176,7 +227,9 @@ ON CONFLICT (id) DO UPDATE SET
                     Janela24hInicio = janela24hInicio,
                     Janela24hFim = janela24hFim,
                     QtdNaoLidas = 0,
-                    MotivoFechamento = (string?)null,
+                    MotivoFechamento = conversa.MotivoFechamento,
+                    FechadoPorId = conversa.FechadoPorId,
+                    DataFechamento = conversa.DataFechamento.HasValue ? DateTime.SpecifyKind(conversa.DataFechamento.Value, DateTimeKind.Utc) : (DateTime?)null,
                     DataCriacao = criado,
                     DataAtualizacao = atualizado
                 });
@@ -256,7 +309,7 @@ ON CONFLICT (id) DO UPDATE SET
             await cx.ExecuteAsync(sql, parametros);
         }
 
-        public async Task AcrescentarMensagemAsync(Message mensagem, string? phoneNumberId, string idWa = null)
+        public async Task AcrescentarMensagemAsync(Message mensagem, string? phoneNumberId, string? idWa = null)
         {
             // Normaliza timestamp para UTC corretamente
             DateTime quandoUtc;
@@ -501,6 +554,189 @@ UPDATE conversas
             return found ?? Guid.Empty;
         }
 
+        public async Task<IReadOnlyList<ConversationListItemDto>> ListarConversasAsync(string? estado, int? idAgente, bool incluirArquivadas)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("SELECT");
+            sb.AppendLine("  c.id                   AS Id,");
+            sb.AppendLine("  c.id_cliente           AS IdCliente,");
+            sb.AppendLine("  NULL::text             AS ClienteNome,");
+            sb.AppendLine("  c.estado::text         AS Estado,");
+            sb.AppendLine("  c.id_agente_atribuido  AS IdAgenteAtribuido,");
+            sb.AppendLine("  c.data_primeira_mensagem AS DataPrimeiraMensagem,");
+            sb.AppendLine("  c.data_ultima_mensagem AS DataUltimaMensagem,");
+            sb.AppendLine("  c.data_criacao         AS DataCriacao,");
+            sb.AppendLine("  c.data_atualizacao     AS DataAtualizacao,");
+            sb.AppendLine("  c.data_fechamento      AS DataFechamento,");
+            sb.AppendLine("  lm.conteudo            AS UltimaMensagemConteudo,");
+            sb.AppendLine("  lm.data_criacao        AS UltimaMensagemData,");
+            sb.AppendLine("  lm.criada_por          AS UltimaMensagemCriadaPor");
+            sb.AppendLine("FROM conversas c");
+            sb.AppendLine("LEFT JOIN LATERAL (");
+            sb.AppendLine("    SELECT m.conteudo, m.data_criacao, m.criada_por");
+            sb.AppendLine("    FROM mensagens m");
+            sb.AppendLine("    WHERE m.id_conversa = c.id");
+            sb.AppendLine("    ORDER BY m.data_criacao DESC");
+            sb.AppendLine("    LIMIT 1");
+            sb.AppendLine(") lm ON TRUE");
+            sb.AppendLine("WHERE 1=1");
+
+            var parameters = new DynamicParameters();
+            string? estadoNormalizado = null;
+
+            if (!string.IsNullOrWhiteSpace(estado))
+            {
+                estadoNormalizado = NormalizeEstadoFiltro(estado);
+                parameters.Add("Estado", estadoNormalizado);
+                sb.AppendLine("  AND c.estado = @Estado::estado_conversa_enum");
+            }
+
+            if (idAgente.HasValue)
+            {
+                parameters.Add("Responsavel", idAgente);
+                sb.AppendLine("  AND c.id_agente_atribuido = @Responsavel");
+            }
+
+            if (!incluirArquivadas)
+            {
+                if (!string.Equals(estadoNormalizado, "arquivada", StringComparison.OrdinalIgnoreCase))
+                {
+                    sb.AppendLine("  AND c.estado <> 'arquivada'::estado_conversa_enum");
+                }
+            }
+
+            sb.AppendLine("ORDER BY c.data_ultima_mensagem DESC NULLS LAST, c.data_criacao DESC;");
+
+            await using var cx = new NpgsqlConnection(_connectionString);
+            var registros = (await cx.QueryAsync<ConversationListItemDto>(sb.ToString(), parameters)).ToList();
+            foreach (var item in registros)
+            {
+                item.Estado = MapEstadoDbToApi(item.Estado);
+            }
+
+            return registros;
+        }
+
+        public async Task<ConversationHistoryDto?> ObterHistoricoConversaAsync(Guid idConversa, int page, int pageSize)
+        {
+            if (page < 1) page = 1;
+            if (pageSize <= 0) pageSize = 50;
+
+            await using var cx = new NpgsqlConnection(_connectionString);
+            var detalhes = await cx.QueryFirstOrDefaultAsync<ConversationDetailsDto>(ConversationDetailsSql, new { Id = idConversa });
+            if (detalhes == null)
+            {
+                return null;
+            }
+
+            detalhes.Estado = MapEstadoDbToApi(detalhes.Estado);
+
+            var parametrosMensagens = new
+            {
+                Id = idConversa,
+                PageSize = pageSize,
+                Offset = (page - 1) * pageSize
+            };
+
+            var mensagens = (await cx.QueryAsync<ConversationMessageItemDto>(@"
+SELECT
+  m.id          AS Id,
+  COALESCE(m.criada_por, '') AS CriadaPor,
+  COALESCE(m.conteudo, '')   AS Conteudo,
+  m.data_envio  AS DataEnvio,
+  m.data_criacao AS DataCriacao
+FROM mensagens m
+WHERE m.id_conversa = @Id
+ORDER BY m.data_criacao ASC, m.data_envio ASC
+LIMIT @PageSize OFFSET @Offset;", parametrosMensagens)).ToList();
+
+            var total = await cx.ExecuteScalarAsync<int>("SELECT COUNT(1) FROM mensagens WHERE id_conversa = @Id;", new { Id = idConversa });
+
+            return new ConversationHistoryDto
+            {
+                Conversa = detalhes,
+                Mensagens = mensagens,
+                Page = page,
+                PageSize = pageSize,
+                Total = total
+            };
+        }
+
+        public async Task<bool> AtribuirConversaAsync(Guid idConversa, int idAgente)
+        {
+            const string sql = @"
+UPDATE conversas
+   SET id_agente_atribuido = @IdAgente,
+       estado = 'em_atendimento'::estado_conversa_enum,
+       data_atualizacao = NOW()
+ WHERE id = @Id;";
+
+            await using var cx = new NpgsqlConnection(_connectionString);
+            var linhas = await cx.ExecuteAsync(sql, new { Id = idConversa, IdAgente = idAgente });
+            return linhas > 0;
+        }
+
+        public async Task<bool> FecharConversaAsync(Guid idConversa, int? idAgente, string? motivo)
+        {
+            var estado = idAgente.HasValue ? "fechado_agente" : "fechado_automaticamente";
+            const string sql = @"
+UPDATE conversas
+   SET estado = @Estado::estado_conversa_enum,
+       motivo_fechamento = @Motivo,
+       fechado_por_id = @FechadoPorId,
+       data_fechamento = NOW(),
+       data_atualizacao = NOW()
+ WHERE id = @Id;";
+
+            await using var cx = new NpgsqlConnection(_connectionString);
+            var linhas = await cx.ExecuteAsync(sql, new
+            {
+                Id = idConversa,
+                Estado = estado,
+                Motivo = string.IsNullOrWhiteSpace(motivo) ? null : motivo.Trim(),
+                FechadoPorId = idAgente
+            });
+
+            return linhas > 0;
+        }
+
+        public async Task<ConversationDetailsDto?> ArquivarConversaAsync(Guid idConversa)
+        {
+            const string sql = @"
+UPDATE conversas
+   SET estado = 'arquivada'::estado_conversa_enum,
+       data_atualizacao = NOW()
+ WHERE id = @Id;";
+
+            await using var cx = new NpgsqlConnection(_connectionString);
+            var linhas = await cx.ExecuteAsync(sql, new { Id = idConversa });
+            if (linhas == 0)
+            {
+                return null;
+            }
+
+            var detalhes = await cx.QueryFirstOrDefaultAsync<ConversationDetailsDto>(ConversationDetailsSql, new { Id = idConversa });
+            if (detalhes == null)
+            {
+                return null;
+            }
+
+            detalhes.Estado = MapEstadoDbToApi(detalhes.Estado);
+            return detalhes;
+        }
+
+        public async Task<ConversationDetailsDto?> ObterDetalhesConversaAsync(Guid idConversa)
+        {
+            await using var cx = new NpgsqlConnection(_connectionString);
+            var detalhes = await cx.QueryFirstOrDefaultAsync<ConversationDetailsDto>(ConversationDetailsSql, new { Id = idConversa });
+            if (detalhes == null)
+            {
+                return null;
+            }
+
+            detalhes.Estado = MapEstadoDbToApi(detalhes.Estado);
+            return detalhes;
+        }
         public async Task AtualizarEstadoAsync(Guid idConversa, EstadoConversa novoEstado)
         {
             const string sql = @"
@@ -520,6 +756,18 @@ UPDATE conversas
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) =================
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
