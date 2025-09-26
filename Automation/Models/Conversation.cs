@@ -32,6 +32,9 @@ namespace APIBack.Automation.Models
         public DateTime? AtualizadoEm { get; set; } = DateTime.UtcNow;
         public string? MessageIdWhatsapp { get; set; }
         public EstadoConversa Estado { get; set; } = EstadoConversa.Aberto;
+        public string? MotivoFechamento { get; set; }
+        public int? FechadoPorId { get; set; }
+        public DateTime? DataFechamento { get; set; }
 
         // Propriedades para compatibilidade com SqlConversationRepository
         public DateTime DataPrimeiraMensagem => CriadoEm;
@@ -40,4 +43,5 @@ namespace APIBack.Automation.Models
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
+
 
