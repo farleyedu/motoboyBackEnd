@@ -74,7 +74,8 @@ namespace APIBack.Automation.Controllers
             // stub send to WA
             _ = await _enviadorWhatsapp.EnviarTextoAsync(conversa.IdWa, req.Mensagem);
 
-            return Ok();
+            var payload = ConversationMessageView.FromMessage(mensagem);
+            return Ok(payload);
         }
 
         [HttpGet("conversation/{idConversa:guid}")]
