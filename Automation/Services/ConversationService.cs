@@ -238,14 +238,7 @@ namespace APIBack.Automation.Services
                 Janela24hExpiraEm = conversa.Janela24hExpiraEm,
                 CriadoEm = conversa.CriadoEm,
                 AtualizadoEm = conversa.AtualizadoEm ?? default(DateTime),
-                Mensagens = ultimas.Select(m => new ConversationMessageView
-                {
-                    IdMensagemWa = m.IdMensagemWa,
-                    Direcao = m.Direcao.ToString(),
-                    Conteudo = m.Conteudo,
-                    MetadadosMidia = m.MetadadosMidia,
-                    DataHora = m.DataHora
-                }).ToList()
+                Mensagens = ultimas.Select(ConversationMessageView.FromMessage).ToList()
             };
         }
 
