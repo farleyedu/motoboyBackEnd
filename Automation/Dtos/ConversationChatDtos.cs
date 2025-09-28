@@ -1,6 +1,7 @@
 // ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
 using System;
 using System.Collections.Generic;
+using System.Text.Json.Serialization;
 
 namespace APIBack.Automation.Dtos
 {
@@ -9,6 +10,7 @@ namespace APIBack.Automation.Dtos
         public Guid Id { get; set; }
         public Guid IdCliente { get; set; }
         public string? ClienteNome { get; set; }
+        public string? ClienteNumero { get; set; }
         public string Estado { get; set; } = string.Empty;
         public int? IdAgenteAtribuido { get; set; }
         public DateTime? DataPrimeiraMensagem { get; set; }
@@ -26,6 +28,7 @@ namespace APIBack.Automation.Dtos
         public Guid Id { get; set; }
         public Guid IdCliente { get; set; }
         public string? ClienteNome { get; set; }
+        public string? ClienteNumero { get; set; }
         public string Estado { get; set; } = string.Empty;
         public int? IdAgenteAtribuido { get; set; }
         public DateTime? DataPrimeiraMensagem { get; set; }

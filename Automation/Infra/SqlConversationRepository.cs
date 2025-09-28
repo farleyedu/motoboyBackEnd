@@ -26,7 +26,8 @@ namespace APIBack.Automation.Infra
         private const string ConversationDetailsSql = @"SELECT
   c.id                    AS Id,
   c.id_cliente            AS IdCliente,
-  NULL::text              AS ClienteNome,
+  COALESCE(cl.nome, cl.telefone_e164) AS ClienteNome,
+  cl.telefone_e164        AS ClienteNumero,
   c.estado::text          AS Estado,
   c.id_agente_atribuido   AS IdAgenteAtribuido,
   c.data_primeira_mensagem AS DataPrimeiraMensagem,
@@ -37,6 +38,7 @@ namespace APIBack.Automation.Infra
   c.fechado_por_id        AS FechadoPorId,
   c.motivo_fechamento     AS MotivoFechamento
 FROM conversas c
+LEFT JOIN clientes cl ON c.id_cliente = cl.id
 WHERE c.id = @Id
 LIMIT 1;";
 
@@ -48,7 +50,7 @@ LIMIT 1;";
             _configuration = config;
             _logger = logger;
 
-            // Garante índice único de idempotência (executa uma vez por processo)
+            // Garante ï¿½ndice ï¿½nico de idempotï¿½ncia (executa uma vez por processo)
             if (!_indexesEnsured)
             {
                 try
@@ -59,7 +61,7 @@ LIMIT 1;";
                 }
                 catch
                 {
-                    // Não interrompe a aplicação em caso de erro ao criar índice.
+                    // Nï¿½o interrompe a aplicaï¿½ï¿½o em caso de erro ao criar ï¿½ndice.
                 }
             }
         }
@@ -560,7 +562,8 @@ UPDATE conversas
             sb.AppendLine("SELECT");
             sb.AppendLine("  c.id                   AS Id,");
             sb.AppendLine("  c.id_cliente           AS IdCliente,");
-            sb.AppendLine("  NULL::text             AS ClienteNome,");
+            sb.AppendLine("  COALESCE(cl.nome, cl.telefone_e164) AS ClienteNome,");
+            sb.AppendLine("  cl.telefone_e164       AS ClienteNumero,");
             sb.AppendLine("  c.estado::text         AS Estado,");
             sb.AppendLine("  c.id_agente_atribuido  AS IdAgenteAtribuido,");
             sb.AppendLine("  c.data_primeira_mensagem AS DataPrimeiraMensagem,");
@@ -572,6 +575,7 @@ UPDATE conversas
             sb.AppendLine("  lm.data_criacao        AS UltimaMensagemData,");
             sb.AppendLine("  lm.criada_por          AS UltimaMensagemCriadaPor");
             sb.AppendLine("FROM conversas c");
+            sb.AppendLine("LEFT JOIN clientes cl ON c.id_cliente = cl.id");
             sb.AppendLine("LEFT JOIN LATERAL (");
             sb.AppendLine("    SELECT m.conteudo, m.data_criacao, m.criada_por");
             sb.AppendLine("    FROM mensagens m");
@@ -630,6 +634,10 @@ UPDATE conversas
             }
 
             detalhes.Estado = MapEstadoDbToApi(detalhes.Estado);
+            
+            // Log para debug
+            _logger.LogInformation("ClienteNumero: {ClienteNumero}, ClienteNome: {ClienteNome}", detalhes.ClienteNumero, detalhes.ClienteNome);
+            _logger.LogInformation("Query SQL: {Sql}", ConversationDetailsSql);
 
             var parametrosMensagens = new
             {
