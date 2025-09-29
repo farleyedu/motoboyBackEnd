@@ -39,8 +39,8 @@ namespace APIBack.Automation.Infra
                                   FROM waba_phone
                                   WHERE ativo = TRUE
                                     AND (
-                                         phone_number_id = @Raw
-                                         OR regexp_replace(phone_number_id, '[^0-9]', '', 'g') = @Digits
+                                         display_phone_number  = @Raw
+                                         OR regexp_replace(display_phone_number, '[^0-9]', '', 'g') = @Digits
                                         )
                                   ORDER BY data_atualizacao DESC
                                   LIMIT 1;";
@@ -53,7 +53,7 @@ namespace APIBack.Automation.Infra
             }
             catch (Exception ex)
             {
-                _logger?.LogError(ex, "Erro ao buscar estabelecimento por phone_number_id {PhoneNumberId}", phoneNumberId);
+                _logger?.LogError(ex, "Erro ao buscar estabelecimento por display_phone_number  {PhoneNumberId}", phoneNumberId);
                 return null;
             }
         }
@@ -96,9 +96,9 @@ namespace APIBack.Automation.Infra
             var criado = wabaPhone.DataCriacao != default ? DateTime.SpecifyKind(wabaPhone.DataCriacao, DateTimeKind.Utc) : DateTime.UtcNow;
             var atualizado = DateTime.UtcNow;
 
-            const string sql = @"INSERT INTO waba_phone (phone_number_id, id_estabelecimento, ativo, descricao, data_criacao, data_atualizacao)
+            const string sql = @"INSERT INTO waba_phone (display_phone_number , id_estabelecimento, ativo, descricao, data_criacao, data_atualizacao)
                                  VALUES (@PhoneNumberId, @IdEstabelecimento, @Ativo, @Descricao, @DataCriacao, @DataAtualizacao)
-                                 ON CONFLICT (phone_number_id)
+                                 ON CONFLICT (display_phone_number )
                                  DO UPDATE SET
                                    id_estabelecimento = EXCLUDED.id_estabelecimento,
                                    ativo              = EXCLUDED.ativo,
@@ -137,8 +137,8 @@ namespace APIBack.Automation.Infra
                                   FROM waba_phone
                                   WHERE ativo = TRUE
                                     AND (
-                                         phone_number_id = @Raw
-                                         OR regexp_replace(phone_number_id, '[^0-9]', '', 'g') = @Digits
+                                         display_phone_number  = @Raw
+                                         OR regexp_replace(display_phone_number , '[^0-9]', '', 'g') = @Digits
                                         )
                                   LIMIT 1;";
 
