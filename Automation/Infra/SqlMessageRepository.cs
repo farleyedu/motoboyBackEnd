@@ -47,7 +47,7 @@ namespace APIBack.Automation.Infra
             return r.HasValue;
         }
 
-        public async Task AddMessageAsync(Message mensagem, string? phoneNumberId, string? idWa)
+        public async Task AddMessageAsync(Message mensagem, string? displayPhoneNumber, string? idWa)
         {
             // Timestamp base (UTC)
             DateTime quandoUtc;
@@ -147,9 +147,9 @@ UPDATE conversas
             var convExists = await cx.ExecuteScalarAsync<int?>(checkConv, new { Id = mensagem.IdConversa }, transaction: tx);
             if (!convExists.HasValue)
             {
-                // Descobre id_estabelecimento pelo phone_number_id
-                const string sqlWaba = "SELECT id_estabelecimento FROM waba_phone WHERE phone_number_id = @PhoneNumberId LIMIT 1;";
-                var idEstabelecimento = await cx.ExecuteScalarAsync<Guid?>(sqlWaba, new { PhoneNumberId = phoneNumberId }, transaction: tx);
+                // Descobre id_estabelecimento pelo display_phone_number
+                const string sqlWaba = "SELECT id_estabelecimento FROM waba_phone WHERE display_phone_number = @DisplayPhoneNumber LIMIT 1;";
+                var idEstabelecimento = await cx.ExecuteScalarAsync<Guid?>(sqlWaba, new { DisplayPhoneNumber = displayPhoneNumber }, transaction: tx);
                 if (!idEstabelecimento.HasValue || idEstabelecimento.Value == Guid.Empty)
                     throw new InvalidOperationException("Estabelecimento não encontrado para este WABA");
 

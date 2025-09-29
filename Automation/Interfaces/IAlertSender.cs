@@ -5,7 +5,7 @@ namespace APIBack.Automation.Interfaces
 {
     public interface IAlertSender
     {
-        Task EnviarAlertaAsync(string mensagem, string? chatIdOverride = null);
+        Task EnviarAlertaTelegramAsync(string mensagem, string? chatIdOverride = null);
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================

@@ -16,7 +16,7 @@ namespace APIBack.Automation.Services
     {
         private readonly IConversationRepository _repositorio;
         private readonly ILogger<ConversationService> _logger;
-        private readonly IQueueBus _queueBus;  
+        private readonly IQueueBus _queueBus;
         private readonly IClienteRepository _repositorioClientes;
         private readonly IWabaPhoneRepository _wabaPhoneRepository;
         private readonly IMessageService _mensagemService;
@@ -29,9 +29,10 @@ namespace APIBack.Automation.Services
         private readonly ConcurrentDictionary<Guid, ConcurrentQueue<Message>> _mensagens = new();
 
         public ConversationService(
-            IConversationRepository repo, 
+            IConversationRepository repo,
             ILogger<ConversationService> logger,
-            IQueueBus queueBus,           IClienteRepository repositorioClientes,
+            IQueueBus queueBus,
+            IClienteRepository repositorioClientes,
             IWabaPhoneRepository wabaPhoneRepository,
             IConfiguration configuration,
             IMessageService mensagemService)
@@ -45,7 +46,22 @@ namespace APIBack.Automation.Services
             _mensagemService = mensagemService;
         }
 
-        public async Task<Message?> AcrescentarEntradaAsync(string idWa, string idMensagemWa, string conteudo, string phonedisplay, DateTime? dataMensagemUtc = null, string? tipoOrigem = null)
+        /// <summary>
+        /// Adiciona uma mensagem de entrada (do cliente) e persiste no banco.
+        /// </summary>
+        /// <param name="idWa">WhatsApp ID do cliente (ex: 5534999887766)</param>
+        /// <param name="idMensagemWa">ID único da mensagem do WhatsApp</param>
+        /// <param name="conteudo">Texto da mensagem</param>
+        /// <param name="displayPhoneNumber">Número de telefone visível do estabelecimento (ex: +5534999887766) - USADO PARA BUSCAR ESTABELECIMENTO</param>
+        /// <param name="dataMensagemUtc">Data/hora UTC da mensagem</param>
+        /// <param name="tipoOrigem">Tipo da mensagem (text, image, etc)</param>
+        public async Task<Message?> AcrescentarEntradaAsync(
+            string idWa,
+            string idMensagemWa,
+            string conteudo,
+            string displayPhoneNumber,
+            DateTime? dataMensagemUtc = null,
+            string? tipoOrigem = null)
         {
             if (string.IsNullOrWhiteSpace(idMensagemWa))
             {
@@ -53,67 +69,83 @@ namespace APIBack.Automation.Services
                 return null;
             }
 
-
-            ///voltar depois
-            //if (await _repositorio.ExisteIdMensagemPorProvedorWaAsync(idMensagemWa))
-            //{
-            //    _logger.LogInformation("Ignorando duplicata de entrada IdMensagemWa={WaMessageId}", idMensagemWa);
-            //    return null;
-            //}
-
-            //////////////////////////////////////////////////
-            ///
-            // Em desenvolvimento, não bloqueia duplicatas para facilitar testes.
+            // Verificar duplicidade (com exceção em DEV)
             var ambiente = _configuration.GetValue<string>("ASPNETCORE_ENVIRONMENT");
             var isDev = string.Equals(ambiente, "Development", StringComparison.OrdinalIgnoreCase);
 
-            // Verifica duplicidade apenas uma vez
             var duplicata = await _repositorio.ExisteIdMensagemPorProvedorWaAsync(idMensagemWa);
             if (duplicata)
             {
                 if (isDev)
                 {
-                    _logger.LogWarning("DEV: Duplicata detectada IdMensagemWa={WaMessageId}, processamento continuará para testes.", idMensagemWa);
-                    // segue o fluxo em DEV
+                    _logger.LogWarning(
+                        "DEV: Duplicata detectada IdMensagemWa={WaMessageId}, processamento continuará para testes.",
+                        idMensagemWa);
                 }
                 else
                 {
                     _logger.LogInformation("Ignorando duplicata de entrada IdMensagemWa={WaMessageId}", idMensagemWa);
-                    return null; // bloqueia fora de DEV
+                    return null;
                 }
             }
-            //////////////////////////////////////////////////////////////////////////////
-            ///
 
-
-            // Resolve o id_estabelecimento usando o phone_number_id
+            // ============== CORREÇÃO: SEMPRE USAR DISPLAY PHONE NUMBER ==============
+            // Buscar estabelecimento pelo número visível (display_phone_number)
             Guid? idEstabelecimento = null;
-            if (!string.IsNullOrWhiteSpace(phonedisplay))
+            if (!string.IsNullOrWhiteSpace(displayPhoneNumber))
             {
-                idEstabelecimento = await _wabaPhoneRepository.ObterIdEstabelecimentoPorPhoneNumberIdAsync(phonedisplay);
+                idEstabelecimento = await _wabaPhoneRepository
+                    .ObterIdEstabelecimentoPorDisplayPhoneAsync(displayPhoneNumber);
+
+                if (idEstabelecimento == null || idEstabelecimento == Guid.Empty)
+                {
+                    _logger.LogWarning(
+                        "Estabelecimento não encontrado para display_phone_number={Display}",
+                        displayPhoneNumber);
+                }
+                else
+                {
+                    _logger.LogDebug(
+                        "Estabelecimento {IdEstabelecimento} encontrado para display={Display}",
+                        idEstabelecimento,
+                        displayPhoneNumber);
+                }
             }
+            // =========================================================================
 
             // Fallback para estabelecimento padrão se não encontrar
             if (idEstabelecimento == null || idEstabelecimento == Guid.Empty)
             {
                 var fallbackEstabelecimentoId = _configuration.GetValue<string>("WhatsApp:FallbackEstabelecimentoId");
-                if (!string.IsNullOrWhiteSpace(fallbackEstabelecimentoId) && Guid.TryParse(fallbackEstabelecimentoId, out var fallbackGuid))
+                if (!string.IsNullOrWhiteSpace(fallbackEstabelecimentoId) &&
+                    Guid.TryParse(fallbackEstabelecimentoId, out var fallbackGuid))
                 {
                     idEstabelecimento = fallbackGuid;
-                    _logger.LogWarning("Usando estabelecimento fallback {IdEstabelecimento} para phone_number_id {PhoneNumberId}", idEstabelecimento, phonedisplay);
+                    _logger.LogWarning(
+                        "Usando estabelecimento fallback {IdEstabelecimento} para display_phone_number={Display}",
+                        idEstabelecimento,
+                        displayPhoneNumber);
                 }
                 else
                 {
-                    _logger.LogError("Não foi possível resolver id_estabelecimento para phone_number_id {PhoneNumberId} e não há fallback configurado", phonedisplay);
-                    throw new InvalidOperationException($"Não foi possível resolver id_estabelecimento para phone_number_id {phonedisplay}");
+                    _logger.LogError(
+                        "Não foi possível resolver id_estabelecimento para display_phone_number={Display} e não há fallback configurado",
+                        displayPhoneNumber);
+                    throw new InvalidOperationException(
+                        $"Não foi possível resolver id_estabelecimento para display_phone_number={displayPhoneNumber}");
                 }
             }
 
+            // Garantir cliente existe
             var telefoneE164 = APIBack.Automation.Helpers.TelefoneHelper.ToE164(idWa);
             var idCliente = await _repositorioClientes.GarantirClienteAsync(telefoneE164, idEstabelecimento.Value);
+
+            // Obter ou criar conversa
             var idConversa = await _repositorio.ObterIdConversaPorClienteAsync(idCliente, idEstabelecimento.Value);
             if (idConversa == Guid.Empty) idConversa = Guid.NewGuid();
+
             _waParaConversa[idWa] = idConversa; // cache auxiliar
+
             var existente = await _repositorio.ObterPorIdAsync(idConversa);
             var conversa = existente ?? new Conversation
             {
@@ -127,19 +159,25 @@ namespace APIBack.Automation.Services
                 MessageIdWhatsapp = idMensagemWa
             };
 
-            // Garante WaId salvo
+            // Garante WaId e Estabelecimento salvos
             conversa.IdWa = idWa;
             conversa.IdEstabelecimento = idEstabelecimento.Value;
+
             var conversaInserida = await _repositorio.InserirOuAtualizarAsync(conversa);
             if (!conversaInserida)
             {
                 _logger.LogError("Falha ao inserir/atualizar conversa {IdConversa}", idConversa);
             }
+
             if (existente == null)
             {
-                _logger.LogInformation("[Automation] Nova conversa criada: {ConversationId} para WaId={WaId}", idConversa, idWa);
+                _logger.LogInformation(
+                    "[Automation] Nova conversa criada: {ConversationId} para WaId={WaId}",
+                    idConversa,
+                    idWa);
             }
 
+            // Criar mensagem
             const string criador = "cliente";
             var dataMensagem = dataMensagemUtc.HasValue
                 ? DateTime.SpecifyKind(dataMensagemUtc.Value, DateTimeKind.Utc)
@@ -159,8 +197,9 @@ namespace APIBack.Automation.Services
                 Tipo = tipoMapeado,
             };
 
+            // Persistir
             EnfileirarMensagem(mensagem);
-            await _mensagemService.AdicionarMensagemAsync(mensagem, phonedisplay, idWa);
+            await _mensagemService.AdicionarMensagemAsync(mensagem, displayPhoneNumber, idWa);
 
             return mensagem;
         }
@@ -218,7 +257,6 @@ namespace APIBack.Automation.Services
                 await _mensagemService.AdicionarMensagemAsync(msg, phoneNumberId: null, idWa: null);
             }
         }
-
 
         public async Task<ConversationResponse?> ObterConversaRespostaAsync(Guid idConversa, int ultimasN = 20)
         {

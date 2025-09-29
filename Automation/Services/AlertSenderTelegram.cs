@@ -30,7 +30,7 @@ namespace APIBack.Automation.Services
             _logger = logger;
         }
 
-        public async Task EnviarAlertaAsync(string mensagem, string? chatIdOverride = null)
+        public async Task EnviarAlertaTelegramAsync(string mensagem, string? chatIdOverride = null)
         {
             if (string.IsNullOrWhiteSpace(mensagem)) return;
 

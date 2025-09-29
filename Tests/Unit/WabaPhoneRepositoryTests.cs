@@ -51,7 +51,7 @@ namespace APIBack.Tests.Unit
         public async Task ObterPorPhoneNumberIdAsync_WithInvalidPhoneNumberId_ShouldReturnNull(string phoneNumberId)
         {
             var repository = new SqlWabaPhoneRepository(_configuration);
-            var result = await repository.ObterPorPhoneNumberIdAsync(phoneNumberId);
+            var result = await repository.ObterIdEstabelecimentoPorDisplayPhoneAsync(phoneNumberId);
             Assert.Null(result);
         }
 

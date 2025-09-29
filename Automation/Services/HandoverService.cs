@@ -101,7 +101,7 @@ namespace APIBack.Automation.Services
 
             try
             {
-                await _alertas.EnviarAlertaAsync(mensagemAlerta, destinoTelegram?.ToString());
+                await _alertas.EnviarAlertaTelegramAsync(mensagemAlerta, destinoTelegram?.ToString());
             }
             catch (Exception ex)
             {
