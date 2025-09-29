@@ -435,7 +435,7 @@ UPDATE conversas
                     string? telefoneClienteRaw = idWa;
 
                     // Resolve IdEstabelecimento via waba_phone
-                    const string sqlWaba = "SELECT id_estabelecimento FROM waba_phone WHERE phone_number_id = @PhoneNumberId LIMIT 1;";
+                    const string sqlWaba = "SELECT id_estabelecimento FROM waba_phone WHERE display_phone_number  = @PhoneNumberId LIMIT 1;";
                     var idEstabelecimento = await cx.ExecuteScalarAsync<Guid?>(sqlWaba, new { PhoneNumberId = wabaPhoneNumberId }, transaction: tx);
                     if (!idEstabelecimento.HasValue || idEstabelecimento.Value == Guid.Empty)
                         throw new InvalidOperationException("Estabelecimento não encontrado para este WABA");
