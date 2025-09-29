@@ -39,6 +39,7 @@ builder.Services.AddScoped<IMotoboyService, MotoboyService>();
 builder.Services.AddScoped<ILocalizacaoService, LocalizacaoService>();
 
 
+
 // ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
 // Automation DI
 builder.Services.Configure<AutomationOptions>(builder.Configuration.GetSection("Automation"));
@@ -53,6 +54,8 @@ builder.Services.AddScoped<IClienteRepository, SqlClienteRepository>();
 builder.Services.AddSingleton<IQueueBus, InMemoryQueueBus>();
 builder.Services.AddScoped<IWebhookSignatureValidator, WebhookSignatureValidator>();
 builder.Services.AddScoped<IWhatsappSender, WhatsappSenderStub>();
+builder.Services.AddScoped<ToolExecutorService>();
+
 // Provedor de token do WhatsApp em memória (permite atualizar via endpoint)
 builder.Services.AddSingleton<IWhatsAppTokenProvider, InMemoryWhatsAppTokenProvider>();
 // IA real via OpenAI

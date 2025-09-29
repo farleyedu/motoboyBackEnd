@@ -1,4 +1,3 @@
-// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
 using System;
 using System.Collections.Generic;
 using System.Net.Http;
@@ -22,17 +21,20 @@ namespace APIBack.Automation.Services
         private readonly IOptions<OpenAIOptions> _options;
         private readonly ILogger<OpenAIAssistantService> _logger;
         private readonly IMessageRepository _messageRepository;
+        private readonly ToolExecutorService _toolExecutor;
 
         public OpenAIAssistantService(
             IHttpClientFactory httpFactory,
             IOptions<OpenAIOptions> options,
             ILogger<OpenAIAssistantService> logger,
-            IMessageRepository messageRepository)
+            IMessageRepository messageRepository,
+            ToolExecutorService toolExecutor)
         {
             _httpFactory = httpFactory;
             _options = options;
             _logger = logger;
             _messageRepository = messageRepository;
+            _toolExecutor = toolExecutor;
         }
 
         public Task<AssistantDecision> GerarDecisaoAsync(string textoUsuario, Guid idConversa, object? contexto = null)
@@ -44,23 +46,24 @@ namespace APIBack.Automation.Services
         private async Task<AssistantDecision> GerarDecisaoInternoAsync(string textoUsuario, Guid idConversa, object? contexto, IEnumerable<AssistantChatTurn>? historico)
         {
             var apiKey = _options.Value.ApiKey;
-            var model = string.IsNullOrWhiteSpace(_options.Value.Model) ? "gpt-4o-mini" : _options.Value.Model;
+            var model = string.IsNullOrWhiteSpace(_options.Value.Model) ? "gpt-4o-2024-08-06" : _options.Value.Model;
 
             if (string.IsNullOrWhiteSpace(apiKey))
             {
-                _logger.LogWarning("[Conversa={Conversa}] OpenAI ApiKey n�o configurada; usando decis�o padr�o", idConversa);
+                _logger.LogWarning("[Conversa={Conversa}] OpenAI ApiKey não configurada; usando decisão padrão", idConversa);
                 return new AssistantDecision(
-                    Reply: string.IsNullOrWhiteSpace(textoUsuario) ? "Poderia repetir?" : $"Voc� disse: '{textoUsuario}'.",
+                    Reply: string.IsNullOrWhiteSpace(textoUsuario) ? "Poderia repetir?" : $"Você disse: '{textoUsuario}'.",
                     HandoverAction: "none",
                     AgentPrompt: null,
                     ReservaConfirmada: false,
-                    Detalhes: null);
+                    Detalhes: null
+                );
             }
 
             var client = _httpFactory.CreateClient();
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
 
-            var systemPrompt = contexto as string ?? "Vocé é um assistente útil.";
+            var systemPrompt = contexto as string ?? "Você é um assistente útil.";
             var messages = new List<object> { new { role = "system", content = systemPrompt } };
 
             if (historico != null)
@@ -78,25 +81,80 @@ namespace APIBack.Automation.Services
             var payload = new
             {
                 model,
-                messages = messages.ToArray(),
-                response_format = new { type = "json_object" }
+                input = messages.ToArray(),
+                text = new
+                {
+                    format = new
+                    {
+                        type = "json_schema",
+                        name = "assistant_decision",
+                        schema = new
+                        {
+                            type = "object",
+                            additionalProperties = false,
+                            properties = new
+                            {
+                                reply = new { type = "string", minLength = 1 },
+                                agentPrompt = new { type = new[] { "string", "null" } },
+                                nomeCompleto = new { type = new[] { "string", "null" } },
+                                qtdPessoas = new { type = new[] { "integer", "null" } },
+                                data = new { type = new[] { "string", "null" } },
+                                hora = new { type = new[] { "string", "null" } }
+                            },
+                            // CORREÇÃO: Todos os campos devem estar em required
+                            required = new[] { "reply", "agentPrompt", "nomeCompleto", "qtdPessoas", "data", "hora" }
+                        }
+                    }
+                },
+                tools = _toolExecutor.GetDeclaredTools()
             };
+
             var json = JsonSerializer.Serialize(payload, JsonOptions);
             using var content = new StringContent(json, Encoding.UTF8, "application/json");
 
             try
             {
-                var response = await client.PostAsync("https://api.openai.com/v1/chat/completions", content);
+                var response = await client.PostAsync("https://api.openai.com/v1/responses", content);
                 var body = await response.Content.ReadAsStringAsync();
                 if (!response.IsSuccessStatusCode)
                 {
                     _logger.LogWarning("[Conversa={Conversa}] OpenAI falhou: {Status} {Body}", idConversa, (int)response.StatusCode, body);
-                    return new AssistantDecision("Desculpe, n�o consegui formular uma resposta agora.", "none", null, false, null);
+                    return new AssistantDecision("Desculpe, não consegui formular uma resposta agora.", "none", null, false, null);
                 }
 
                 using var doc = JsonDocument.Parse(body);
-                var message = doc.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString();
-                return await InterpretarResposta(message, idConversa);
+                var outputArray = doc.RootElement.GetProperty("output");
+
+                foreach (var item in outputArray.EnumerateArray())
+                {
+                    var type = item.GetProperty("type").GetString();
+
+                    if (type == "message")
+                    {
+                        var message = item
+                            .GetProperty("content")[0]
+                            .GetProperty("text")
+                            .GetString();
+
+                        return await InterpretarResposta(message, idConversa);
+                    }
+                    else if (type == "tool_call")
+                    {
+                        var toolName = item.GetProperty("name").GetString();
+                        var args = item.GetProperty("arguments").GetRawText();
+
+                        var result = await _toolExecutor.ExecuteToolAsync(toolName!, args);
+                        return new AssistantDecision(
+                            Reply: result,
+                            HandoverAction: "none",
+                            AgentPrompt: null,
+                            ReservaConfirmada: false,
+                            Detalhes: null
+                        );
+                    }
+                }
+
+                return new AssistantDecision("Desculpe, não entendi a solicitação.", "none", null, false, null);
             }
             catch (Exception ex)
             {
@@ -109,10 +167,7 @@ namespace APIBack.Automation.Services
         {
             var parseResult = await AssistantDecisionParser.TryParse(conteudo, JsonOptions, _logger, idConversa, _messageRepository);
 
-            if (parseResult.Success)
-            {
-                return parseResult.Decision;
-            }
+            if (parseResult.Success) return parseResult.Decision;
 
             if (!string.IsNullOrWhiteSpace(parseResult.ExtractedJson))
             {
@@ -128,14 +183,8 @@ namespace APIBack.Automation.Services
 
         private static string TruncarConteudo(string? texto, int maxLength = 300)
         {
-            if (string.IsNullOrEmpty(texto))
-            {
-                return string.Empty;
-            }
-
-            return texto!.Length <= maxLength ? texto : texto.Substring(0, maxLength) + "...";
+            if (string.IsNullOrEmpty(texto)) return string.Empty;
+            return texto.Length <= maxLength ? texto : texto.Substring(0, maxLength) + "...";
         }
     }
 }
-
-// ================= ZIPPYGO AUTOMATION SECTION (END) ===================

@@ -1,13 +1,17 @@
 // ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
-using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using APIBack.Automation.Dtos;
 using APIBack.Automation.Interfaces;
 using APIBack.Automation.Models;
 using Microsoft.Extensions.Logging;
+using Microsoft.VisualStudio.TestPlatform.CommunicationUtilities;
+using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+using Message = APIBack.Automation.Models.Message;
+
 
 namespace APIBack.Automation.Services
 {
@@ -54,9 +58,10 @@ namespace APIBack.Automation.Services
                 idWa: input.Mensagem.De!,
                 idMensagemWa: input.Mensagem.Id!,
                 conteudo: input.Texto,
-                phonedisplay: input.PhoneNumberDisplay ?? string.Empty,
+                displayPhoneNumber: input.PhoneNumberDisplay ?? string.Empty,  // NOME CORRETO
                 dataMensagemUtc: input.DataMensagemUtc,
-                tipoOrigem: input.Mensagem.Tipo);
+                tipoOrigem: input.Mensagem.Tipo
+            );
 
             if (criada == null)
             {
@@ -147,16 +152,16 @@ namespace APIBack.Automation.Services
             {
                 // Busca os módulos ativos diretamente da tabela estabelecimentos
                 var modulosAtivos = await _estabelecimentoRepo.ObterModulosAtivosAsync(idEstabelecimento);
-                
+
                 if (modulosAtivos.Count == 0)
                 {
                     _logger.LogWarning("Nenhum módulo ativo encontrado para estabelecimento {Estabelecimento}", idEstabelecimento);
                     return Array.Empty<string>();
                 }
 
-                _logger.LogDebug("Módulos ativos encontrados para estabelecimento {Estabelecimento}: {Modulos}", 
+                _logger.LogDebug("Módulos ativos encontrados para estabelecimento {Estabelecimento}: {Modulos}",
                     idEstabelecimento, string.Join(", ", modulosAtivos));
-                
+
                 return modulosAtivos;
             }
             catch (Exception ex)

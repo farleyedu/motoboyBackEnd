@@ -44,9 +44,12 @@ namespace APIBack.Automation.Services
             var client = _httpFactory.CreateClient();
             client.DefaultRequestHeaders.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", token);
 
-            var graphVersion = _configuration["WhatsApp:GraphApiVersion"] ?? "v17.0";
+            // CORREÇÃO: Usar v23.0 ou superior
+            var graphVersion = _configuration["WhatsApp:GraphApiVersion"] ?? "v23.0";  // Mudei de v17.0 para v23.0
             var endpoint = $"https://graph.facebook.com/{graphVersion}/{phoneNumberId}/messages";
+
             var numeroDestinoNormalizado = TelefoneHelper.NormalizeBrazilianForWhatsappTo(numeroDestino);
+
             var payload = new
             {
                 messaging_product = "whatsapp",
@@ -56,29 +59,44 @@ namespace APIBack.Automation.Services
             };
 
             var json = JsonSerializer.Serialize(payload);
+            _logger.LogDebug("[Conversa={Conversa}] Payload WhatsApp: {Json}", idConversa, json);
+
             var delays = new[] { TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(5) };
+
             for (var tentativa = 0; tentativa < delays.Length; tentativa++)
             {
                 using var content = new StringContent(json, Encoding.UTF8, "application/json");
+
                 try
                 {
                     var resposta = await client.PostAsync(endpoint, content);
+                    var body = await resposta.Content.ReadAsStringAsync();
+
                     if (resposta.IsSuccessStatusCode)
                     {
-                        _logger.LogInformation("[Conversa={Conversa}] Mensagem enviada via WhatsApp", idConversa);
+                        _logger.LogInformation("[Conversa={Conversa}] Mensagem enviada via WhatsApp com sucesso", idConversa);
                         return;
                     }
 
-                    var body = await resposta.Content.ReadAsStringAsync();
-                    _logger.LogWarning("[Conversa={Conversa}] Falha ao enviar WhatsApp (tentativa {Tentativa}): {Status} {Body}", idConversa, tentativa + 1, (int)resposta.StatusCode, body);
+                    _logger.LogWarning(
+                        "[Conversa={Conversa}] Falha ao enviar WhatsApp (tentativa {Tentativa}): {Status} - {Body}",
+                        idConversa,
+                        tentativa + 1,
+                        (int)resposta.StatusCode,
+                        body);
                 }
                 catch (Exception ex)
                 {
                     _logger.LogWarning(ex, "[Conversa={Conversa}] Erro ao enviar WhatsApp (tentativa {Tentativa})", idConversa, tentativa + 1);
                 }
 
-                await Task.Delay(delays[tentativa]);
+                if (tentativa < delays.Length - 1)
+                {
+                    await Task.Delay(delays[tentativa]);
+                }
             }
+
+            _logger.LogError("[Conversa={Conversa}] Todas as tentativas de envio via WhatsApp falharam", idConversa);
         }
     }
 }

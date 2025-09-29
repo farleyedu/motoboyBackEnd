@@ -10,115 +10,111 @@ namespace APIBack.Automation.Services
 {
     public class IAResponseHandler
     {
-        private const string PerguntaFallback = "Deseja que eu acione um atendente humano para te ajudar? Se sim, pode me dizer em poucas palavras o que gostaria de tratar com ele?";
-
-        private readonly HandoverService _handoverService;
         private readonly IMessageService _mensagemService;
         private readonly IQueueBus _fila;
         private readonly WhatsAppSender _whatsAppSender;
-        private readonly AgenteService _agenteService;
-        private readonly IConversationRepository _conversationRepository;
         private readonly ILogger<IAResponseHandler> _logger;
 
         public IAResponseHandler(
-            HandoverService handoverService,
             IMessageService mensagemService,
             IQueueBus fila,
             WhatsAppSender whatsAppSender,
-            AgenteService agenteService,
-            IConversationRepository conversationRepository,
             ILogger<IAResponseHandler> logger)
         {
-            _handoverService = handoverService;
             _mensagemService = mensagemService;
             _fila = fila;
             _whatsAppSender = whatsAppSender;
-            _agenteService = agenteService;
-            _conversationRepository = conversationRepository;
             _logger = logger;
         }
 
+        /// <summary>
+        /// Processa a resposta da IA e envia ao cliente via WhatsApp.
+        /// 
+        /// IMPORTANTE: Com a arquitetura de Tools, as ações (confirmar reserva, escalar para humano)
+        /// já foram executadas pelo ToolExecutorService. Este handler apenas:
+        /// 1. Persiste a mensagem de resposta no banco
+        /// 2. Envia a mensagem para o WhatsApp
+        /// </summary>
         public async Task HandleAsync(AssistantDecision decision, ConversationProcessingResult processamento)
         {
             if (processamento.IdConversa is null || processamento.MensagemRegistrada is null)
             {
-                _logger.LogWarning("[Webhook] Resultado de processamento invÃ¡lido, nÃ£o hÃ¡ conversa registrada");
+                _logger.LogWarning("[IAResponseHandler] Resultado de processamento inválido, não há conversa registrada");
                 return;
             }
 
             var idConversa = processamento.IdConversa.Value;
-            var handoverDetalhes = decision.Detalhes ?? processamento.HandoverDetalhes;
-            var numeroDestino = processamento.HandoverDetalhes.Telefone;
+            var numeroDestino = processamento.HandoverDetalhes?.Telefone;
+            var phoneNumberDisplay = processamento.NumeroTelefoneExibicao;
             var phoneNumberId = processamento.NumeroWhatsappId;
 
-            switch (decision.HandoverAction.ToLowerInvariant())
+
+            // Validar se temos os dados necessários para enviar
+            if (string.IsNullOrWhiteSpace(phoneNumberDisplay) || string.IsNullOrWhiteSpace(numeroDestino))
             {
-                case "confirm":
-                    await _conversationRepository.AtualizarEstadoAsync(idConversa, EstadoConversa.FechadoAutomaticamente);
-                    await ExecutarHandoverAsync(idConversa, decision, handoverDetalhes);
-                    if (!string.IsNullOrWhiteSpace(decision.Reply))
-                    {
-                        await EnviarMensagemAoClienteAsync(idConversa, phoneNumberId, numeroDestino, decision.Reply);
-                    }
-
-                    break;
-
-                case "ask":
-                    await _conversationRepository.AtualizarEstadoAsync(idConversa, EstadoConversa.EmAtendimento);
-                    await ExecutarHandoverAsync(idConversa, decision, handoverDetalhes);
-                    var mensagemAsk = string.IsNullOrWhiteSpace(decision.Reply)
-                        ? "Vou te encaminhar para um atendente humano. Um momento, por favor."
-                        : decision.Reply;
-
-                    await EnviarMensagemAoClienteAsync(idConversa, phoneNumberId, numeroDestino, mensagemAsk);
-                    break;
-
-                default:
-                    if (!string.IsNullOrWhiteSpace(decision.Reply))
-                    {
-                        await EnviarMensagemAoClienteAsync(idConversa, phoneNumberId, numeroDestino, decision.Reply);
-                    }
-                    break;
-            }
-
-        }
-
-
-        private async Task ExecutarHandoverAsync(Guid idConversa, AssistantDecision decision, HandoverContextDto detalhes)
-        {
-            var agente = await _agenteService.ObterAgenteSuporteAsync();
-            if (agente == null)
-            {
-                _logger.LogWarning("[Conversa={Conversa}] Nenhum agente de suporte configurado; utilizando fallback padrÃ£o", idConversa);
-                agente = new HandoverAgentDto
-                {
-                    Id = 0,
-                    Nome = "Agente de suporte"
-                };
-            }
-            else if (string.IsNullOrWhiteSpace(agente.Nome))
-            {
-                agente.Nome = "Agente de suporte";
-            }
-
-            await _handoverService.ProcessarMensagensTelegramAsync(idConversa, agente, decision.ReservaConfirmada || string.Equals(decision.HandoverAction, "confirm", StringComparison.OrdinalIgnoreCase), detalhes, telegramChatIdOverride: agente.TelegramChatId);
-        }
-
-        private async Task EnviarMensagemAoClienteAsync(Guid idConversa, string? phoneNumberId, string? numeroDestino, string? texto)
-        {
-            if (string.IsNullOrWhiteSpace(texto)) return;
-            if (string.IsNullOrWhiteSpace(phoneNumberId) || string.IsNullOrWhiteSpace(numeroDestino))
-            {
-                _logger.LogWarning("[Conversa={Conversa}] NÃ£o foi possÃ­vel enviar mensagem ao cliente: phoneNumberId ou destino ausente", idConversa);
+                _logger.LogWarning(
+                    "[Conversa={Conversa}] Não é possível enviar resposta: phoneNumberDisplay ou numeroDestino ausente",
+                    idConversa);
                 return;
             }
 
-            var mensagem = MessageFactory.CreateMessage(idConversa, texto!, DirecaoMensagem.Saida, "ia", tipoOrigem: "text");
-            await _mensagemService.AdicionarMensagemAsync(mensagem, phoneNumberId, numeroDestino);
-            await _fila.PublicarSaidaAsync(mensagem);
+            // Se a IA não gerou resposta, não há nada a fazer
+            if (string.IsNullOrWhiteSpace(decision.Reply))
+            {
+                _logger.LogInformation(
+                    "[Conversa={Conversa}] IA não retornou mensagem de resposta (possivelmente apenas executou uma tool)",
+                    idConversa);
+                return;
+            }
 
-            await _whatsAppSender.SendTextAsync(idConversa, phoneNumberId, numeroDestino, texto!);
+            // Enviar a resposta da IA para o cliente
+            await EnviarMensagemAoClienteAsync(idConversa, phoneNumberDisplay, numeroDestino, phoneNumberId, decision.Reply);
+
+            _logger.LogInformation(
+                "[Conversa={Conversa}] Resposta da IA processada e enviada com sucesso",
+                idConversa);
+        }
+
+        private async Task EnviarMensagemAoClienteAsync(Guid idConversa, string phoneNumberDisplay, string numeroDestino,string phoneNumberId, string texto)
+        {
+            try
+            {
+                // 1. Criar a mensagem
+                var mensagem = MessageFactory.CreateMessage(
+                    idConversa,
+                    texto,
+                    DirecaoMensagem.Saida,
+                    "ia",
+                    tipoOrigem: "text");
+
+                // 2. Persistir no banco
+                await _mensagemService.AdicionarMensagemAsync(mensagem, phoneNumberDisplay, numeroDestino);
+
+                _logger.LogInformation(
+                    "[Conversa={Conversa}] Mensagem da IA persistida no banco: {Preview}",
+                    idConversa,
+                    texto.Length > 100 ? texto.Substring(0, 100) + "..." : texto);
+
+                // 3. Publicar na fila (se aplicável)
+                await _fila.PublicarSaidaAsync(mensagem);
+
+                // 4. Enviar para o WhatsApp
+                await _whatsAppSender.SendTextAsync(idConversa, phoneNumberId, numeroDestino, texto);
+
+                _logger.LogInformation(
+                    "[Conversa={Conversa}] Mensagem enviada ao WhatsApp com sucesso",
+                    idConversa);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(
+                    ex,
+                    "[Conversa={Conversa}] Erro ao enviar mensagem ao cliente. Texto: {Texto}",
+                    idConversa,
+                    texto);
+                throw; // Re-throw para que o controller saiba que houve erro
+            }
         }
     }
 }
-// ================= ZIPPYGO AUTOMATION SECTION (END) ===================
+// ================= ZIPPYGO AUTOMATION SECTION (END) ==================

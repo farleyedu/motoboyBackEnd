@@ -58,32 +58,32 @@ namespace APIBack.Automation.Infra
             }
         }
 
-        public async Task<WabaPhone?> ObterPorPhoneNumberIdAsync(string phoneNumberId)
+        public async Task<Guid?> ObterIdEstabelecimentoPorDisplayPhoneAsync(string displayPhoneNumber)
         {
-            if (string.IsNullOrWhiteSpace(phoneNumberId))
+            if (string.IsNullOrWhiteSpace(displayPhoneNumber))
                 return null;
 
-            const string sql = @"SELECT
-                                     id                 AS ""Id"",
-                                     phone_number_id    AS ""PhoneNumberId"",
-                                     id_estabelecimento AS ""IdEstabelecimento"",
-                                     ativo              AS ""Ativo"",
-                                     descricao          AS ""Descricao"",
-                                     data_criacao       AS ""DataCriacao"",
-                                     data_atualizacao   AS ""DataAtualizacao""
-                                   FROM waba_phone
-                                   WHERE phone_number_id = @phoneNumberId
-                                   LIMIT 1;";
+            const string sql = @"
+        SELECT id_estabelecimento
+        FROM waba_phone
+        WHERE display_phone_number = @displayPhoneNumber
+          AND ativo = true
+        LIMIT 1;";
 
             try
             {
                 await using var connection = new NpgsqlConnection(_connectionString);
-                var entidade = await connection.QueryFirstOrDefaultAsync<WabaPhone>(sql, new { phoneNumberId });
-                return entidade;
+                var idEstabelecimento = await connection.QueryFirstOrDefaultAsync<Guid?>(
+                    sql,
+                    new { displayPhoneNumber });
+                return idEstabelecimento;
             }
             catch (Exception ex)
             {
-                _logger?.LogError(ex, "Erro ao buscar WabaPhone por phone_number_id {PhoneNumberId}", phoneNumberId);
+                _logger?.LogError(
+                    ex,
+                    "Erro ao buscar estabelecimento por display_phone_number {DisplayPhone}",
+                    displayPhoneNumber);
                 return null;
             }
         }

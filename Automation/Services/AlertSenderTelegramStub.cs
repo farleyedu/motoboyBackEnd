@@ -13,7 +13,7 @@ namespace APIBack.Automation.Services
             _logger = logger;
         }
 
-        public Task EnviarAlertaAsync(string mensagem, string? chatIdOverride = null)
+        public Task EnviarAlertaTelegramAsync(string mensagem, string? chatIdOverride = null)
         {
             _logger.LogInformation("[Automation] Alerta Telegram (stub): {Message} (chatId={ChatId})", mensagem, chatIdOverride);
             return Task.CompletedTask;

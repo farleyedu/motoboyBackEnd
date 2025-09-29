@@ -11,7 +11,7 @@ namespace APIBack.Automation.Interfaces
     public interface IWabaPhoneRepository
     {
         Task<Guid?> ObterIdEstabelecimentoPorPhoneNumberIdAsync(string phoneNumberId);
-        Task<WabaPhone?> ObterPorPhoneNumberIdAsync(string phoneNumberId);
+        Task<Guid?> ObterIdEstabelecimentoPorDisplayPhoneAsync(string displayPhoneNumber);
         Task<bool> InserirOuAtualizarAsync(WabaPhone wabaPhone);
         Task<bool> ExisteAtivoAsync(string phoneNumberId);
     }
