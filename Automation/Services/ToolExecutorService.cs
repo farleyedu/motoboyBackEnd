@@ -115,6 +115,25 @@ Esta função transfere a conversa para um atendente humano imediatamente.",
         }
 
         /// <summary>
+        /// Helper para sempre retornar JSON padronizado.
+        /// </summary>
+        private string BuildJsonReply(string reply, string? agentPrompt = null,
+            string? nomeCompleto = null, int? qtdPessoas = null,
+            string? data = null, string? hora = null)
+        {
+            var obj = new
+            {
+                reply,
+                agentPrompt,
+                nomeCompleto,
+                qtdPessoas,
+                data,
+                hora
+            };
+            return JsonSerializer.Serialize(obj);
+        }
+
+        /// <summary>
         /// Executa a ferramenta chamada pela IA.
         /// </summary>
         public async Task<string> ExecuteToolAsync(string toolName, string argsJson)
@@ -131,21 +150,20 @@ Esta função transfere a conversa para um atendente humano imediatamente.",
                     catch (JsonException ex)
                     {
                         _logger.LogWarning(ex, "Não foi possível desescapar a string JSON. Tentando parsear como está.");
-                        // Se falhar, tenta parsear a string original, pode ser que não estivesse duplamente escapada.
                     }
                 }
 
                 var args = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(argsJson);
                 if (args == null)
                 {
-                    return "Argumentos inválidos.";
+                    return BuildJsonReply("Argumentos inválidos.");
                 }
 
                 if (!args.TryGetValue("idConversa", out var idConversaElement) ||
                     !Guid.TryParse(idConversaElement.GetString(), out var idConversa))
                 {
                     _logger.LogWarning("[Conversa={Conversa}] idConversa inválido ou ausente na chamada da ferramenta '{ToolName}'. Valor recebido: '{ReceivedIdConversa}'", idConversaElement.GetString(), toolName, idConversaElement.GetString());
-                    return "ID de conversa inválido.";
+                    return BuildJsonReply("ID de conversa inválido.");
                 }
 
                 switch (toolName)
@@ -164,6 +182,26 @@ Esta função transfere a conversa para um atendente humano imediatamente.",
                         var qtd = qtdElement.GetInt32();
                         var data = dataElement.GetString();
                         var hora = horaElement.GetString();
+
+                        // 🔒 Validação extra para evitar valores inválidos
+                        if (string.IsNullOrWhiteSpace(nome) ||
+                            qtd <= 0 ||
+                            string.IsNullOrWhiteSpace(data) ||
+                            string.IsNullOrWhiteSpace(hora) ||
+                            nome.Equals("null", StringComparison.OrdinalIgnoreCase) ||
+                            data.Equals("null", StringComparison.OrdinalIgnoreCase) ||
+                            hora.Equals("null", StringComparison.OrdinalIgnoreCase))
+                        {
+                            return JsonSerializer.Serialize(new
+                            {
+                                reply = "Os dados da reserva ainda não estão completos 🌸 Por favor, confirme nome completo, quantidade de pessoas, data e horário.",
+                                agentPrompt = "modelo_reserva",
+                                nomeCompleto = (string?)null,
+                                qtdPessoas = (int?)null,
+                                data = (string?)null,
+                                hora = (string?)null
+                            });
+                        }
 
                         // Montar o HandoverContextDto com os dados da reserva
                         var detalhesReserva = new HandoverContextDto
@@ -186,7 +224,17 @@ Esta função transfere a conversa para um atendente humano imediatamente.",
                             "[Conversa={Conversa}] Reserva confirmada: {Nome}, {Qtd} pessoas, {Data} às {Hora}",
                             idConversa, nome, qtd, data, hora
                         );
-                        return $"✅ Reserva confirmada com sucesso!\n\nNome: {nome}\nPessoas: {qtd}\nData: {data}\nHorário: {hora}\n\nAté breve!";
+
+                        return JsonSerializer.Serialize(new
+                        {
+                            reply = $"✅ Reserva confirmada com sucesso!\n\n- Nome: {nome}\n- Pessoas: {qtd}\n- Data: {data}\n- Horário: {hora}\n\nAté breve! 🌸✨",
+                            agentPrompt = (string?)null,
+                            nomeCompleto = nome,
+                            qtdPessoas = qtd,
+                            data,
+                            hora
+                        });
+
 
                     case "escalar_para_humano":
                         var motivoEscalacao = args.TryGetValue("motivo", out var motivoElementEscalacao)
@@ -211,22 +259,25 @@ Esta função transfere a conversa para um atendente humano imediatamente.",
                             "[Conversa={Conversa}] Conversa escalada para humano. Motivo: {Motivo}",
                             idConversa, motivoEscalacao
                         );
-                        return $"Transferindo você para um atendente humano.\nEm instantes alguém irá atendê-lo.";
+
+                        return BuildJsonReply(
+                            "Transferindo você para um atendente humano.\nEm instantes alguém irá atendê-lo."
+                        );
 
                     default:
                         _logger.LogWarning("[Conversa={Conversa}] Ferramenta desconhecida: {Tool}", idConversa, toolName);
-                        return $"Ferramenta {toolName} não implementada.";
+                        return BuildJsonReply($"Ferramenta {toolName} não implementada.");
                 }
             }
             catch (JsonException ex)
             {
                 _logger.LogError(ex, "Erro ao fazer parse dos argumentos da ferramenta {Tool}: {Json}", toolName, argsJson);
-                return "Erro ao processar os argumentos da ferramenta.";
+                return BuildJsonReply("Erro ao processar os argumentos da ferramenta.");
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Erro ao executar ferramenta {Tool}", toolName);
-                return $"Erro ao executar {toolName}: {ex.Message}";
+                return BuildJsonReply($"Erro ao executar {toolName}: {ex.Message}");
             }
         }
     }

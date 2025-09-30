@@ -52,7 +52,7 @@ namespace APIBack.Automation.Services
             {
                 _logger.LogWarning("[Conversa={Conversa}] OpenAI ApiKey não configurada; usando decisão padrão", idConversa);
                 return new AssistantDecision(
-                    Reply: string.IsNullOrWhiteSpace(textoUsuario) ? "Poderia repetir?" : $"Você disse: '{textoUsuario}'.",
+                    Reply: "Desculpe, não consegui gerar uma resposta agora.",
                     HandoverAction: "none",
                     AgentPrompt: null,
                     ReservaConfirmada: false,
@@ -63,7 +63,27 @@ namespace APIBack.Automation.Services
             var client = _httpFactory.CreateClient();
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
 
-            var systemPrompt = contexto as string ?? "Você é um assistente útil.";
+            // 🔹 Prompt completo do Seu Eurico (identidade, horários, cardápio, regras de reserva e escalonamento)
+            var systemPrompt = contexto as string ?? @"
+Você é um agente virtual acolhedor que atende clientes do Bar Seu Eurico 🍻✨.
+Sua missão: responder dúvidas (horário, endereço, cardápio) e organizar reservas com carinho 🌸.
+Use sempre JSON com a estrutura:
+{
+  ""reply"": ""string"",
+  ""agentPrompt"": ""string|null"",
+  ""nomeCompleto"": ""string|null"",
+  ""qtdPessoas"": ""int|null"",
+  ""data"": ""string|null"",
+  ""hora"": ""string|null""
+}
+Regras:
+- Antes de confirmar reserva ou escalar humano, SEMPRE peça confirmação do cliente.
+- Só confirme reserva se tiver nome completo, quantidade, data e hora.
+- Respeite horário de funcionamento: Seg-Sex 17h–00h30, Sáb 12h–01h, Dom 12h–00h30.
+- Promoções e cardápio devem ser respondidos com tom simpático e emojis.
+- Escalação para humano segue fluxo de 2 passos (pergunta → confirmação → tool).
+";
+
             var messages = new List<object> { new { role = "system", content = systemPrompt } };
 
             if (historico != null)
@@ -104,12 +124,11 @@ namespace APIBack.Automation.Services
                                 data = new { type = new[] { "string", "null" } },
                                 hora = new { type = new[] { "string", "null" } }
                             },
-                            // CORREÇÃO: Todos os campos devem estar em required
                             required = new[] { "reply", "agentPrompt", "nomeCompleto", "qtdPessoas", "data", "hora" }
                         }
                     }
                 },
-                tools = _toolExecutor.GetDeclaredTools(idConversa)
+                tools
             };
 
             var json = JsonSerializer.Serialize(payload, JsonOptions);
@@ -150,25 +169,40 @@ namespace APIBack.Automation.Services
                         var args = item.GetProperty("arguments").GetRawText();
 
                         var result = await _toolExecutor.ExecuteToolAsync(toolName!, args);
+
+                        // 🔹 Sempre devolver JSON padronizado
                         return new AssistantDecision(
                             Reply: result,
-                            HandoverAction: "none",
+                            HandoverAction: toolName,
                             AgentPrompt: null,
-                            ReservaConfirmada: false,
+                            ReservaConfirmada: toolName == "confirmar_reserva",
                             Detalhes: null
                         );
                     }
                 }
 
-
-                return new AssistantDecision("Desculpe, não entendi a solicitação.", "none", null, false, null);
+                // 🔹 Fallback padronizado
+                return new AssistantDecision(
+                    Reply: "Desculpe, não entendi sua solicitação. Pode reformular, por favor? 😊",
+                    HandoverAction: "none",
+                    AgentPrompt: null,
+                    ReservaConfirmada: false,
+                    Detalhes: null
+                );
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "[Conversa={Conversa}] Erro ao chamar OpenAI", idConversa);
-                return new AssistantDecision("Desculpe, ocorreu um erro ao gerar a resposta.", "none", null, false, null);
+                return new AssistantDecision(
+                    Reply: "Desculpe, ocorreu um erro ao gerar a resposta.",
+                    HandoverAction: "none",
+                    AgentPrompt: null,
+                    ReservaConfirmada: false,
+                    Detalhes: null
+                );
             }
         }
+
 
         private async Task<AssistantDecision> InterpretarResposta(string? conteudo, Guid idConversa)
         {

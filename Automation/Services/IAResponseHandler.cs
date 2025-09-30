@@ -75,14 +75,17 @@ namespace APIBack.Automation.Services
                 idConversa);
         }
 
-        private async Task EnviarMensagemAoClienteAsync(Guid idConversa, string phoneNumberDisplay, string numeroDestino,string phoneNumberId, string texto)
+        private async Task EnviarMensagemAoClienteAsync(Guid idConversa, string phoneNumberDisplay, string numeroDestino, string phoneNumberId, string texto)
         {
             try
             {
+                // 🔑 Corrigir texto com caracteres escapados
+                var textoLimpo = System.Text.Json.JsonSerializer.Deserialize<string>($"\"{texto}\"");
+
                 // 1. Criar a mensagem
                 var mensagem = MessageFactory.CreateMessage(
                     idConversa,
-                    texto,
+                    textoLimpo,
                     DirecaoMensagem.Saida,
                     "ia",
                     tipoOrigem: "text");
@@ -93,13 +96,13 @@ namespace APIBack.Automation.Services
                 _logger.LogInformation(
                     "[Conversa={Conversa}] Mensagem da IA persistida no banco: {Preview}",
                     idConversa,
-                    texto.Length > 100 ? texto.Substring(0, 100) + "..." : texto);
+                    textoLimpo.Length > 100 ? textoLimpo.Substring(0, 100) + "..." : textoLimpo);
 
                 // 3. Publicar na fila (se aplicável)
                 await _fila.PublicarSaidaAsync(mensagem);
 
                 // 4. Enviar para o WhatsApp
-                await _whatsAppSender.SendTextAsync(idConversa, phoneNumberId, numeroDestino, texto);
+                await _whatsAppSender.SendTextAsync(idConversa, phoneNumberId, numeroDestino, textoLimpo);
 
                 _logger.LogInformation(
                     "[Conversa={Conversa}] Mensagem enviada ao WhatsApp com sucesso",
@@ -112,9 +115,10 @@ namespace APIBack.Automation.Services
                     "[Conversa={Conversa}] Erro ao enviar mensagem ao cliente. Texto: {Texto}",
                     idConversa,
                     texto);
-                throw; // Re-throw para que o controller saiba que houve erro
+                throw;
             }
         }
+
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ==================
