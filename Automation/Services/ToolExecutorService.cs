@@ -83,8 +83,14 @@ namespace APIBack.Automation.Services
             };
         }
 
-        private string BuildJsonReply(string reply)
+        private string BuildJsonReply(string reply, bool? reservaConfirmada = null)
         {
+            if (reservaConfirmada.HasValue)
+            {
+                var objComConfirmacao = new { reply, reserva_confirmada = reservaConfirmada.Value };
+                return JsonSerializer.Serialize(objComConfirmacao, JsonOptions);
+            }
+
             var obj = new { reply };
             return JsonSerializer.Serialize(obj, JsonOptions);
         }
@@ -130,8 +136,29 @@ namespace APIBack.Automation.Services
             }
         }
 
+        private const string MissingReservationDataMessage = "Para organizar a sua reserva, preciso que me confirme o nome completo, a quantidade de pessoas, a data e o horário, por favor.";
+
         private async Task<string> HandleConfirmarReserva(ConfirmarReservaArgs args)
         {
+            args.NomeCompleto = args.NomeCompleto?.Trim() ?? string.Empty;
+            args.Data = args.Data?.Trim() ?? string.Empty;
+            args.Hora = args.Hora?.Trim() ?? string.Empty;
+
+            if (DadosReservaInvalidos(args))
+            {
+                _logger.LogWarning(
+                    "[Conversa={Conversa}] Dados inválidos recebidos na confirmação de reserva: {@Args}",
+                    args.IdConversa,
+                    args);
+                return BuildJsonReply(MissingReservationDataMessage);
+            }
+
+            if (!DateTime.TryParseExact(args.Hora, "HH:mm", CultureInfo.InvariantCulture, DateTimeStyles.None, out _))
+            {
+                _logger.LogWarning("[Conversa={Conversa}] Horário inválido recebido: {Hora}", args.IdConversa, args.Hora);
+                return BuildJsonReply(MissingReservationDataMessage);
+            }
+
             DateTime? dataCalculada = ParseDataRelativa(args.Data);
 
             if (dataCalculada == null)
@@ -159,11 +186,77 @@ namespace APIBack.Automation.Services
             );
 
             var replyMessage = $"✅ Reserva confirmada com sucesso!\n\n- **Nome:** {args.NomeCompleto}\n- **Pessoas:** {args.QtdPessoas}\n- **Data:** {dataFormatada}\n- **Horário:** {args.Hora}\n\nAté breve! 🌸✨";
-            return BuildJsonReply(replyMessage);
+            return BuildJsonReply(replyMessage, reservaConfirmada: true);
+        }
+
+        private static bool DadosReservaInvalidos(ConfirmarReservaArgs args)
+        {
+            if (string.IsNullOrWhiteSpace(args?.NomeCompleto) || HasMissingValueIndicator(args.NomeCompleto))
+            {
+                return true;
+            }
+
+            if (args.QtdPessoas <= 0)
+            {
+                return true;
+            }
+
+            if (string.IsNullOrWhiteSpace(args.Data) || HasMissingValueIndicator(args.Data))
+            {
+                return true;
+            }
+
+            if (string.IsNullOrWhiteSpace(args.Hora) || HasMissingValueIndicator(args.Hora))
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool HasMissingValueIndicator(string valor)
+        {
+            var normalized = valor.Trim().ToLowerInvariant();
+
+            if (normalized.Length == 0)
+            {
+                return true;
+            }
+
+            if (normalized == "string" || normalized == "null" || normalized == "undefined")
+            {
+                return true;
+            }
+
+            if (normalized.Contains("não inform") || normalized.Contains("nao inform"))
+            {
+                return true;
+            }
+
+            if (normalized.Contains("a definir") || normalized.Contains("a combinar"))
+            {
+                return true;
+            }
+
+            if (normalized.Contains("informada") && normalized.Contains("ainda"))
+            {
+                return true;
+            }
+
+            return false;
         }
 
         private async Task<string> HandleEscalarParaHumano(EscalarParaHumanoArgs args)
         {
+            args.Motivo = args.Motivo?.Trim() ?? string.Empty;
+            args.ResumoConversa = args.ResumoConversa?.Trim() ?? string.Empty;
+
+            if (string.IsNullOrWhiteSpace(args.Motivo) || string.IsNullOrWhiteSpace(args.ResumoConversa))
+            {
+                _logger.LogWarning("[Conversa={Conversa}] Motivo ou resumo ausentes na solicitação de escalonamento", args.IdConversa);
+                return BuildJsonReply("Claro! Antes de chamar o time, pode me contar rapidinho o motivo do atendimento?");
+            }
+
             var contexto = new HandoverContextDto
             {
                 Historico = new[] { $"Resumo: {args.ResumoConversa}", $"Motivo: {args.Motivo}" }
