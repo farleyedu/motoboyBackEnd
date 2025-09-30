@@ -73,30 +73,40 @@ namespace APIBack.Automation.Services
 
             messages.Add(new { role = "user", content = textoUsuario });
 
+            // Simplificação: A API "Responses" não usa response_format para JSON, ela infere pelo prompt.
+            // Para forçar JSON, o melhor é instruir no prompt de sistema e ter um bom parser.
+            // O uso de `text.format` com `json_schema` foi o que causou os erros anteriores.
             var payload = new
             {
                 model,
                 input = messages.ToArray(),
-                text = new { format = "json" },
                 tools = _toolExecutor.GetDeclaredTools(idConversa)
+                // O parâmetro 'text' foi removido para simplificar e evitar erros de schema.
             };
 
             var json = JsonSerializer.Serialize(payload, JsonOptions);
+            _logger.LogInformation("[Conversa={Conversa}] Payload enviado para OpenAI: {Payload}", idConversa, json);
+
             using var content = new StringContent(json, Encoding.UTF8, "application/json");
 
             try
             {
                 var response = await client.PostAsync("https://api.openai.com/v1/responses", content);
                 var body = await response.Content.ReadAsStringAsync();
+
                 if (!response.IsSuccessStatusCode)
                 {
                     _logger.LogWarning("[Conversa={Conversa}] OpenAI falhou: {Status} {Body}", idConversa, (int)response.StatusCode, body);
                     return new AssistantDecision("Desculpe, não consegui formular uma resposta agora.", "none", null, false, null);
                 }
 
-                using var doc = JsonDocument.Parse(body);
+                _logger.LogInformation("[Conversa={Conversa}] Resposta bruta da OpenAI: {Body}", idConversa, body);
 
+                using var doc = JsonDocument.Parse(body);
                 var outputArray = doc.RootElement.GetProperty("output");
+
+                string? toolResult = null;
+
                 foreach (var item in outputArray.EnumerateArray())
                 {
                     var type = item.GetProperty("type").GetString();
@@ -110,22 +120,22 @@ namespace APIBack.Automation.Services
 
                         return await InterpretarResposta(message, idConversa);
                     }
-                    else if (type == "tool_call" || type == "function_call") // <-- corrigido aqui
+                    else if (type == "tool_call" || type == "function_call")
                     {
                         var toolName = item.GetProperty("name").GetString();
                         var args = item.GetProperty("arguments").GetRawText();
 
-                        var result = await _toolExecutor.ExecuteToolAsync(toolName!, args);
-                        return new AssistantDecision(
-                            Reply: result,
-                            HandoverAction: "none",
-                            AgentPrompt: null,
-                            ReservaConfirmada: false,
-                            Detalhes: null
-                        );
+                        // Executa a tool, mas guarda o resultado.
+                        // A IA pode chamar múltiplas tools, vamos processar todas.
+                        toolResult = await _toolExecutor.ExecuteToolAsync(toolName!, args);
                     }
                 }
 
+                // Se houve resultado de uma tool, retornamos ele como a decisão final.
+                if (toolResult != null)
+                {
+                    return new AssistantDecision(toolResult, "none", null, false, null);
+                }
 
                 return new AssistantDecision("Desculpe, não entendi a solicitação.", "none", null, false, null);
             }
@@ -163,8 +173,7 @@ namespace APIBack.Automation.Services
             {
                 return string.Empty;
             }
-
-            return texto!.Length <= maxLength ? texto : texto.Substring(0, maxLength) + "...";
+            return texto.Length <= maxLength ? texto : texto.Substring(0, maxLength) + "...";
         }
     }
 }
