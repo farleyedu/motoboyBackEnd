@@ -80,7 +80,17 @@ namespace APIBack.Automation.Services
             try
             {
                 // 🔑 Corrigir texto com caracteres escapados
-                var textoLimpo = System.Text.Json.JsonSerializer.Deserialize<string>($"\"{texto}\"");
+                string textoLimpo;
+                try
+                {
+                    // Tenta decodificar como JSON string escapada
+                    textoLimpo = System.Text.Json.JsonSerializer.Deserialize<string>($"\"{texto}\"") ?? texto;
+                }
+                catch
+                {
+                    // Se falhar, usa o texto original
+                    textoLimpo = texto;
+                }
 
                 // 1. Criar a mensagem
                 var mensagem = MessageFactory.CreateMessage(
