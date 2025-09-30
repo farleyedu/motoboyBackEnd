@@ -16,48 +16,48 @@ namespace APIBack.Automation.Services
     {
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
         private static readonly string DefaultSystemPrompt = """
-Você é o assistente virtual do Bar Seu Eurico via WhatsApp. Seja acolhedor, amigável e use emojis (🌸✨🍻😊) quando adequado.
+Identidade e Objetivo Principal
+Você é o assistente virtual do Bar Seu Eurico no WhatsApp. Seja acolhedor, simpático e use emojis (🌸✨🍻😊) quando fizer sentido.
 
-Sua função é interpretar a intenção do cliente e SEMPRE responder com um JSON estruturado contendo a próxima ação. Você nunca executa ações diretamente; apenas sinaliza o que deve acontecer.
+Regra de Ouro
+Você nunca executa ações diretamente. Sua função é interpretar a intenção do cliente e responder SEMPRE com um JSON que descreve a próxima etapa.
 
-Formato obrigatório:
+Formato obrigatório da resposta
 {
   "acao": "responder" | "confirmar_reserva" | "escalar_para_humano",
-  "reply": "...",                    // obrigatório quando acao = "responder"
-  "agentPrompt": "..." | null,
+  "reply": "...",            // use null quando não houver mensagem para o cliente
   "dadosReserva": {
-      "idConversa": "<GUID>",
-      "nomeCompleto": "...",
-      "qtdPessoas": <int>,
-      "data": "...",
-      "hora": "HH:mm"
-  } | null,
+    "nomeCompleto": "...",
+    "qtdPessoas": 0,
+    "data": "...",
+    "hora": "HH:mm"
+  },
   "escalacao": {
-      "idConversa": "<GUID>",
-      "motivo": "...",
-      "resumoConversa": "..."
-  } | null
+    "motivo": "...",
+    "resumoConversa": "..."
+  }
 }
 
-Fluxo obrigatório de reserva:
-1. Coletar dados faltantes usando "acao": "responder" (nome, quantidade, data, hora).
-2. Assim que possuir todos os dados, responda com um resumo e pergunte se deseja confirmar (ainda usando "responder").
-3. Apenas após o cliente confirmar explicitamente, retorne "acao": "confirmar_reserva" com os dados completos e sem mensagem.
+Fluxo obrigatório de reserva
+1. Se faltarem dados (nome, quantidade, data ou hora), use apenas "acao": "responder" para pedir as informações que faltam.
+2. Quando tiver todos os dados, use "acao": "responder" para apresentar um resumo e perguntar se a pessoa confirma.
+3. Somente depois de o cliente responder afirmativamente, use "acao": "confirmar_reserva" sem mensagem ("reply": null).
 
-Fluxo de escalonamento:
-1. Pergunte se deseja falar com um atendente usando "responder".
-2. Após confirmação, retorne "acao": "escalar_para_humano" preenchendo "motivo" e "resumoConversa".
+Fluxo de escalonamento humano
+1. Pergunte primeiro se deseja falar com um atendente usando "acao": "responder".
+2. Após o cliente confirmar, use "acao": "escalar_para_humano" e preencha "motivo" e "resumoConversa".
 
-Regras adicionais:
-- Nunca misture perguntas de confirmação com a execução de ferramentas na mesma resposta.
-- Se faltar qualquer informação ou houver dúvida, peça esclarecimentos com "responder".
-- Não invente dados; preserve campos ausentes como null.
-- Responda sempre em português do Brasil, mantendo tom acolhedor.
+Regras adicionais
+- Nunca misture pergunta de confirmação e execução na mesma resposta.
+- Não invente dados; mantenha campos vazios ou peça esclarecimentos.
+- Responda sempre em português do Brasil com tom acolhedor.
 
-Informações do Bar Seu Eurico:
+Informações úteis do Bar Seu Eurico
 - Endereço: Av. Anselmo Alves dos Santos, 1750 – Bairro Santa Mônica, Uberlândia/MG.
 - Horário: Seg-Sex 17h–00h30, Sáb 12h–01h, Dom 12h–00h30. Happy hour: Seg-Sex 17h–20h, Sáb-Dom 12h–16h.
-- Diferenciais: Pet friendly 🐶, área kids gratuita 👧🧒, ambiente familiar, promoções (chopp R$4,90, caipirinha R$9,90, batata 30% off) e cardápio com Sra Picanha, Costela Barão, Cupim Bola, Contra Filé, bolinho de costela, frango a passarinho, panelinha do Eurico e diversos drinks.
+- Diferenciais: Pet friendly 🐶, área kids gratuita 👧🧒, ambiente familiar.
+- Promoções: Chopp R$4,90 | Caipirinha R$9,90 | Outras frutas R$13,00 | Batata com 30% off.
+- Cardápio resumido: Sra Picanha, Costela Barão, Cupim Bola, Contra Filé, bolinho de costela, frango a passarinho, panelinha do Eurico, cervejas e drinks variados.
 """;
 
         private readonly IHttpClientFactory _httpFactory;
@@ -85,6 +85,8 @@ Informações do Bar Seu Eurico:
             var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY");
             var model = Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o-mini";
 
+            apiKey = apiKey?.Trim();
+
             if (string.IsNullOrWhiteSpace(apiKey))
             {
                 _logger.LogWarning("[Conversa={Conversa}] OPENAI_API_KEY não configurada; usando decisão padrão", idConversa);
@@ -99,7 +101,15 @@ Informações do Bar Seu Eurico:
             var client = _httpFactory.CreateClient();
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
 
-            var systemPrompt = contexto as string ?? DefaultSystemPrompt;
+            var apiBase = Environment.GetEnvironmentVariable("OPENAI_API_BASE")?.Trim();
+            var endpoint = string.IsNullOrWhiteSpace(apiBase)
+                ? "https://api.openai.com/v1/chat/completions"
+                : $"{apiBase.TrimEnd('/')}/v1/chat/completions";
+
+            var contextoTexto = (contexto as string)?.Trim();
+            var systemPrompt = string.IsNullOrWhiteSpace(contextoTexto)
+                ? DefaultSystemPrompt
+                : string.Concat(contextoTexto, "\n\n", DefaultSystemPrompt);
             var messages = new List<object> { new { role = "system", content = systemPrompt } };
 
             if (historico != null)
@@ -132,7 +142,7 @@ Informações do Bar Seu Eurico:
 
             try
             {
-                var response = await client.PostAsync("https://api.openai.com/v1/chat/completions", content);
+                var response = await client.PostAsync(endpoint, content);
                 var body = await response.Content.ReadAsStringAsync();
 
                 if (!response.IsSuccessStatusCode)
@@ -182,35 +192,32 @@ Informações do Bar Seu Eurico:
                     case "responder":
                     {
                         var reply = string.IsNullOrWhiteSpace(iaAction.Reply)
-                            ? "Desculpe, não entendi sua solicitação. Pode reformular, por favor? 😊"
+                            ? "Desculpe, não entendi sua solicitação agora. Pode me contar novamente, por favor? 😊"
                             : iaAction.Reply!;
 
-                        return new AssistantDecision(reply, "none", iaAction.AgentPrompt, false, null);
+                        return new AssistantDecision(reply, "none", null, false, null);
                     }
 
                     case "confirmar_reserva":
                     {
-                        if (iaAction.DadosReserva is null)
+                        if (iaAction.DadosReserva is null || !iaAction.DadosReserva.PossuiCamposEssenciais())
                         {
                             _logger.LogWarning("[Conversa={Conversa}] IA sugeriu confirmar reserva sem dados", idConversa);
                             return new AssistantDecision(
                                 "Para organizar a sua reserva, preciso que me confirme o nome completo, a quantidade de pessoas, a data e o horário, por favor.",
                                 "none",
-                                iaAction.AgentPrompt,
+                                null,
                                 false,
                                 null);
                         }
 
-                        var confirmarArgsJson = JsonSerializer.Serialize(iaAction.DadosReserva, JsonOptions);
+                        var confirmarArgs = iaAction.DadosReserva.ToConfirmarReservaArgs(idConversa);
+                        var confirmarArgsJson = JsonSerializer.Serialize(confirmarArgs, JsonOptions);
                         var confirmarResultado = await _toolExecutor.ExecuteToolAsync("confirmar_reserva", confirmarArgsJson);
 
-                        var reservaConfirmada = false;
-                        if (TryExtrairReply(confirmarResultado, out var textoConfirmacao) && !string.IsNullOrWhiteSpace(textoConfirmacao))
-                        {
-                            reservaConfirmada = textoConfirmacao.Contains("Reserva confirmada", StringComparison.OrdinalIgnoreCase);
-                        }
+                        var (reply, reservaConfirmada) = ExtrairRespostaDaFerramenta(confirmarResultado);
 
-                        return new AssistantDecision(confirmarResultado, "confirmar_reserva", iaAction.AgentPrompt, reservaConfirmada, null);
+                        return new AssistantDecision(reply, "confirmar_reserva", null, reservaConfirmada, null);
                     }
 
                     case "escalar_para_humano":
@@ -221,14 +228,29 @@ Informações do Bar Seu Eurico:
                             return new AssistantDecision(
                                 "Posso te ajudar com mais alguma informação antes de chamar um atendente humano?",
                                 "none",
-                                iaAction.AgentPrompt,
+                                null,
                                 false,
                                 null);
                         }
 
-                        var escalarArgsJson = JsonSerializer.Serialize(iaAction.Escalacao, JsonOptions);
+                        var escalarArgs = iaAction.Escalacao.ToEscalarArgs(idConversa);
+
+                        if (string.IsNullOrWhiteSpace(escalarArgs.Motivo) || string.IsNullOrWhiteSpace(escalarArgs.ResumoConversa))
+                        {
+                            _logger.LogWarning("[Conversa={Conversa}] IA tentou escalar sem motivo ou resumo válidos", idConversa);
+                            return new AssistantDecision(
+                                "Claro! Antes de te conectar, pode me contar rapidinho o motivo do atendimento?",
+                                "none",
+                                null,
+                                false,
+                                null);
+                        }
+
+                        var escalarArgsJson = JsonSerializer.Serialize(escalarArgs, JsonOptions);
                         var escalarResultado = await _toolExecutor.ExecuteToolAsync("escalar_para_humano", escalarArgsJson);
-                        return new AssistantDecision(escalarResultado, "escalar_para_humano", iaAction.AgentPrompt, false, null);
+                        var (reply, _) = ExtrairRespostaDaFerramenta(escalarResultado);
+
+                        return new AssistantDecision(reply, "escalar_para_humano", null, false, null);
                     }
 
                     default:
@@ -243,24 +265,35 @@ Informações do Bar Seu Eurico:
             }
         }
 
-        private bool TryExtrairReply(string json, out string? reply)
+        private (string Reply, bool ReservaConfirmada) ExtrairRespostaDaFerramenta(string json)
         {
+            string? reply = null;
+            var reservaConfirmada = false;
+
             try
             {
                 using var doc = JsonDocument.Parse(json);
                 if (doc.RootElement.TryGetProperty("reply", out var replyProperty) && replyProperty.ValueKind == JsonValueKind.String)
                 {
                     reply = replyProperty.GetString();
-                    return true;
+                }
+
+                if (doc.RootElement.TryGetProperty("reserva_confirmada", out var confirmadaProperty) && confirmadaProperty.ValueKind == JsonValueKind.True)
+                {
+                    reservaConfirmada = true;
                 }
             }
-            catch (JsonException)
+            catch (JsonException ex)
             {
-                // Ignora erros de parsing e segue para o fallback
+                _logger.LogDebug(ex, "Falha ao extrair reply do JSON retornado pela ferramenta");
             }
 
-            reply = null;
-            return false;
+            if (string.IsNullOrWhiteSpace(reply))
+            {
+                reply = json;
+            }
+
+            return (reply!, reservaConfirmada);
         }
 
         private AssistantDecision FallbackDecision(string? conteudo = null)
@@ -278,9 +311,52 @@ Informações do Bar Seu Eurico:
         {
             public string? Acao { get; set; }
             public string? Reply { get; set; }
-            public string? AgentPrompt { get; set; }
-            public ConfirmarReservaArgs? DadosReserva { get; set; }
-            public EscalarParaHumanoArgs? Escalacao { get; set; }
+            public DadosReservaPayload? DadosReserva { get; set; }
+            public EscalacaoPayload? Escalacao { get; set; }
+        }
+
+        private sealed class DadosReservaPayload
+        {
+            public string? NomeCompleto { get; set; }
+            public int? QtdPessoas { get; set; }
+            public string? Data { get; set; }
+            public string? Hora { get; set; }
+
+            public bool PossuiCamposEssenciais()
+            {
+                return !string.IsNullOrWhiteSpace(NomeCompleto)
+                    && QtdPessoas.HasValue
+                    && !string.IsNullOrWhiteSpace(Data)
+                    && !string.IsNullOrWhiteSpace(Hora);
+            }
+
+            public ConfirmarReservaArgs ToConfirmarReservaArgs(Guid idConversa)
+            {
+                return new ConfirmarReservaArgs
+                {
+                    IdConversa = idConversa,
+                    NomeCompleto = NomeCompleto ?? string.Empty,
+                    QtdPessoas = QtdPessoas ?? 0,
+                    Data = Data ?? string.Empty,
+                    Hora = Hora ?? string.Empty
+                };
+            }
+        }
+
+        private sealed class EscalacaoPayload
+        {
+            public string? Motivo { get; set; }
+            public string? ResumoConversa { get; set; }
+
+            public EscalarParaHumanoArgs ToEscalarArgs(Guid idConversa)
+            {
+                return new EscalarParaHumanoArgs
+                {
+                    IdConversa = idConversa,
+                    Motivo = Motivo ?? string.Empty,
+                    ResumoConversa = ResumoConversa ?? string.Empty
+                };
+            }
         }
     }
 }
