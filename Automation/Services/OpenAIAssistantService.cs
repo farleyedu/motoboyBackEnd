@@ -156,12 +156,27 @@ Regras:
 
                     if (type == "message")
                     {
-                        var message = item
+                        var rawJson = item
                             .GetProperty("content")[0]
                             .GetProperty("text")
                             .GetString();
 
-                        return await InterpretarResposta(message, idConversa);
+                        try
+                        {
+                            var decision = JsonSerializer.Deserialize<AssistantDecision>(rawJson, JsonOptions);
+                            if (decision != null)
+                            {
+                                _logger.LogInformation("[Conversa={Conversa}] JSON da IA desserializado com sucesso", idConversa);
+                                return decision;
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "[Conversa={Conversa}] Falha ao desserializar JSON direto. Conteúdo: {Raw}", idConversa, rawJson);
+                        }
+
+                        // fallback: tenta regex/parse do jeito antigo
+                        return await InterpretarResposta(rawJson, idConversa);
                     }
                     else if (type == "tool_call" || type == "function_call")
                     {

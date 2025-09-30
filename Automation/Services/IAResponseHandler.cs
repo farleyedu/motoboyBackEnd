@@ -1,5 +1,6 @@
 ﻿// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
 using System;
+using System.Text.Json;
 using System.Threading.Tasks;
 using APIBack.Automation.Dtos;
 using APIBack.Automation.Interfaces;
@@ -29,11 +30,6 @@ namespace APIBack.Automation.Services
 
         /// <summary>
         /// Processa a resposta da IA e envia ao cliente via WhatsApp.
-        /// 
-        /// IMPORTANTE: Com a arquitetura de Tools, as ações (confirmar reserva, escalar para humano)
-        /// já foram executadas pelo ToolExecutorService. Este handler apenas:
-        /// 1. Persiste a mensagem de resposta no banco
-        /// 2. Envia a mensagem para o WhatsApp
         /// </summary>
         public async Task HandleAsync(AssistantDecision decision, ConversationProcessingResult processamento)
         {
@@ -48,8 +44,6 @@ namespace APIBack.Automation.Services
             var phoneNumberDisplay = processamento.NumeroTelefoneExibicao;
             var phoneNumberId = processamento.NumeroWhatsappId;
 
-
-            // Validar se temos os dados necessários para enviar
             if (string.IsNullOrWhiteSpace(phoneNumberDisplay) || string.IsNullOrWhiteSpace(numeroDestino))
             {
                 _logger.LogWarning(
@@ -58,7 +52,6 @@ namespace APIBack.Automation.Services
                 return;
             }
 
-            // Se a IA não gerou resposta, não há nada a fazer
             if (string.IsNullOrWhiteSpace(decision.Reply))
             {
                 _logger.LogInformation(
@@ -67,7 +60,6 @@ namespace APIBack.Automation.Services
                 return;
             }
 
-            // Enviar a resposta da IA para o cliente
             await EnviarMensagemAoClienteAsync(idConversa, phoneNumberDisplay, numeroDestino, phoneNumberId, decision.Reply);
 
             _logger.LogInformation(
@@ -79,23 +71,29 @@ namespace APIBack.Automation.Services
         {
             try
             {
-                // 🔑 Corrigir texto com caracteres escapados
-                string textoLimpo;
+                // ================= CORREÇÃO APLICADA AQUI =================
+                // O texto pode ser uma string simples ou um JSON vindo de uma Tool.
+                // Esta lógica extrai a mensagem de "reply" se for um JSON.
+                string textoFinalParaUsuario = texto;
                 try
                 {
-                    // Tenta decodificar como JSON string escapada
-                    textoLimpo = System.Text.Json.JsonSerializer.Deserialize<string>($"\"{texto}\"") ?? texto;
+                    using var doc = JsonDocument.Parse(texto);
+                    if (doc.RootElement.TryGetProperty("reply", out var replyProperty) && replyProperty.ValueKind == JsonValueKind.String)
+                    {
+                        textoFinalParaUsuario = replyProperty.GetString() ?? texto;
+                    }
                 }
-                catch
+                catch (JsonException)
                 {
-                    // Se falhar, usa o texto original
-                    textoLimpo = texto;
+                    // Se não for um JSON válido, simplesmente usamos o texto original.
+                    // Isso é esperado quando a IA responde sem chamar uma tool.
                 }
+                // ================= FIM DA CORREÇÃO =================
 
                 // 1. Criar a mensagem
                 var mensagem = MessageFactory.CreateMessage(
                     idConversa,
-                    textoLimpo,
+                    textoFinalParaUsuario, // Usar o texto extraído
                     DirecaoMensagem.Saida,
                     "ia",
                     tipoOrigem: "text");
@@ -106,13 +104,13 @@ namespace APIBack.Automation.Services
                 _logger.LogInformation(
                     "[Conversa={Conversa}] Mensagem da IA persistida no banco: {Preview}",
                     idConversa,
-                    textoLimpo.Length > 100 ? textoLimpo.Substring(0, 100) + "..." : textoLimpo);
+                    textoFinalParaUsuario.Length > 100 ? textoFinalParaUsuario.Substring(0, 100) + "..." : textoFinalParaUsuario);
 
                 // 3. Publicar na fila (se aplicável)
                 await _fila.PublicarSaidaAsync(mensagem);
 
                 // 4. Enviar para o WhatsApp
-                await _whatsAppSender.SendTextAsync(idConversa, phoneNumberId, numeroDestino, textoLimpo);
+                await _whatsAppSender.SendTextAsync(idConversa, phoneNumberId, numeroDestino, textoFinalParaUsuario); // Usar o texto extraído
 
                 _logger.LogInformation(
                     "[Conversa={Conversa}] Mensagem enviada ao WhatsApp com sucesso",
@@ -128,7 +126,6 @@ namespace APIBack.Automation.Services
                 throw;
             }
         }
-
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ==================

@@ -27,6 +27,12 @@ namespace APIBack.Automation.Services
 
             try
             {
+                // 🔑 Correção: se o conteúdo estiver como string JSON escapada, desserializa primeiro
+                if (conteudo.StartsWith("\"") && conteudo.EndsWith("\""))
+                {
+                    conteudo = JsonSerializer.Deserialize<string>(conteudo, jsonOptions);
+                }
+
                 // Primeiro tenta interpretar o texto como JSON direto
                 var decision = JsonSerializer.Deserialize<AssistantDecision>(conteudo, jsonOptions);
                 if (decision != null && !string.IsNullOrWhiteSpace(decision.Reply))
@@ -58,7 +64,7 @@ namespace APIBack.Automation.Services
                 logger.LogError(ex, "[Conversa={Conversa}] Erro ao interpretar JSON retornado pela IA", idConversa);
             }
 
-            // Fallback: se nada deu certo, retorna o texto bruto como reply
+            // 🚨 Fallback: se nada deu certo, retorna o texto bruto como reply
             return (false, new AssistantDecision(conteudo, "none", null, false, null), extractedJson);
         }
     }
