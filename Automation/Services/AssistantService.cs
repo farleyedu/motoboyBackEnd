@@ -15,35 +15,36 @@ namespace APIBack.Automation.Services
     public class AssistantService : IAssistantService
     {
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
-        private static readonly string DefaultSystemPrompt = @"Você é o assistente virtual do Bar Seu Eurico via WhatsApp.
+        private static readonly string DefaultSystemPrompt = """
+Você é o assistente virtual do Bar Seu Eurico via WhatsApp.
 Sua função é interpretar a intenção do cliente e SEMPRE responder com um JSON estruturado contendo a próxima ação.
 
 Formato obrigatório:
 {
-  \"acao\": \"responder\" | \"confirmar_reserva\" | \"escalar_para_humano\",
-  \"reply\": \"...\",                    // obrigatório quando acao = \"responder\"
-  \"agentPrompt\": \"...\" | null,
-  \"dadosReserva\": {
-      \"idConversa\": \"<GUID>\",
-      \"nomeCompleto\": \"...\",
-      \"qtdPessoas\": <int>,
-      \"data\": \"...\",
-      \"hora\": \"HH:mm\"
+  "acao": "responder" | "confirmar_reserva" | "escalar_para_humano",
+  "reply": "...",                    // obrigatório quando acao = "responder"
+  "agentPrompt": "..." | null,
+  "dadosReserva": {
+      "idConversa": "<GUID>",
+      "nomeCompleto": "...",
+      "qtdPessoas": <int>,
+      "data": "...",
+      "hora": "HH:mm"
   } | null,
-  \"escalacao\": {
-      \"idConversa\": \"<GUID>\",
-      \"motivo\": \"...\",
-      \"resumoConversa\": \"...\"
+  "escalacao": {
+      "idConversa": "<GUID>",
+      "motivo": "...",
+      "resumoConversa": "..."
   } | null
 }
 
 Regras:
-- Use \"responder\" para saudações, esclarecimentos e para pedir dados faltantes.
-- Só use \"confirmar_reserva\" quando o cliente tiver fornecido nome completo, quantidade de pessoas, data e hora e já tiver confirmado explicitamente a reserva. Nunca combine a pergunta de confirmação com a execução.
-- Use \"escalar_para_humano\" apenas se o cliente solicitar ou se o fluxo não puder continuar, preenchendo motivo e resumo.
-- Em caso de dúvida, peça esclarecimentos usando \"responder\".
+- Use "responder" para saudações, esclarecimentos e para pedir dados faltantes.
+- Só use "confirmar_reserva" quando o cliente tiver fornecido nome completo, quantidade de pessoas, data e hora e já tiver confirmado explicitamente a reserva. Nunca combine a pergunta de confirmação com a execução.
+- Use "escalar_para_humano" apenas se o cliente solicitar ou se o fluxo não puder continuar, preenchendo motivo e resumo.
+- Em caso de dúvida, peça esclarecimentos usando "responder".
 - Responda sempre em português do Brasil, com tom cordial e acolhedor.
-".Trim();
+""";
 
         private readonly IHttpClientFactory _httpFactory;
         private readonly ILogger<AssistantService> _logger;
@@ -94,7 +95,11 @@ Regras:
             {
                 foreach (var turn in historico)
                 {
-                    if (string.IsNullOrWhiteSpace(turn.Content)) continue;
+                    if (string.IsNullOrWhiteSpace(turn.Content))
+                    {
+                        continue;
+                    }
+
                     var role = string.Equals(turn.Role, "assistant", StringComparison.OrdinalIgnoreCase) ? "assistant" : "user";
                     messages.Add(new { role, content = turn.Content });
                 }
@@ -164,12 +169,16 @@ Regras:
                 switch (iaAction.Acao.ToLowerInvariant())
                 {
                     case "responder":
+                    {
                         var reply = string.IsNullOrWhiteSpace(iaAction.Reply)
                             ? "Desculpe, não entendi sua solicitação. Pode reformular, por favor? 😊"
                             : iaAction.Reply!;
+
                         return new AssistantDecision(reply, "none", iaAction.AgentPrompt, false, null);
+                    }
 
                     case "confirmar_reserva":
+                    {
                         if (iaAction.DadosReserva is null)
                         {
                             _logger.LogWarning("[Conversa={Conversa}] IA sugeriu confirmar reserva sem dados", idConversa);
@@ -183,17 +192,18 @@ Regras:
 
                         var confirmarArgsJson = JsonSerializer.Serialize(iaAction.DadosReserva, JsonOptions);
                         var confirmarResultado = await _toolExecutor.ExecuteToolAsync("confirmar_reserva", confirmarArgsJson);
-                        var reservaConfirmada = false;
 
-                        if (TryExtrairReply(confirmarResultado, out var textoConfirmacao) &&
-                            !string.IsNullOrWhiteSpace(textoConfirmacao))
+                        var reservaConfirmada = false;
+                        if (TryExtrairReply(confirmarResultado, out var textoConfirmacao) && !string.IsNullOrWhiteSpace(textoConfirmacao))
                         {
                             reservaConfirmada = textoConfirmacao.Contains("Reserva confirmada", StringComparison.OrdinalIgnoreCase);
                         }
 
                         return new AssistantDecision(confirmarResultado, "confirmar_reserva", iaAction.AgentPrompt, reservaConfirmada, null);
+                    }
 
                     case "escalar_para_humano":
+                    {
                         if (iaAction.Escalacao is null)
                         {
                             _logger.LogWarning("[Conversa={Conversa}] IA sugeriu escalar sem detalhes", idConversa);
@@ -208,6 +218,7 @@ Regras:
                         var escalarArgsJson = JsonSerializer.Serialize(iaAction.Escalacao, JsonOptions);
                         var escalarResultado = await _toolExecutor.ExecuteToolAsync("escalar_para_humano", escalarArgsJson);
                         return new AssistantDecision(escalarResultado, "escalar_para_humano", iaAction.AgentPrompt, false, null);
+                    }
 
                     default:
                         _logger.LogWarning("[Conversa={Conversa}] Ação desconhecida sugerida pela IA: {Acao}", idConversa, iaAction.Acao);
@@ -234,7 +245,7 @@ Regras:
             }
             catch (JsonException)
             {
-                // ignoramos erros de parsing e devolvemos false
+                // Ignora erros de parsing e segue para o fallback
             }
 
             reply = null;
@@ -252,7 +263,7 @@ Regras:
             return new AssistantDecision(mensagemPadrao, "none", null, false, null);
         }
 
-        private class IaActionResponse
+        private sealed class IaActionResponse
         {
             public string? Acao { get; set; }
             public string? Reply { get; set; }
