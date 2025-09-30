@@ -78,7 +78,7 @@ namespace APIBack.Automation.Services
                 model,
                 input = messages.ToArray(),
                 text = new { format = "json" },
-                tools = _toolExecutor.GetDeclaredTools()
+                tools = _toolExecutor.GetDeclaredTools(idConversa)
             };
 
             var json = JsonSerializer.Serialize(payload, JsonOptions);
@@ -110,9 +110,8 @@ namespace APIBack.Automation.Services
 
                         return await InterpretarResposta(message, idConversa);
                     }
-                    else if (type == "tool_call")
+                    else if (type == "tool_call" || type == "function_call") // <-- corrigido aqui
                     {
-                        var callId = item.GetProperty("id").GetString();
                         var toolName = item.GetProperty("name").GetString();
                         var args = item.GetProperty("arguments").GetRawText();
 
@@ -122,9 +121,11 @@ namespace APIBack.Automation.Services
                             HandoverAction: "none",
                             AgentPrompt: null,
                             ReservaConfirmada: false,
-                            Detalhes: null);
+                            Detalhes: null
+                        );
                     }
                 }
+
 
                 return new AssistantDecision("Desculpe, não entendi a solicitação.", "none", null, false, null);
             }

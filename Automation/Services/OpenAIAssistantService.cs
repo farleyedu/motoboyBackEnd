@@ -78,6 +78,9 @@ namespace APIBack.Automation.Services
 
             messages.Add(new { role = "user", content = textoUsuario });
 
+            var tools = _toolExecutor.GetDeclaredTools(idConversa);
+            _logger.LogInformation("[Conversa={Conversa}] Enviando {Count} tools para OpenAI", idConversa, tools.Length);
+
             var payload = new
             {
                 model,
@@ -106,16 +109,19 @@ namespace APIBack.Automation.Services
                         }
                     }
                 },
-                tools = _toolExecutor.GetDeclaredTools()
+                tools = _toolExecutor.GetDeclaredTools(idConversa)
             };
 
             var json = JsonSerializer.Serialize(payload, JsonOptions);
+            _logger.LogInformation("[Conversa={Conversa}] Payload enviado para OpenAI: {Payload}", idConversa, json);
             using var content = new StringContent(json, Encoding.UTF8, "application/json");
 
             try
             {
                 var response = await client.PostAsync("https://api.openai.com/v1/responses", content);
                 var body = await response.Content.ReadAsStringAsync();
+                _logger.LogInformation("[Conversa={Conversa}] Resposta bruta da OpenAI: {Body}", idConversa, body);
+
                 if (!response.IsSuccessStatusCode)
                 {
                     _logger.LogWarning("[Conversa={Conversa}] OpenAI falhou: {Status} {Body}", idConversa, (int)response.StatusCode, body);
@@ -138,7 +144,7 @@ namespace APIBack.Automation.Services
 
                         return await InterpretarResposta(message, idConversa);
                     }
-                    else if (type == "tool_call")
+                    else if (type == "tool_call" || type == "function_call")
                     {
                         var toolName = item.GetProperty("name").GetString();
                         var args = item.GetProperty("arguments").GetRawText();
@@ -153,6 +159,7 @@ namespace APIBack.Automation.Services
                         );
                     }
                 }
+
 
                 return new AssistantDecision("Desculpe, não entendi a solicitação.", "none", null, false, null);
             }

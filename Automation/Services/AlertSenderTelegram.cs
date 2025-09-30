@@ -19,27 +19,31 @@ namespace APIBack.Automation.Services
         private readonly IHttpClientFactory _httpFactory;
         private readonly IOptions<AutomationOptions> _options;
         private readonly ILogger<AlertSenderTelegram> _logger;
+        private readonly IAgenteRepository _agenteRepository;
 
         public AlertSenderTelegram(
             IHttpClientFactory httpFactory,
             IOptions<AutomationOptions> options,
-            ILogger<AlertSenderTelegram> logger)
+            ILogger<AlertSenderTelegram> logger, IAgenteRepository agenteRepository)
+
         {
             _httpFactory = httpFactory;
             _options = options;
             _logger = logger;
+            _agenteRepository = agenteRepository;
         }
 
         public async Task EnviarAlertaTelegramAsync(string mensagem, string? chatIdOverride = null)
         {
             if (string.IsNullOrWhiteSpace(mensagem)) return;
+            var chatIdAgente = await _agenteRepository.ObterTelegramChatIdPorAgenteIdAsync(4);
 
             var conversationId = ExtrairIdentificadorConversa(mensagem);
             var cfg = _options.Value?.Telegram;
             var token = cfg?.BotToken;
             var chatId = string.IsNullOrWhiteSpace(chatIdOverride) ? cfg?.ChatId : chatIdOverride;
 
-            if (string.IsNullOrWhiteSpace(token) || token == "<TODO>" || string.IsNullOrWhiteSpace(chatId) || chatId == "<TODO>")
+            if (string.IsNullOrWhiteSpace(token) || token == "<TODO>" || !chatIdAgente.HasValue || chatIdAgente.Value == 0)
             {
                 _logger.LogWarning("[Conversa={Conversa}] Telegram BotToken/ChatId não configurados. Alerta não enviado.", conversationId);
                 return;
@@ -59,7 +63,7 @@ namespace APIBack.Automation.Services
 
                 var payload = new
                 {
-                    chat_id = chatId,
+                    chat_id = chatIdAgente,
                     text = trecho,
                     disable_web_page_preview = true,
                     allow_sending_without_reply = true
