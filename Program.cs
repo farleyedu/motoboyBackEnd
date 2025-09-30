@@ -58,8 +58,8 @@ builder.Services.AddScoped<ToolExecutorService>();
 
 // Provedor de token do WhatsApp em memória (permite atualizar via endpoint)
 builder.Services.AddSingleton<IWhatsAppTokenProvider, InMemoryWhatsAppTokenProvider>();
-// IA real via OpenAI
-builder.Services.AddScoped<IAssistantService, OpenAIAssistantService>();
+// IA real via OpenAI (novo orquestrador determinístico)
+builder.Services.AddScoped<IAssistantService, AssistantService>();
 // Envio real de alertas para Telegram
 builder.Services.AddScoped<IAlertSender, AlertSenderTelegram>();
 builder.Services.AddScoped<IAgenteRepository, SqlAgenteRepository>();
