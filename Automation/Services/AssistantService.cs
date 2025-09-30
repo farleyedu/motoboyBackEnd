@@ -7,8 +7,10 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using APIBack.Automation.Dtos;
+using APIBack.Automation.Infra.Config;
 using APIBack.Automation.Interfaces;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace APIBack.Automation.Services
 {
@@ -63,15 +65,18 @@ Informações úteis do Bar Seu Eurico
         private readonly IHttpClientFactory _httpFactory;
         private readonly ILogger<AssistantService> _logger;
         private readonly ToolExecutorService _toolExecutor;
+        private readonly IOptions<OpenAIOptions> _options;
 
         public AssistantService(
             IHttpClientFactory httpFactory,
             ILogger<AssistantService> logger,
-            ToolExecutorService toolExecutor)
+            ToolExecutorService toolExecutor,
+            IOptions<OpenAIOptions> options)
         {
             _httpFactory = httpFactory;
             _logger = logger;
             _toolExecutor = toolExecutor;
+            _options = options;
         }
 
         public Task<AssistantDecision> GerarDecisaoAsync(string textoUsuario, Guid idConversa, object? contexto = null)
@@ -82,14 +87,12 @@ Informações úteis do Bar Seu Eurico
 
         private async Task<AssistantDecision> GerarDecisaoInternoAsync(string textoUsuario, Guid idConversa, object? contexto, IEnumerable<AssistantChatTurn>? historico)
         {
-            var apiKey = Environment.GetEnvironmentVariable("OPENAI_API_KEY");
-            var model = Environment.GetEnvironmentVariable("OPENAI_MODEL") ?? "gpt-4o-mini";
-
-            apiKey = apiKey?.Trim();
+            var apiKey = _options.Value.ApiKey;
+            var model = string.IsNullOrWhiteSpace(_options.Value.Model) ? "gpt-4o-mini" : _options.Value.Model;
 
             if (string.IsNullOrWhiteSpace(apiKey))
             {
-                _logger.LogWarning("[Conversa={Conversa}] OPENAI_API_KEY não configurada; usando decisão padrão", idConversa);
+                _logger.LogWarning("[Conversa={Conversa}] OpenAI ApiKey não configurada; usando decisão padrão", idConversa);
                 return new AssistantDecision(
                     Reply: string.IsNullOrWhiteSpace(textoUsuario) ? "Poderia repetir?" : $"Você disse: '{textoUsuario}'.",
                     HandoverAction: "none",
@@ -101,10 +104,7 @@ Informações úteis do Bar Seu Eurico
             var client = _httpFactory.CreateClient();
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
 
-            var apiBase = Environment.GetEnvironmentVariable("OPENAI_API_BASE")?.Trim();
-            var endpoint = string.IsNullOrWhiteSpace(apiBase)
-                ? "https://api.openai.com/v1/chat/completions"
-                : $"{apiBase.TrimEnd('/')}/v1/chat/completions";
+            var endpoint = "https://api.openai.com/v1/chat/completions";
 
             var contextoTexto = (contexto as string)?.Trim();
             var systemPrompt = string.IsNullOrWhiteSpace(contextoTexto)
@@ -136,7 +136,7 @@ Informações úteis do Bar Seu Eurico
             };
 
             var json = JsonSerializer.Serialize(payload, JsonOptions);
-            _logger.LogInformation("[Conversa={Conversa}] Payload enviado para OpenAI: {Payload}", idConversa, json);
+            _logger.LogDebug("[Conversa={Conversa}] Payload enviado para OpenAI: {Payload}", idConversa, json);
 
             using var content = new StringContent(json, Encoding.UTF8, "application/json");
 
@@ -151,7 +151,7 @@ Informações úteis do Bar Seu Eurico
                     return new AssistantDecision("Desculpe, não consegui formular uma resposta agora.", "none", null, false, null);
                 }
 
-                _logger.LogInformation("[Conversa={Conversa}] Resposta bruta da OpenAI: {Body}", idConversa, body);
+                _logger.LogDebug("[Conversa={Conversa}] Resposta bruta da OpenAI: {Body}", idConversa, body);
 
                 using var doc = JsonDocument.Parse(body);
 
@@ -190,68 +190,68 @@ Informações úteis do Bar Seu Eurico
                 switch (iaAction.Acao.ToLowerInvariant())
                 {
                     case "responder":
-                    {
-                        var reply = string.IsNullOrWhiteSpace(iaAction.Reply)
-                            ? "Desculpe, não entendi sua solicitação agora. Pode me contar novamente, por favor? 😊"
-                            : iaAction.Reply!;
+                        {
+                            var reply = string.IsNullOrWhiteSpace(iaAction.Reply)
+                                ? "Desculpe, não entendi sua solicitação agora. Pode me contar novamente, por favor? 😊"
+                                : iaAction.Reply!;
 
-                        return new AssistantDecision(reply, "none", null, false, null);
-                    }
+                            return new AssistantDecision(reply, "none", null, false, null);
+                        }
 
                     case "confirmar_reserva":
-                    {
-                        if (iaAction.DadosReserva is null || !iaAction.DadosReserva.PossuiCamposEssenciais())
                         {
-                            _logger.LogWarning("[Conversa={Conversa}] IA sugeriu confirmar reserva sem dados", idConversa);
-                            return new AssistantDecision(
-                                "Para organizar a sua reserva, preciso que me confirme o nome completo, a quantidade de pessoas, a data e o horário, por favor.",
-                                "none",
-                                null,
-                                false,
-                                null);
+                            if (iaAction.DadosReserva is null || !iaAction.DadosReserva.PossuiCamposEssenciais())
+                            {
+                                _logger.LogWarning("[Conversa={Conversa}] IA sugeriu confirmar reserva sem dados", idConversa);
+                                return new AssistantDecision(
+                                    "Para organizar a sua reserva, preciso que me confirme o nome completo, a quantidade de pessoas, a data e o horário, por favor.",
+                                    "none",
+                                    null,
+                                    false,
+                                    null);
+                            }
+
+                            var confirmarArgs = iaAction.DadosReserva.ToConfirmarReservaArgs(idConversa);
+                            var confirmarArgsJson = JsonSerializer.Serialize(confirmarArgs, JsonOptions);
+                            var confirmarResultado = await _toolExecutor.ExecuteToolAsync("confirmar_reserva", confirmarArgsJson);
+
+                            var (reply, reservaConfirmada) = ExtrairRespostaDaFerramenta(confirmarResultado);
+
+                            return new AssistantDecision(reply, "confirmar_reserva", null, reservaConfirmada, null);
                         }
-
-                        var confirmarArgs = iaAction.DadosReserva.ToConfirmarReservaArgs(idConversa);
-                        var confirmarArgsJson = JsonSerializer.Serialize(confirmarArgs, JsonOptions);
-                        var confirmarResultado = await _toolExecutor.ExecuteToolAsync("confirmar_reserva", confirmarArgsJson);
-
-                        var (reply, reservaConfirmada) = ExtrairRespostaDaFerramenta(confirmarResultado);
-
-                        return new AssistantDecision(reply, "confirmar_reserva", null, reservaConfirmada, null);
-                    }
 
                     case "escalar_para_humano":
-                    {
-                        if (iaAction.Escalacao is null)
                         {
-                            _logger.LogWarning("[Conversa={Conversa}] IA sugeriu escalar sem detalhes", idConversa);
-                            return new AssistantDecision(
-                                "Posso te ajudar com mais alguma informação antes de chamar um atendente humano?",
-                                "none",
-                                null,
-                                false,
-                                null);
+                            if (iaAction.Escalacao is null)
+                            {
+                                _logger.LogWarning("[Conversa={Conversa}] IA sugeriu escalar sem detalhes", idConversa);
+                                return new AssistantDecision(
+                                    "Posso te ajudar com mais alguma informação antes de chamar um atendente humano?",
+                                    "none",
+                                    null,
+                                    false,
+                                    null);
+                            }
+
+                            var escalarArgs = iaAction.Escalacao.ToEscalarArgs(idConversa);
+
+                            if (string.IsNullOrWhiteSpace(escalarArgs.Motivo) || string.IsNullOrWhiteSpace(escalarArgs.ResumoConversa))
+                            {
+                                _logger.LogWarning("[Conversa={Conversa}] IA tentou escalar sem motivo ou resumo válidos", idConversa);
+                                return new AssistantDecision(
+                                    "Claro! Antes de te conectar, pode me contar rapidinho o motivo do atendimento?",
+                                    "none",
+                                    null,
+                                    false,
+                                    null);
+                            }
+
+                            var escalarArgsJson = JsonSerializer.Serialize(escalarArgs, JsonOptions);
+                            var escalarResultado = await _toolExecutor.ExecuteToolAsync("escalar_para_humano", escalarArgsJson);
+                            var (reply, _) = ExtrairRespostaDaFerramenta(escalarResultado);
+
+                            return new AssistantDecision(reply, "escalar_para_humano", null, false, null);
                         }
-
-                        var escalarArgs = iaAction.Escalacao.ToEscalarArgs(idConversa);
-
-                        if (string.IsNullOrWhiteSpace(escalarArgs.Motivo) || string.IsNullOrWhiteSpace(escalarArgs.ResumoConversa))
-                        {
-                            _logger.LogWarning("[Conversa={Conversa}] IA tentou escalar sem motivo ou resumo válidos", idConversa);
-                            return new AssistantDecision(
-                                "Claro! Antes de te conectar, pode me contar rapidinho o motivo do atendimento?",
-                                "none",
-                                null,
-                                false,
-                                null);
-                        }
-
-                        var escalarArgsJson = JsonSerializer.Serialize(escalarArgs, JsonOptions);
-                        var escalarResultado = await _toolExecutor.ExecuteToolAsync("escalar_para_humano", escalarArgsJson);
-                        var (reply, _) = ExtrairRespostaDaFerramenta(escalarResultado);
-
-                        return new AssistantDecision(reply, "escalar_para_humano", null, false, null);
-                    }
 
                     default:
                         _logger.LogWarning("[Conversa={Conversa}] Ação desconhecida sugerida pela IA: {Acao}", idConversa, iaAction.Acao);
