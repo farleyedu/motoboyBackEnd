@@ -15,6 +15,35 @@ namespace APIBack.Automation.Services
     public class AssistantService : IAssistantService
     {
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
+        private static readonly string DefaultSystemPrompt = @"Você é o assistente virtual do Bar Seu Eurico via WhatsApp.
+Sua função é interpretar a intenção do cliente e SEMPRE responder com um JSON estruturado contendo a próxima ação.
+
+Formato obrigatório:
+{
+  \"acao\": \"responder\" | \"confirmar_reserva\" | \"escalar_para_humano\",
+  \"reply\": \"...\",                    // obrigatório quando acao = \"responder\"
+  \"agentPrompt\": \"...\" | null,
+  \"dadosReserva\": {
+      \"idConversa\": \"<GUID>\",
+      \"nomeCompleto\": \"...\",
+      \"qtdPessoas\": <int>,
+      \"data\": \"...\",
+      \"hora\": \"HH:mm\"
+  } | null,
+  \"escalacao\": {
+      \"idConversa\": \"<GUID>\",
+      \"motivo\": \"...\",
+      \"resumoConversa\": \"...\"
+  } | null
+}
+
+Regras:
+- Use \"responder\" para saudações, esclarecimentos e para pedir dados faltantes.
+- Só use \"confirmar_reserva\" quando o cliente tiver fornecido nome completo, quantidade de pessoas, data e hora e já tiver confirmado explicitamente a reserva. Nunca combine a pergunta de confirmação com a execução.
+- Use \"escalar_para_humano\" apenas se o cliente solicitar ou se o fluxo não puder continuar, preenchendo motivo e resumo.
+- Em caso de dúvida, peça esclarecimentos usando \"responder\".
+- Responda sempre em português do Brasil, com tom cordial e acolhedor.
+".Trim();
 
         private readonly IHttpClientFactory _httpFactory;
         private readonly ILogger<AssistantService> _logger;
@@ -58,7 +87,7 @@ namespace APIBack.Automation.Services
             var client = _httpFactory.CreateClient();
             client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
 
-            var systemPrompt = contexto as string ?? "Você é um assistente útil.";
+            var systemPrompt = contexto as string ?? DefaultSystemPrompt;
             var messages = new List<object> { new { role = "system", content = systemPrompt } };
 
             if (historico != null)
@@ -73,15 +102,11 @@ namespace APIBack.Automation.Services
 
             messages.Add(new { role = "user", content = textoUsuario });
 
-            // Simplificação: A API "Responses" não usa response_format para JSON, ela infere pelo prompt.
-            // Para forçar JSON, o melhor é instruir no prompt de sistema e ter um bom parser.
-            // O uso de `text.format` com `json_schema` foi o que causou os erros anteriores.
             var payload = new
             {
                 model,
-                input = messages.ToArray(),
-                tools = _toolExecutor.GetDeclaredTools(idConversa)
-                // O parâmetro 'text' foi removido para simplificar e evitar erros de schema.
+                messages = messages.ToArray(),
+                response_format = new { type = "json_object" }
             };
 
             var json = JsonSerializer.Serialize(payload, JsonOptions);
@@ -91,7 +116,7 @@ namespace APIBack.Automation.Services
 
             try
             {
-                var response = await client.PostAsync("https://api.openai.com/v1/responses", content);
+                var response = await client.PostAsync("https://api.openai.com/v1/chat/completions", content);
                 var body = await response.Content.ReadAsStringAsync();
 
                 if (!response.IsSuccessStatusCode)
@@ -103,41 +128,91 @@ namespace APIBack.Automation.Services
                 _logger.LogInformation("[Conversa={Conversa}] Resposta bruta da OpenAI: {Body}", idConversa, body);
 
                 using var doc = JsonDocument.Parse(body);
-                var outputArray = doc.RootElement.GetProperty("output");
 
-                string? toolResult = null;
-
-                foreach (var item in outputArray.EnumerateArray())
+                if (!doc.RootElement.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0)
                 {
-                    var type = item.GetProperty("type").GetString();
-
-                    if (type == "message")
-                    {
-                        var message = item
-                            .GetProperty("content")[0]
-                            .GetProperty("text")
-                            .GetString();
-
-                        return await InterpretarResposta(message, idConversa);
-                    }
-                    else if (type == "tool_call" || type == "function_call")
-                    {
-                        var toolName = item.GetProperty("name").GetString();
-                        var args = item.GetProperty("arguments").GetRawText();
-
-                        // Executa a tool, mas guarda o resultado.
-                        // A IA pode chamar múltiplas tools, vamos processar todas.
-                        toolResult = await _toolExecutor.ExecuteToolAsync(toolName!, args);
-                    }
+                    _logger.LogWarning("[Conversa={Conversa}] Resposta da OpenAI sem choices", idConversa);
+                    return FallbackDecision();
                 }
 
-                // Se houve resultado de uma tool, retornamos ele como a decisão final.
-                if (toolResult != null)
+                var messageElement = choices[0].GetProperty("message");
+                var messageContent = messageElement.GetProperty("content").GetString();
+
+                if (string.IsNullOrWhiteSpace(messageContent))
                 {
-                    return new AssistantDecision(toolResult, "none", null, false, null);
+                    _logger.LogWarning("[Conversa={Conversa}] Conteúdo vazio retornado pela OpenAI", idConversa);
+                    return FallbackDecision();
                 }
 
-                return new AssistantDecision("Desculpe, não entendi a solicitação.", "none", null, false, null);
+                IaActionResponse? iaAction;
+                try
+                {
+                    iaAction = JsonSerializer.Deserialize<IaActionResponse>(messageContent, JsonOptions);
+                }
+                catch (JsonException ex)
+                {
+                    _logger.LogError(ex, "[Conversa={Conversa}] Falha ao desserializar resposta da IA: {Content}", idConversa, messageContent);
+                    return FallbackDecision(messageContent);
+                }
+
+                if (iaAction is null || string.IsNullOrWhiteSpace(iaAction.Acao))
+                {
+                    _logger.LogWarning("[Conversa={Conversa}] Resposta da IA sem campo 'acao'. Conteúdo: {Content}", idConversa, messageContent);
+                    return FallbackDecision(messageContent);
+                }
+
+                switch (iaAction.Acao.ToLowerInvariant())
+                {
+                    case "responder":
+                        var reply = string.IsNullOrWhiteSpace(iaAction.Reply)
+                            ? "Desculpe, não entendi sua solicitação. Pode reformular, por favor? 😊"
+                            : iaAction.Reply!;
+                        return new AssistantDecision(reply, "none", iaAction.AgentPrompt, false, null);
+
+                    case "confirmar_reserva":
+                        if (iaAction.DadosReserva is null)
+                        {
+                            _logger.LogWarning("[Conversa={Conversa}] IA sugeriu confirmar reserva sem dados", idConversa);
+                            return new AssistantDecision(
+                                "Para organizar a sua reserva, preciso que me confirme o nome completo, a quantidade de pessoas, a data e o horário, por favor.",
+                                "none",
+                                iaAction.AgentPrompt,
+                                false,
+                                null);
+                        }
+
+                        var confirmarArgsJson = JsonSerializer.Serialize(iaAction.DadosReserva, JsonOptions);
+                        var confirmarResultado = await _toolExecutor.ExecuteToolAsync("confirmar_reserva", confirmarArgsJson);
+                        var reservaConfirmada = false;
+
+                        if (TryExtrairReply(confirmarResultado, out var textoConfirmacao) &&
+                            !string.IsNullOrWhiteSpace(textoConfirmacao))
+                        {
+                            reservaConfirmada = textoConfirmacao.Contains("Reserva confirmada", StringComparison.OrdinalIgnoreCase);
+                        }
+
+                        return new AssistantDecision(confirmarResultado, "confirmar_reserva", iaAction.AgentPrompt, reservaConfirmada, null);
+
+                    case "escalar_para_humano":
+                        if (iaAction.Escalacao is null)
+                        {
+                            _logger.LogWarning("[Conversa={Conversa}] IA sugeriu escalar sem detalhes", idConversa);
+                            return new AssistantDecision(
+                                "Posso te ajudar com mais alguma informação antes de chamar um atendente humano?",
+                                "none",
+                                iaAction.AgentPrompt,
+                                false,
+                                null);
+                        }
+
+                        var escalarArgsJson = JsonSerializer.Serialize(iaAction.Escalacao, JsonOptions);
+                        var escalarResultado = await _toolExecutor.ExecuteToolAsync("escalar_para_humano", escalarArgsJson);
+                        return new AssistantDecision(escalarResultado, "escalar_para_humano", iaAction.AgentPrompt, false, null);
+
+                    default:
+                        _logger.LogWarning("[Conversa={Conversa}] Ação desconhecida sugerida pela IA: {Acao}", idConversa, iaAction.Acao);
+                        return FallbackDecision(messageContent);
+                }
             }
             catch (Exception ex)
             {
@@ -146,34 +221,44 @@ namespace APIBack.Automation.Services
             }
         }
 
-        private async Task<AssistantDecision> InterpretarResposta(string? conteudo, Guid idConversa)
+        private bool TryExtrairReply(string json, out string? reply)
         {
-            var parseResult = await AssistantDecisionParser.TryParse(conteudo, JsonOptions, _logger, idConversa, _messageRepository);
-
-            if (parseResult.Success)
+            try
             {
-                return parseResult.Decision;
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.TryGetProperty("reply", out var replyProperty) && replyProperty.ValueKind == JsonValueKind.String)
+                {
+                    reply = replyProperty.GetString();
+                    return true;
+                }
+            }
+            catch (JsonException)
+            {
+                // ignoramos erros de parsing e devolvemos false
             }
 
-            if (!string.IsNullOrWhiteSpace(parseResult.ExtractedJson))
-            {
-                _logger.LogWarning("[Conversa={Conversa}] JSON retornado pela IA não pôde ser interpretado: {Json}", idConversa, parseResult.ExtractedJson);
-            }
-            else if (!string.IsNullOrWhiteSpace(conteudo))
-            {
-                _logger.LogWarning("[Conversa={Conversa}] Resposta da IA fora do formato JSON esperado. Prévia: {Preview}", idConversa, TruncarConteudo(conteudo));
-            }
-
-            return new AssistantDecision(conteudo ?? string.Empty, "none", null, false, null);
+            reply = null;
+            return false;
         }
 
-        private static string TruncarConteudo(string? texto, int maxLength = 300)
+        private AssistantDecision FallbackDecision(string? conteudo = null)
         {
-            if (string.IsNullOrEmpty(texto))
+            var mensagemPadrao = "Desculpe, não consegui entender sua solicitação agora. Pode me contar novamente, por favor?";
+            if (!string.IsNullOrWhiteSpace(conteudo))
             {
-                return string.Empty;
+                _logger.LogDebug("Conteúdo recebido no fallback: {Conteudo}", conteudo);
             }
-            return texto.Length <= maxLength ? texto : texto.Substring(0, maxLength) + "...";
+
+            return new AssistantDecision(mensagemPadrao, "none", null, false, null);
+        }
+
+        private class IaActionResponse
+        {
+            public string? Acao { get; set; }
+            public string? Reply { get; set; }
+            public string? AgentPrompt { get; set; }
+            public ConfirmarReservaArgs? DadosReserva { get; set; }
+            public EscalarParaHumanoArgs? Escalacao { get; set; }
         }
     }
 }
