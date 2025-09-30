@@ -1,4 +1,4 @@
-﻿// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
+// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
 using APIBack.Automation.Dtos;
 using APIBack.Automation.Interfaces;
 using APIBack.Automation.Models;
@@ -29,8 +29,9 @@ namespace APIBack.Automation.Services
         /// <summary>
         /// Declara apenas as ferramentas que vamos expor para a IA.
         /// </summary>
-        public object[] GetDeclaredTools()
+        public object[] GetDeclaredTools(Guid idConversa)
         {
+            var idConversaString = idConversa.ToString();
             return new object[]
             {
                 new {
@@ -52,7 +53,8 @@ Esta função confirma definitivamente a reserva e encerra a conversa automatica
                         properties = new {
                             idConversa = new {
                                 type = "string",
-                                description = "ID único da conversa atual"
+                                description = "ID único da conversa atual",
+                                @enum = new[] { idConversaString }
                             },
                             nomeCompleto = new {
                                 type = "string",
@@ -94,7 +96,8 @@ Esta função transfere a conversa para um atendente humano imediatamente.",
                         properties = new {
                             idConversa = new {
                                 type = "string",
-                                description = "ID único da conversa atual"
+                                description = "ID único da conversa atual",
+                                @enum = new[] { idConversaString }
                             },
                             motivo = new {
                                 type = "string",
@@ -118,6 +121,20 @@ Esta função transfere a conversa para um atendente humano imediatamente.",
         {
             try
             {
+                // Se a string JSON estiver escapada (ex: "{\"key\":\"value\"}"), desescape-a.
+                if (argsJson.StartsWith("\"") && argsJson.EndsWith("\""))
+                {
+                    try
+                    {
+                        argsJson = JsonSerializer.Deserialize<string>(argsJson)!;
+                    }
+                    catch (JsonException ex)
+                    {
+                        _logger.LogWarning(ex, "Não foi possível desescapar a string JSON. Tentando parsear como está.");
+                        // Se falhar, tenta parsear a string original, pode ser que não estivesse duplamente escapada.
+                    }
+                }
+
                 var args = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(argsJson);
                 if (args == null)
                 {
@@ -127,6 +144,7 @@ Esta função transfere a conversa para um atendente humano imediatamente.",
                 if (!args.TryGetValue("idConversa", out var idConversaElement) ||
                     !Guid.TryParse(idConversaElement.GetString(), out var idConversa))
                 {
+                    _logger.LogWarning("[Conversa={Conversa}] idConversa inválido ou ausente na chamada da ferramenta '{ToolName}'. Valor recebido: '{ReceivedIdConversa}'", idConversaElement.GetString(), toolName, idConversaElement.GetString());
                     return "ID de conversa inválido.";
                 }
 
@@ -171,28 +189,27 @@ Esta função transfere a conversa para um atendente humano imediatamente.",
                         return $"✅ Reserva confirmada com sucesso!\n\nNome: {nome}\nPessoas: {qtd}\nData: {data}\nHorário: {hora}\n\nAté breve!";
 
                     case "escalar_para_humano":
-                        var motivo = args.TryGetValue("motivo", out var motivoElement)
-                            ? motivoElement.GetString()
+                        var motivoEscalacao = args.TryGetValue("motivo", out var motivoElementEscalacao)
+                            ? motivoElementEscalacao.GetString()
                             : "Solicitação do cliente";
 
-                        var resumo = args.TryGetValue("resumoConversa", out var resumoElement)
-                            ? resumoElement.GetString()
+                        var resumoConversaEscalacao = args.TryGetValue("resumoConversa", out var resumoElementEscalacao)
+                            ? resumoElementEscalacao.GetString()
                             : null;
 
-                        // Montar o HandoverContextDto com as informações disponíveis
-                        var contexto = new HandoverContextDto
+                        var contextoEscalacao = new HandoverContextDto
                         {
-                            Historico = resumo != null
-                                ? new[] { $"Resumo: {resumo}", $"Motivo: {motivo}" }
-                                : new[] { $"Motivo: {motivo}" }
+                            Historico = resumoConversaEscalacao != null
+                                ? new[] { $"Resumo: {resumoConversaEscalacao}", $"Motivo: {motivoEscalacao}" }
+                                : new[] { $"Motivo: {motivoEscalacao}" }
                         };
 
                         await _conversationRepository.AtualizarEstadoAsync(idConversa, EstadoConversa.EmAtendimento);
-                        await _handoverService.ProcessarMensagensTelegramAsync(idConversa, null, false, contexto);
+                        await _handoverService.ProcessarMensagensTelegramAsync(idConversa, null, false, contextoEscalacao);
 
                         _logger.LogInformation(
                             "[Conversa={Conversa}] Conversa escalada para humano. Motivo: {Motivo}",
-                            idConversa, motivo
+                            idConversa, motivoEscalacao
                         );
                         return $"Transferindo você para um atendente humano.\nEm instantes alguém irá atendê-lo.";
 
