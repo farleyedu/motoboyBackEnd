@@ -83,8 +83,14 @@ namespace APIBack.Automation.Services
             };
         }
 
-        private string BuildJsonReply(string reply)
+        private string BuildJsonReply(string reply, bool? reservaConfirmada = null)
         {
+            if (reservaConfirmada.HasValue)
+            {
+                var objComConfirmacao = new { reply, reserva_confirmada = reservaConfirmada.Value };
+                return JsonSerializer.Serialize(objComConfirmacao, JsonOptions);
+            }
+
             var obj = new { reply };
             return JsonSerializer.Serialize(obj, JsonOptions);
         }
@@ -134,6 +140,10 @@ namespace APIBack.Automation.Services
 
         private async Task<string> HandleConfirmarReserva(ConfirmarReservaArgs args)
         {
+            args.NomeCompleto = args.NomeCompleto?.Trim() ?? string.Empty;
+            args.Data = args.Data?.Trim() ?? string.Empty;
+            args.Hora = args.Hora?.Trim() ?? string.Empty;
+
             if (DadosReservaInvalidos(args))
             {
                 _logger.LogWarning(
@@ -176,7 +186,7 @@ namespace APIBack.Automation.Services
             );
 
             var replyMessage = $"✅ Reserva confirmada com sucesso!\n\n- **Nome:** {args.NomeCompleto}\n- **Pessoas:** {args.QtdPessoas}\n- **Data:** {dataFormatada}\n- **Horário:** {args.Hora}\n\nAté breve! 🌸✨";
-            return BuildJsonReply(replyMessage);
+            return BuildJsonReply(replyMessage, reservaConfirmada: true);
         }
 
         private static bool DadosReservaInvalidos(ConfirmarReservaArgs args)
@@ -238,6 +248,15 @@ namespace APIBack.Automation.Services
 
         private async Task<string> HandleEscalarParaHumano(EscalarParaHumanoArgs args)
         {
+            args.Motivo = args.Motivo?.Trim() ?? string.Empty;
+            args.ResumoConversa = args.ResumoConversa?.Trim() ?? string.Empty;
+
+            if (string.IsNullOrWhiteSpace(args.Motivo) || string.IsNullOrWhiteSpace(args.ResumoConversa))
+            {
+                _logger.LogWarning("[Conversa={Conversa}] Motivo ou resumo ausentes na solicitação de escalonamento", args.IdConversa);
+                return BuildJsonReply("Claro! Antes de chamar o time, pode me contar rapidinho o motivo do atendimento?");
+            }
+
             var contexto = new HandoverContextDto
             {
                 Historico = new[] { $"Resumo: {args.ResumoConversa}", $"Motivo: {args.Motivo}" }
