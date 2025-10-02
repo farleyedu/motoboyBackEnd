@@ -17,7 +17,7 @@ namespace APIBack.Automation.Services
     public class AssistantService : IAssistantService
     {
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
-        private const string PromptIndisponivelMensagem = "Ops! Não consegui acessar as orientações do Bar Seu Eurico agora. Já pedi ajuda ao time por aqui; pode me mandar uma mensagem daqui a pouquinho? 😊";
+        private const string PromptIndisponivelMensagem = "Ops! NÃ£o consegui acessar as orientaÃ§Ãµes do Bar Seu Eurico agora. JÃ¡ pedi ajuda ao time por aqui; pode me mandar uma mensagem daqui a pouquinho? ðŸ˜Š";
 
         private readonly IHttpClientFactory _httpFactory;
         private readonly ILogger<AssistantService> _logger;
@@ -49,9 +49,9 @@ namespace APIBack.Automation.Services
 
             if (string.IsNullOrWhiteSpace(apiKey))
             {
-                _logger.LogWarning("[Conversa={Conversa}] OpenAI ApiKey não configurada; usando decisão padrão", idConversa);
+                _logger.LogWarning("[Conversa={Conversa}] OpenAI ApiKey nÃ£o configurada; usando decisÃ£o padrÃ£o", idConversa);
                 return new AssistantDecision(
-                    Reply: string.IsNullOrWhiteSpace(textoUsuario) ? "Poderia repetir?" : $"Você disse: '{textoUsuario}'.",
+                    Reply: string.IsNullOrWhiteSpace(textoUsuario) ? "Poderia repetir?" : $"VocÃª disse: '{textoUsuario}'.",
                     HandoverAction: "none",
                     AgentPrompt: null,
                     ReservaConfirmada: false,
@@ -66,7 +66,7 @@ namespace APIBack.Automation.Services
             var contextoTexto = (contexto as string)?.Trim();
             if (string.IsNullOrWhiteSpace(contextoTexto))
             {
-                _logger.LogWarning("[Conversa={Conversa}] Prompt não encontrado para o estabelecimento", idConversa);
+                _logger.LogWarning("[Conversa={Conversa}] Prompt nÃ£o encontrado para o estabelecimento", idConversa);
                 return new AssistantDecision(PromptIndisponivelMensagem, "none", null, false, null);
             }
 
@@ -108,7 +108,7 @@ namespace APIBack.Automation.Services
                 if (!response.IsSuccessStatusCode)
                 {
                     _logger.LogWarning("[Conversa={Conversa}] OpenAI falhou: {Status} {Body}", idConversa, (int)response.StatusCode, body);
-                    return new AssistantDecision("Desculpe, não consegui formular uma resposta agora.", "none", null, false, null);
+                    return new AssistantDecision("Desculpe, nÃ£o consegui formular uma resposta agora.", "none", null, false, null);
                 }
 
                 _logger.LogDebug("[Conversa={Conversa}] Resposta bruta da OpenAI: {Body}", idConversa, body);
@@ -126,33 +126,26 @@ namespace APIBack.Automation.Services
 
                 if (string.IsNullOrWhiteSpace(messageContent))
                 {
-                    _logger.LogWarning("[Conversa={Conversa}] Conteúdo vazio retornado pela OpenAI", idConversa);
+                    _logger.LogWarning("[Conversa={Conversa}] ConteÃºdo vazio retornado pela OpenAI", idConversa);
                     return FallbackDecision();
                 }
 
-                IaActionResponse? iaAction;
-                try
+                if (!TryParseIaAction(messageContent, idConversa, out var iaAction, out var decisaoInvalida))
+
                 {
-                    iaAction = JsonSerializer.Deserialize<IaActionResponse>(messageContent, JsonOptions);
-                }
-                catch (JsonException ex)
-                {
-                    _logger.LogError(ex, "[Conversa={Conversa}] Falha ao desserializar resposta da IA: {Content}", idConversa, messageContent);
-                    return FallbackDecision(messageContent);
+
+                    return decisaoInvalida ?? FallbackDecision(messageContent);
+
                 }
 
-                if (iaAction is null || string.IsNullOrWhiteSpace(iaAction.Acao))
-                {
-                    _logger.LogWarning("[Conversa={Conversa}] Resposta da IA sem campo 'acao'. Conteúdo: {Content}", idConversa, messageContent);
-                    return FallbackDecision(messageContent);
-                }
 
-                switch (iaAction.Acao.ToLowerInvariant())
+
+                switch (iaAction.Acao!.ToLowerInvariant())
                 {
                     case "responder":
                         {
                             var reply = string.IsNullOrWhiteSpace(iaAction.Reply)
-                                ? "Desculpe, não entendi sua solicitação agora. Pode me contar novamente, por favor? 😊"
+                                ? "Desculpe, nÃ£o entendi sua solicitaÃ§Ã£o agora. Pode me contar novamente, por favor? ðŸ˜Š"
                                 : iaAction.Reply!;
 
                             return new AssistantDecision(reply, "none", iaAction.AgentPrompt, false, null);
@@ -164,7 +157,7 @@ namespace APIBack.Automation.Services
                             {
                                 _logger.LogWarning("[Conversa={Conversa}] IA sugeriu confirmar reserva sem dados", idConversa);
                                 return new AssistantDecision(
-                                    "Para organizar a sua reserva, preciso que me confirme o nome completo, a quantidade de pessoas, a data e o horário, por favor.",
+                                    "Para organizar a sua reserva, preciso que me confirme o nome completo, o telefone, a quantidade de pessoas, a data e o horário, por favor.",
                                     "none",
                                     "modelo_reserva",
                                     false,
@@ -175,7 +168,7 @@ namespace APIBack.Automation.Services
 
                             if (dadosReserva.IdConversa.HasValue && dadosReserva.IdConversa.Value != Guid.Empty && dadosReserva.IdConversa.Value != idConversa)
                             {
-                                _logger.LogWarning("[Conversa={Conversa}] ID de conversa informado pela IA ({IaId}) não corresponde ao esperado ({IdEsperado})", idConversa, dadosReserva.IdConversa.Value, idConversa);
+                                _logger.LogWarning("[Conversa={Conversa}] ID de conversa informado pela IA ({IaId}) nÃ£o corresponde ao esperado ({IdEsperado})", idConversa, dadosReserva.IdConversa.Value, idConversa);
                             }
 
                             var confirmarArgs = dadosReserva.ToConfirmarReservaArgs(idConversa);
@@ -193,7 +186,7 @@ namespace APIBack.Automation.Services
                             {
                                 _logger.LogWarning("[Conversa={Conversa}] IA sugeriu escalar sem detalhes", idConversa);
                                 return new AssistantDecision(
-                                    "Entendo! Posso te conectar com um atendente agora. Mas antes, tem algo que eu possa tentar resolver? Se preferir ir direto, é só me confirmar!",
+                                    "Entendo! Posso te conectar com um atendente agora. Mas antes, tem algo que eu possa tentar resolver? Se preferir ir direto, Ã© sÃ³ me confirmar!",
                                     "none",
                                     null,
                                     false,
@@ -204,7 +197,7 @@ namespace APIBack.Automation.Services
 
                             if (escalacao.IdConversa.HasValue && escalacao.IdConversa.Value != Guid.Empty && escalacao.IdConversa.Value != idConversa)
                             {
-                                _logger.LogWarning("[Conversa={Conversa}] ID de conversa informado para escalonamento ({IaId}) não corresponde ao esperado ({IdEsperado})", idConversa, escalacao.IdConversa.Value, idConversa);
+                                _logger.LogWarning("[Conversa={Conversa}] ID de conversa informado para escalonamento ({IaId}) nÃ£o corresponde ao esperado ({IdEsperado})", idConversa, escalacao.IdConversa.Value, idConversa);
                             }
 
                             var escalarArgs = escalacao.ToEscalarArgs(idConversa);
@@ -217,7 +210,7 @@ namespace APIBack.Automation.Services
                         }
 
                     default:
-                        _logger.LogWarning("[Conversa={Conversa}] Ação desconhecida sugerida pela IA: {Acao}", idConversa, iaAction.Acao);
+                        _logger.LogWarning("[Conversa={Conversa}] AÃ§Ã£o desconhecida sugerida pela IA: {Acao}", idConversa, iaAction.Acao);
                         return FallbackDecision(messageContent);
                 }
             }
@@ -228,6 +221,79 @@ namespace APIBack.Automation.Services
             }
         }
 
+        private bool TryParseIaAction(string jsonContent, Guid idConversa, out IaActionResponse iaAction, out AssistantDecision? decisionErro)
+        {
+            decisionErro = null;
+            iaAction = null!;
+
+            try
+            {
+                using var document = JsonDocument.Parse(jsonContent);
+                var root = document.RootElement;
+
+                if (root.ValueKind != JsonValueKind.Object)
+                {
+                    _logger.LogWarning("[Conversa={Conversa}] Resposta da IA não é um objeto JSON: {Conteudo}", idConversa, jsonContent);
+                    decisionErro = BuildInvalidFormatDecision();
+                    return false;
+                }
+
+                if (!root.TryGetProperty("acao", out var acaoElement) || acaoElement.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(acaoElement.GetString()))
+                {
+                    _logger.LogWarning("[Conversa={Conversa}] Resposta da IA sem campo 'acao' válido: {Conteudo}", idConversa, jsonContent);
+                    decisionErro = BuildInvalidFormatDecision();
+                    return false;
+                }
+
+                if (!root.TryGetProperty("reply", out var replyElement) || (replyElement.ValueKind != JsonValueKind.String && replyElement.ValueKind != JsonValueKind.Null))
+                {
+                    _logger.LogWarning("[Conversa={Conversa}] Campo 'reply' ausente ou inválido na resposta da IA: {Conteudo}", idConversa, jsonContent);
+                    decisionErro = BuildInvalidFormatDecision();
+                    return false;
+                }
+
+                if (!root.TryGetProperty("dadosReserva", out var dadosReservaElement) || (dadosReservaElement.ValueKind != JsonValueKind.Object && dadosReservaElement.ValueKind != JsonValueKind.Null))
+                {
+                    _logger.LogWarning("[Conversa={Conversa}] Campo 'dadosReserva' ausente ou inválido na resposta da IA: {Conteudo}", idConversa, jsonContent);
+                    decisionErro = BuildInvalidFormatDecision();
+                    return false;
+                }
+
+                if (!root.TryGetProperty("escalacao", out var escalacaoElement) || (escalacaoElement.ValueKind != JsonValueKind.Object && escalacaoElement.ValueKind != JsonValueKind.Null))
+                {
+                    _logger.LogWarning("[Conversa={Conversa}] Campo 'escalacao' ausente ou inválido na resposta da IA: {Conteudo}", idConversa, jsonContent);
+                    decisionErro = BuildInvalidFormatDecision();
+                    return false;
+                }
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogWarning(ex, "[Conversa={Conversa}] Resposta da IA não pôde ser lida como JSON: {Conteudo}", idConversa, jsonContent);
+                decisionErro = BuildInvalidFormatDecision();
+                return false;
+            }
+
+            try
+            {
+                iaAction = JsonSerializer.Deserialize<IaActionResponse>(jsonContent, JsonOptions)
+                           ?? throw new JsonException("JSON desserializado para null");
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogError(ex, "[Conversa={Conversa}] Falha ao desserializar ação da IA: {Conteudo}", idConversa, jsonContent);
+                decisionErro = BuildInvalidFormatDecision();
+                return false;
+            }
+
+            return true;
+        }
+
+        private static AssistantDecision BuildInvalidFormatDecision()
+        {
+            const string mensagem = "Desculpe, não consegui entender a última mensagem. Você pode reformular, por favor?";
+            return new AssistantDecision(mensagem, "none", null, false, null);
+        }
+
         private (string Reply, bool ReservaConfirmada) ExtrairRespostaDaFerramenta(string json)
         {
             string? reply = null;
@@ -261,10 +327,10 @@ namespace APIBack.Automation.Services
 
         private AssistantDecision FallbackDecision(string? conteudo = null)
         {
-            var mensagemPadrao = "Desculpe, não consegui entender sua solicitação agora. Pode me contar novamente, por favor?";
+            var mensagemPadrao = "Desculpe, nÃ£o consegui entender sua solicitaÃ§Ã£o agora. Pode me contar novamente, por favor?";
             if (!string.IsNullOrWhiteSpace(conteudo))
             {
-                _logger.LogDebug("Conteúdo recebido no fallback: {Conteudo}", conteudo);
+                _logger.LogDebug("ConteÃºdo recebido no fallback: {Conteudo}", conteudo);
             }
 
             return new AssistantDecision(mensagemPadrao, "none", null, false, null);
@@ -279,41 +345,45 @@ namespace APIBack.Automation.Services
             public EscalacaoPayload? Escalacao { get; set; }
         }
 
-        private sealed class DadosReservaPayload
-        {
-            public Guid? IdConversa { get; set; }
-            public string? NomeCompleto { get; set; }
-            public int? QtdPessoas { get; set; }
-            public string? Data { get; set; }
-            public string? Hora { get; set; }
-
-            public bool PossuiCamposEssenciais()
-            {
-                return IdConversa.HasValue
-                    && IdConversa.Value != Guid.Empty
-                    && !string.IsNullOrWhiteSpace(NomeCompleto)
-                    && QtdPessoas.HasValue
-                    && !string.IsNullOrWhiteSpace(Data)
-                    && !string.IsNullOrWhiteSpace(Hora);
-            }
-
-            public ConfirmarReservaArgs ToConfirmarReservaArgs(Guid idConversaAtual)
-            {
-                var idFinal = IdConversa.HasValue && IdConversa.Value != Guid.Empty
-                    ? IdConversa.Value
-                    : idConversaAtual;
-
-                return new ConfirmarReservaArgs
-                {
-                    IdConversa = idFinal,
-                    NomeCompleto = NomeCompleto ?? string.Empty,
-                    QtdPessoas = QtdPessoas ?? 0,
-                    Data = Data ?? string.Empty,
-                    Hora = Hora ?? string.Empty
-                };
-            }
-        }
-
+        private sealed class DadosReservaPayload
+        {
+            public Guid? IdConversa { get; set; }
+            public string? NomeCompleto { get; set; }
+            public string? Telefone { get; set; }
+            public int? QtdPessoas { get; set; }
+            public string? Data { get; set; }
+            public string? Hora { get; set; }
+
+            public bool PossuiCamposEssenciais()
+            {
+                return IdConversa.HasValue
+                    && IdConversa.Value != Guid.Empty
+                    && !string.IsNullOrWhiteSpace(NomeCompleto)
+                    && !string.IsNullOrWhiteSpace(Telefone)
+                    && QtdPessoas.HasValue
+                    && !string.IsNullOrWhiteSpace(Data)
+                    && !string.IsNullOrWhiteSpace(Hora);
+            }
+
+            public ConfirmarReservaArgs ToConfirmarReservaArgs(Guid idConversaAtual)
+            {
+                var idFinal = IdConversa.HasValue && IdConversa.Value != Guid.Empty
+                    ? IdConversa.Value
+                    : idConversaAtual;
+
+                return new ConfirmarReservaArgs
+                {
+                    IdConversa = idFinal,
+                    NomeCompleto = NomeCompleto ?? string.Empty,
+                    Telefone = Telefone ?? string.Empty,
+                    QtdPessoas = QtdPessoas ?? 0,
+                    Data = Data ?? string.Empty,
+                    Hora = Hora ?? string.Empty
+                };
+            }
+        }
+
+
         private sealed class EscalacaoPayload
         {
             public Guid? IdConversa { get; set; }
