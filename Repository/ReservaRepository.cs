@@ -20,22 +20,29 @@ namespace APIBack.Repository
             _dataSource = dataSource;
         }
 
+        // helper local (pode subir para uma classe util depois)
+        private static string ToPgStatus(ReservaStatus s) => s switch
+        {
+            ReservaStatus.Pendente => "pendente",
+            ReservaStatus.Confirmado => "confirmado",
+            ReservaStatus.Cancelado => "cancelado",
+            _ => throw new ArgumentOutOfRangeException(nameof(s), s, "Status inválido")
+        };
+
         public async Task<long> AdicionarAsync(Reserva entity)
         {
-
-            // A única alteração é na linha do VALUES para o @Status
-            const string sql = @"INSERT INTO reservas (
-                        id_cliente, id_estabelecimento, id_profissional, id_servico,
-                        qtd_pessoas, data_reserva, hora_inicio, hora_fim,
-                        status, observacoes)
-                      VALUES (
-                        @IdCliente, @IdEstabelecimento, @IdProfissional, @IdServico,
-                        @QtdPessoas, @DataReserva, @HoraInicio, @HoraFim,
-                        @Status, @Observacoes)
-                      RETURNING id;"; 
+            const string sql = @"
+INSERT INTO reservas (
+  id_cliente, id_estabelecimento, id_profissional, id_servico,
+  qtd_pessoas, data_reserva, hora_inicio, hora_fim,
+  status, observacoes)
+VALUES (
+  @IdCliente, @IdEstabelecimento, @IdProfissional, @IdServico,
+  @QtdPessoas, @DataReserva, @HoraInicio, @HoraFim,
+  @Status::status_reserva, @Observacoes)
+RETURNING id;";
 
             await using var connection = await _dataSource.OpenConnectionAsync();
-            // O restante do código não muda
             return await connection.ExecuteScalarAsync<long>(sql, new
             {
                 entity.IdCliente,
@@ -46,10 +53,11 @@ namespace APIBack.Repository
                 DataReserva = entity.DataReserva.Date,
                 entity.HoraInicio,
                 entity.HoraFim,
-                entity.Status,
+                Status = ToPgStatus(entity.Status), // << agora bate com o enum do PG
                 entity.Observacoes
             });
         }
+
 
         public async Task<Reserva?> BuscarPorIdAsync(long id)
         {
@@ -181,6 +189,22 @@ namespace APIBack.Repository
             });
 
             return conflitos == 0;
+        }
+
+        public async Task<int> SomarPessoasDoDiaAsync(Guid idEstabelecimento, DateTime dataReserva)
+        {
+            const string sql = @"SELECT COALESCE(SUM(qtd_pessoas), 0)
+                                   FROM reservas
+                                  WHERE id_estabelecimento = @IdEstabelecimento
+                                    AND data_reserva = @DataReserva
+                                    AND status IN ('pendente','confirmado');";
+
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            return await connection.ExecuteScalarAsync<int>(sql, new
+            {
+                IdEstabelecimento = idEstabelecimento,
+                DataReserva = dataReserva.Date
+            });
         }
     }
 }
