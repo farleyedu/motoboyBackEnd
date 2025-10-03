@@ -165,9 +165,9 @@ namespace APIBack.Automation.Services
                         }
 
                         var dadosReserva = iaAction.DadosReserva;
-                        if (dadosReserva.IdConversa.HasValue && dadosReserva.IdConversa.Value != Guid.Empty && dadosReserva.IdConversa.Value != idConversa)
+                        if (!string.IsNullOrWhiteSpace(dadosReserva.IdConversa) && Guid.TryParse(dadosReserva.IdConversa, out var idConversaIa) && idConversaIa != Guid.Empty && idConversaIa != idConversa)
                         {
-                            _logger.LogWarning("[Conversa={Conversa}] ID de conversa informado pela IA ({IaId}) nao corresponde ao esperado ({Esperado})", idConversa, dadosReserva.IdConversa.Value, idConversa);
+                            _logger.LogWarning("[Conversa={Conversa}] ID de conversa informado pela IA ({IaId}) nao corresponde ao esperado ({Esperado})", idConversa, idConversaIa, idConversa);
                         }
 
                         var confirmarArgs = dadosReserva.ToConfirmarReservaArgs(idConversa);
@@ -193,9 +193,9 @@ namespace APIBack.Automation.Services
                         }
 
                         var escalacao = iaAction.Escalacao;
-                        if (escalacao.IdConversa.HasValue && escalacao.IdConversa.Value != Guid.Empty && escalacao.IdConversa.Value != idConversa)
+                        if (!string.IsNullOrWhiteSpace(escalacao.IdConversa) && Guid.TryParse(escalacao.IdConversa, out var idConversaIaEscalacao) && idConversaIaEscalacao != Guid.Empty && idConversaIaEscalacao != idConversa)
                         {
-                            _logger.LogWarning("[Conversa={Conversa}] ID de conversa informado para escalacao ({IaId}) nao corresponde ao esperado ({Esperado})", idConversa, escalacao.IdConversa.Value, idConversa);
+                            _logger.LogWarning("[Conversa={Conversa}] ID de conversa informado para escalacao ({IaId}) nao corresponde ao esperado ({Esperado})", idConversa, idConversaIaEscalacao, idConversa);
                         }
 
                         var escalarArgs = escalacao.ToEscalarArgs(idConversa);
@@ -387,7 +387,7 @@ namespace APIBack.Automation.Services
 
         private sealed class DadosReservaPayload
         {
-            public Guid? IdConversa { get; set; }
+            public string? IdConversa { get; set; }
             public string? NomeCompleto { get; set; }
             public int? QtdPessoas { get; set; }
             public string? Data { get; set; }
@@ -395,9 +395,7 @@ namespace APIBack.Automation.Services
 
             public bool PossuiCamposEssenciais()
             {
-                return IdConversa.HasValue
-                    && IdConversa.Value != Guid.Empty
-                    && !string.IsNullOrWhiteSpace(NomeCompleto)
+                return !string.IsNullOrWhiteSpace(NomeCompleto)
                     && QtdPessoas.HasValue
                     && !string.IsNullOrWhiteSpace(Data)
                     && !string.IsNullOrWhiteSpace(Hora);
@@ -405,9 +403,15 @@ namespace APIBack.Automation.Services
 
             public ConfirmarReservaArgs ToConfirmarReservaArgs(Guid idConversaAtual)
             {
-                var idFinal = IdConversa.HasValue && IdConversa.Value != Guid.Empty
-                    ? IdConversa.Value
-                    : idConversaAtual;
+                Guid idFinal;
+                if (!string.IsNullOrWhiteSpace(IdConversa) && Guid.TryParse(IdConversa, out var g) && g != Guid.Empty)
+                {
+                    idFinal = g;
+                }
+                else
+                {
+                    idFinal = idConversaAtual;
+                }
 
                 return new ConfirmarReservaArgs
                 {
@@ -422,23 +426,27 @@ namespace APIBack.Automation.Services
 
         private sealed class EscalacaoPayload
         {
-            public Guid? IdConversa { get; set; }
+            public string? IdConversa { get; set; }
             public string? Motivo { get; set; }
             public string? ResumoConversa { get; set; }
 
             public bool PossuiCamposEssenciais()
             {
-                return IdConversa.HasValue
-                    && IdConversa.Value != Guid.Empty
-                    && !string.IsNullOrWhiteSpace(Motivo)
+                return !string.IsNullOrWhiteSpace(Motivo)
                     && !string.IsNullOrWhiteSpace(ResumoConversa);
             }
 
             public EscalarParaHumanoArgs ToEscalarArgs(Guid idConversaAtual)
             {
-                var idFinal = IdConversa.HasValue && IdConversa.Value != Guid.Empty
-                    ? IdConversa.Value
-                    : idConversaAtual;
+                Guid idFinal;
+                if (!string.IsNullOrWhiteSpace(IdConversa) && Guid.TryParse(IdConversa, out var g) && g != Guid.Empty)
+                {
+                    idFinal = g;
+                }
+                else
+                {
+                    idFinal = idConversaAtual;
+                }
 
                 return new EscalarParaHumanoArgs
                 {

@@ -228,7 +228,7 @@ namespace APIBack.Automation.Services
                 QtdPessoas = args.QtdPessoas,
                 DataReserva = dataReserva,
                 HoraInicio = horaConvertida,
-                Status = "confirmado",
+                Status = ReservaStatus.Confirmado,
                 DataCriacao = agoraUtc,
                 DataAtualizacao = agoraUtc
             };
@@ -373,7 +373,7 @@ namespace APIBack.Automation.Services
 
         private static bool TryParseHora(string horaTexto, out TimeSpan hora)
         {
-            return TimeSpan.TryParseExact(horaTexto, @"HH\:mm", CultureInfo.InvariantCulture, out hora);
+            return TimeSpan.TryParseExact(horaTexto, @"hh\:mm", CultureInfo.InvariantCulture, out hora);
         }
 
         private DateTime? ParseDataRelativa(string dataTexto, DateTime referenciaAtual)

@@ -13,6 +13,11 @@ using APIBack.Automation.Infra.Config;
 using System.Net;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
+// ================= ADIÇÕES NECESSÁRIAS (BEGIN) ========================
+using Npgsql;
+using APIBack.Model; // Namespace onde seu enum ReservaStatus está
+// ================= ADIÇÕES NECESSÁRIAS (END) ==========================
+
 
 var builder = WebApplication.CreateBuilder(args);
 // ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
@@ -27,6 +32,24 @@ builder.Host.UseSerilog();
 // Ensure Dapper maps snake_case columns to PascalCase properties
 DefaultTypeMap.MatchNamesWithUnderscores = true;
 
+// ================= CONFIGURAÇÃO DO NPGSQL (BEGIN) ======================
+// 1. Pega a connection string do appsettings.json
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+
+// 2. Cria um "construtor de fonte de dados" com a connection string
+var dataSourceBuilder = new NpgsqlDataSourceBuilder(connectionString);
+
+// 3. ✨ AQUI ESTÁ A CORREÇÃO: Mapeia o enum do C# para o tipo do PostgreSQL
+dataSourceBuilder.MapEnum<ReservaStatus>();
+
+// 4. Constrói a fonte de dados
+var dataSource = dataSourceBuilder.Build();
+
+// 5. Registra a fonte de dados como um singleton para ser usada em toda a aplicação
+builder.Services.AddSingleton(dataSource);
+// ================= CONFIGURAÇÃO DO NPGSQL (END) ========================
+
+
 // Add services to the container.
 builder.Services.AddControllers();
 builder.Services.AddHttpClient();
@@ -38,7 +61,6 @@ builder.Services.AddScoped<IMotoboyRepository, MotoboyRepository>();
 builder.Services.AddScoped<IReservaRepository, ReservaRepository>();
 builder.Services.AddScoped<IMotoboyService, MotoboyService>();
 builder.Services.AddScoped<ILocalizacaoService, LocalizacaoService>();
-
 
 
 // ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
@@ -136,6 +158,3 @@ app.Lifetime.ApplicationStarted.Register(() =>
 });
 
 app.Run();
-
-
-

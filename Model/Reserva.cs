@@ -13,7 +13,7 @@ namespace APIBack.Model
         public DateTime DataReserva { get; set; }
         public TimeSpan HoraInicio { get; set; }
         public TimeSpan? HoraFim { get; set; }
-        public string Status { get; set; } = string.Empty;
+        public ReservaStatus Status { get; set; } = ReservaStatus.Confirmado;
         public string? Observacoes { get; set; }
         public DateTime DataCriacao { get; set; }
         public DateTime DataAtualizacao { get; set; }

@@ -1,55 +1,41 @@
-﻿using System;
-using System.Collections.Generic;
-using System.Threading.Tasks;
-using APIBack.Model;
+﻿using APIBack.Model;
 using APIBack.Repository.Interface;
 using Dapper;
 using Microsoft.Extensions.Configuration;
 using Npgsql;
+using System;
+using System.Collections.Generic;
+using System.Data.Common;
+using System.Threading.Tasks;
 
 namespace APIBack.Repository
 {
     public class ReservaRepository : IReservaRepository
     {
-        private readonly string _connectionString;
+        private readonly NpgsqlDataSource _dataSource;
 
-        public ReservaRepository(IConfiguration configuration)
+        // 2. Receba NpgsqlDataSource no construtor em vez de IConfiguration
+        public ReservaRepository(NpgsqlDataSource dataSource)
         {
-            _connectionString = configuration.GetConnectionString("DefaultConnection");
+            _dataSource = dataSource;
         }
 
         public async Task<long> AdicionarAsync(Reserva entity)
         {
-            if (string.IsNullOrWhiteSpace(entity.Status))
-            {
-                entity.Status = "confirmado";
-            }
 
+            // A única alteração é na linha do VALUES para o @Status
             const string sql = @"INSERT INTO reservas (
-                                        id_cliente,
-                                        id_estabelecimento,
-                                        id_profissional,
-                                        id_servico,
-                                        qtd_pessoas,
-                                        data_reserva,
-                                        hora_inicio,
-                                        hora_fim,
-                                        status,
-                                        observacoes)
-                                  VALUES (
-                                        @IdCliente,
-                                        @IdEstabelecimento,
-                                        @IdProfissional,
-                                        @IdServico,
-                                        @QtdPessoas,
-                                        @DataReserva,
-                                        @HoraInicio,
-                                        @HoraFim,
-                                        @Status,
-                                        @Observacoes)
-                                  RETURNING id;";
+                        id_cliente, id_estabelecimento, id_profissional, id_servico,
+                        qtd_pessoas, data_reserva, hora_inicio, hora_fim,
+                        status, observacoes)
+                      VALUES (
+                        @IdCliente, @IdEstabelecimento, @IdProfissional, @IdServico,
+                        @QtdPessoas, @DataReserva, @HoraInicio, @HoraFim,
+                        @Status, @Observacoes)
+                      RETURNING id;"; 
 
-            using var connection = new NpgsqlConnection(_connectionString);
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            // O restante do código não muda
             return await connection.ExecuteScalarAsync<long>(sql, new
             {
                 entity.IdCliente,
@@ -84,7 +70,7 @@ namespace APIBack.Repository
                                    FROM reservas
                                    WHERE id = @Id;";
 
-            using var connection = new NpgsqlConnection(_connectionString);
+            await using var connection = await _dataSource.OpenConnectionAsync();
             return await connection.QueryFirstOrDefaultAsync<Reserva>(sql, new { Id = id });
         }
 
@@ -107,7 +93,8 @@ namespace APIBack.Repository
                                    FROM reservas
                                    ORDER BY id;";
 
-            using var connection = new NpgsqlConnection(_connectionString);
+            await using var connection = await _dataSource.OpenConnectionAsync();
+
             return await connection.QueryAsync<Reserva>(sql);
         }
 
@@ -129,7 +116,7 @@ namespace APIBack.Repository
                                        data_atualizacao = @DataAtualizacao
                                    WHERE id = @Id;";
 
-            using var connection = new NpgsqlConnection(_connectionString);
+            await using var connection = await _dataSource.OpenConnectionAsync();
             return await connection.ExecuteAsync(sql, new
             {
                 entity.Id,
@@ -151,7 +138,7 @@ namespace APIBack.Repository
         {
             const string sql = "DELETE FROM reservas WHERE id = @Id;";
 
-            using var connection = new NpgsqlConnection(_connectionString);
+            await using var connection = await _dataSource.OpenConnectionAsync();
             return await connection.ExecuteAsync(sql, new { Id = id });
         }
 
@@ -164,7 +151,8 @@ namespace APIBack.Repository
                                        data_atualizacao = @DataAtualizacao
                                    WHERE id = @Id AND status <> 'cancelado';";
 
-            using var connection = new NpgsqlConnection(_connectionString);
+            await using var connection = await _dataSource.OpenConnectionAsync();
+
             return await connection.ExecuteAsync(sql, new { Id = id, DataAtualizacao = dataAtualizacao });
         }
 
@@ -182,7 +170,7 @@ namespace APIBack.Repository
                                         OR (hora_fim IS NULL AND @HoraFim IS NULL AND hora_inicio = @HoraInicio)
                                     );";
 
-            using var connection = new NpgsqlConnection(_connectionString);
+            await using var connection = await _dataSource.OpenConnectionAsync();
             var conflitos = await connection.ExecuteScalarAsync<int>(sql, new
             {
                 IdEstabelecimento = idEstabelecimento,
