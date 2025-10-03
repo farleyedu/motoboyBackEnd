@@ -61,7 +61,8 @@ namespace APIBack.Automation.Services
             string conteudo,
             string displayPhoneNumber,
             DateTime? dataMensagemUtc = null,
-            string? tipoOrigem = null)
+            string? tipoOrigem = null,
+            string? telefoneContato = null)
         {
             if (string.IsNullOrWhiteSpace(idMensagemWa))
             {
@@ -137,7 +138,41 @@ namespace APIBack.Automation.Services
             }
 
             // Garantir cliente existe
-            var telefoneE164 = APIBack.Automation.Helpers.TelefoneHelper.ToE164(idWa);
+            var telefonePreferencialBruto = !string.IsNullOrWhiteSpace(telefoneContato) ? telefoneContato : idWa;
+            string telefoneE164;
+
+            try
+            {
+                telefoneE164 = APIBack.Automation.Helpers.TelefoneHelper.ToE164(telefonePreferencialBruto);
+
+                if (telefoneE164.Length < 13 || telefoneE164 == "+55")
+                {
+                    _logger.LogWarning("Telefone incompleto após normalização: {Telefone}. Tentando fallback para idWa.", telefoneE164);
+
+                    if (!string.Equals(telefonePreferencialBruto, idWa, StringComparison.Ordinal))
+                    {
+                        try
+                        {
+                            telefoneE164 = APIBack.Automation.Helpers.TelefoneHelper.ToE164(idWa);
+
+                            if (telefoneE164.Length < 13)
+                            {
+                                _logger.LogError("Impossível obter telefone válido. idWa: {IdWa}, telefoneContato: {TelefoneContato}", idWa, telefoneContato);
+                            }
+                        }
+                        catch (Exception exFallback)
+                        {
+                            _logger.LogError(exFallback, "Falha ao normalizar idWa como telefone: {IdWa}", idWa);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao normalizar telefone. Usando idWa como fallback: {IdWa}", idWa);
+                telefoneE164 = APIBack.Automation.Helpers.TelefoneHelper.ToE164(idWa);
+            }
+
             var idCliente = await _repositorioClientes.GarantirClienteAsync(telefoneE164, idEstabelecimento.Value);
 
             // Obter ou criar conversa
@@ -162,6 +197,11 @@ namespace APIBack.Automation.Services
             // Garante WaId e Estabelecimento salvos
             conversa.IdWa = idWa;
             conversa.IdEstabelecimento = idEstabelecimento.Value;
+
+            if (string.IsNullOrWhiteSpace(conversa.TelefoneCliente) && !string.IsNullOrWhiteSpace(telefoneE164))
+            {
+                conversa.TelefoneCliente = telefoneE164;
+            }
 
             var conversaInserida = await _repositorio.InserirOuAtualizarAsync(conversa);
             if (!conversaInserida)

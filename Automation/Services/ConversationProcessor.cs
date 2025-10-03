@@ -2,6 +2,7 @@
 using APIBack.Automation.Dtos;
 using APIBack.Automation.Interfaces;
 using APIBack.Automation.Models;
+using APIBack.Automation.Helpers;
 using Microsoft.Extensions.Logging;
 using Microsoft.VisualStudio.TestPlatform.CommunicationUtilities;
 using System;
@@ -54,13 +55,16 @@ namespace APIBack.Automation.Services
                 return new ConversationProcessingResult(true, null, null, Array.Empty<AssistantChatTurn>(), null, new HandoverContextDto(), input.Texto, input.PhoneNumberDisplay, input.PhoneNumberId);
             }
 
+            var telefoneNormalizado = NormalizarTelefoneContato(input.Mensagem?.De);
+
             var criada = await _conversationService.AcrescentarEntradaAsync(
                 idWa: input.Mensagem.De!,
                 idMensagemWa: input.Mensagem.Id!,
                 conteudo: input.Texto,
                 displayPhoneNumber: input.PhoneNumberDisplay ?? string.Empty,  // NOME CORRETO
                 dataMensagemUtc: input.DataMensagemUtc,
-                tipoOrigem: input.Mensagem.Tipo
+                tipoOrigem: input.Mensagem.Tipo,
+                telefoneContato: telefoneNormalizado
             );
 
             if (criada == null)
@@ -110,6 +114,23 @@ namespace APIBack.Automation.Services
             return false;
         }
 
+        private static string? NormalizarTelefoneContato(string? numero)
+        {
+            if (string.IsNullOrWhiteSpace(numero))
+            {
+                return null;
+            }
+
+            try
+            {
+                return TelefoneHelper.ToE164(numero);
+            }
+            catch
+            {
+                return SanitizarNumero(numero);
+            }
+        }
+
         private static string SanitizarNumero(string? valor)
         {
             if (string.IsNullOrWhiteSpace(valor)) return string.Empty;
@@ -150,16 +171,16 @@ namespace APIBack.Automation.Services
         {
             try
             {
-                // Busca os módulos ativos diretamente da tabela estabelecimentos
+                // Busca os modulos ativos diretamente da tabela estabelecimentos
                 var modulosAtivos = await _estabelecimentoRepo.ObterModulosAtivosAsync(idEstabelecimento);
 
                 if (modulosAtivos.Count == 0)
                 {
-                    _logger.LogWarning("Nenhum módulo ativo encontrado para estabelecimento {Estabelecimento}", idEstabelecimento);
+                    _logger.LogWarning("Nenhum modulo ativo encontrado para estabelecimento {Estabelecimento}", idEstabelecimento);
                     return Array.Empty<string>();
                 }
 
-                _logger.LogDebug("Módulos ativos encontrados para estabelecimento {Estabelecimento}: {Modulos}",
+                _logger.LogDebug("Modulos ativos encontrados para estabelecimento {Estabelecimento}: {Modulos}",
                     idEstabelecimento, string.Join(", ", modulosAtivos));
 
                 return modulosAtivos;
@@ -224,7 +245,7 @@ namespace APIBack.Automation.Services
             return new HandoverContextDto
             {
                 ClienteNome = string.IsNullOrWhiteSpace(clienteNome) ? mensagem.IdConversa.ToString() : clienteNome,
-                Telefone = SanitizarNumero(input.Mensagem.De),
+                Telefone = NormalizarTelefoneContato(input.Mensagem.De) ?? SanitizarNumero(input.Mensagem.De),
                 Motivo = null,
                 NumeroPessoas = null,
                 Dia = null,
@@ -236,4 +257,9 @@ namespace APIBack.Automation.Services
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
+
+
+
+
+
 

@@ -23,6 +23,7 @@ namespace APIBack.Automation.Models
         public Guid IdConversa { get; set; }
         public Guid IdEstabelecimento { get; set; }
         public Guid IdCliente { get; set; }
+        public string? TelefoneCliente { get; set; }
         public string IdWa { get; set; } = string.Empty;
         public ModoConversa Modo { get; set; } = ModoConversa.Bot;
         public int? AgenteDesignadoId { get; set; }

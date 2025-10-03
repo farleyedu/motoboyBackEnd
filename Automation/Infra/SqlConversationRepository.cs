@@ -133,36 +133,39 @@ LIMIT 1;";
         {
             const string sql = @"
 SELECT
-  id                         AS Id,
-  id_estabelecimento         AS IdEstabelecimento,
-  id_cliente                 AS IdCliente,
-  canal                      AS Canal,
-  estado                     AS Estado,
-  id_agente_atribuido        AS IdAgenteAtribuido,
-  data_primeira_mensagem     AS DataPrimeiraMensagem,
-  data_ultima_mensagem       AS DataUltimaMensagem,
-  data_ultima_entrada        AS DataUltimaEntrada,
-  data_ultima_saida          AS DataUltimaSaida,
-  janela_24h_inicio          AS Janela24hInicio,
-  janela_24h_fim             AS Janela24hFim,
-  qtd_nao_lidas              AS QtdNaoLidas,
-  motivo_fechamento          AS MotivoFechamento,
-  fechado_por_id             AS FechadoPorId,
-  data_fechamento            AS DataFechamento,
-  data_criacao               AS DataCriacao,
-  data_atualizacao           AS DataAtualizacao
-FROM conversas
-WHERE id = @Id;";
+  c.id                         AS Id,
+  c.id_estabelecimento         AS IdEstabelecimento,
+  c.id_cliente                 AS IdCliente,
+  c.canal                      AS Canal,
+  c.estado::text               AS Estado,
+  c.id_agente_atribuido        AS IdAgenteAtribuido,
+  c.data_primeira_mensagem     AS DataPrimeiraMensagem,
+  c.data_ultima_mensagem       AS DataUltimaMensagem,
+  c.data_ultima_entrada        AS DataUltimaEntrada,
+  c.data_ultima_saida          AS DataUltimaSaida,
+  c.janela_24h_inicio          AS Janela24hInicio,
+  c.janela_24h_fim             AS Janela24hFim,
+  c.qtd_nao_lidas              AS QtdNaoLidas,
+  c.motivo_fechamento          AS MotivoFechamento,
+  c.fechado_por_id             AS FechadoPorId,
+  c.data_fechamento            AS DataFechamento,
+  c.data_criacao               AS DataCriacao,
+  c.data_atualizacao           AS DataAtualizacao,
+  cl.telefone_e164             AS TelefoneCliente
+FROM conversas c
+LEFT JOIN clientes cl ON c.id_cliente = cl.id
+WHERE c.id = @Id;";
 
             await using var cx = new NpgsqlConnection(_connectionString);
-            var row = await cx.QueryFirstOrDefaultAsync<(Guid Id, Guid IdEstabelecimento, Guid IdCliente, string? Canal, string? Estado, int? IdAgenteAtribuido, DateTime? DataPrimeiraMensagem, DateTime? DataUltimaMensagem, DateTime? DataUltimaEntrada, DateTime? DataUltimaSaida, DateTime? Janela24hInicio, DateTime? Janela24hFim, int QtdNaoLidas, string? MotivoFechamento, int? FechadoPorId, DateTime? DataFechamento, DateTime DataCriacao, DateTime DataAtualizacao)>(sql, new { Id = id });
-            if (row.Equals(default((Guid, Guid, Guid, string?, string?, int?, DateTime?, DateTime?, DateTime?, DateTime?, DateTime?, DateTime?, int, string?, DateTime, DateTime)))) return null;
+            var row = await cx.QueryFirstOrDefaultAsync<(Guid Id, Guid IdEstabelecimento, Guid IdCliente, string? Canal, string? Estado, int? IdAgenteAtribuido, DateTime? DataPrimeiraMensagem, DateTime? DataUltimaMensagem, DateTime? DataUltimaEntrada, DateTime? DataUltimaSaida, DateTime? Janela24hInicio, DateTime? Janela24hFim, int QtdNaoLidas, string? MotivoFechamento, int? FechadoPorId, DateTime? DataFechamento, DateTime DataCriacao, DateTime DataAtualizacao, string? TelefoneCliente)>(sql, new { Id = id });
+            if (row.Equals(default((Guid, Guid, Guid, string?, string?, int?, DateTime?, DateTime?, DateTime?, DateTime?, DateTime?, DateTime?, int, string?, int?, DateTime?, DateTime, DateTime, string?)))) return null;
 
             var conv = new Conversation
             {
                 IdConversa = row.Id,
                 IdEstabelecimento = row.IdEstabelecimento,
                 IdCliente = row.IdCliente,
+                TelefoneCliente = row.TelefoneCliente,
                 IdWa = string.Empty, // não existe no schema
                 Modo = row.IdAgenteAtribuido == null ? ModoConversa.Bot : ModoConversa.Humano,
                 AgenteDesignadoId = row.IdAgenteAtribuido,

@@ -35,6 +35,7 @@ builder.Services.AddScoped<IUsuarioService, UsuarioService>();
 builder.Services.AddScoped<IPedidoRepository, PedidoRepository>();
 builder.Services.AddScoped<IPedidoService, PedidoService>();
 builder.Services.AddScoped<IMotoboyRepository, MotoboyRepository>();
+builder.Services.AddScoped<IReservaRepository, ReservaRepository>();
 builder.Services.AddScoped<IMotoboyService, MotoboyService>();
 builder.Services.AddScoped<ILocalizacaoService, LocalizacaoService>();
 

@@ -1,12 +1,12 @@
-﻿using System;
+using System;
 
 namespace APIBack.Model
 {
     public class Reserva
     {
         public long Id { get; set; }
-        public long IdCliente { get; set; }
-        public long IdEstabelecimento { get; set; }
+        public Guid IdCliente { get; set; }
+        public Guid IdEstabelecimento { get; set; }
         public long? IdProfissional { get; set; }
         public long? IdServico { get; set; }
         public int? QtdPessoas { get; set; }
@@ -19,3 +19,4 @@ namespace APIBack.Model
         public DateTime DataAtualizacao { get; set; }
     }
 }
+
