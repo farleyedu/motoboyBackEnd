@@ -11,6 +11,7 @@ using APIBack.Automation.Interfaces;
 using APIBack.Automation.Models;
 using APIBack.Model;
 using APIBack.Repository.Interface;
+using APIBack.Service;
 using Microsoft.Extensions.Logging;
 
 namespace APIBack.Automation.Services
@@ -213,8 +214,8 @@ namespace APIBack.Automation.Services
                 return BuildJsonReply("Tivemos um probleminha ao confirmar. Pode tentar novamente em instantes?");
             }
 
-            var disponibilidade = await _reservaRepository.BuscarDisponibilidadeAsync(idEstabelecimento, dataReserva, horaConvertida, null, null);
-            if (!disponibilidade)
+            var capacidadeDisponivel = await new ReservaService(_reservaRepository).VerificarCapacidadeDiaAsync(idEstabelecimento, dataReserva, args.QtdPessoas);
+            if (!capacidadeDisponivel)
             {
                 _logger.LogInformation("[Conversa={Conversa}] Conflito de horário detectado na confirmação de reserva", args.IdConversa);
                 return BuildJsonReply("Esse horário já está reservado. Que tal escolher outro horário ou data?");
@@ -238,7 +239,7 @@ namespace APIBack.Automation.Services
                 var idReserva = await _reservaRepository.AdicionarAsync(reserva);
 
                 var dataFormatada = dataReserva.ToString("dd/MM/yyyy", CultureInfo.InvariantCulture);
-                var horaFormatada = horaConvertida.ToString(@"HH\:mm", CultureInfo.InvariantCulture);
+                var horaFormatada = horaConvertida.ToString(@"hh\:mm", CultureInfo.InvariantCulture);
 
                 var detalhesReserva = new HandoverContextDto
                 {
