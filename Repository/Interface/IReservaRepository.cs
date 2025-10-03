@@ -13,6 +13,6 @@ namespace APIBack.Repository.Interface
         Task<int> AtualizarAsync(Reserva entity);
         Task<int> ExcluirAsync(long id);
         Task<int> CancelarReservaAsync(long id);
-        Task<bool> BuscarDisponibilidadeAsync(long idEstabelecimento, DateTime dataReserva, TimeSpan horaInicio, TimeSpan? horaFim, long? idProfissional = null);
+        Task<bool> BuscarDisponibilidadeAsync(Guid idEstabelecimento, DateTime dataReserva, TimeSpan horaInicio, TimeSpan? horaFim, long? idProfissional = null);
     }
 }

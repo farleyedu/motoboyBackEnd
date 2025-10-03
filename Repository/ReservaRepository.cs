@@ -168,7 +168,7 @@ namespace APIBack.Repository
             return await connection.ExecuteAsync(sql, new { Id = id, DataAtualizacao = dataAtualizacao });
         }
 
-        public async Task<bool> BuscarDisponibilidadeAsync(long idEstabelecimento, DateTime dataReserva, TimeSpan horaInicio, TimeSpan? horaFim, long? idProfissional = null)
+        public async Task<bool> BuscarDisponibilidadeAsync(Guid idEstabelecimento, DateTime dataReserva, TimeSpan horaInicio, TimeSpan? horaFim, long? idProfissional = null)
         {
             const string sql = @"SELECT COUNT(1)
                                    FROM reservas

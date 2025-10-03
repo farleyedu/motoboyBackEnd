@@ -1,4 +1,4 @@
-﻿// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
+// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
 using System;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -28,14 +28,11 @@ namespace APIBack.Automation.Services
             _logger = logger;
         }
 
-        /// <summary>
-        /// Processa a resposta da IA e envia ao cliente via WhatsApp.
-        /// </summary>
         public async Task HandleAsync(AssistantDecision decision, ConversationProcessingResult processamento)
         {
             if (processamento.IdConversa is null || processamento.MensagemRegistrada is null)
             {
-                _logger.LogWarning("[IAResponseHandler] Resultado de processamento inválido, não há conversa registrada");
+                _logger.LogWarning("[IAResponseHandler] Resultado de processamento invalido; nenhuma conversa associada");
                 return;
             }
 
@@ -44,77 +41,90 @@ namespace APIBack.Automation.Services
             var phoneNumberDisplay = processamento.NumeroTelefoneExibicao;
             var phoneNumberId = processamento.NumeroWhatsappId;
 
-            if (string.IsNullOrWhiteSpace(phoneNumberDisplay) || string.IsNullOrWhiteSpace(numeroDestino))
+            if (string.IsNullOrWhiteSpace(phoneNumberDisplay) || string.IsNullOrWhiteSpace(numeroDestino) || string.IsNullOrWhiteSpace(phoneNumberId))
             {
                 _logger.LogWarning(
-                    "[Conversa={Conversa}] Não é possível enviar resposta: phoneNumberDisplay ou numeroDestino ausente",
+                    "[Conversa={Conversa}] Nao foi possivel enviar resposta: informacoes de telefone ausentes",
                     idConversa);
                 return;
             }
 
+            if (decision.Media != null)
+            {
+                var mediaEnviada = await TentarEnviarMediaAsync(idConversa, phoneNumberId, numeroDestino, decision.Media);
+                if (!mediaEnviada)
+                {
+                    _logger.LogInformation(
+                        "[Conversa={Conversa}] Media informada foi ignorada por tipo nao suportado ou erro de envio",
+                        idConversa);
+                }
+            }
+
             if (string.IsNullOrWhiteSpace(decision.Reply))
             {
-                _logger.LogInformation(
-                    "[Conversa={Conversa}] IA não retornou mensagem de resposta (possivelmente apenas executou uma tool)",
-                    idConversa);
+                if (decision.Media == null)
+                {
+                    _logger.LogInformation(
+                        "[Conversa={Conversa}] IA nao retornou mensagem de resposta",
+                        idConversa);
+                }
                 return;
             }
 
             await EnviarMensagemAoClienteAsync(idConversa, phoneNumberDisplay, numeroDestino, phoneNumberId, decision.Reply);
 
             _logger.LogInformation(
-                "[Conversa={Conversa}] Resposta da IA processada e enviada com sucesso",
+                "[Conversa={Conversa}] Resposta da IA processada com sucesso",
                 idConversa);
+        }
+
+        private async Task<bool> TentarEnviarMediaAsync(Guid idConversa, string phoneNumberId, string numeroDestino, AssistantMedia media)
+        {
+            try
+            {
+                switch (media.Tipo)
+                {
+                    case "imagem":
+                    case "image":
+                        await _whatsAppSender.SendImageAsync(idConversa, phoneNumberId, numeroDestino, media.Url);
+                        return true;
+
+                    case "pdf":
+                        await _whatsAppSender.SendDocumentAsync(idConversa, phoneNumberId, numeroDestino, media.Url, "reserva.pdf");
+                        return true;
+
+                    case "link":
+                        await _whatsAppSender.SendTextAsync(idConversa, phoneNumberId, numeroDestino, media.Url);
+                        return true;
+
+                    default:
+                        _logger.LogWarning("[Conversa={Conversa}] Tipo de media nao suportado: {Tipo}", idConversa, media.Tipo);
+                        return false;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[Conversa={Conversa}] Falha ao enviar media para o cliente", idConversa);
+                return false;
+            }
         }
 
         private async Task EnviarMensagemAoClienteAsync(Guid idConversa, string phoneNumberDisplay, string numeroDestino, string phoneNumberId, string texto)
         {
             try
             {
-                // ================= CORREÇÃO APLICADA AQUI =================
-                // O texto pode ser uma string simples ou um JSON vindo de uma Tool.
-                // Esta lógica extrai a mensagem de "reply" se for um JSON.
-                string textoFinalParaUsuario = texto;
-                try
-                {
-                    using var doc = JsonDocument.Parse(texto);
-                    if (doc.RootElement.TryGetProperty("reply", out var replyProperty) && replyProperty.ValueKind == JsonValueKind.String)
-                    {
-                        textoFinalParaUsuario = replyProperty.GetString() ?? texto;
-                    }
-                }
-                catch (JsonException)
-                {
-                    // Se não for um JSON válido, simplesmente usamos o texto original.
-                    // Isso é esperado quando a IA responde sem chamar uma tool.
-                }
-                // ================= FIM DA CORREÇÃO =================
+                var textoFinalParaUsuario = ExtrairTextoDeResposta(texto);
 
-                // 1. Criar a mensagem
                 var mensagem = MessageFactory.CreateMessage(
                     idConversa,
-                    textoFinalParaUsuario, // Usar o texto extraído
+                    textoFinalParaUsuario,
                     DirecaoMensagem.Saida,
                     "ia",
                     tipoOrigem: "text");
 
-                // 2. Persistir no banco
                 await _mensagemService.AdicionarMensagemAsync(mensagem, phoneNumberDisplay, numeroDestino);
-
-                _logger.LogInformation(
-                    "[Conversa={Conversa}] Mensagem da IA persistida no banco: {Preview}",
-                    idConversa,
-                    textoFinalParaUsuario.Length > 100 ? textoFinalParaUsuario.Substring(0, 100) + "..." : textoFinalParaUsuario);
-
-                // 3. Publicar na fila (se aplicável)
                 await _fila.PublicarSaidaAsync(mensagem);
-
-                // 4. Enviar para o WhatsApp
-                await _whatsAppSender.SendTextAsync(idConversa, phoneNumberId, numeroDestino, textoFinalParaUsuario); // Usar o texto extraído
-
-                _logger.LogInformation(
-                    "[Conversa={Conversa}] Mensagem enviada ao WhatsApp com sucesso",
-                    idConversa);
+                await _whatsAppSender.SendTextAsync(idConversa, phoneNumberId, numeroDestino, textoFinalParaUsuario);
             }
             catch (Exception ex)
             {
@@ -125,6 +135,23 @@ namespace APIBack.Automation.Services
                     texto);
                 throw;
             }
+        }
+
+        private static string ExtrairTextoDeResposta(string texto)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(texto);
+                if (doc.RootElement.TryGetProperty("reply", out var replyProperty) && replyProperty.ValueKind == JsonValueKind.String)
+                {
+                    return replyProperty.GetString() ?? texto;
+                }
+            }
+            catch (JsonException)
+            {
+            }
+
+            return texto;
         }
     }
 }

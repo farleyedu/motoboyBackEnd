@@ -6,7 +6,8 @@ namespace APIBack.Automation.Dtos
         string HandoverAction,
         string? AgentPrompt,
         bool ReservaConfirmada,
-        HandoverContextDto? Detalhes
+        HandoverContextDto? Detalhes,
+        AssistantMedia? Media = null
     );
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
