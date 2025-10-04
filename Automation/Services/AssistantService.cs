@@ -193,19 +193,51 @@ namespace APIBack.Automation.Services
                             return new AssistantDecision(reply, "cancelar_reserva", null, false, null, iaAction.Media);
                         }
 
+                    // No case "escalar_para_humano" do AssistantService, substitua por:
+
                     case "escalar_para_humano":
                         {
                             if (iaAction.Escalacao is null || !iaAction.Escalacao.PossuiCamposEssenciais())
                             {
                                 _logger.LogWarning("[Conversa={Conversa}] IA sugeriu escalacao sem detalhes", idConversa);
                                 return new AssistantDecision(
-                                    "Entendo! Posso te conectar com um atendente 👤. Se quiser seguir comigo, é só me avisar 😊",
+                                    "Entendo! Posso te conectar com um atendente 👤\n\nSe quiser seguir comigo, é só me avisar 😊",
                                     "none",
                                     null,
                                     false,
                                     null,
                                     iaAction.Media);
                             }
+
+                            // VALIDAÇÃO CRÍTICA: Verificar se realmente deve escalar
+                            var historicoMensagens = historico?.Select(h => h.Content ?? string.Empty) ?? Array.Empty<string>();
+                            var (shouldEscalate, reason) = EscalationValidator.ValidateEscalation(
+                                textoUsuario,
+                                iaAction.Escalacao.Motivo ?? string.Empty,
+                                historicoMensagens);
+
+                            if (!shouldEscalate)
+                            {
+                                _logger.LogWarning(
+                                    "[Conversa={Conversa}] Escalação bloqueada. Motivo: {Motivo}. Mensagem: '{Msg}'",
+                                    idConversa,
+                                    reason,
+                                    textoUsuario);
+
+                                // Responde ao invés de escalar
+                                return new AssistantDecision(
+                                    "Entendo sua preocupação! 😊\n\nPosso te ajudar com:\n\n✅ Criar/cancelar reservas\n✅ Verificar disponibilidade\n✅ Dúvidas sobre o estabelecimento\n\nSe realmente precisar falar com um humano, é só me pedir explicitamente! Como posso te ajudar?",
+                                    "none",
+                                    null,
+                                    false,
+                                    null,
+                                    iaAction.Media);
+                            }
+
+                            _logger.LogInformation(
+                                "[Conversa={Conversa}] Escalação APROVADA. Motivo: {Motivo}",
+                                idConversa,
+                                reason);
 
                             var escalacao = iaAction.Escalacao;
                             if (!string.IsNullOrWhiteSpace(escalacao.IdConversa) && Guid.TryParse(escalacao.IdConversa, out var idConversaIaEscalacao) && idConversaIaEscalacao != Guid.Empty && idConversaIaEscalacao != idConversa)
