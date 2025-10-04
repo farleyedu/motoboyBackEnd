@@ -206,5 +206,37 @@ RETURNING id;";
                 DataReserva = dataReserva.Date
             });
         }
+        // Adicione este método na classe ReservaRepository
+
+        public async Task<List<Reserva>> ObterPorClienteEstabelecimentoAsync(Guid idCliente, Guid idEstabelecimento)
+        {
+            const string sql = @"SELECT
+                            id AS Id,
+                            id_cliente AS IdCliente,
+                            id_estabelecimento AS IdEstabelecimento,
+                            id_profissional AS IdProfissional,
+                            id_servico AS IdServico,
+                            qtd_pessoas AS QtdPessoas,
+                            data_reserva AS DataReserva,
+                            hora_inicio AS HoraInicio,
+                            hora_fim AS HoraFim,
+                            status AS Status,
+                            observacoes AS Observacoes,
+                            data_criacao AS DataCriacao,
+                            data_atualizacao AS DataAtualizacao
+                       FROM reservas
+                      WHERE id_cliente = @IdCliente
+                        AND id_estabelecimento = @IdEstabelecimento
+                      ORDER BY data_reserva DESC;";
+
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            var resultado = await connection.QueryAsync<Reserva>(sql, new
+            {
+                IdCliente = idCliente,
+                IdEstabelecimento = idEstabelecimento
+            });
+
+            return resultado.AsList();
+        }
     }
 }

@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Linq;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
@@ -32,10 +33,16 @@ namespace APIBack.Automation.Services
         public string ResumoConversa { get; set; } = string.Empty;
     }
 
+    public class CancelarReservaArgs
+    {
+        public Guid IdConversa { get; set; }
+        public string MotivoCliente { get; set; } = string.Empty;
+    }
+
     public class ToolExecutorService
     {
-        private const string MissingReservationDataMessage = "Para organizar a sua reserva, preciso do nome completo, número de pessoas, data e horário, por favor.";
-        private const string AvisoConfirmacaoTexto = "Sua reserva está confirmada 🎉! Só lembrando que em caso de atraso, se houver clientes esperando, sua mesa poderá ser cedida. Vamos te esperar com alegria 🍻.";
+        private const string MissingReservationDataMessage = "Para organizar a sua reserva, preciso do nome completo, número de pessoas, data e horário, por favor. 😊";
+        private const string AvisoConfirmacaoTexto = "Sua reserva está confirmada 🎉! Só lembrando que em caso de atraso, se houver clientes esperando, sua mesa poderá ser cedida. Vamos te esperar com alegria 🍻";
 
         private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
 
@@ -64,7 +71,7 @@ namespace APIBack.Automation.Services
                 new {
                     type = "function",
                     name = "confirmar_reserva",
-                    description = "Confirma uma reserva após ter todos os dados e a confirmação explícita do usuário.",
+                    description = "Confirma uma reserva após ter todos os dados e a confirmação explícita do usuário. SEMPRE verifica se já existe reserva antes.",
                     parameters = new {
                         type = "object",
                         properties = new {
@@ -75,6 +82,19 @@ namespace APIBack.Automation.Services
                             hora = new { type = "string", description = "Horário da reserva no formato HH:mm" }
                         },
                         required = new[] { "idConversa", "nomeCompleto", "qtdPessoas", "data", "hora" }
+                    }
+                },
+                new {
+                    type = "function",
+                    name = "cancelar_reserva",
+                    description = "Cancela uma reserva existente do cliente. Só executar após confirmação explícita do cliente.",
+                    parameters = new {
+                        type = "object",
+                        properties = new {
+                            idConversa = new { type = "string", description = "ID único da conversa atual", @enum = new[] { idConversaString } },
+                            motivoCliente = new { type = "string", description = "Breve motivo do cancelamento informado pelo cliente" }
+                        },
+                        required = new[] { "idConversa", "motivoCliente" }
                     }
                 },
                 new {
@@ -125,6 +145,14 @@ namespace APIBack.Automation.Services
                         }
                         return await HandleConfirmarReserva(reservaArgs);
 
+                    case "cancelar_reserva":
+                        var cancelarArgs = JsonSerializer.Deserialize<CancelarReservaArgs>(argsJson, JsonOptions);
+                        if (cancelarArgs == null)
+                        {
+                            return BuildJsonReply("Argumentos inválidos para cancelar reserva.");
+                        }
+                        return await HandleCancelarReserva(cancelarArgs);
+
                     case "escalar_para_humano":
                         var escalarArgs = JsonSerializer.Deserialize<EscalarParaHumanoArgs>(argsJson, JsonOptions);
                         if (escalarArgs == null)
@@ -165,43 +193,47 @@ namespace APIBack.Automation.Services
             if (!TryParseHora(args.Hora, out var horaConvertida))
             {
                 _logger.LogWarning("[Conversa={Conversa}] Horário inválido recebido: {Hora}", args.IdConversa, args.Hora);
-                return BuildJsonReply("Não consegui entender o horário informado. Pode enviar no formato HH:mm?");
+                return BuildJsonReply("Não consegui entender o horário informado. Pode enviar no formato HH:mm? 😊");
             }
 
             var referenciaAtual = TimeZoneHelper.GetSaoPauloNow();
+            _logger.LogInformation("[Conversa={Conversa}] Referência atual (SP): {Ref}, Tentando parsear: '{Data}'", args.IdConversa, referenciaAtual, args.Data);
+
             var dataCalculada = ParseDataRelativa(args.Data, referenciaAtual);
 
             if (dataCalculada == null)
             {
                 _logger.LogWarning("[Conversa={Conversa}] Não foi possível interpretar a data fornecida pela IA: '{Data}'", args.IdConversa, args.Data);
-                return BuildJsonReply($"Não consegui entender a data '{args.Data}'. Pode me enviar com dia e mês, por favor?");
+                return BuildJsonReply($"Não consegui entender a data '{args.Data}'. Pode me enviar com dia e mês, por favor? 😊");
             }
 
             var dataReserva = dataCalculada.Value.Date;
             var dataHoraReserva = DateTime.SpecifyKind(dataReserva, DateTimeKind.Unspecified).Add(horaConvertida);
 
+            _logger.LogInformation("[Conversa={Conversa}] Data calculada: {DataReserva}, Horário: {Hora}", args.IdConversa, dataReserva.ToString("dd/MM/yyyy"), horaConvertida);
+
             if (dataHoraReserva <= referenciaAtual)
             {
-                return BuildJsonReply("Para garantir a melhor experiência, as reservas precisam ser feitas para um horário futuro. Pode escolher outro horário?");
+                return BuildJsonReply("Para garantir a melhor experiência, as reservas precisam ser feitas para um horário futuro. Pode escolher outro horário? 😊");
             }
 
             var limiteMaximo = referenciaAtual.Date.AddDays(14);
             if (dataReserva > limiteMaximo)
             {
-                return BuildJsonReply("Atendemos reservas com até 14 dias de antecedência. Pode escolher uma data mais próxima?");
+                return BuildJsonReply("Atendemos reservas com até 14 dias de antecedência. Pode escolher uma data mais próxima? 😊");
             }
 
             var conversa = await _conversationRepository.ObterPorIdAsync(args.IdConversa);
             if (conversa == null)
             {
                 _logger.LogWarning("[Conversa={Conversa}] Conversa não encontrada ao confirmar reserva", args.IdConversa);
-                return BuildJsonReply("Não consegui localizar nossa conversa agora. Pode tentar novamente em instantes?");
+                return BuildJsonReply("Não consegui localizar nossa conversa agora. Pode tentar novamente em instantes? 😊");
             }
 
             if (string.IsNullOrWhiteSpace(conversa.TelefoneCliente))
             {
                 _logger.LogWarning("[Conversa={Conversa}] Telefone não encontrado para confirmação de reserva", args.IdConversa);
-                return BuildJsonReply("Desculpe, não consegui identificar seu telefone. Pode me chamar de novo para finalizar?");
+                return BuildJsonReply("Desculpe, não consegui identificar seu telefone. Pode me chamar de novo para finalizar? 😊");
             }
 
             var telefone = conversa.TelefoneCliente;
@@ -211,14 +243,47 @@ namespace APIBack.Automation.Services
             if (idCliente == Guid.Empty || idEstabelecimento == Guid.Empty)
             {
                 _logger.LogWarning("[Conversa={Conversa}] Dados de relacionamento ausentes (cliente ou estabelecimento)", args.IdConversa);
-                return BuildJsonReply("Tivemos um probleminha ao confirmar. Pode tentar novamente em instantes?");
+                return BuildJsonReply("Tivemos um probleminha ao confirmar. Pode tentar novamente em instantes? 😊");
+            }
+
+            // **NOVA VERIFICAÇÃO: Reservas existentes do mesmo cliente**
+            var reservasExistentes = await _reservaRepository.ObterPorClienteEstabelecimentoAsync(idCliente, idEstabelecimento);
+            var reservasAtivas = reservasExistentes
+                .Where(r => r.Status == ReservaStatus.Confirmado && r.DataReserva >= referenciaAtual.Date)
+                .OrderBy(r => r.DataReserva)
+                .ToList();
+
+            // Verifica se já tem reserva no MESMO DIA
+            var reservaMesmoDia = reservasAtivas.FirstOrDefault(r => r.DataReserva.Date == dataReserva.Date);
+            if (reservaMesmoDia != null)
+            {
+                var horaExistente = reservaMesmoDia.HoraInicio.ToString(@"hh\:mm");
+                var dataExistente = reservaMesmoDia.DataReserva.ToString("dd/MM/yyyy");
+
+                _logger.LogInformation("[Conversa={Conversa}] Cliente já possui reserva no mesmo dia: {Data} às {Hora}",
+                    args.IdConversa, dataExistente, horaExistente);
+
+                return BuildJsonReply($"Você já possui uma reserva confirmada para {dataExistente} às {horaExistente} ✅. Gostaria de cancelar aquela e criar esta nova, ou prefere manter a reserva existente? 😊");
+            }
+
+            // Verifica se tem reserva em OUTRO DIA (apenas aviso gentil)
+            if (reservasAtivas.Any())
+            {
+                var primeiraReserva = reservasAtivas.First();
+                var dataOutraReserva = primeiraReserva.DataReserva.ToString("dd/MM/yyyy");
+                var horaOutraReserva = primeiraReserva.HoraInicio.ToString(@"hh\:mm");
+
+                _logger.LogInformation("[Conversa={Conversa}] Cliente possui reserva futura em outro dia: {Data}",
+                    args.IdConversa, dataOutraReserva);
+
+                return BuildJsonReply($"Só para confirmar: você já tem uma reserva marcada para {dataOutraReserva} às {horaOutraReserva} 📅. Quer mesmo criar mais uma reserva para {dataReserva.ToString("dd/MM/yyyy")} às {horaConvertida.ToString(@"hh\:mm")}? Se sim, é só me confirmar! 😊");
             }
 
             var capacidadeDisponivel = await new ReservaService(_reservaRepository).VerificarCapacidadeDiaAsync(idEstabelecimento, dataReserva, args.QtdPessoas);
             if (!capacidadeDisponivel)
             {
                 _logger.LogInformation("[Conversa={Conversa}] Conflito de horário detectado na confirmação de reserva", args.IdConversa);
-                return BuildJsonReply("Esse horário já está reservado. Que tal escolher outro horário ou data?");
+                return BuildJsonReply("Esse horário já está reservado 😔. Que tal escolher outro horário ou data?");
             }
 
             var agoraUtc = DateTime.UtcNow;
@@ -265,32 +330,88 @@ namespace APIBack.Automation.Services
                 var builder = new StringBuilder();
                 builder.AppendLine($"✅ Reserva #{idReserva} confirmada com sucesso!");
                 builder.AppendLine();
-                builder.AppendLine($"- **Nome:** {args.NomeCompleto}");
-                builder.AppendLine($"- **Telefone:** {telefone}");
-                builder.AppendLine($"- **Pessoas:** {args.QtdPessoas}");
-                builder.AppendLine($"- **Data:** {dataFormatada}");
-                builder.AppendLine($"- **Horário:** {horaFormatada}");
+                builder.AppendLine($"- *Nome:* {args.NomeCompleto}");
+                builder.AppendLine($"- *Telefone:* {telefone}");
+                builder.AppendLine($"- *Pessoas:* {args.QtdPessoas}");
+                builder.AppendLine($"- *Data:* {dataFormatada}");
+                builder.AppendLine($"- *Horário:* {horaFormatada}");
                 builder.AppendLine();
-                if (!ContemAviso(builder))
-                {
-                    builder.AppendLine(AvisoConfirmacaoTexto);
-                }
+                builder.AppendLine(AvisoConfirmacaoTexto);
 
                 var reply = builder.ToString().TrimEnd();
                 return BuildJsonReply(reply, reservaConfirmada: true);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "[Conversa={Conversa}] Falha ao salvar reserva");
-                return BuildJsonReply("Tivemos um problema temporário ao salvar a reserva. Pode tentar novamente em instantes?");
+                _logger.LogError(ex, "[Conversa={Conversa}] Falha ao salvar reserva", args.IdConversa);
+                return BuildJsonReply("Tivemos um problema temporário ao salvar a reserva. Pode tentar novamente em instantes? 😊");
             }
         }
 
-        private static bool ContemAviso(StringBuilder builder)
+        private async Task<string> HandleCancelarReserva(CancelarReservaArgs args)
         {
-            var texto = builder.ToString().ToLowerInvariant();
-            return texto.Contains("sua reserva") &&
-                   (texto.Contains("atraso") || texto.Contains("mesa poderá ser cedida"));
+            args.MotivoCliente = args.MotivoCliente?.Trim() ?? "Não informado";
+
+            var conversa = await _conversationRepository.ObterPorIdAsync(args.IdConversa);
+            if (conversa == null)
+            {
+                return BuildJsonReply("Não consegui localizar nossa conversa. Pode tentar novamente? 😊");
+            }
+
+            var idCliente = conversa.IdCliente;
+            var idEstabelecimento = conversa.IdEstabelecimento;
+
+            if (idCliente == Guid.Empty || idEstabelecimento == Guid.Empty)
+            {
+                return BuildJsonReply("Não consegui identificar seus dados. Pode tentar novamente? 😊");
+            }
+
+            var reservasExistentes = await _reservaRepository.ObterPorClienteEstabelecimentoAsync(idCliente, idEstabelecimento);
+            var referenciaAtual = TimeZoneHelper.GetSaoPauloNow();
+
+            var reservasAtivas = reservasExistentes
+                .Where(r => r.Status == ReservaStatus.Confirmado && r.DataReserva >= referenciaAtual.Date)
+                .OrderBy(r => r.DataReserva)
+                .ToList();
+
+            if (!reservasAtivas.Any())
+            {
+                _logger.LogInformation("[Conversa={Conversa}] Cliente tentou cancelar mas não possui reservas ativas", args.IdConversa);
+                return BuildJsonReply("Não encontrei nenhuma reserva ativa no seu nome 🤔. Se precisar de ajuda, é só me avisar! 😊");
+            }
+
+            // Se tiver apenas 1 reserva, cancela direto
+            if (reservasAtivas.Count == 1)
+            {
+                var reserva = reservasAtivas.First();
+                reserva.Status = ReservaStatus.Cancelado;
+                reserva.DataAtualizacao = DateTime.UtcNow;
+                await _reservaRepository.AtualizarAsync(reserva);
+
+                var dataFormatada = reserva.DataReserva.ToString("dd/MM/yyyy");
+                var horaFormatada = reserva.HoraInicio.ToString(@"hh\:mm");
+
+                _logger.LogInformation(
+                    "[Conversa={Conversa}] Reserva #{IdReserva} cancelada. Motivo: {Motivo}",
+                    args.IdConversa,
+                    reserva.Id,
+                    args.MotivoCliente);
+
+                return BuildJsonReply($"Reserva de {dataFormatada} às {horaFormatada} cancelada com sucesso ✅. Se mudar de ideia, estamos aqui! 😊");
+            }
+
+            // Se tiver múltiplas, pede para o cliente especificar
+            var listaReservas = new StringBuilder();
+            listaReservas.AppendLine("Você tem mais de uma reserva ativa:");
+            listaReservas.AppendLine();
+            foreach (var r in reservasAtivas)
+            {
+                listaReservas.AppendLine($"📅 {r.DataReserva:dd/MM/yyyy} às {r.HoraInicio:hh\\:mm} - {r.QtdPessoas} pessoas");
+            }
+            listaReservas.AppendLine();
+            listaReservas.AppendLine("Qual delas você gostaria de cancelar? Me informe a data 😊");
+
+            return BuildJsonReply(listaReservas.ToString());
         }
 
         private async Task<string> HandleEscalarParaHumano(EscalarParaHumanoArgs args)
@@ -301,7 +422,7 @@ namespace APIBack.Automation.Services
             if (string.IsNullOrWhiteSpace(args.Motivo) || string.IsNullOrWhiteSpace(args.ResumoConversa))
             {
                 _logger.LogWarning("[Conversa={Conversa}] Motivo ou resumo ausentes na solicitação de escalonamento", args.IdConversa);
-                return BuildJsonReply("Claro! Antes de chamar o time, pode me contar rapidinho o motivo do atendimento?");
+                return BuildJsonReply("Claro! Antes de chamar o time, pode me contar rapidinho o motivo do atendimento? 😊");
             }
 
             var contexto = new HandoverContextDto
@@ -317,7 +438,7 @@ namespace APIBack.Automation.Services
                 args.IdConversa,
                 args.Motivo);
 
-            return BuildJsonReply("Transferindo você para um atendente humano. Em instantes alguém irá atendê-lo.");
+            return BuildJsonReply("Transferindo você para um atendente humano 👤. Em instantes alguém irá atendê-lo! 😊");
         }
 
         private static bool DadosReservaInvalidos(ConfirmarReservaArgs args)
@@ -387,16 +508,30 @@ namespace APIBack.Automation.Services
             var textoNormalizado = RemoveDiacritics(dataTexto.ToLowerInvariant().Trim()).Replace("-feira", string.Empty);
             var hoje = referenciaAtual.Date;
 
-            switch (textoNormalizado)
+            _logger.LogDebug("ParseDataRelativa: texto='{Texto}', normalizado='{Norm}', hoje={Hoje}", dataTexto, textoNormalizado, hoje);
+
+            // Termos relativos exatos
+            if (textoNormalizado == "hoje")
             {
-                case "hoje":
-                    return hoje;
-                case "amanha":
-                    return hoje.AddDays(1);
-                case "depois de amanha":
-                    return hoje.AddDays(2);
+                _logger.LogDebug("Detectado: HOJE -> {Data}", hoje);
+                return hoje;
             }
 
+            if (textoNormalizado == "amanha")
+            {
+                var resultado = hoje.AddDays(1);
+                _logger.LogDebug("Detectado: AMANHÃ -> {Data}", resultado);
+                return resultado;
+            }
+
+            if (textoNormalizado == "depois de amanha")
+            {
+                var resultado = hoje.AddDays(2);
+                _logger.LogDebug("Detectado: DEPOIS DE AMANHÃ -> {Data}", resultado);
+                return resultado;
+            }
+
+            // Dias da semana
             var diasDaSemana = new Dictionary<string, DayOfWeek>
             {
                 { "domingo", DayOfWeek.Sunday },
@@ -413,28 +548,34 @@ namespace APIBack.Automation.Services
                 if (textoNormalizado.Contains(dia.Key))
                 {
                     var diaAlvo = dia.Value;
-                    var dataResultado = hoje;
+                    var dataResultado = hoje.AddDays(1); // Começa a buscar a partir de amanhã
+
                     while (dataResultado.DayOfWeek != diaAlvo)
                     {
                         dataResultado = dataResultado.AddDays(1);
                     }
 
-                    if (dataResultado == hoje || textoNormalizado.Contains("que vem") || textoNormalizado.Contains("proxima"))
+                    // Se mencionar "que vem" ou "proxima", pula mais uma semana
+                    if (textoNormalizado.Contains("que vem") || textoNormalizado.Contains("proxima"))
                     {
                         dataResultado = dataResultado.AddDays(7);
                     }
 
+                    _logger.LogDebug("Detectado dia da semana: {Dia} -> {Data}", dia.Key, dataResultado);
                     return dataResultado;
                 }
             }
 
+            // Tenta formatos de data específicos
             if (DateTime.TryParseExact(textoNormalizado, "dd/MM/yyyy", CultureInfo.InvariantCulture, DateTimeStyles.None, out var dataEspecifica))
             {
+                _logger.LogDebug("Parse formato dd/MM/yyyy: {Data}", dataEspecifica);
                 return dataEspecifica.Date;
             }
 
             if (DateTime.TryParse(dataTexto, new CultureInfo("pt-BR"), DateTimeStyles.None, out var dataOutroFormato))
             {
+                _logger.LogDebug("Parse genérico pt-BR: {Data}", dataOutroFormato);
                 return dataOutroFormato.Date;
             }
 
@@ -465,4 +606,3 @@ namespace APIBack.Automation.Services
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) =================
-
