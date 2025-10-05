@@ -71,7 +71,7 @@ namespace APIBack.Service
 
         public async Task<ResultadoUploadAvatar> UploadAvatarAsync(int id, IFormFile avatar)
         {
-            var motoboy = await _motoboyRepository.ObterPorIdAsync(id);
+            var motoboy = await _motoboyRepository.BuscarPorIdAsync(id);
             if (motoboy == null)
                 return new ResultadoUploadAvatar { Sucesso = false, Mensagem = "Motoboy não encontrado" };
 

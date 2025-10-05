@@ -6,7 +6,7 @@ namespace APIBack.Repository.Interface
     {
         IEnumerable<Motoboy> GetMotoboy();
         IEnumerable<Motoboy> ConvidarMotoboy();
-        Task<Motoboy> ObterPorIdAsync(int id);
+        Task<Motoboy> BuscarPorIdAsync(int id);
         IEnumerable<Motoboy> ListarOnline();
         Task AtualizarAvatarAsync(int id, string caminhoAvatar);
     }

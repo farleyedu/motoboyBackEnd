@@ -38,7 +38,6 @@ namespace APIBack.Automation.Services
         public Guid IdConversa { get; set; }
         public string MotivoCliente { get; set; } = string.Empty;
     }
-
     public class ToolExecutorService
     {
         private const string MissingReservationDataMessage = "Para organizar a sua reserva, preciso de algumas informações:\n\n📋 Nome completo\n👥 Número de pessoas\n📅 Data\n⏰ Horário\n\nPode me passar esses dados? 😊";
@@ -49,17 +48,20 @@ namespace APIBack.Automation.Services
         private readonly IConversationRepository _conversationRepository;
         private readonly HandoverService _handoverService;
         private readonly IReservaRepository _reservaRepository;
+        private readonly ReservaValidator _reservaValidator; // ✨ NOVO
 
         public ToolExecutorService(
             ILogger<ToolExecutorService> logger,
             IConversationRepository conversationRepository,
             HandoverService handoverService,
-            IReservaRepository reservaRepository)
+            IReservaRepository reservaRepository,
+            ReservaValidator reservaValidator) // ✨ NOVO
         {
             _logger = logger;
             _conversationRepository = conversationRepository;
             _handoverService = handoverService;
             _reservaRepository = reservaRepository;
+            _reservaValidator = reservaValidator; // ✨ NOVO
         }
 
         public object[] GetDeclaredTools(Guid idConversa)
@@ -183,44 +185,34 @@ namespace APIBack.Automation.Services
             args.Data = args.Data?.Trim() ?? string.Empty;
             args.Hora = args.Hora?.Trim() ?? string.Empty;
 
-            if (DadosReservaInvalidos(args))
+            // ✨ VALIDAÇÃO PREVENTIVA - EXECUTA ANTES DE TUDO
+            var validationResult = await _reservaValidator.ValidateReservaAsync(
+                args.IdConversa,
+                args.NomeCompleto,
+                args.QtdPessoas,
+                args.Data,
+                args.Hora);
+
+            if (!validationResult.IsValid)
             {
-                _logger.LogWarning("[Conversa={Conversa}] Dados inválidos recebidos na confirmação de reserva: {@Args}", args.IdConversa, args);
-                return BuildJsonReply(MissingReservationDataMessage);
+                _logger.LogWarning(
+                    "[Conversa={Conversa}] Validação preventiva falhou: {Issue}",
+                    args.IdConversa,
+                    validationResult.Issue);
+
+                // ✨ Se for duplicação no mesmo dia, não confirma - apenas informa
+                if (validationResult.Issue == ReservaValidationIssue.DuplicacaoMesmoDia)
+                {
+                    return BuildJsonReply(validationResult.MensagemErro!, reservaConfirmada: false);
+                }
+
+                // ✨ Outros erros retornam mensagem específica
+                return BuildJsonReply(validationResult.MensagemErro!);
             }
 
-            if (!TryParseHora(args.Hora, out var horaConvertida))
-            {
-                _logger.LogWarning("[Conversa={Conversa}] Horário inválido recebido: {Hora}", args.IdConversa, args.Hora);
-                return BuildJsonReply("Não consegui entender o horário informado.\n\nPode enviar no formato HH:mm? 😊\nExemplo: 19:00");
-            }
-
-            var referenciaAtual = TimeZoneHelper.GetSaoPauloNow();
-            _logger.LogInformation("[Conversa={Conversa}] Referência atual (SP): {Ref}, Tentando parsear: '{Data}'", args.IdConversa, referenciaAtual, args.Data);
-
-            var dataCalculada = ParseDataRelativa(args.Data, referenciaAtual);
-
-            if (dataCalculada == null)
-            {
-                _logger.LogWarning("[Conversa={Conversa}] Não foi possível interpretar a data fornecida pela IA: '{Data}'", args.IdConversa, args.Data);
-                return BuildJsonReply($"Não consegui entender a data '{args.Data}'.\n\nPode me enviar com dia e mês, por favor? 😊\nExemplo: 25/12 ou 25/12/2025");
-            }
-
-            var dataReserva = dataCalculada.Value.Date;
-            var dataHoraReserva = DateTime.SpecifyKind(dataReserva, DateTimeKind.Unspecified).Add(horaConvertida);
-
-            _logger.LogInformation("[Conversa={Conversa}] Data calculada: {DataReserva}, Horário: {Hora}", args.IdConversa, dataReserva.ToString("dd/MM/yyyy"), horaConvertida);
-
-            if (dataHoraReserva <= referenciaAtual)
-            {
-                return BuildJsonReply("Para garantir a melhor experiência, as reservas precisam ser feitas para um horário futuro.\n\nPode escolher outro horário? 😊");
-            }
-
-            var limiteMaximo = referenciaAtual.Date.AddDays(14);
-            if (dataReserva > limiteMaximo)
-            {
-                return BuildJsonReply("Atendemos reservas com até 14 dias de antecedência.\n\nPode escolher uma data mais próxima? 😊");
-            }
+            // ✅ Validação passou - prosseguir com criação
+            var dataReserva = validationResult.DataCalculada!.Value;
+            var horaConvertida = validationResult.HoraCalculada!.Value;
 
             var conversa = await _conversationRepository.ObterPorIdAsync(args.IdConversa);
             if (conversa == null)
@@ -239,53 +231,7 @@ namespace APIBack.Automation.Services
             var idCliente = conversa.IdCliente;
             var idEstabelecimento = conversa.IdEstabelecimento;
 
-            if (idCliente == Guid.Empty || idEstabelecimento == Guid.Empty)
-            {
-                _logger.LogWarning("[Conversa={Conversa}] Dados de relacionamento ausentes (cliente ou estabelecimento)", args.IdConversa);
-                return BuildJsonReply("Tivemos um probleminha ao confirmar.\n\nPode tentar novamente em instantes? 😊");
-            }
-
-            // Verificação de reservas existentes
-            var reservasExistentes = await _reservaRepository.ObterPorClienteEstabelecimentoAsync(idCliente, idEstabelecimento);
-            var reservasAtivas = reservasExistentes
-                .Where(r => r.Status == ReservaStatus.Confirmado && r.DataReserva >= referenciaAtual.Date)
-                .OrderBy(r => r.DataReserva)
-                .ToList();
-
-            // Verifica se já tem reserva no MESMO DIA
-            var reservaMesmoDia = reservasAtivas.FirstOrDefault(r => r.DataReserva.Date == dataReserva.Date);
-            if (reservaMesmoDia != null)
-            {
-                var horaExistente = reservaMesmoDia.HoraInicio.ToString(@"hh\:mm");
-                var dataExistente = reservaMesmoDia.DataReserva.ToString("dd/MM/yyyy");
-
-                _logger.LogInformation("[Conversa={Conversa}] Cliente já possui reserva no mesmo dia: {Data} às {Hora}",
-                    args.IdConversa, dataExistente, horaExistente);
-
-                var msgDuplicada = new StringBuilder();
-                msgDuplicada.AppendLine("Você já possui uma reserva confirmada para este dia:");
-                msgDuplicada.AppendLine();
-                msgDuplicada.AppendLine($"📅 Data: {dataExistente}");
-                msgDuplicada.AppendLine($"⏰ Horário: {horaExistente}");
-                msgDuplicada.AppendLine();
-                msgDuplicada.AppendLine("Gostaria de:");
-                msgDuplicada.AppendLine("1️⃣ Manter a reserva existente");
-                msgDuplicada.AppendLine("2️⃣ Cancelar e criar esta nova");
-                msgDuplicada.AppendLine();
-                msgDuplicada.Append("Me avisa o que prefere! 😊");
-
-                return BuildJsonReply(msgDuplicada.ToString());
-            }
-
-            // Capacidade disponível
-            var capacidadeDisponivel = await new ReservaService(_reservaRepository).VerificarCapacidadeDiaAsync(idEstabelecimento, dataReserva, args.QtdPessoas);
-            if (!capacidadeDisponivel)
-            {
-                _logger.LogInformation("[Conversa={Conversa}] Conflito de capacidade detectado na confirmação de reserva", args.IdConversa);
-                return BuildJsonReply("Esse horário já está com a capacidade máxima 😔\n\nQue tal escolher outro horário ou data?");
-            }
-
-            // Criar reserva
+            // ✨ Criar reserva
             var agoraUtc = DateTime.UtcNow;
             var reserva = new Reserva
             {
@@ -327,6 +273,7 @@ namespace APIBack.Automation.Services
                     dataFormatada,
                     horaFormatada);
 
+                // ✨ Mensagem de confirmação incluindo informações de capacidade
                 var builder = new StringBuilder();
                 builder.AppendLine("🎉 Sua reserva está confirmadíssima! 🎉");
                 builder.AppendLine();
@@ -338,6 +285,14 @@ namespace APIBack.Automation.Services
                 builder.AppendLine($"⏰ Horário: {horaFormatada}");
                 builder.AppendLine($"👥 Pessoas: {args.QtdPessoas}");
                 builder.AppendLine();
+
+                // ✨ Informação de disponibilidade (opcional mas útil)
+                if (validationResult.VagasDisponiveis.HasValue)
+                {
+                    builder.AppendLine($"📊 Vagas restantes neste dia: {validationResult.VagasDisponiveis - args.QtdPessoas} pessoas");
+                    builder.AppendLine();
+                }
+
                 builder.AppendLine($"🎫 Seu código de reserva é o #{idReserva}.");
                 builder.AppendLine("Caso precise alterar ou cancelar, é só nos informar este número para agilizar o atendimento!");
                 builder.AppendLine();
@@ -457,168 +412,6 @@ namespace APIBack.Automation.Services
             msg.Append("Em instantes alguém irá atendê-lo! 😊");
 
             return BuildJsonReply(msg.ToString());
-        }
-
-        private static bool DadosReservaInvalidos(ConfirmarReservaArgs args)
-        {
-            if (string.IsNullOrWhiteSpace(args.NomeCompleto) || HasMissingValueIndicator(args.NomeCompleto))
-            {
-                return true;
-            }
-
-            if (args.QtdPessoas <= 0)
-            {
-                return true;
-            }
-
-            if (string.IsNullOrWhiteSpace(args.Data) || HasMissingValueIndicator(args.Data))
-            {
-                return true;
-            }
-
-            if (string.IsNullOrWhiteSpace(args.Hora) || HasMissingValueIndicator(args.Hora))
-            {
-                return true;
-            }
-
-            return false;
-        }
-
-        private static bool HasMissingValueIndicator(string valor)
-        {
-            var normalized = valor.Trim().ToLowerInvariant();
-
-            if (normalized.Length == 0)
-            {
-                return true;
-            }
-
-            if (normalized == "string" || normalized == "null" || normalized == "undefined")
-            {
-                return true;
-            }
-
-            if (normalized.Contains("nao inform") || normalized.Contains("a definir") || normalized.Contains("a combinar"))
-            {
-                return true;
-            }
-
-            if (normalized.Contains("informada") && normalized.Contains("ainda"))
-            {
-                return true;
-            }
-
-            return false;
-        }
-
-        private static bool TryParseHora(string horaTexto, out TimeSpan hora)
-        {
-            return TimeSpan.TryParseExact(horaTexto, @"hh\:mm", CultureInfo.InvariantCulture, out hora);
-        }
-
-        private DateTime? ParseDataRelativa(string dataTexto, DateTime referenciaAtual)
-        {
-            if (string.IsNullOrWhiteSpace(dataTexto))
-            {
-                return null;
-            }
-
-            var textoNormalizado = RemoveDiacritics(dataTexto.ToLowerInvariant().Trim()).Replace("-feira", string.Empty);
-            var hoje = referenciaAtual.Date;
-
-            _logger.LogDebug("ParseDataRelativa: texto='{Texto}', normalizado='{Norm}', hoje={Hoje}", dataTexto, textoNormalizado, hoje);
-
-            // Termos relativos exatos
-            if (textoNormalizado == "hoje")
-            {
-                _logger.LogDebug("Detectado: HOJE -> {Data}", hoje);
-                return hoje;
-            }
-
-            if (textoNormalizado == "amanha")
-            {
-                var resultado = hoje.AddDays(1);
-                _logger.LogDebug("Detectado: AMANHÃ -> {Data}", resultado);
-                return resultado;
-            }
-
-            if (textoNormalizado == "depois de amanha")
-            {
-                var resultado = hoje.AddDays(2);
-                _logger.LogDebug("Detectado: DEPOIS DE AMANHÃ -> {Data}", resultado);
-                return resultado;
-            }
-
-            // Dias da semana
-            var diasDaSemana = new Dictionary<string, DayOfWeek>
-            {
-                { "domingo", DayOfWeek.Sunday },
-                { "segunda", DayOfWeek.Monday },
-                { "terca", DayOfWeek.Tuesday },
-                { "quarta", DayOfWeek.Wednesday },
-                { "quinta", DayOfWeek.Thursday },
-                { "sexta", DayOfWeek.Friday },
-                { "sabado", DayOfWeek.Saturday }
-            };
-
-            foreach (var dia in diasDaSemana)
-            {
-                if (textoNormalizado.Contains(dia.Key))
-                {
-                    var diaAlvo = dia.Value;
-                    var dataResultado = hoje.AddDays(1);
-
-                    while (dataResultado.DayOfWeek != diaAlvo)
-                    {
-                        dataResultado = dataResultado.AddDays(1);
-                    }
-
-                    if (textoNormalizado.Contains("que vem") || textoNormalizado.Contains("proxima"))
-                    {
-                        dataResultado = dataResultado.AddDays(7);
-                    }
-
-                    _logger.LogDebug("Detectado dia da semana: {Dia} -> {Data}", dia.Key, dataResultado);
-                    return dataResultado;
-                }
-            }
-
-            // Formatos de data específicos
-            if (DateTime.TryParseExact(textoNormalizado, "dd/MM/yyyy", CultureInfo.InvariantCulture, DateTimeStyles.None, out var dataEspecifica))
-            {
-                _logger.LogDebug("Parse formato dd/MM/yyyy: {Data}", dataEspecifica);
-                return dataEspecifica.Date;
-            }
-
-            if (DateTime.TryParse(dataTexto, new CultureInfo("pt-BR"), DateTimeStyles.None, out var dataOutroFormato))
-            {
-                _logger.LogDebug("Parse genérico pt-BR: {Data}", dataOutroFormato);
-                return dataOutroFormato.Date;
-            }
-
-            _logger.LogWarning("Não foi possível fazer o parse da data relativa: '{DataTexto}'", dataTexto);
-            return null;
-        }
-
-        private static string RemoveDiacritics(string? value)
-        {
-            if (string.IsNullOrWhiteSpace(value))
-            {
-                return string.Empty;
-            }
-
-            var normalized = value.Normalize(NormalizationForm.FormD);
-            var builder = new StringBuilder(normalized.Length);
-            foreach (var ch in normalized)
-            {
-                var category = CharUnicodeInfo.GetUnicodeCategory(ch);
-                if (category != UnicodeCategory.NonSpacingMark)
-                {
-                    builder.Append(ch);
-                }
-            }
-
-            return builder.ToString().Normalize(NormalizationForm.FormC);
         }
     }
 }

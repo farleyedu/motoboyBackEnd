@@ -78,6 +78,11 @@ builder.Services.AddSingleton<IQueueBus, InMemoryQueueBus>();
 builder.Services.AddScoped<IWebhookSignatureValidator, WebhookSignatureValidator>();
 builder.Services.AddScoped<IWhatsappSender, WhatsappSenderStub>();
 builder.Services.AddScoped<ToolExecutorService>();
+builder.Services.AddScoped<AtualizarReservaHandler>();
+builder.Services.AddScoped<ReservaValidator>();
+
+
+
 
 // Provedor de token do WhatsApp em memória (permite atualizar via endpoint)
 builder.Services.AddSingleton<IWhatsAppTokenProvider, InMemoryWhatsAppTokenProvider>();

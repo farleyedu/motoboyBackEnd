@@ -30,7 +30,7 @@ namespace APIBack.Repository
                 return connection.Query<Motoboy>("SELECT * FROM motoboy").ToList();
             }
         }
-        public async Task<Motoboy> ObterPorIdAsync(int id)
+        public async Task<Motoboy> BuscarPorIdAsync(int id)
         {
             using var connection = new NpgsqlConnection(_connectionString);
             {
