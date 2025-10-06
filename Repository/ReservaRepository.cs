@@ -238,5 +238,23 @@ RETURNING id;";
 
             return resultado.AsList();
         }
+
+        public async Task<Reserva?> BuscarPorCodigoAsync(long codigo, Guid idEstabelecimento)
+        {
+            const string sql = @"
+                SELECT * FROM reservas
+                WHERE id = @Codigo
+                  AND id_estabelecimento = @IdEstabelecimento
+                  AND status = @Status
+                LIMIT 1;";
+
+            await using var cx = await _dataSource.OpenConnectionAsync();
+            return await cx.QueryFirstOrDefaultAsync<Reserva>(sql, new
+            {
+                Codigo = codigo,
+                IdEstabelecimento = idEstabelecimento,
+                Status = ToPgStatus(ReservaStatus.Confirmado)
+            });
+        }
     }
 }

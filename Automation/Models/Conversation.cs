@@ -36,6 +36,7 @@ namespace APIBack.Automation.Models
         public string? MotivoFechamento { get; set; }
         public int? FechadoPorId { get; set; }
         public DateTime? DataFechamento { get; set; }
+        public string? ContextoEstadoJson { get; set; }
 
         // Propriedades para compatibilidade com SqlConversationRepository
         public DateTime DataPrimeiraMensagem => CriadoEm;

@@ -222,7 +222,7 @@ namespace APIBack.Automation.Services
             try
             {
                 var historico = await _mensagemRepository.GetByConversationAsync(idConversa, limit: 200);
-                return historico
+                var turnos = historico
                     .Where(m => !string.IsNullOrWhiteSpace(m.Conteudo))
                     .Select(m => new AssistantChatTurn
                     {
@@ -231,12 +231,70 @@ namespace APIBack.Automation.Services
                         Timestamp = m.DataHora
                     })
                     .ToList();
+
+                // Compactar se mais de 20 turnos
+                if (turnos.Count > 20)
+                {
+                    var turnosRecentes = turnos.TakeLast(15).ToList();
+                    var turnosAntigos = turnos.Take(turnos.Count - 15).ToList();
+
+                    var resumo = CriarResumoCompacto(turnosAntigos);
+
+                    var turnosCompactados = new List<AssistantChatTurn>
+                    {
+                        new AssistantChatTurn
+                        {
+                            Role = "assistant",
+                            Content = $"[Resumo conversa anterior: {resumo}]",
+                            Timestamp = turnosAntigos.First().Timestamp
+                        }
+                    };
+
+                    turnosCompactados.AddRange(turnosRecentes);
+                    return turnosCompactados;
+                }
+
+                return turnos;
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Falha ao carregar historico para conversa {Conversa}", idConversa);
                 return Array.Empty<AssistantChatTurn>();
             }
+        }
+
+        private string CriarResumoCompacto(List<AssistantChatTurn> turnos)
+        {
+            var dadosExtraidos = new List<string>();
+
+            foreach (var turno in turnos)
+            {
+                if (turno.Role == "user" && !string.IsNullOrWhiteSpace(turno.Content))
+                {
+                    var conteudo = turno.Content.Trim();
+
+                    if (conteudo.Length > 10 && !conteudo.Any(char.IsDigit) && conteudo.Split(' ').Length >= 2)
+                    {
+                        dadosExtraidos.Add($"Nome={conteudo.Substring(0, Math.Min(50, conteudo.Length))}");
+                    }
+
+                    var matchPessoas = System.Text.RegularExpressions.Regex.Match(conteudo, @"(\d{1,3})\s*pessoas?", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                    if (matchPessoas.Success)
+                    {
+                        dadosExtraidos.Add($"QtdPessoas={matchPessoas.Groups[1].Value}");
+                    }
+
+                    var matchHora = System.Text.RegularExpressions.Regex.Match(conteudo, @"(\d{1,2}):(\d{2})");
+                    if (matchHora.Success)
+                    {
+                        dadosExtraidos.Add($"Horario={matchHora.Value}");
+                    }
+                }
+            }
+
+            return dadosExtraidos.Any()
+                ? string.Join(", ", dadosExtraidos.Distinct())
+                : "conversa inicial";
         }
 
         private static HandoverContextDto MontarHandoverDetalhes(ConversationProcessingInput input, Message mensagem, IReadOnlyList<AssistantChatTurn> historico, string? contexto)

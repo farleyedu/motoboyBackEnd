@@ -101,6 +101,7 @@ namespace APIBack.Automation.Services
             {
                 model,
                 messages = messages.ToArray(),
+                max_tokens = 2000,
                 response_format = new { type = "json_object" }
             };
 
@@ -349,47 +350,64 @@ namespace APIBack.Automation.Services
 
                 if (root.ValueKind != JsonValueKind.Object)
                 {
-                    _logger.LogWarning("[Conversa={Conversa}] Resposta da IA nao eh um objeto JSON: {Conteudo}", idConversa, jsonContent);
+                    _logger.LogWarning("[Conversa={Conversa}] Resposta da IA nao eh um objeto JSON", idConversa);
                     decisionErro = BuildInvalidFormatDecision();
                     return false;
                 }
 
-                if (!root.TryGetProperty("acao", out var acaoElement) || acaoElement.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(acaoElement.GetString()))
+                // Campo 'acao' é obrigatório
+                if (!root.TryGetProperty("acao", out var acaoElement) ||
+                    acaoElement.ValueKind != JsonValueKind.String ||
+                    string.IsNullOrWhiteSpace(acaoElement.GetString()))
                 {
-                    _logger.LogWarning("[Conversa={Conversa}] Campo 'acao' ausente ou invalido: {Conteudo}", idConversa, jsonContent);
+                    _logger.LogWarning("[Conversa={Conversa}] Campo 'acao' ausente ou invalido", idConversa);
                     decisionErro = BuildInvalidFormatDecision();
                     return false;
                 }
 
-                if (!root.TryGetProperty("reply", out var replyElement) || (replyElement.ValueKind != JsonValueKind.String && replyElement.ValueKind != JsonValueKind.Null))
+                // Campo 'reply' é obrigatório
+                if (!root.TryGetProperty("reply", out var replyElement) ||
+                    (replyElement.ValueKind != JsonValueKind.String && replyElement.ValueKind != JsonValueKind.Null))
                 {
-                    _logger.LogWarning("[Conversa={Conversa}] Campo 'reply' ausente ou invalido: {Conteudo}", idConversa, jsonContent);
+                    _logger.LogWarning("[Conversa={Conversa}] Campo 'reply' ausente ou invalido", idConversa);
                     decisionErro = BuildInvalidFormatDecision();
                     return false;
                 }
 
-                if (!root.TryGetProperty("dadosReserva", out var dadosReservaElement) || (dadosReservaElement.ValueKind != JsonValueKind.Object && dadosReservaElement.ValueKind != JsonValueKind.Null))
+                // Campos opcionais - apenas logar, NÃO rejeitar
+                if (!root.TryGetProperty("dadosReserva", out var dadosReservaElement))
                 {
-                    _logger.LogWarning("[Conversa={Conversa}] Campo 'dadosReserva' ausente ou invalido: {Conteudo}", idConversa, jsonContent);
-                    decisionErro = BuildInvalidFormatDecision();
-                    return false;
+                    _logger.LogDebug("[Conversa={Conversa}] Campo 'dadosReserva' ausente, usando null", idConversa);
+                }
+                else if (dadosReservaElement.ValueKind != JsonValueKind.Object && dadosReservaElement.ValueKind != JsonValueKind.Null)
+                {
+                    _logger.LogWarning("[Conversa={Conversa}] Campo 'dadosReserva' com tipo invalido, usando null", idConversa);
                 }
 
-                if (!root.TryGetProperty("escalacao", out var escalacaoElement) || (escalacaoElement.ValueKind != JsonValueKind.Object && escalacaoElement.ValueKind != JsonValueKind.Null))
+                if (!root.TryGetProperty("escalacao", out var escalacaoElement))
                 {
-                    _logger.LogWarning("[Conversa={Conversa}] Campo 'escalacao' ausente ou invalido: {Conteudo}", idConversa, jsonContent);
-                    decisionErro = BuildInvalidFormatDecision();
-                    return false;
+                    _logger.LogDebug("[Conversa={Conversa}] Campo 'escalacao' ausente, usando null", idConversa);
+                }
+                else if (escalacaoElement.ValueKind != JsonValueKind.Object && escalacaoElement.ValueKind != JsonValueKind.Null)
+                {
+                    _logger.LogWarning("[Conversa={Conversa}] Campo 'escalacao' com tipo invalido, usando null", idConversa);
                 }
 
-                if (root.TryGetProperty("media", out var mediaElement) && mediaElement.ValueKind != JsonValueKind.Object && mediaElement.ValueKind != JsonValueKind.Null)
+                if (!root.TryGetProperty("agentPrompt", out var agentPromptElement))
                 {
-                    _logger.LogWarning("[Conversa={Conversa}] Campo 'media' invalido: {Conteudo}", idConversa, jsonContent);
+                    _logger.LogDebug("[Conversa={Conversa}] Campo 'agentPrompt' ausente, usando null", idConversa);
+                }
+
+                if (root.TryGetProperty("media", out var mediaElement) &&
+                    mediaElement.ValueKind != JsonValueKind.Object &&
+                    mediaElement.ValueKind != JsonValueKind.Null)
+                {
+                    _logger.LogWarning("[Conversa={Conversa}] Campo 'media' invalido, usando null", idConversa);
                 }
             }
             catch (JsonException ex)
             {
-                _logger.LogWarning(ex, "[Conversa={Conversa}] Resposta da IA nao pode ser lida como JSON: {Conteudo}", idConversa, jsonContent);
+                _logger.LogWarning(ex, "[Conversa={Conversa}] Resposta da IA nao pode ser lida como JSON", idConversa);
                 decisionErro = BuildInvalidFormatDecision();
                 return false;
             }
@@ -401,7 +419,7 @@ namespace APIBack.Automation.Services
             }
             catch (JsonException ex)
             {
-                _logger.LogError(ex, "[Conversa={Conversa}] Falha ao desserializar acao da IA: {Conteudo}", idConversa, jsonContent);
+                _logger.LogError(ex, "[Conversa={Conversa}] Falha ao desserializar acao da IA", idConversa);
                 decisionErro = BuildInvalidFormatDecision();
                 return false;
             }

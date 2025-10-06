@@ -16,5 +16,6 @@ namespace APIBack.Repository.Interface
         Task<List<Reserva>> ObterPorClienteEstabelecimentoAsync(Guid idCliente, Guid idEstabelecimento);
         Task<bool> BuscarDisponibilidadeAsync(Guid idEstabelecimento, DateTime dataReserva, TimeSpan horaInicio, TimeSpan? horaFim, long? idProfissional = null);
         Task<int> SomarPessoasDoDiaAsync(Guid idEstabelecimento, DateTime dataReserva);
+        Task<Reserva?> BuscarPorCodigoAsync(long codigo, Guid idEstabelecimento);
     }
 }

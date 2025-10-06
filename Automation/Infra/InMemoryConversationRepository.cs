@@ -297,6 +297,43 @@ namespace APIBack.Automation.Infra
             return Task.FromResult<ConversationDetailsDto?>(ToDetails(conversa));
         }
 
+        public Task SalvarContextoAsync(Guid idConversa, ConversationContext contexto)
+        {
+            if (_conversas.TryGetValue(idConversa, out var conversa))
+            {
+                conversa.ContextoEstadoJson = System.Text.Json.JsonSerializer.Serialize(contexto);
+                conversa.AtualizadoEm = DateTime.UtcNow;
+            }
+            return Task.CompletedTask;
+        }
+
+        public Task<ConversationContext?> ObterContextoAsync(Guid idConversa)
+        {
+            if (_conversas.TryGetValue(idConversa, out var conversa) && !string.IsNullOrWhiteSpace(conversa.ContextoEstadoJson))
+            {
+                try
+                {
+                    var contexto = System.Text.Json.JsonSerializer.Deserialize<ConversationContext>(conversa.ContextoEstadoJson);
+                    return Task.FromResult<ConversationContext?>(contexto);
+                }
+                catch
+                {
+                    return Task.FromResult<ConversationContext?>(null);
+                }
+            }
+            return Task.FromResult<ConversationContext?>(null);
+        }
+
+        public Task LimparContextoAsync(Guid idConversa)
+        {
+            if (_conversas.TryGetValue(idConversa, out var conversa))
+            {
+                conversa.ContextoEstadoJson = null;
+                conversa.AtualizadoEm = DateTime.UtcNow;
+            }
+            return Task.CompletedTask;
+        }
+
         private static bool TryMapEstado(string estado, out EstadoConversa resultado)
         {
             var normalized = estado.Trim().ToLowerInvariant();

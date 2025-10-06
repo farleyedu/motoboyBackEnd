@@ -764,6 +764,55 @@ UPDATE conversas
             await cx.ExecuteAsync(sql, new { IdConversa = idConversa, NovoEstado = MapEstadoToDatabase(novoEstado) });
         }
 
+        public async Task SalvarContextoAsync(Guid idConversa, ConversationContext contexto)
+        {
+            const string sql = @"
+                UPDATE conversas
+                SET contexto_estado = @ContextoJson::jsonb,
+                    data_atualizacao = NOW()
+                WHERE id = @IdConversa;";
+
+            var json = System.Text.Json.JsonSerializer.Serialize(contexto);
+
+            await using var cx = new NpgsqlConnection(_connectionString);
+            await cx.ExecuteAsync(sql, new { IdConversa = idConversa, ContextoJson = json });
+        }
+
+        public async Task<ConversationContext?> ObterContextoAsync(Guid idConversa)
+        {
+            const string sql = @"
+                SELECT contexto_estado
+                FROM conversas
+                WHERE id = @IdConversa;";
+
+            await using var cx = new NpgsqlConnection(_connectionString);
+            var json = await cx.ExecuteScalarAsync<string>(sql, new { IdConversa = idConversa });
+
+            if (string.IsNullOrWhiteSpace(json))
+                return null;
+
+            try
+            {
+                return System.Text.Json.JsonSerializer.Deserialize<ConversationContext>(json);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        public async Task LimparContextoAsync(Guid idConversa)
+        {
+            const string sql = @"
+                UPDATE conversas
+                SET contexto_estado = NULL,
+                    data_atualizacao = NOW()
+                WHERE id = @IdConversa;";
+
+            await using var cx = new NpgsqlConnection(_connectionString);
+            await cx.ExecuteAsync(sql, new { IdConversa = idConversa });
+        }
+
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) =================

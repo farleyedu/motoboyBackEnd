@@ -22,6 +22,9 @@ namespace APIBack.Automation.Interfaces
         Task<bool> FecharConversaAsync(Guid idConversa, int? idAgente, string? motivo);
         Task<ConversationDetailsDto?> ArquivarConversaAsync(Guid idConversa);
         Task<ConversationDetailsDto?> ObterDetalhesConversaAsync(Guid idConversa);
+        Task SalvarContextoAsync(Guid idConversa, ConversationContext contexto);
+        Task<ConversationContext?> ObterContextoAsync(Guid idConversa);
+        Task LimparContextoAsync(Guid idConversa);
     }
 }
 

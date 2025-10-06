@@ -120,6 +120,14 @@ namespace APIBack.Automation.Services
             }
 
             var dataReserva = dataCalculada.Value.Date;
+
+            // Validar se dia da semana corresponde
+            var alerta = ValidarDiaDaSemana(dataTexto, dataReserva);
+            if (!string.IsNullOrWhiteSpace(alerta))
+            {
+                return ReservaValidationResult.Failure(alerta, ReservaValidationIssue.DataInvalida);
+            }
+
             var dataHoraReserva = DateTime.SpecifyKind(dataReserva, DateTimeKind.Unspecified).Add(horaConvertida);
 
             // 4. Validar se não é passado
@@ -312,6 +320,40 @@ namespace APIBack.Automation.Services
                     builder.Append(ch);
             }
             return builder.ToString().Normalize(System.Text.NormalizationForm.FormC);
+        }
+
+        private string? ValidarDiaDaSemana(string dataTexto, DateTime dataCalculada)
+        {
+            var textoNormalizado = RemoveDiacritics(dataTexto.ToLowerInvariant());
+
+            var diasDaSemana = new System.Collections.Generic.Dictionary<string, DayOfWeek>
+            {
+                { "domingo", DayOfWeek.Sunday },
+                { "segunda", DayOfWeek.Monday },
+                { "terca", DayOfWeek.Tuesday },
+                { "quarta", DayOfWeek.Wednesday },
+                { "quinta", DayOfWeek.Thursday },
+                { "sexta", DayOfWeek.Friday },
+                { "sabado", DayOfWeek.Saturday }
+            };
+
+            foreach (var dia in diasDaSemana)
+            {
+                if (textoNormalizado.Contains(dia.Key))
+                {
+                    var diaCalculado = dataCalculada.DayOfWeek;
+                    if (diaCalculado != dia.Value)
+                    {
+                        var nomeDiaCalculado = dataCalculada.ToString("dddd", new System.Globalization.CultureInfo("pt-BR"));
+                        var dataFormatada = dataCalculada.ToString("dd/MM/yyyy");
+
+                        return $"⚠️ Atenção: Você mencionou '{dia.Key}', mas {dataFormatada} cai em {nomeDiaCalculado}.\n\nConfirma que quer reservar para esta data mesmo? 😊";
+                    }
+                    break;
+                }
+            }
+
+            return null;
         }
     }
 }
