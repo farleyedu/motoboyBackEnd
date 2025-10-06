@@ -97,12 +97,16 @@ namespace APIBack.Automation.Services
 
             messages.Add(new { role = "user", content = textoUsuario });
 
+            // Obter lista de tools disponíveis
+            var toolsArray = await _toolExecutor.GetToolsForOpenAI(idConversa);
+
             var payload = new
             {
                 model,
                 messages = messages.ToArray(),
                 max_tokens = 2000,
-                response_format = new { type = "json_object" }
+                tools = toolsArray,
+                tool_choice = "auto"
             };
 
             var json = JsonSerializer.Serialize(payload, JsonOptions);
@@ -132,6 +136,41 @@ namespace APIBack.Automation.Services
                         idConversa, stopwatch.ElapsedMilliseconds, attempt);
 
                     var body = await response.Content.ReadAsStringAsync();
+
+                    // Verificar se OpenAI retornou tool_calls
+                    using var docCheck = JsonDocument.Parse(body);
+                    if (docCheck.RootElement.TryGetProperty("choices", out var choicesArray) &&
+                        choicesArray.GetArrayLength() > 0)
+                    {
+                        var firstChoice = choicesArray[0];
+                        if (firstChoice.TryGetProperty("message", out var msgObj) &&
+                            msgObj.TryGetProperty("tool_calls", out var toolCallsArray) &&
+                            toolCallsArray.GetArrayLength() > 0)
+                        {
+                            var toolCall = toolCallsArray[0];
+                            var functionObj = toolCall.GetProperty("function");
+                            var functionName = functionObj.GetProperty("name").GetString();
+                            var functionArgs = functionObj.GetProperty("arguments").GetString();
+
+                            _logger.LogInformation(
+                                "[Conversa={Conversa}] OpenAI solicitou tool: {Tool}",
+                                idConversa,
+                                functionName);
+
+                            // Executar tool
+                            var toolResult = await _toolExecutor.ExecuteToolAsync(functionName!, functionArgs!);
+
+                            // Retornar resultado como decisão de responder
+                            return new AssistantDecision
+                            {
+                                Acao = "responder",
+                                Reply = toolResult,
+                                AgentPrompt = null,
+                                DadosReserva = null,
+                                Escalacao = null
+                            };
+                        }
+                    }
 
                     if (!response.IsSuccessStatusCode)
                     {

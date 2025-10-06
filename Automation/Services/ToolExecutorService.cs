@@ -713,16 +713,14 @@ namespace APIBack.Automation.Services
             var reservasExistentes = await _reservaRepository.ObterPorClienteEstabelecimentoAsync(idCliente, idEstabelecimento);
             var referenciaAtual = TimeZoneHelper.GetSaoPauloNow();
 
-            // Apenas reservas FUTURAS
             var reservasAtivas = reservasExistentes
                 .Where(r => r.Status == ReservaStatus.Confirmado && r.DataReserva >= referenciaAtual.Date)
                 .OrderBy(r => r.DataReserva)
-                .ThenBy(r => r.HoraInicio)
                 .ToList();
 
             if (!reservasAtivas.Any())
             {
-                return BuildJsonReply("Não encontrei reservas futuras vinculadas ao seu telefone.\n\nQuer fazer uma nova reserva? 😊");
+                return BuildJsonReply("Não encontrei reservas ativas no seu nome.\n\nQuer fazer uma nova reserva? 😊");
             }
 
             var msg = new StringBuilder();
@@ -731,25 +729,129 @@ namespace APIBack.Automation.Services
 
             foreach (var r in reservasAtivas)
             {
-                var diaSemana = r.DataReserva.ToString("dddd", new CultureInfo("pt-BR"));
                 msg.AppendLine($"🎫 Código: #{r.Id}");
-                msg.AppendLine($"📅 {r.DataReserva:dd/MM/yyyy} ({diaSemana})");
-                msg.AppendLine($"⏰ {r.HoraInicio:hh\\:mm}");
-                msg.AppendLine($"👥 {r.QtdPessoas} pessoas");
+                msg.AppendLine($"📅 Data: {r.DataReserva:dd/MM/yyyy} ({r.DataReserva:dddd})");
+                msg.AppendLine($"⏰ Horário: {r.HoraInicio:hh\\:mm}");
+                msg.AppendLine($"👥 Pessoas: {r.QtdPessoas}");
                 msg.AppendLine();
             }
 
-            if (reservasAtivas.Count == 1)
-            {
-                msg.Append("Esta é a sua reserva. Como posso te ajudar com ela? 😊");
-            }
-            else
-            {
-                msg.AppendLine("Qual delas você quer alterar?");
-                msg.Append("Pode informar o código (#), a data, ou dizer 'a do dia X' 😊");
-            }
+            msg.Append("Qual delas você quer alterar? Me informe o código (#) ou a data 😊");
 
             return BuildJsonReply(msg.ToString());
+        }
+
+        public async Task<object[]> GetToolsForOpenAI(Guid idConversa)
+        {
+            var idConversaString = idConversa.ToString();
+
+            return new object[]
+            {
+                new {
+                    type = "function",
+                    function = new {
+                        name = "listar_reservas",
+                        description = "Lista todas as reservas ativas do cliente vinculadas ao seu telefone. Use quando cliente pedir para alterar/cancelar/ver reservas sem especificar qual.",
+                        parameters = new {
+                            type = "object",
+                            properties = new {
+                                idConversa = new {
+                                    type = "string",
+                                    description = "ID único da conversa atual",
+                                    @enum = new[] { idConversaString }
+                                }
+                            },
+                            required = new[] { "idConversa" }
+                        }
+                    }
+                },
+                new {
+                    type = "function",
+                    function = new {
+                        name = "atualizar_reserva",
+                        description = "Atualiza uma reserva existente. Use após listar reservas e cliente escolher qual atualizar. Com código (#123) pode alterar qualquer reserva. Sem código, só altera se mesmo telefone.",
+                        parameters = new {
+                            type = "object",
+                            properties = new {
+                                idConversa = new {
+                                    type = "string",
+                                    description = "ID único da conversa atual",
+                                    @enum = new[] { idConversaString }
+                                },
+                                codigoReserva = new {
+                                    type = "integer",
+                                    description = "Código da reserva (#123). Obrigatório se cliente mencionar."
+                                },
+                                novoHorario = new {
+                                    type = "string",
+                                    description = "Novo horário no formato HH:mm (ex: 20:00). Opcional."
+                                },
+                                novaQtdPessoas = new {
+                                    type = "integer",
+                                    description = "Nova quantidade de pessoas. Opcional."
+                                }
+                            },
+                            required = new[] { "idConversa" }
+                        }
+                    }
+                },
+                new {
+                    type = "function",
+                    function = new {
+                        name = "confirmar_reserva",
+                        description = "Cria UMA NOVA reserva. NÃO use para atualizar reserva existente. Use apenas quando cliente confirmar criação de nova reserva.",
+                        parameters = new {
+                            type = "object",
+                            properties = new {
+                                idConversa = new {
+                                    type = "string",
+                                    description = "ID único da conversa atual",
+                                    @enum = new[] { idConversaString }
+                                },
+                                nomeCompleto = new {
+                                    type = "string",
+                                    description = "Nome completo do cliente (mínimo 2 palavras)"
+                                },
+                                qtdPessoas = new {
+                                    type = "integer",
+                                    description = "Quantidade de pessoas (1-100)"
+                                },
+                                data = new {
+                                    type = "string",
+                                    description = "Data no formato que cliente informou (dd/MM/yyyy, dd/MM, ou texto como 'amanhã')"
+                                },
+                                hora = new {
+                                    type = "string",
+                                    description = "Horário no formato HH:mm (ex: 19:00)"
+                                }
+                            },
+                            required = new[] { "idConversa", "nomeCompleto", "qtdPessoas", "data", "hora" }
+                        }
+                    }
+                },
+                new {
+                    type = "function",
+                    function = new {
+                        name = "cancelar_reserva",
+                        description = "Cancela uma reserva. Se cliente tem múltiplas, use listar_reservas primeiro.",
+                        parameters = new {
+                            type = "object",
+                            properties = new {
+                                idConversa = new {
+                                    type = "string",
+                                    description = "ID único da conversa atual",
+                                    @enum = new[] { idConversaString }
+                                },
+                                codigoReserva = new {
+                                    type = "integer",
+                                    description = "Código da reserva a cancelar. Opcional se cliente tem apenas uma."
+                                }
+                            },
+                            required = new[] { "idConversa" }
+                        }
+                    }
+                }
+            };
         }
 
         private async Task<string> HandleEscalarParaHumano(EscalarParaHumanoArgs args)
