@@ -214,7 +214,15 @@ namespace APIBack.Automation.Services
                         return FallbackDecision();
                     }
 
-                    if (!TryParseIaAction(messageContent!, idConversa, out var iaAction, out var decisaoErro))
+                    // Se não começar com {, a IA retornou texto plano - wrappear em JSON
+                    var contentToSend = messageContent!.TrimStart();
+                    if (!contentToSend.StartsWith("{"))
+                    {
+                        _logger.LogWarning("[Conversa={Conversa}] IA retornou texto plano em vez de JSON. Convertendo automaticamente.", idConversa);
+                        contentToSend = $@"{{""acao"":""responder"",""reply"":{JsonSerializer.Serialize(messageContent)}}}";
+                    }
+
+                    if (!TryParseIaAction(contentToSend, idConversa, out var iaAction, out var decisaoErro))
                     {
                         return decisaoErro ?? FallbackDecision(messageContent);
                     }
