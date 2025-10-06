@@ -741,11 +741,11 @@ namespace APIBack.Automation.Services
             return BuildJsonReply(msg.ToString());
         }
 
-        public async Task<object[]> GetToolsForOpenAI(Guid idConversa)
+        public Task<object[]> GetToolsForOpenAI(Guid idConversa)
         {
             var idConversaString = idConversa.ToString();
 
-            return new object[]
+            var tools = new object[]
             {
                 new {
                     type = "function",
@@ -852,6 +852,8 @@ namespace APIBack.Automation.Services
                     }
                 }
             };
+
+            return Task.FromResult(tools);
         }
 
         private async Task<string> HandleEscalarParaHumano(EscalarParaHumanoArgs args)

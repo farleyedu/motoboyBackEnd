@@ -161,14 +161,14 @@ namespace APIBack.Automation.Services
                             var toolResult = await _toolExecutor.ExecuteToolAsync(functionName!, functionArgs!);
 
                             // Retornar resultado como decisão de responder
-                            return new AssistantDecision
-                            {
-                                Acao = "responder",
-                                Reply = toolResult,
-                                AgentPrompt = null,
-                                DadosReserva = null,
-                                Escalacao = null
-                            };
+                            return new AssistantDecision(
+                                Reply: toolResult,
+                                HandoverAction: "none",
+                                AgentPrompt: null,
+                                ReservaConfirmada: false,
+                                Detalhes: null,
+                                Media: null
+                            );
                         }
                     }
 
