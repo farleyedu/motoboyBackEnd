@@ -89,6 +89,7 @@ namespace APIBack.Automation.Services
             string? dataTexto,
             string? horaTexto)
         {
+
             // 1. Validar dados básicos
             if (string.IsNullOrWhiteSpace(nomeCompleto) ||
                 !qtdPessoas.HasValue || qtdPessoas.Value <= 0 ||
@@ -121,6 +122,46 @@ namespace APIBack.Automation.Services
 
             var dataReserva = dataCalculada.Value.Date;
 
+            // Validar regras de alteração por horário
+            var ehMesmoDia = dataReserva.Date == referenciaAtual.Date;
+            var horaAtual = referenciaAtual.TimeOfDay;
+            var conversa = await _conversationRepository.ObterPorIdAsync(idConversa);
+            var idEstabelecimento = conversa.IdEstabelecimento;
+            if (ehMesmoDia)
+            {
+                // Regra: não pode criar/alterar reserva do mesmo dia após 16h
+                if (horaAtual >= new TimeSpan(16, 0, 0))
+                {
+                    return ReservaValidationResult.Failure(
+                        "Reservas para hoje só podem ser feitas até as 16h.\n\nPode escolher outro dia? 😊",
+                        ReservaValidationIssue.DataInvalida);
+                }
+
+
+                // Limite do mesmo dia: 50 pessoas
+                var capacidadeMesmoDia = 50;
+                var ocupadasHoje = await _reservaRepository.SomarPessoasDoDiaAsync(idEstabelecimento, dataReserva.Date);
+
+                if (ocupadasHoje + qtdPessoas.Value > capacidadeMesmoDia)
+                {
+                    var vagasRestantes = Math.Max(0, capacidadeMesmoDia - ocupadasHoje);
+                    return ReservaValidationResult.Failure(
+                        $"😔 Para reservas hoje, temos capacidade de {capacidadeMesmoDia} pessoas.\n\n📊 Situação atual:\n• Já reservadas: {ocupadasHoje} pessoas\n• Vagas disponíveis: {vagasRestantes} pessoas\n\nPode reduzir para até {vagasRestantes} pessoas ou escolher outro dia? 😊",
+                        ReservaValidationIssue.CapacidadeExcedida);
+                }
+            }
+            else
+            {
+                // Reserva antecipada: dia anterior até 21h
+                var ehDiaAnterior = dataReserva.Date == referenciaAtual.Date.AddDays(1);
+                if (ehDiaAnterior && horaAtual >= new TimeSpan(21, 0, 0))
+                {
+                    return ReservaValidationResult.Failure(
+                        "Reservas para amanhã só podem ser feitas até as 21h de hoje.\n\nPode tentar novamente amanhã cedo? 😊",
+                        ReservaValidationIssue.DataInvalida);
+                }
+            }
+
             // Validar se dia da semana corresponde
             var alerta = ValidarDiaDaSemana(dataTexto, dataReserva);
             if (!string.IsNullOrWhiteSpace(alerta))
@@ -128,14 +169,17 @@ namespace APIBack.Automation.Services
                 return ReservaValidationResult.Failure(alerta, ReservaValidationIssue.DataInvalida);
             }
 
-            var dataHoraReserva = DateTime.SpecifyKind(dataReserva, DateTimeKind.Unspecified).Add(horaConvertida);
+            var dataHoraReserva = dataReserva.Add(horaConvertida);
 
-            // 4. Validar se não é passado
-            if (dataHoraReserva <= referenciaAtual)
+            // Validar se data+hora já passou (com margem de 1 hora)
+            var limiteMinimo = referenciaAtual.AddHours(1);
+            if (dataHoraReserva < limiteMinimo)
             {
-                return ReservaValidationResult.Failure(
-                    "Para garantir a melhor experiência, as reservas precisam ser feitas para um horário futuro.\n\nPode escolher outro horário? 😊",
-                    ReservaValidationIssue.DataPassada);
+                var msgErro = dataReserva.Date == referenciaAtual.Date
+                    ? "Para reservas hoje, o horário deve ser pelo menos 1 hora no futuro.\n\nPode escolher outro horário? 😊"
+                    : "A data e horário informados já passaram.\n\nPode escolher uma data futura? 😊";
+
+                return ReservaValidationResult.Failure(msgErro, ReservaValidationIssue.DataPassada);
             }
 
             // 5. Validar limite de 14 dias
@@ -148,7 +192,6 @@ namespace APIBack.Automation.Services
             }
 
             // 6. Obter dados da conversa
-            var conversa = await _conversationRepository.ObterPorIdAsync(idConversa);
             if (conversa == null)
             {
                 return ReservaValidationResult.Failure(
@@ -157,7 +200,6 @@ namespace APIBack.Automation.Services
             }
 
             var idCliente = conversa.IdCliente;
-            var idEstabelecimento = conversa.IdEstabelecimento;
 
             if (idCliente == Guid.Empty || idEstabelecimento == Guid.Empty)
             {
@@ -172,18 +214,43 @@ namespace APIBack.Automation.Services
                 .Where(r => r.Status == ReservaStatus.Confirmado && r.DataReserva >= referenciaAtual.Date)
                 .ToList();
 
-            var reservaMesmoDia = reservasAtivas.FirstOrDefault(r => r.DataReserva.Date == dataReserva.Date);
+            var reservaMesmoDia = reservasAtivas
+                .Where(r => r.DataReserva.Date == dataReserva.Date)
+                .OrderByDescending(r => r.DataAtualizacao)
+                .FirstOrDefault();
+
             if (reservaMesmoDia != null)
             {
-                var horaExistente = reservaMesmoDia.HoraInicio.ToString(@"hh\:mm");
+                // Verificar se dados são EXATAMENTE iguais (cliente confirmando a mesma coisa)
+                var horaExistente = reservaMesmoDia.HoraInicio;
+                var qtdExistente = reservaMesmoDia.QtdPessoas ?? 0;
+
+                var horaIgual = Math.Abs((horaExistente - horaConvertida).TotalMinutes) < 1;
+                var qtdIgual = qtdExistente == qtdPessoas.Value;
+
+                if (horaIgual && qtdIgual)
+                {
+                    // Cliente está confirmando a mesma reserva - permitir (não é duplicação)
+                    _logger.LogDebug(
+                        "[Conversa={Conversa}] Cliente confirmando reserva existente #{Id} com mesmos dados",
+                        idConversa,
+                        reservaMesmoDia.Id);
+
+                    var result = ReservaValidationResult.Success(dataReserva, horaConvertida);
+                    result.ReservaExistenteMesmoDia = reservaMesmoDia;
+                    return result;
+                }
+
+                // Dados diferentes - avisar sobre duplicação
+                var horaExistenteStr = reservaMesmoDia.HoraInicio.ToString(@"hh\:mm");
                 var dataExistente = reservaMesmoDia.DataReserva.ToString("dd/MM/yyyy");
 
                 var msgDuplicada = new StringBuilder();
                 msgDuplicada.AppendLine("📋 Você já possui uma reserva para este dia:");
                 msgDuplicada.AppendLine();
                 msgDuplicada.AppendLine($"📅 Data: {dataExistente}");
-                msgDuplicada.AppendLine($"⏰ Horário atual: {horaExistente}");
-                msgDuplicada.AppendLine($"👥 Pessoas: {reservaMesmoDia.QtdPessoas ?? 0}");
+                msgDuplicada.AppendLine($"⏰ Horário atual: {horaExistenteStr}");
+                msgDuplicada.AppendLine($"👥 Pessoas: {qtdExistente}");
                 msgDuplicada.AppendLine();
                 msgDuplicada.AppendLine($"🔄 Dados novos informados:");
                 msgDuplicada.AppendLine($"⏰ Horário: {horaConvertida:hh\\:mm}");
@@ -194,11 +261,11 @@ namespace APIBack.Automation.Services
                 msgDuplicada.AppendLine("2️⃣ Atualizar para os novos dados");
                 msgDuplicada.AppendLine("3️⃣ Cancelar ambas");
 
-                var result = ReservaValidationResult.Failure(msgDuplicada.ToString(), ReservaValidationIssue.DuplicacaoMesmoDia);
-                result.ReservaExistenteMesmoDia = reservaMesmoDia;
-                result.DataCalculada = dataReserva;
-                result.HoraCalculada = horaConvertida;
-                return result;
+                var result2 = ReservaValidationResult.Failure(msgDuplicada.ToString(), ReservaValidationIssue.DuplicacaoMesmoDia);
+                result2.ReservaExistenteMesmoDia = reservaMesmoDia;
+                result2.DataCalculada = dataReserva;
+                result2.HoraCalculada = horaConvertida;
+                return result2;
             }
 
             // 8. Validar capacidade disponível
@@ -297,8 +364,22 @@ namespace APIBack.Automation.Services
             }
 
             // Formatos específicos
+            // Tentar formatos dd/MM/yyyy, dd/MM, yyyy-MM-dd
             if (DateTime.TryParseExact(textoNormalizado, "dd/MM/yyyy", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var dataEspecifica))
                 return dataEspecifica.Date;
+
+            // Formato dd/MM sem ano (assumir ano atual ou próximo)
+            if (DateTime.TryParseExact(textoNormalizado, "dd/MM", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var dataSemAno))
+            {
+                var anoAtual = referenciaAtual.Year;
+                var dataComAno = new DateTime(anoAtual, dataSemAno.Month, dataSemAno.Day);
+
+                // Se a data ficou no passado, assumir ano seguinte
+                if (dataComAno < referenciaAtual.Date)
+                    dataComAno = dataComAno.AddYears(1);
+
+                return dataComAno.Date;
+            }
 
             if (DateTime.TryParse(dataTexto, new System.Globalization.CultureInfo("pt-BR"), System.Globalization.DateTimeStyles.None, out var dataOutroFormato))
                 return dataOutroFormato.Date;

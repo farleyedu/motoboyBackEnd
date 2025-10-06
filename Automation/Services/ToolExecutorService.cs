@@ -96,6 +96,18 @@ namespace APIBack.Automation.Services
                 },
                 new {
                     type = "function",
+                    name = "listar_reservas",
+                    description = "Lista todas as reservas ativas do cliente. Use quando ele pedir para alterar/ver/cancelar sem especificar qual.",
+                    parameters = new {
+                        type = "object",
+                        properties = new {
+                            idConversa = new { type = "string", description = "ID único da conversa atual", @enum = new[] { idConversaString } }
+                        },
+                        required = new[] { "idConversa" }
+                    }
+                },
+                new {
+                    type = "function",
                     name = "cancelar_reserva",
                     description = "Cancela uma reserva existente do cliente. Só executar após confirmação explícita do cliente.",
                     parameters = new {
@@ -169,6 +181,14 @@ namespace APIBack.Automation.Services
                             return BuildJsonReply("Argumentos inválidos para confirmar reserva.");
                         }
                         return await HandleConfirmarReserva(reservaArgs);
+
+                    case "listar_reservas":
+                        var listarArgs = JsonSerializer.Deserialize<Dictionary<string, Guid>>(argsJson, JsonOptions);
+                        if (listarArgs == null || !listarArgs.TryGetValue("idConversa", out var idConvLista))
+                        {
+                            return BuildJsonReply("Argumentos inválidos.");
+                        }
+                        return await HandleListarReservas(idConvLista);
 
                     case "cancelar_reserva":
                         var cancelarArgs = JsonSerializer.Deserialize<CancelarReservaArgs>(argsJson, JsonOptions);
@@ -265,7 +285,10 @@ namespace APIBack.Automation.Services
                 .Where(r => r.Status == ReservaStatus.Confirmado && r.DataReserva >= referenciaAtual.Date)
                 .ToList();
 
-            var reservaMesmoDia = reservasAtivas.FirstOrDefault(r => r.DataReserva.Date == dataReserva.Date);
+            var reservaMesmoDia = reservasAtivas
+                .Where(r => r.DataReserva.Date == dataReserva.Date)
+                .OrderByDescending(r => r.DataAtualizacao)
+                .FirstOrDefault();
 
             long idReserva;
             bool ehAtualizacao = false;
@@ -569,6 +592,47 @@ namespace APIBack.Automation.Services
             }
 
             return null;
+        }
+        private async Task<string> HandleListarReservas(Guid idConversa)
+        {
+            var conversa = await _conversationRepository.ObterPorIdAsync(idConversa);
+            if (conversa == null)
+            {
+                return BuildJsonReply("Não consegui localizar nossa conversa.");
+            }
+
+            var idCliente = conversa.IdCliente;
+            var idEstabelecimento = conversa.IdEstabelecimento;
+
+            var reservasExistentes = await _reservaRepository.ObterPorClienteEstabelecimentoAsync(idCliente, idEstabelecimento);
+            var referenciaAtual = TimeZoneHelper.GetSaoPauloNow();
+
+            var reservasAtivas = reservasExistentes
+                .Where(r => r.Status == ReservaStatus.Confirmado && r.DataReserva >= referenciaAtual.Date)
+                .OrderBy(r => r.DataReserva)
+                .ToList();
+
+            if (!reservasAtivas.Any())
+            {
+                return BuildJsonReply("Não encontrei reservas ativas no seu nome.\n\nQuer fazer uma nova reserva? 😊");
+            }
+
+            var msg = new StringBuilder();
+            msg.AppendLine("📋 Reservas vinculadas ao seu telefone:");
+            msg.AppendLine();
+
+            foreach (var r in reservasAtivas)
+            {
+                msg.AppendLine($"🎫 Código: #{r.Id}");
+                msg.AppendLine($"📅 Data: {r.DataReserva:dd/MM/yyyy}");
+                msg.AppendLine($"⏰ Horário: {r.HoraInicio:hh\\:mm}");
+                msg.AppendLine($"👥 Pessoas: {r.QtdPessoas}");
+                msg.AppendLine();
+            }
+
+            msg.Append("Qual delas você quer alterar? Me informe o código (#) ou a data 😊");
+
+            return BuildJsonReply(msg.ToString());
         }
 
         private async Task<string> HandleEscalarParaHumano(EscalarParaHumanoArgs args)
