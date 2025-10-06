@@ -428,7 +428,11 @@ namespace APIBack.Automation.Services
                         var nomeDiaCalculado = dataCalculada.ToString("dddd", new System.Globalization.CultureInfo("pt-BR"));
                         var dataFormatada = dataCalculada.ToString("dd/MM/yyyy");
 
-                        return $"⚠️ Atenção: Você mencionou '{dia.Key}', mas {dataFormatada} cai em {nomeDiaCalculado}.\n\nConfirma que quer reservar para esta data mesmo? 😊";
+                        var msgAlerta = new StringBuilder();
+                        msgAlerta.AppendLine($"⚠️ Atenção: Você mencionou '{dia.Key}', mas {dataFormatada} cai em {nomeDiaCalculado}.");
+                        msgAlerta.AppendLine();
+                        msgAlerta.Append("Deseja continuar com esta data? 😊");
+                        return msgAlerta.ToString();
                     }
                     break;
                 }

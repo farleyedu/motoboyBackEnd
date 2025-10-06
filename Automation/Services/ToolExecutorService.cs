@@ -455,16 +455,20 @@ namespace APIBack.Automation.Services
                 return BuildJsonReply(msg.ToString());
             }
 
-            // Se tiver múltiplas, pede para o cliente especificar
+            // Se tiver múltiplas, listar com CÓDIGO
             var listaReservas = new StringBuilder();
             listaReservas.AppendLine("Você tem mais de uma reserva ativa:");
             listaReservas.AppendLine();
             foreach (var r in reservasAtivas)
             {
-                listaReservas.AppendLine($"📅 {r.DataReserva:dd/MM/yyyy} às {r.HoraInicio:hh\\:mm} - {r.QtdPessoas} pessoas");
+                var diaSemana = r.DataReserva.ToString("dddd", new CultureInfo("pt-BR"));
+                listaReservas.AppendLine($"🎫 #{r.Id}");
+                listaReservas.AppendLine($"📅 {r.DataReserva:dd/MM/yyyy} ({diaSemana})");
+                listaReservas.AppendLine($"⏰ {r.HoraInicio:hh\\:mm}");
+                listaReservas.AppendLine($"👥 {r.QtdPessoas} pessoas");
+                listaReservas.AppendLine();
             }
-            listaReservas.AppendLine();
-            listaReservas.Append("Qual delas você gostaria de cancelar? Me informe a data 😊");
+            listaReservas.Append("Qual delas você quer cancelar? Informe o código (#) ou a data 😊");
 
             return BuildJsonReply(listaReservas.ToString());
         }
@@ -479,57 +483,21 @@ namespace APIBack.Automation.Services
 
             var idCliente = conversa.IdCliente;
             var idEstabelecimento = conversa.IdEstabelecimento;
-            var telefoneConversa = conversa.TelefoneCliente;
 
-            Reserva? reserva = null;
+            // Usar busca inteligente
+            var (reserva, mensagemErro) = await BuscarReservaInteligente(
+                args.IdConversa,
+                null, // dataTexto será inferido do contexto se necessário
+                args.CodigoReserva,
+                idCliente,
+                idEstabelecimento);
 
-            if (args.CodigoReserva.HasValue)
+            if (reserva == null)
             {
-                reserva = await _reservaRepository.BuscarPorCodigoAsync(args.CodigoReserva.Value, idEstabelecimento);
-
-                if (reserva == null)
-                {
-                    return BuildJsonReply($"Não encontrei a reserva #{args.CodigoReserva} no sistema.\n\nPode verificar o código? 😊");
-                }
-
-                _logger.LogInformation(
-                    "[Conversa={Conversa}] Atualizando reserva #{Codigo} via código (bypass telefone)",
-                    args.IdConversa,
-                    args.CodigoReserva);
-            }
-            else
-            {
-                var reservasExistentes = await _reservaRepository.ObterPorClienteEstabelecimentoAsync(idCliente, idEstabelecimento);
-                var referenciaAtual = TimeZoneHelper.GetSaoPauloNow();
-
-                var reservasAtivas = reservasExistentes
-                    .Where(r => r.Status == ReservaStatus.Confirmado && r.DataReserva >= referenciaAtual.Date)
-                    .OrderBy(r => r.DataReserva)
-                    .ToList();
-
-                if (!reservasAtivas.Any())
-                {
-                    return BuildJsonReply("Não encontrei nenhuma reserva ativa no seu nome.\n\nSe tiver o código da reserva (#123), me informe para localizar! 😊");
-                }
-
-                if (reservasAtivas.Count > 1)
-                {
-                    var lista = new StringBuilder();
-                    lista.AppendLine("Você tem múltiplas reservas ativas:");
-                    lista.AppendLine();
-                    foreach (var r in reservasAtivas)
-                    {
-                        lista.AppendLine($"🎫 #{r.Id} - {r.DataReserva:dd/MM/yyyy} às {r.HoraInicio:hh\\:mm} ({r.QtdPessoas} pessoas)");
-                    }
-                    lista.AppendLine();
-                    lista.Append("Qual delas você quer atualizar? Me informe o código (#) 😊");
-
-                    return BuildJsonReply(lista.ToString());
-                }
-
-                reserva = reservasAtivas.First();
+                return BuildJsonReply(mensagemErro ?? "Não consegui identificar qual reserva alterar.");
             }
 
+            // Resto do método continua igual...
             bool houveAlteracao = false;
 
             if (!string.IsNullOrWhiteSpace(args.NovoHorario) && TimeSpan.TryParseExact(args.NovoHorario, @"hh\:mm", CultureInfo.InvariantCulture, out var novoHorario))
@@ -593,6 +561,144 @@ namespace APIBack.Automation.Services
 
             return null;
         }
+        private async Task<(Reserva? Reserva, string? MensagemErro)> BuscarReservaInteligente(
+            Guid idConversa,
+            string? dataTexto,
+            long? codigo,
+            Guid idCliente,
+            Guid idEstabelecimento)
+        {
+            var reservasExistentes = await _reservaRepository.ObterPorClienteEstabelecimentoAsync(idCliente, idEstabelecimento);
+            var referenciaAtual = TimeZoneHelper.GetSaoPauloNow();
+
+            var reservasAtivas = reservasExistentes
+                .Where(r => r.Status == ReservaStatus.Confirmado && r.DataReserva >= referenciaAtual.Date)
+                .OrderBy(r => r.DataReserva)
+                .ThenBy(r => r.HoraInicio)
+                .ToList();
+
+            if (!reservasAtivas.Any())
+            {
+                return (null, "Não encontrei reservas futuras no seu nome.\n\nQuer fazer uma nova reserva? 😊");
+            }
+
+            // Busca por código (prioridade máxima)
+            if (codigo.HasValue)
+            {
+                var porCodigo = reservasAtivas.FirstOrDefault(r => r.Id == codigo.Value);
+                if (porCodigo != null)
+                    return (porCodigo, null);
+
+                return (null, $"Não encontrei a reserva #{codigo} nas suas reservas futuras.\n\nQuer que eu liste suas reservas? 😊");
+            }
+
+            // Busca por data/contexto
+            if (!string.IsNullOrWhiteSpace(dataTexto))
+            {
+                var textoNorm = dataTexto.ToLowerInvariant().Trim();
+
+                // Tentar parsear data específica
+                if (DateTime.TryParse(dataTexto, new CultureInfo("pt-BR"), System.Globalization.DateTimeStyles.None, out var dataEspecifica))
+                {
+                    var porData = reservasAtivas.Where(r => r.DataReserva.Date == dataEspecifica.Date).ToList();
+
+                    if (porData.Count == 1)
+                        return (porData.First(), null);
+
+                    if (porData.Count > 1)
+                    {
+                        var lista = new StringBuilder();
+                        lista.AppendLine($"Encontrei {porData.Count} reservas para {dataEspecifica:dd/MM/yyyy}:");
+                        lista.AppendLine();
+                        foreach (var r in porData)
+                        {
+                            lista.AppendLine($"🎫 #{r.Id} - {r.HoraInicio:hh\\:mm} - {r.QtdPessoas} pessoas");
+                        }
+                        lista.AppendLine();
+                        lista.Append("Qual delas? Informe o código (#) 😊");
+                        return (null, lista.ToString());
+                    }
+                }
+
+                // Buscar por dia do mês (ex: "dia 7", "dia 15")
+                var matchDia = System.Text.RegularExpressions.Regex.Match(textoNorm, @"dia\s*(\d{1,2})");
+                if (matchDia.Success && int.TryParse(matchDia.Groups[1].Value, out var dia))
+                {
+                    var porDia = reservasAtivas.Where(r => r.DataReserva.Day == dia).ToList();
+
+                    if (porDia.Count == 1)
+                        return (porDia.First(), null);
+
+                    if (porDia.Count > 1)
+                    {
+                        var lista = new StringBuilder();
+                        lista.AppendLine($"Encontrei {porDia.Count} reservas para o dia {dia}:");
+                        lista.AppendLine();
+                        foreach (var r in porDia)
+                        {
+                            lista.AppendLine($"🎫 #{r.Id} - {r.DataReserva:dd/MM/yyyy} - {r.HoraInicio:hh\\:mm}");
+                        }
+                        lista.AppendLine();
+                        lista.Append("Qual delas? Informe o código (#) ou a data completa 😊");
+                        return (null, lista.ToString());
+                    }
+                }
+
+                // Buscar por mês (ex: "junho", "outubro")
+                var meses = new Dictionary<string, int>
+                {
+                    {"janeiro", 1}, {"fevereiro", 2}, {"março", 3}, {"marco", 3},
+                    {"abril", 4}, {"maio", 5}, {"junho", 6},
+                    {"julho", 7}, {"agosto", 8}, {"setembro", 9},
+                    {"outubro", 10}, {"novembro", 11}, {"dezembro", 12}
+                };
+
+                foreach (var mes in meses)
+                {
+                    if (textoNorm.Contains(mes.Key))
+                    {
+                        var porMes = reservasAtivas.Where(r => r.DataReserva.Month == mes.Value).ToList();
+
+                        if (porMes.Count == 1)
+                            return (porMes.First(), null);
+
+                        if (porMes.Count > 1)
+                        {
+                            var lista = new StringBuilder();
+                            lista.AppendLine($"Encontrei {porMes.Count} reservas em {mes.Key}:");
+                            lista.AppendLine();
+                            foreach (var r in porMes)
+                            {
+                                lista.AppendLine($"🎫 #{r.Id} - {r.DataReserva:dd/MM/yyyy} ({r.DataReserva:dddd}) - {r.HoraInicio:hh\\:mm}");
+                            }
+                            lista.AppendLine();
+                            lista.Append("Qual delas? Informe o código (#) ou a data 😊");
+                            return (null, lista.ToString());
+                        }
+                    }
+                }
+            }
+
+            // Se só tem uma reserva, retornar ela
+            if (reservasAtivas.Count == 1)
+            {
+                return (reservasAtivas.First(), null);
+            }
+
+            // Múltiplas reservas sem contexto suficiente
+            var msg = new StringBuilder();
+            msg.AppendLine("📋 Você tem múltiplas reservas. Qual delas?");
+            msg.AppendLine();
+            foreach (var r in reservasAtivas)
+            {
+                msg.AppendLine($"🎫 #{r.Id} - {r.DataReserva:dd/MM/yyyy} às {r.HoraInicio:hh\\:mm}");
+            }
+            msg.AppendLine();
+            msg.Append("Informe o código (#) ou a data 😊");
+
+            return (null, msg.ToString());
+        }
+
         private async Task<string> HandleListarReservas(Guid idConversa)
         {
             var conversa = await _conversationRepository.ObterPorIdAsync(idConversa);
@@ -607,14 +713,16 @@ namespace APIBack.Automation.Services
             var reservasExistentes = await _reservaRepository.ObterPorClienteEstabelecimentoAsync(idCliente, idEstabelecimento);
             var referenciaAtual = TimeZoneHelper.GetSaoPauloNow();
 
+            // Apenas reservas FUTURAS
             var reservasAtivas = reservasExistentes
                 .Where(r => r.Status == ReservaStatus.Confirmado && r.DataReserva >= referenciaAtual.Date)
                 .OrderBy(r => r.DataReserva)
+                .ThenBy(r => r.HoraInicio)
                 .ToList();
 
             if (!reservasAtivas.Any())
             {
-                return BuildJsonReply("Não encontrei reservas ativas no seu nome.\n\nQuer fazer uma nova reserva? 😊");
+                return BuildJsonReply("Não encontrei reservas futuras vinculadas ao seu telefone.\n\nQuer fazer uma nova reserva? 😊");
             }
 
             var msg = new StringBuilder();
@@ -623,14 +731,23 @@ namespace APIBack.Automation.Services
 
             foreach (var r in reservasAtivas)
             {
+                var diaSemana = r.DataReserva.ToString("dddd", new CultureInfo("pt-BR"));
                 msg.AppendLine($"🎫 Código: #{r.Id}");
-                msg.AppendLine($"📅 Data: {r.DataReserva:dd/MM/yyyy}");
-                msg.AppendLine($"⏰ Horário: {r.HoraInicio:hh\\:mm}");
-                msg.AppendLine($"👥 Pessoas: {r.QtdPessoas}");
+                msg.AppendLine($"📅 {r.DataReserva:dd/MM/yyyy} ({diaSemana})");
+                msg.AppendLine($"⏰ {r.HoraInicio:hh\\:mm}");
+                msg.AppendLine($"👥 {r.QtdPessoas} pessoas");
                 msg.AppendLine();
             }
 
-            msg.Append("Qual delas você quer alterar? Me informe o código (#) ou a data 😊");
+            if (reservasAtivas.Count == 1)
+            {
+                msg.Append("Esta é a sua reserva. Como posso te ajudar com ela? 😊");
+            }
+            else
+            {
+                msg.AppendLine("Qual delas você quer alterar?");
+                msg.Append("Pode informar o código (#), a data, ou dizer 'a do dia X' 😊");
+            }
 
             return BuildJsonReply(msg.ToString());
         }
