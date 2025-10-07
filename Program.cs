@@ -101,6 +101,7 @@ builder.Services.AddScoped<WebhookValidatorService>();
 builder.Services.AddScoped<ConversationProcessor>();
 builder.Services.AddScoped<IAResponseHandler>();
 builder.Services.AddScoped<WhatsAppSender>();
+builder.Services.AddScoped<ContextInterceptorService>();
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
 
 

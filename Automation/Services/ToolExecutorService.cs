@@ -723,20 +723,46 @@ namespace APIBack.Automation.Services
                 return BuildJsonReply("Não encontrei reservas ativas no seu nome.\n\nQuer fazer uma nova reserva? 😊");
             }
 
+            // Salvar mapeamento de números para IDs no contexto
+            var mapeamento = new Dictionary<int, long>();
+            for (int i = 0; i < reservasAtivas.Count; i++)
+            {
+                mapeamento[i + 1] = reservasAtivas[i].Id;
+            }
+
+            await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
+            {
+                Estado = "aguardando_escolha_reserva",
+                DadosColetados = new Dictionary<string, object>
+                {
+                    { "mapeamento_reservas", System.Text.Json.JsonSerializer.Serialize(mapeamento) },
+                    { "reservas_json", System.Text.Json.JsonSerializer.Serialize(reservasAtivas.Select(r => new {
+                        r.Id,
+                        r.DataReserva,
+                        r.HoraInicio,
+                        r.QtdPessoas
+                    }).ToList()) }
+                },
+                ExpiracaoEstado = DateTime.UtcNow.AddMinutes(30)
+            });
+
             var msg = new StringBuilder();
-            msg.AppendLine("📋 Reservas vinculadas ao seu telefone:");
+            msg.AppendLine("📋 Encontrei estas reservas ativas:");
             msg.AppendLine();
 
+            int numero = 1;
             foreach (var r in reservasAtivas)
             {
-                msg.AppendLine($"🎫 Código: #{r.Id}");
+                var emoji = numero == 1 ? "1️⃣" : numero == 2 ? "2️⃣" : numero == 3 ? "3️⃣" : $"{numero}️⃣";
+                msg.AppendLine($"{emoji} Reserva #{r.Id}");
                 msg.AppendLine($"📅 Data: {r.DataReserva:dd/MM/yyyy} ({r.DataReserva:dddd})");
                 msg.AppendLine($"⏰ Horário: {r.HoraInicio:hh\\:mm}");
                 msg.AppendLine($"👥 Pessoas: {r.QtdPessoas}");
                 msg.AppendLine();
+                numero++;
             }
 
-            msg.Append("Qual delas você quer alterar? Me informe o código (#) ou a data 😊");
+            msg.Append("Qual você quer alterar? Digite o número (1, 2...) 😊");
 
             return BuildJsonReply(msg.ToString());
         }

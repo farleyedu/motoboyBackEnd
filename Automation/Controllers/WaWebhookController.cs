@@ -26,6 +26,7 @@ namespace APIBack.Automation.Controllers
         private readonly IAssistantService? _assistant;
         private readonly IOptions<AutomationOptions> _opcoes;
         private readonly IWhatsAppTokenProvider _waTokenProvider;
+        private readonly ContextInterceptorService _contextInterceptor;
 
         public WaWebhookController(
             ILogger<WaWebhookController> logger,
@@ -34,7 +35,8 @@ namespace APIBack.Automation.Controllers
             IAResponseHandler iaResponseHandler,
             IAssistantService? assistant,
             IOptions<AutomationOptions> opcoes,
-            IWhatsAppTokenProvider waTokenProvider)
+            IWhatsAppTokenProvider waTokenProvider,
+            ContextInterceptorService contextInterceptor)
         {
             _logger = logger;
             _validator = validator;
@@ -43,6 +45,7 @@ namespace APIBack.Automation.Controllers
             _assistant = assistant;
             _opcoes = opcoes;
             _waTokenProvider = waTokenProvider;
+            _contextInterceptor = contextInterceptor;
         }
 
         [HttpGet("webhook")]
@@ -145,6 +148,20 @@ namespace APIBack.Automation.Controllers
                             }
 
                             var idConversa = processamento.IdConversa ?? Guid.Empty;
+
+                            // Tentar interceptar mensagem se há contexto ativo
+                            var (intercepted, interceptedDecision) = await _contextInterceptor.TryInterceptAsync(
+                                idConversa,
+                                processamento.TextoUsuario);
+
+                            if (intercepted && interceptedDecision != null)
+                            {
+                                _logger.LogInformation("[Conversa={Conversa}] Mensagem interceptada por contexto ativo", idConversa);
+                                await _iaResponseHandler.HandleAsync(interceptedDecision, processamento);
+                                continue;
+                            }
+
+                            // Se não foi interceptada, segue fluxo normal com IA
                             var stopwatch = Stopwatch.StartNew();
                             var decision = _assistant != null
                                 ? await _assistant.GerarDecisaoComHistoricoAsync(

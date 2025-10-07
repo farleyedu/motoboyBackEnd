@@ -2,6 +2,7 @@
 using System;
 using System.Threading.Tasks;
 using APIBack.Automation.Interfaces;
+using APIBack.Automation.Models;
 using Dapper;
 using Npgsql;
 
@@ -66,6 +67,22 @@ namespace APIBack.Automation.Infra
 
             await using var cx = new NpgsqlConnection(_connectionString);
             return await cx.ExecuteScalarAsync<string?>(sql, new { IdCliente = idCliente, IdEstabelecimento = idEstabelecimento });
+        }
+
+        public async Task<Cliente?> ObterPorIdAsync(Guid idCliente)
+        {
+            if (idCliente == Guid.Empty)
+                throw new ArgumentException("idCliente obrigatório", nameof(idCliente));
+
+            const string sql = @"SELECT id, id_estabelecimento as IdEstabelecimento,
+                                        nome, telefone_e164 as TelefoneE164,
+                                        data_criacao as DataCriacao, data_atualizacao as DataAtualizacao
+                                 FROM clientes
+                                 WHERE id = @IdCliente
+                                 LIMIT 1;";
+
+            await using var cx = new NpgsqlConnection(_connectionString);
+            return await cx.QueryFirstOrDefaultAsync<Cliente>(sql, new { IdCliente = idCliente });
         }
     }
 }
