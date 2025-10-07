@@ -111,15 +111,12 @@ RETURNING id;";
             entity.DataAtualizacao = DateTime.UtcNow;
 
             const string sql = @"UPDATE reservas
-                                   SET id_cliente = @IdCliente,
-                                       id_estabelecimento = @IdEstabelecimento,
-                                       id_profissional = @IdProfissional,
+                                   SET id_profissional = @IdProfissional,
                                        id_servico = @IdServico,
                                        qtd_pessoas = @QtdPessoas,
                                        data_reserva = @DataReserva,
                                        hora_inicio = @HoraInicio,
                                        hora_fim = @HoraFim,
-                                       status = @Status,
                                        observacoes = @Observacoes,
                                        data_atualizacao = @DataAtualizacao
                                    WHERE id = @Id;";
@@ -128,15 +125,12 @@ RETURNING id;";
             return await connection.ExecuteAsync(sql, new
             {
                 entity.Id,
-                entity.IdCliente,
-                entity.IdEstabelecimento,
                 entity.IdProfissional,
                 entity.IdServico,
                 entity.QtdPessoas,
                 DataReserva = entity.DataReserva.Date,
                 entity.HoraInicio,
                 entity.HoraFim,
-                entity.Status,
                 entity.Observacoes,
                 entity.DataAtualizacao
             });
