@@ -385,6 +385,45 @@ namespace APIBack.Automation.Services
             _logger.LogInformation("[Conversa={Conversa}] Resposta preparada pelo contexto interceptor", idConversa);
             await Task.CompletedTask;
         }
+
+        private bool MensagemContemFiltro(string mensagem)
+        {
+            if (string.IsNullOrWhiteSpace(mensagem))
+                return false;
+
+            var textoLower = mensagem.ToLower();
+
+            // Detectar código
+            if (Regex.IsMatch(textoLower,
+                @"#\d+|c[oó]digo\s*\d+|reserva\s*\d+"))
+                return true;
+
+            // Detectar dia específico
+            if (Regex.IsMatch(textoLower,
+                @"dia\s*\d{1,2}|\d{1,2}/\d{1,2}|\d{1,2}\s+de\s+\w+"))
+                return true;
+
+            // Detectar dia da semana
+            var diasSemana = new[] { "domingo", "segunda", "terça", "terca",
+                "quarta", "quinta", "sexta", "sábado", "sabado" };
+            if (diasSemana.Any(dia => textoLower.Contains(dia)))
+                return true;
+
+            // Detectar referência temporal
+            var temporais = new[] { "hoje", "amanhã", "amanha",
+                "depois de amanhã", "depois de amanha" };
+            if (temporais.Any(temp => textoLower.Contains(temp)))
+                return true;
+
+            // Detectar mês
+            var meses = new[] { "janeiro", "fevereiro", "março", "marco",
+                "abril", "maio", "junho", "julho", "agosto", "setembro",
+                "outubro", "novembro", "dezembro" };
+            if (meses.Any(mes => textoLower.Contains(mes)))
+                return true;
+
+            return false;
+        }
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================

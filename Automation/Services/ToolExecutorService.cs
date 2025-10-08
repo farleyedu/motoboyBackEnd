@@ -558,7 +558,7 @@ namespace APIBack.Automation.Services
                 }
             }
 
-            // 4. Validar nova quantidade (se informada)
+            // 4. Validar nova quantidade (se informada) - REGRA 50/110
             if (args.NovaQtdPessoas.HasValue)
             {
                 var novaQtd = args.NovaQtdPessoas.Value;
@@ -573,26 +573,41 @@ namespace APIBack.Automation.Services
                     return BuildJsonReply("Para grupos acima de 100 pessoas, entre em contato conosco. 📞");
                 }
 
-                // Verificar capacidade disponível
+                // ✨ VALIDAR CAPACIDADE: 50 (mesmo dia) ou 110 (dias futuros)
+                var hoje = referenciaAtual.Date;
+                var ehMesmoDia = reserva.DataReserva.Date == hoje;
+                var capacidadeMaxima = ehMesmoDia ? 50 : 110;
+
+                // Buscar todas as reservas do dia
                 var reservasDia = await _reservaRepository.ObterPorEstabelecimentoDataAsync(
                     idEstabelecimento, reserva.DataReserva);
 
+                // Calcular capacidade ocupada (excluindo a reserva atual)
                 var capacidadeOcupada = reservasDia
                     .Where(r => r.Id != reserva.Id && r.Status == ReservaStatus.Confirmado)
                     .Sum(r => r.QtdPessoas ?? 0);
 
-                const int CAPACIDADE_MAXIMA = 110;
-                var vagasDisponiveis = CAPACIDADE_MAXIMA - capacidadeOcupada;
+                var vagasDisponiveis = capacidadeMaxima - capacidadeOcupada;
 
                 if (novaQtd > vagasDisponiveis)
                 {
-                    return BuildJsonReply(
-                        $"😔 Não conseguimos aumentar para {novaQtd} pessoas.\n\n" +
-                        $"📊 Situação de {reserva.DataReserva:dd/MM/yyyy}:\n" +
-                        $"• Capacidade: {CAPACIDADE_MAXIMA}\n" +
-                        $"• Reservadas: {capacidadeOcupada}\n" +
-                        $"• Disponíveis: {vagasDisponiveis}\n\n" +
-                        $"Pode reduzir para {vagasDisponiveis} ou escolher outro dia? 😊");
+                    var tipoReserva = ehMesmoDia ? "hoje" : "este dia";
+                    var erroCapacidade = new StringBuilder();
+                    erroCapacidade.AppendLine($"😔 Não conseguimos aumentar para {novaQtd} pessoas.");
+                    erroCapacidade.AppendLine();
+                    erroCapacidade.AppendLine($"📊 Situação de {reserva.DataReserva:dd/MM/yyyy}:");
+                    erroCapacidade.AppendLine($"• Tipo: Reserva {tipoReserva}");
+                    erroCapacidade.AppendLine($"• Capacidade máxima: {capacidadeMaxima} pessoas");
+                    erroCapacidade.AppendLine($"• Já reservadas: {capacidadeOcupada} pessoas");
+                    erroCapacidade.AppendLine($"• Disponíveis: {vagasDisponiveis} pessoas");
+                    erroCapacidade.AppendLine();
+                    erroCapacidade.AppendLine("💡 Você pode:");
+                    erroCapacidade.AppendLine($"• Reduzir para até {vagasDisponiveis} pessoas");
+                    erroCapacidade.AppendLine("• Escolher outro dia");
+                    erroCapacidade.AppendLine();
+                    erroCapacidade.Append("Como prefere continuar? 😊");
+
+                    return BuildJsonReply(erroCapacidade.ToString());
                 }
             }
 
@@ -667,11 +682,22 @@ namespace APIBack.Automation.Services
             Guid idCliente,
             Guid idEstabelecimento)
         {
+            // Log para debugging
+            _logger.LogDebug(
+                "[Conversa={Conversa}] BuscarReservaInteligente: dataTexto={Data}, codigo={Codigo}",
+                idConversa, dataTexto ?? "null", codigo?.ToString() ?? "null");
+
             var reservasExistentes = await _reservaRepository.ObterPorClienteEstabelecimentoAsync(idCliente, idEstabelecimento);
             var referenciaAtual = TimeZoneHelper.GetSaoPauloNow();
 
             var reservasAtivas = reservasExistentes
-                .Where(r => r.Status == ReservaStatus.Confirmado && r.DataReserva >= referenciaAtual.Date)
+                .Where(r => {
+                    if (r.Status != ReservaStatus.Confirmado) return false;
+
+                    // Data+hora precisa ser futura
+                    var dataHoraReserva = r.DataReserva.Date.Add(r.HoraInicio);
+                    return dataHoraReserva > referenciaAtual;
+                })
                 .OrderBy(r => r.DataReserva)
                 .ThenBy(r => r.HoraInicio)
                 .ToList();
