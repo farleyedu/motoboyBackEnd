@@ -497,6 +497,105 @@ namespace APIBack.Automation.Services
                 return BuildJsonReply(mensagemErro ?? "Não consegui identificar qual reserva alterar.");
             }
 
+            // 1. Verificar se reserva já passou
+            var referenciaAtual = TimeZoneHelper.GetSaoPauloNow();
+            var dataHoraReserva = reserva.DataReserva.Date.Add(reserva.HoraInicio);
+
+            if (dataHoraReserva <= referenciaAtual)
+            {
+                return BuildJsonReply($"⏰ A reserva #{reserva.Id} já foi finalizada.\n\n" +
+                                     $"📅 Era para: {reserva.DataReserva:dd/MM/yyyy} às {reserva.HoraInicio:hh\\:mm}\n\n" +
+                                     "Não é possível alterar reservas passadas. Quer fazer uma nova? 😊");
+            }
+
+            // 2. Verificar permissão (mesmo telefone OU tem código)
+            if (!args.CodigoReserva.HasValue && reserva.IdCliente != idCliente)
+            {
+                return BuildJsonReply("Não encontrei essa reserva no seu telefone. 😕\n\n" +
+                                     "💡 Para alterar reserva de outra pessoa, você precisa " +
+                                     "informar o código (#123).");
+            }
+
+            // 3. Validar novo horário (se informado)
+            if (!string.IsNullOrWhiteSpace(args.NovoHorario))
+            {
+                if (!TimeSpan.TryParseExact(args.NovoHorario, @"hh\:mm",
+                    System.Globalization.CultureInfo.InvariantCulture, out var horarioParseado))
+                {
+                    return BuildJsonReply("Formato de horário inválido. Use HH:MM (ex: 19:00)");
+                }
+
+                // Validar horário de funcionamento
+                var diaSemana = reserva.DataReserva.DayOfWeek;
+                TimeSpan horaAbertura, horaFechamento;
+
+                if (diaSemana >= DayOfWeek.Monday && diaSemana <= DayOfWeek.Friday)
+                {
+                    horaAbertura = new TimeSpan(17, 0, 0);
+                    horaFechamento = new TimeSpan(23, 59, 59);
+                }
+                else if (diaSemana == DayOfWeek.Saturday)
+                {
+                    horaAbertura = new TimeSpan(12, 0, 0);
+                    horaFechamento = new TimeSpan(23, 59, 59);
+                }
+                else
+                {
+                    horaAbertura = new TimeSpan(12, 0, 0);
+                    horaFechamento = new TimeSpan(23, 59, 59);
+                }
+
+                if (horarioParseado < horaAbertura || horarioParseado > horaFechamento)
+                {
+                    var diaDesc = diaSemana == DayOfWeek.Saturday ? "sábado" :
+                                  diaSemana == DayOfWeek.Sunday ? "domingo" : "segunda a sexta";
+
+                    return BuildJsonReply($"⏰ Horário inválido para {diaDesc}.\n\n" +
+                                         "🕐 Horários:\n" +
+                                         "• Seg-Sex: 17h às 00h30\n" +
+                                         "• Sábado: 12h à 01h\n" +
+                                         "• Domingo: 12h às 00h30");
+                }
+            }
+
+            // 4. Validar nova quantidade (se informada)
+            if (args.NovaQtdPessoas.HasValue)
+            {
+                var novaQtd = args.NovaQtdPessoas.Value;
+
+                if (novaQtd <= 0)
+                {
+                    return BuildJsonReply("A quantidade precisa ser maior que zero. 😊");
+                }
+
+                if (novaQtd > 100)
+                {
+                    return BuildJsonReply("Para grupos acima de 100 pessoas, entre em contato conosco. 📞");
+                }
+
+                // Verificar capacidade disponível
+                var reservasDia = await _reservaRepository.ObterPorEstabelecimentoDataAsync(
+                    idEstabelecimento, reserva.DataReserva);
+
+                var capacidadeOcupada = reservasDia
+                    .Where(r => r.Id != reserva.Id && r.Status == ReservaStatus.Confirmado)
+                    .Sum(r => r.QtdPessoas ?? 0);
+
+                const int CAPACIDADE_MAXIMA = 110;
+                var vagasDisponiveis = CAPACIDADE_MAXIMA - capacidadeOcupada;
+
+                if (novaQtd > vagasDisponiveis)
+                {
+                    return BuildJsonReply(
+                        $"😔 Não conseguimos aumentar para {novaQtd} pessoas.\n\n" +
+                        $"📊 Situação de {reserva.DataReserva:dd/MM/yyyy}:\n" +
+                        $"• Capacidade: {CAPACIDADE_MAXIMA}\n" +
+                        $"• Reservadas: {capacidadeOcupada}\n" +
+                        $"• Disponíveis: {vagasDisponiveis}\n\n" +
+                        $"Pode reduzir para {vagasDisponiveis} ou escolher outro dia? 😊");
+                }
+            }
+
             // Resto do método continua igual...
             bool houveAlteracao = false;
 
@@ -714,8 +813,15 @@ namespace APIBack.Automation.Services
             var referenciaAtual = TimeZoneHelper.GetSaoPauloNow();
 
             var reservasAtivas = reservasExistentes
-                .Where(r => r.Status == ReservaStatus.Confirmado && r.DataReserva >= referenciaAtual.Date)
+                .Where(r => {
+                    if (r.Status != ReservaStatus.Confirmado) return false;
+
+                    // Data+hora precisa ser futura
+                    var dataHoraReserva = r.DataReserva.Date.Add(r.HoraInicio);
+                    return dataHoraReserva > referenciaAtual;
+                })
                 .OrderBy(r => r.DataReserva)
+                .ThenBy(r => r.HoraInicio)
                 .ToList();
 
             if (!reservasAtivas.Any())

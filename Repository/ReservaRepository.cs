@@ -233,6 +233,39 @@ RETURNING id;";
             return resultado.AsList();
         }
 
+        public async Task<List<Reserva>> ObterPorEstabelecimentoDataAsync(Guid idEstabelecimento, DateTime data)
+        {
+            const string sql = @"SELECT
+                            id AS Id,
+                            id_cliente AS IdCliente,
+                            id_estabelecimento AS IdEstabelecimento,
+                            id_profissional AS IdProfissional,
+                            id_servico AS IdServico,
+                            qtd_pessoas AS QtdPessoas,
+                            data_reserva AS DataReserva,
+                            hora_inicio AS HoraInicio,
+                            hora_fim AS HoraFim,
+                            status AS Status,
+                            observacoes AS Observacoes,
+                            data_criacao AS DataCriacao,
+                            data_atualizacao AS DataAtualizacao
+                       FROM reservas
+                      WHERE id_estabelecimento = @IdEstabelecimento
+                        AND data_reserva = @Data
+                        AND status = @Status
+                      ORDER BY hora_inicio;";
+
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            var resultado = await connection.QueryAsync<Reserva>(sql, new
+            {
+                IdEstabelecimento = idEstabelecimento,
+                Data = data.Date,
+                Status = ToPgStatus(ReservaStatus.Confirmado)
+            });
+
+            return resultado.AsList();
+        }
+
         public async Task<Reserva?> BuscarPorCodigoAsync(long codigo, Guid idEstabelecimento)
         {
             const string sql = @"
