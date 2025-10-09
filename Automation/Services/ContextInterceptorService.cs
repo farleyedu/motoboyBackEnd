@@ -37,6 +37,22 @@ namespace APIBack.Automation.Services
             _logger = logger;
         }
 
+        private async Task<List<APIBack.Model.Reserva>> ObterReservasAtivasAsync(Guid idCliente, Guid idEstabelecimento)
+        {
+            var reservasExistentes = await _reservaRepository.ObterPorClienteEstabelecimentoAsync(idCliente, idEstabelecimento);
+            var referenciaAtual = TimeZoneHelper.GetSaoPauloNow();
+
+            return reservasExistentes
+                .Where(r => {
+                    if (r.Status != APIBack.Model.ReservaStatus.Confirmado) return false;
+                    var dataHoraReserva = r.DataReserva.Date.Add(r.HoraInicio);
+                    return dataHoraReserva > referenciaAtual;
+                })
+                .OrderBy(r => r.DataReserva)
+                .ThenBy(r => r.HoraInicio)
+                .ToList();
+        }
+
         /// <summary>
         /// Verifica se há contexto ativo e intercepta a mensagem se necessário
         /// </summary>
@@ -45,6 +61,130 @@ namespace APIBack.Automation.Services
             Guid idConversa,
             string mensagemTexto)
         {
+            // ═══════ DETECÇÃO INTELIGENTE DE FILTROS ═══════
+            var textoLower = mensagemTexto.ToLower();
+            var ehAlteracao = textoLower.Contains("alterar") ||
+                               textoLower.Contains("mudar") ||
+                               textoLower.Contains("modificar") ||
+                               textoLower.Contains("reagendar") ||
+                               textoLower.Contains("adicionar") ||
+                               textoLower.Contains("atualizar");
+
+            if (ehAlteracao)
+            {
+                // ✨ NOVIDADE: Verificar se cliente tem apenas 1 reserva ativa
+                var conversa = await _conversationRepository.ObterPorIdAsync(idConversa);
+                if (conversa != null)
+                {
+                    var reservasAtivas = await ObterReservasAtivasAsync(conversa.IdCliente, conversa.IdEstabelecimento);
+
+                    // ✅ Se tem APENAS 1 reserva, não precisa de filtro!
+                    if (reservasAtivas.Count == 1)
+                    {
+                        _logger.LogInformation(
+                            "[Conversa={Conversa}] Cliente tem apenas 1 reserva - fast-path DIRETO",
+                            idConversa);
+
+                        var reserva = reservasAtivas.First();
+
+                        // Tentar extrair dados da mensagem
+                        var novoHorario = ExtrairHorario(mensagemTexto);
+                        var novaQtd = ExtrairQuantidade(mensagemTexto);
+
+                        // Se conseguiu extrair dados, monta confirmação
+                        if (novoHorario != null || novaQtd.HasValue)
+                        {
+                            var textoMin = mensagemTexto.ToLower();
+                            var isDelta = textoMin.Contains("adicionar") || textoMin.Contains("somar") ||
+                                         textoMin.Contains("a mais") || textoMin.Contains("a+") || textoMin.Contains("+");
+
+                            var qtdAtual = reserva.QtdPessoas ?? 0;
+                            var qtdDepois = novaQtd.HasValue ? (isDelta ? Math.Max(0, qtdAtual + novaQtd.Value) : novaQtd.Value) : qtdAtual;
+                            var horaAtual = reserva.HoraInicio.ToString(@"hh\:mm");
+                            var horaDepois = string.IsNullOrWhiteSpace(novoHorario) ? horaAtual : novoHorario!;
+
+                            var reply = BuildMsgConfirmacaoAlteracao(
+                                reserva.Id,
+                                reserva.DataReserva,
+                                horaAtual,
+                                horaDepois,
+                                qtdAtual,
+                                qtdDepois);
+
+                            await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
+                            {
+                                Estado = "aguardando_confirmacao_alteracao",
+                                ReservaIdPendente = reserva.Id,
+                                DadosColetados = new Dictionary<string, object>
+                                {
+                                    { "reserva_id", reserva.Id },
+                                    { "novo_horario", horaDepois },
+                                    { "nova_qtd", qtdDepois }
+                                },
+                                ExpiracaoEstado = DateTime.UtcNow.AddMinutes(10)
+                            });
+
+                            await SalvarMensagemRespostaAsync(idConversa, reply);
+                            return (true, new AssistantDecision(reply, "none", null, false, null, null));
+                        }
+                        else
+                        {
+                            // Não conseguiu extrair dados, mostra a reserva e pede os dados
+                            var cliente = await _clienteRepository.ObterPorIdAsync(reserva.IdCliente);
+                            var nomeCliente = cliente?.Nome ?? "Cliente";
+
+                            var msg = new StringBuilder();
+                            msg.AppendLine($"📋 Reserva #{reserva.Id} - Informações atuais:");
+                            msg.AppendLine();
+                            msg.AppendLine($"👤 Nome: {nomeCliente}");
+                            msg.AppendLine($"📅 Data: {reserva.DataReserva:dd/MM/yyyy} ({reserva.DataReserva:dddd})");
+                            msg.AppendLine($"⏰ Horário: {reserva.HoraInicio:hh\\:mm}");
+                            msg.AppendLine($"👥 Pessoas: {reserva.QtdPessoas}");
+                            msg.AppendLine();
+                            msg.AppendLine("O que você quer alterar? 😊");
+                            msg.AppendLine("• Horário (ex: 20h, 19:30)");
+                            msg.AppendLine("• Quantidade (ex: 8 pessoas, adicionar 2)");
+
+                            await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
+                            {
+                                Estado = "aguardando_dados_alteracao",
+                                ReservaIdPendente = reserva.Id,
+                                DadosColetados = new Dictionary<string, object>
+                                {
+                                    { "reserva_id", reserva.Id },
+                                    { "data_atual", reserva.DataReserva.ToString("yyyy-MM-dd") },
+                                    { "hora_atual", reserva.HoraInicio.ToString(@"hh\:mm") },
+                                    { "qtd_atual", reserva.QtdPessoas ?? 0 }
+                                },
+                                ExpiracaoEstado = DateTime.UtcNow.AddMinutes(30)
+                            });
+
+                            var reply = msg.ToString();
+                            await SalvarMensagemRespostaAsync(idConversa, reply);
+                            return (true, new AssistantDecision(reply, "none", null, false, null, null));
+                        }
+                    }
+
+                    // ✅ Se tem múltiplas reservas E tem filtro, processa direto
+                    var temFiltro = MensagemContemFiltro(mensagemTexto);
+
+                    if (temFiltro)
+                    {
+                        _logger.LogInformation(
+                            "[Conversa={Conversa}] Cliente especificou filtro - fast-path direto no interceptor",
+                            idConversa);
+
+                        var (ok, dec) = await ProcessarAlteracaoDiretaAsync(idConversa, mensagemTexto);
+                        if (ok) return (true, dec);
+                    }
+                }
+
+                _logger.LogInformation(
+                    "[Conversa={Conversa}] Alteração com múltiplas reservas sem filtro - IA vai listar primeiro",
+                    idConversa);
+            }
+            // ═══════ FIM DETECÇÃO ═══════
+
             var contexto = await _conversationRepository.ObterContextoAsync(idConversa);
 
             if (contexto == null || string.IsNullOrWhiteSpace(contexto.Estado))
@@ -386,6 +526,189 @@ namespace APIBack.Automation.Services
             await Task.CompletedTask;
         }
 
+        private async Task<(bool, AssistantDecision?)> ProcessarAlteracaoDiretaAsync(
+            Guid idConversa,
+            string mensagemTexto)
+        {
+            var novoHorario = ExtrairHorario(mensagemTexto);
+            var qtd = ExtrairQuantidade(mensagemTexto);
+            var textoMin = mensagemTexto.ToLower();
+            var isDelta = textoMin.Contains("adicionar") || textoMin.Contains("somar") ||
+                         textoMin.Contains("a mais") || textoMin.Contains("a+") || textoMin.Contains("+");
+
+            var dataPreferida = ExtrairDataPreferencial(mensagemTexto);
+            if (!dataPreferida.HasValue)
+            {
+                return (false, null); // Sem data, deixa a IA processar
+            }
+
+            var conversa = await _conversationRepository.ObterPorIdAsync(idConversa);
+            if (conversa == null || conversa.IdCliente == Guid.Empty)
+            {
+                return (false, null);
+            }
+
+            var idCliente = conversa.IdCliente;
+            var idEstabelecimento = conversa.IdEstabelecimento;
+
+            // Buscar todas as reservas confirmadas futuras do cliente
+            var todasReservas = await _reservaRepository.ObterPorClienteEstabelecimentoAsync(idCliente, idEstabelecimento);
+            var agora = TimeZoneHelper.GetSaoPauloNow();
+            var futuras = todasReservas
+                .Where(r => r.Status == APIBack.Model.ReservaStatus.Confirmado &&
+                           r.DataReserva.Date.Add(r.HoraInicio) > agora)
+                .ToList();
+
+            // Regra: 1 reserva por dia por cliente
+            var alvo = futuras.FirstOrDefault(r => r.DataReserva.Date == dataPreferida.Value.Date);
+            if (alvo == null)
+            {
+                var diaNum = ExtrairDiaNumerico(mensagemTexto);
+                if (diaNum.HasValue)
+                    alvo = futuras.FirstOrDefault(r => r.DataReserva.Day == diaNum.Value);
+            }
+
+            if (alvo == null)
+            {
+                return (false, null); // Sem reserva, deixa a IA processar
+            }
+
+            var qtdAtual = alvo.QtdPessoas ?? 0;
+            var qtdDepois = qtd.HasValue ? (isDelta ? Math.Max(0, qtdAtual + qtd.Value) : qtd.Value) : qtdAtual;
+            var horaAtual = alvo.HoraInicio.ToString(@"hh\:mm");
+            var horaDepois = string.IsNullOrWhiteSpace(novoHorario) ? horaAtual : novoHorario!;
+
+            var reply = BuildMsgConfirmacaoAlteracao(alvo.Id, alvo.DataReserva, horaAtual, horaDepois, qtdAtual, qtdDepois);
+
+            await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
+            {
+                Estado = "aguardando_confirmacao_alteracao",
+                ReservaIdPendente = alvo.Id,
+                DadosColetados = new Dictionary<string, object>
+                {
+                    { "reserva_id", alvo.Id },
+                    { "novo_horario", horaDepois },
+                    { "nova_qtd", qtdDepois }
+                },
+                ExpiracaoEstado = DateTime.UtcNow.AddMinutes(10)
+            });
+
+            await SalvarMensagemRespostaAsync(idConversa, reply);
+            return (true, new AssistantDecision(reply, "none", null, false, null, null));
+        }
+
+        private DateTime? ExtrairDataPreferencial(string texto)
+        {
+            if (string.IsNullOrWhiteSpace(texto)) return null;
+            var referencia = TimeZoneHelper.GetSaoPauloNow().Date;
+            var norm = RemoveDiacritics(texto.ToLower()).Replace("-feira", "");
+
+            if (norm.Contains("hoje")) return referencia;
+            if (norm.Contains("amanha") || norm.Contains("amanhã")) return referencia.AddDays(1);
+            if (norm.Contains("depois de amanha")) return referencia.AddDays(2);
+
+            var dias = new Dictionary<string, DayOfWeek> {
+                {"domingo", DayOfWeek.Sunday}, {"segunda", DayOfWeek.Monday},
+                {"terca", DayOfWeek.Tuesday}, {"terça", DayOfWeek.Tuesday},
+                {"quarta", DayOfWeek.Wednesday}, {"quinta", DayOfWeek.Thursday},
+                {"sexta", DayOfWeek.Friday}, {"sabado", DayOfWeek.Saturday},
+                {"sábado", DayOfWeek.Saturday}
+            };
+            foreach (var kv in dias)
+            {
+                if (norm.Contains(kv.Key))
+                {
+                    var d = referencia.AddDays(1);
+                    while (d.DayOfWeek != kv.Value) d = d.AddDays(1);
+                    if (norm.Contains("que vem") || norm.Contains("proxima") || norm.Contains("próxima"))
+                        d = d.AddDays(7);
+                    return d.Date;
+                }
+            }
+
+            if (DateTime.TryParseExact(norm, "dd/MM/yyyy", System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out var exata))
+                return exata.Date;
+
+            if (DateTime.TryParseExact(norm, "dd/MM", System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out var parcial))
+            {
+                var ano = referencia.Year;
+                var comp = new DateTime(ano, parcial.Month, parcial.Day);
+                if (comp < referencia) comp = comp.AddYears(1);
+                return comp.Date;
+            }
+
+            if (DateTime.TryParse(texto, new System.Globalization.CultureInfo("pt-BR"),
+                System.Globalization.DateTimeStyles.None, out var livre))
+                return livre.Date;
+
+            return null;
+        }
+
+        private int? ExtrairDiaNumerico(string texto)
+        {
+            if (string.IsNullOrWhiteSpace(texto)) return null;
+            var m = Regex.Match(texto.ToLower(), @"dia\s*(\d{1,2})");
+            if (m.Success && int.TryParse(m.Groups[1].Value, out var dia)) return dia;
+            return null;
+        }
+
+        private static string RemoveDiacritics(string value)
+        {
+            var normalized = value.Normalize(System.Text.NormalizationForm.FormD);
+            var sb = new StringBuilder(normalized.Length);
+            foreach (var ch in normalized)
+            {
+                var cat = System.Globalization.CharUnicodeInfo.GetUnicodeCategory(ch);
+                if (cat != System.Globalization.UnicodeCategory.NonSpacingMark) sb.Append(ch);
+            }
+            return sb.ToString().Normalize(System.Text.NormalizationForm.FormC);
+        }
+
+        private string BuildMsgConfirmacaoAlteracao(
+            long codigoReserva,
+            DateTime data,
+            string horaAntes,
+            string horaDepois,
+            int qtdAntes,
+            int qtdDepois)
+        {
+            var ptbr = new System.Globalization.CultureInfo("pt-BR");
+            var sb = new StringBuilder();
+            sb.AppendLine($"📋 Reserva #{codigoReserva} - Confirme as alterações:");
+            sb.AppendLine();
+            sb.AppendLine($"📅 Data: {data:dd/MM/yyyy} ({data.ToString("dddd", ptbr)})");
+            sb.AppendLine();
+
+            sb.AppendLine("⏰ HORÁRIO:");
+            if (horaDepois == horaAntes)
+            {
+                sb.AppendLine($"✔ Mantém: {horaAntes}");
+            }
+            else
+            {
+                sb.AppendLine($"❌ Antes: {horaAntes}");
+                sb.AppendLine($"✅ Depois: {horaDepois}");
+            }
+            sb.AppendLine();
+
+            sb.AppendLine("👥 PESSOAS:");
+            if (qtdDepois == qtdAntes)
+            {
+                sb.AppendLine($"✔ Mantém: {qtdAntes}");
+            }
+            else
+            {
+                sb.AppendLine($"❌ Antes: {qtdAntes}");
+                sb.AppendLine($"✅ Depois: {qtdDepois}");
+            }
+            sb.AppendLine();
+            sb.Append("Confirma essas mudanças? 😊");
+
+            return sb.ToString();
+        }
+
         private bool MensagemContemFiltro(string mensagem)
         {
             if (string.IsNullOrWhiteSpace(mensagem))
@@ -393,34 +716,48 @@ namespace APIBack.Automation.Services
 
             var textoLower = mensagem.ToLower();
 
-            // Detectar código
+            // Detectar código (#16, "código 16", "reserva 16")
             if (Regex.IsMatch(textoLower,
                 @"#\d+|c[oó]digo\s*\d+|reserva\s*\d+"))
+            {
+                _logger.LogInformation("[ContextInterceptor] Filtro detectado: CÓDIGO");
                 return true;
+            }
 
-            // Detectar dia específico
+            // Detectar dia específico ("dia 15", "15/10")
             if (Regex.IsMatch(textoLower,
                 @"dia\s*\d{1,2}|\d{1,2}/\d{1,2}|\d{1,2}\s+de\s+\w+"))
+            {
+                _logger.LogInformation("[ContextInterceptor] Filtro detectado: DIA ESPECÍFICO");
                 return true;
+            }
 
             // Detectar dia da semana
             var diasSemana = new[] { "domingo", "segunda", "terça", "terca",
                 "quarta", "quinta", "sexta", "sábado", "sabado" };
             if (diasSemana.Any(dia => textoLower.Contains(dia)))
+            {
+                _logger.LogInformation("[ContextInterceptor] Filtro detectado: DIA DA SEMANA");
                 return true;
+            }
 
             // Detectar referência temporal
-            var temporais = new[] { "hoje", "amanhã", "amanha",
-                "depois de amanhã", "depois de amanha" };
-            if (temporais.Any(temp => textoLower.Contains(temp)))
+            if (textoLower.Contains("hoje") || textoLower.Contains("amanhã") ||
+                textoLower.Contains("amanha"))
+            {
+                _logger.LogInformation("[ContextInterceptor] Filtro detectado: TEMPORAL");
                 return true;
+            }
 
             // Detectar mês
             var meses = new[] { "janeiro", "fevereiro", "março", "marco",
                 "abril", "maio", "junho", "julho", "agosto", "setembro",
                 "outubro", "novembro", "dezembro" };
             if (meses.Any(mes => textoLower.Contains(mes)))
+            {
+                _logger.LogInformation("[ContextInterceptor] Filtro detectado: MÊS");
                 return true;
+            }
 
             return false;
         }

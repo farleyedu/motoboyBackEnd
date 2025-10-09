@@ -57,20 +57,23 @@ namespace APIBack.Automation.Services
         private readonly IConversationRepository _conversationRepository;
         private readonly HandoverService _handoverService;
         private readonly IReservaRepository _reservaRepository;
-        private readonly ReservaValidator _reservaValidator; // ✨ NOVO
+        private readonly ReservaValidator _reservaValidator;
+        private readonly IClienteRepository _clienteRepository;
 
         public ToolExecutorService(
             ILogger<ToolExecutorService> logger,
             IConversationRepository conversationRepository,
             HandoverService handoverService,
             IReservaRepository reservaRepository,
-            ReservaValidator reservaValidator) // ✨ NOVO
+            ReservaValidator reservaValidator,
+            IClienteRepository clienteRepository)
         {
             _logger = logger;
             _conversationRepository = conversationRepository;
             _handoverService = handoverService;
             _reservaRepository = reservaRepository;
-            _reservaValidator = reservaValidator; // ✨ NOVO
+            _reservaValidator = reservaValidator;
+            _clienteRepository = clienteRepository;
         }
 
         public object[] GetDeclaredTools(Guid idConversa)
@@ -841,8 +844,6 @@ namespace APIBack.Automation.Services
             var reservasAtivas = reservasExistentes
                 .Where(r => {
                     if (r.Status != ReservaStatus.Confirmado) return false;
-
-                    // Data+hora precisa ser futura
                     var dataHoraReserva = r.DataReserva.Date.Add(r.HoraInicio);
                     return dataHoraReserva > referenciaAtual;
                 })
@@ -855,7 +856,49 @@ namespace APIBack.Automation.Services
                 return BuildJsonReply("Não encontrei reservas ativas no seu nome.\n\nQuer fazer uma nova reserva? 😊");
             }
 
-            // Salvar mapeamento de números para IDs no contexto
+            // ✨ FAST-PATH: Se só tem 1 reserva, vai direto para coleta de dados
+            if (reservasAtivas.Count == 1)
+            {
+                var reserva = reservasAtivas.First();
+                var cliente = await _clienteRepository.ObterPorIdAsync(reserva.IdCliente);
+                var nomeCliente = cliente?.Nome ?? "Cliente";
+
+                _logger.LogInformation(
+                    "[Conversa={Conversa}] Cliente tem apenas 1 reserva. Fast-path direto para alteração.",
+                    idConversa);
+
+                // Salvar contexto para aguardar dados de alteração
+                await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
+                {
+                    Estado = "aguardando_dados_alteracao",
+                    ReservaIdPendente = reserva.Id,
+                    DadosColetados = new Dictionary<string, object>
+                    {
+                        { "reserva_id", reserva.Id },
+                        { "data_atual", reserva.DataReserva.ToString("yyyy-MM-dd") },
+                        { "hora_atual", reserva.HoraInicio.ToString(@"hh\:mm") },
+                        { "qtd_atual", reserva.QtdPessoas ?? 0 }
+                    },
+                    ExpiracaoEstado = DateTime.UtcNow.AddMinutes(30)
+                });
+
+                var msg = new StringBuilder();
+                msg.AppendLine($"📋 Reserva #{reserva.Id} - Informações completas:");
+                msg.AppendLine();
+                msg.AppendLine($"👤 Nome: {nomeCliente}");
+                msg.AppendLine($"📅 Data: {reserva.DataReserva:dd/MM/yyyy} ({reserva.DataReserva:dddd})");
+                msg.AppendLine($"⏰ Horário: {reserva.HoraInicio:hh\\:mm}");
+                msg.AppendLine($"👥 Pessoas: {reserva.QtdPessoas}");
+                msg.AppendLine($"🎫 Código: #{reserva.Id}");
+                msg.AppendLine();
+                msg.AppendLine("O que você quer alterar? 😊");
+                msg.AppendLine("• Horário");
+                msg.AppendLine("• Quantidade de pessoas");
+
+                return BuildJsonReply(msg.ToString());
+            }
+
+            // ✨ Se tem múltiplas reservas, aí sim precisa listar
             var mapeamento = new Dictionary<int, long>();
             for (int i = 0; i < reservasAtivas.Count; i++)
             {
@@ -878,25 +921,25 @@ namespace APIBack.Automation.Services
                 ExpiracaoEstado = DateTime.UtcNow.AddMinutes(30)
             });
 
-            var msg = new StringBuilder();
-            msg.AppendLine("📋 Encontrei estas reservas ativas:");
-            msg.AppendLine();
+            var msgLista = new StringBuilder();
+            msgLista.AppendLine("📋 Encontrei estas reservas ativas:");
+            msgLista.AppendLine();
 
             int numero = 1;
             foreach (var r in reservasAtivas)
             {
                 var emoji = numero == 1 ? "1️⃣" : numero == 2 ? "2️⃣" : numero == 3 ? "3️⃣" : $"{numero}️⃣";
-                msg.AppendLine($"{emoji} Reserva #{r.Id}");
-                msg.AppendLine($"📅 Data: {r.DataReserva:dd/MM/yyyy} ({r.DataReserva:dddd})");
-                msg.AppendLine($"⏰ Horário: {r.HoraInicio:hh\\:mm}");
-                msg.AppendLine($"👥 Pessoas: {r.QtdPessoas}");
-                msg.AppendLine();
+                msgLista.AppendLine($"{emoji} Reserva #{r.Id}");
+                msgLista.AppendLine($"📅 Data: {r.DataReserva:dd/MM/yyyy} ({r.DataReserva:dddd})");
+                msgLista.AppendLine($"⏰ Horário: {r.HoraInicio:hh\\:mm}");
+                msgLista.AppendLine($"👥 Pessoas: {r.QtdPessoas}");
+                msgLista.AppendLine();
                 numero++;
             }
 
-            msg.Append("Qual você quer alterar? Digite o número (1, 2...) 😊");
+            msgLista.Append("Qual você quer alterar? Digite o número (1, 2...) 😊");
 
-            return BuildJsonReply(msg.ToString());
+            return BuildJsonReply(msgLista.ToString());
         }
 
         public Task<object[]> GetToolsForOpenAI(Guid idConversa)
