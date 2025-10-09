@@ -89,6 +89,16 @@ namespace APIBack.Automation.Services
             string? dataTexto,
             string? horaTexto)
         {
+            // ✅ LOG PARA DEBUG - Ver exatamente o que foi recebido
+            _logger.LogInformation(
+                "[Conversa={Conversa}] ValidateReservaAsync - Nome: '{Nome}', Qtd: {Qtd}, Data: '{Data}', Hora: '{Hora}'",
+                idConversa, nomeCompleto ?? "null", qtdPessoas, dataTexto ?? "null", horaTexto ?? "null");
+
+            // ✅ LOG DA REFERÊNCIA ATUAL
+            var referenciaAtual = TimeZoneHelper.GetSaoPauloNow();
+            _logger.LogInformation(
+                "[Conversa={Conversa}] Referência atual (São Paulo): {Data:yyyy-MM-dd HH:mm:ss}",
+                idConversa, referenciaAtual);
 
             // 1. Validar dados básicos
             if (string.IsNullOrWhiteSpace(nomeCompleto) ||
@@ -110,7 +120,6 @@ namespace APIBack.Automation.Services
             }
 
             // 3. Parsear e validar data
-            var referenciaAtual = TimeZoneHelper.GetSaoPauloNow();
             var dataCalculada = ParseDataRelativa(dataTexto, referenciaAtual);
 
             if (!dataCalculada.HasValue)
@@ -307,8 +316,9 @@ namespace APIBack.Automation.Services
         private async Task<(bool TemCapacidade, int CapacidadeTotal, int VagasOcupadas, int VagasDisponiveis)>
             ObterInformacoesCapacidadeAsync(Guid idEstabelecimento, DateTime dataReserva, int qtdPessoasSolicitada)
         {
-            var hoje = DateTime.Today;
-            var mesmoDia = dataReserva.Date == hoje;
+            // ✅ Usar horário de São Paulo para comparação
+            var hojeEmSaoPaulo = TimeZoneHelper.GetSaoPauloNow().Date;
+            var mesmoDia = dataReserva.Date == hojeEmSaoPaulo;
             var capacidadeTotal = mesmoDia ? 50 : 110;
 
             var ocupadas = await _reservaRepository.SomarPessoasDoDiaAsync(idEstabelecimento, dataReserva.Date);
@@ -320,7 +330,20 @@ namespace APIBack.Automation.Services
 
         private static bool TryParseHora(string horaTexto, out TimeSpan hora)
         {
-            return TimeSpan.TryParseExact(horaTexto, @"hh\:mm", System.Globalization.CultureInfo.InvariantCulture, out hora);
+            // Tentar formato 24h primeiro (HH:mm) - CORRIGE O BUG
+            if (TimeSpan.TryParseExact(horaTexto, @"HH\:mm", System.Globalization.CultureInfo.InvariantCulture, out hora))
+            {
+                return true;
+            }
+
+            // Fallback: tentar formato 12h (hh:mm)
+            if (TimeSpan.TryParseExact(horaTexto, @"hh\:mm", System.Globalization.CultureInfo.InvariantCulture, out hora))
+            {
+                return true;
+            }
+
+            // Último fallback: parse livre
+            return TimeSpan.TryParse(horaTexto, System.Globalization.CultureInfo.InvariantCulture, out hora);
         }
 
         private DateTime? ParseDataRelativa(string dataTexto, DateTime referenciaAtual)
@@ -331,10 +354,31 @@ namespace APIBack.Automation.Services
             var textoNormalizado = RemoveDiacritics(dataTexto.ToLowerInvariant().Trim()).Replace("-feira", string.Empty);
             var hoje = referenciaAtual.Date;
 
+            // ✅ LOG PARA DEBUG
+            _logger.LogDebug(
+                "[ParseDataRelativa] Input: '{DataTexto}', Normalizado: '{Normalizado}', Hoje: {Hoje:yyyy-MM-dd}",
+                dataTexto, textoNormalizado, hoje);
+
             // Termos relativos exatos
-            if (textoNormalizado == "hoje") return hoje;
-            if (textoNormalizado == "amanha") return hoje.AddDays(1);
-            if (textoNormalizado == "depois de amanha") return hoje.AddDays(2);
+            if (textoNormalizado == "hoje")
+            {
+                _logger.LogDebug("[ParseDataRelativa] Detectado: HOJE = {Data:yyyy-MM-dd}", hoje);
+                return hoje;
+            }
+
+            if (textoNormalizado == "amanha")
+            {
+                var amanha = hoje.AddDays(1);
+                _logger.LogDebug("[ParseDataRelativa] Detectado: AMANHÃ = {Data:yyyy-MM-dd}", amanha);
+                return amanha;
+            }
+
+            if (textoNormalizado == "depois de amanha")
+            {
+                var depoisDeAmanha = hoje.AddDays(2);
+                _logger.LogDebug("[ParseDataRelativa] Detectado: DEPOIS DE AMANHÃ = {Data:yyyy-MM-dd}", depoisDeAmanha);
+                return depoisDeAmanha;
+            }
 
             // Dias da semana
             var diasDaSemana = new System.Collections.Generic.Dictionary<string, DayOfWeek>
