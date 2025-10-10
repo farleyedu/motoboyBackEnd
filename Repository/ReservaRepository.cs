@@ -14,13 +14,11 @@ namespace APIBack.Repository
     {
         private readonly NpgsqlDataSource _dataSource;
 
-        // 2. Receba NpgsqlDataSource no construtor em vez de IConfiguration
         public ReservaRepository(NpgsqlDataSource dataSource)
         {
             _dataSource = dataSource;
         }
 
-        // helper local (pode subir para uma classe util depois)
         private static string ToPgStatus(ReservaStatus s) => s switch
         {
             ReservaStatus.Pendente => "pendente",
@@ -53,11 +51,10 @@ RETURNING id;";
                 DataReserva = entity.DataReserva.Date,
                 entity.HoraInicio,
                 entity.HoraFim,
-                Status = ToPgStatus(entity.Status), // << agora bate com o enum do PG
+                Status = ToPgStatus(entity.Status),
                 entity.Observacoes
             });
         }
-
 
         public async Task<Reserva?> BuscarPorIdAsync(long id)
         {
@@ -144,18 +141,27 @@ RETURNING id;";
             return await connection.ExecuteAsync(sql, new { Id = id });
         }
 
+        // ✨ CORRIGIDO: Método CancelarReservaAsync agora usa cast correto
         public async Task<int> CancelarReservaAsync(long id)
         {
             var dataAtualizacao = DateTime.UtcNow;
 
+            // ✨ MUDANÇA: Adicionado @Status com cast ::status_reserva ao invés de string literal
             const string sql = @"UPDATE reservas
-                                   SET status = 'cancelado',
+                                   SET status = @Status::status_reserva,
                                        data_atualizacao = @DataAtualizacao
-                                   WHERE id = @Id AND status <> 'cancelado';";
+                                   WHERE id = @Id AND status <> @StatusCancelado::status_reserva;";
 
             await using var connection = await _dataSource.OpenConnectionAsync();
 
-            return await connection.ExecuteAsync(sql, new { Id = id, DataAtualizacao = dataAtualizacao });
+            // ✨ MUDANÇA: Usa helper ToPgStatus() para gerar as strings corretas
+            return await connection.ExecuteAsync(sql, new
+            {
+                Id = id,
+                DataAtualizacao = dataAtualizacao,
+                Status = ToPgStatus(ReservaStatus.Cancelado),
+                StatusCancelado = ToPgStatus(ReservaStatus.Cancelado)
+            });
         }
 
         public async Task<bool> BuscarDisponibilidadeAsync(Guid idEstabelecimento, DateTime dataReserva, TimeSpan horaInicio, TimeSpan? horaFim, long? idProfissional = null)
@@ -200,7 +206,6 @@ RETURNING id;";
                 DataReserva = dataReserva.Date
             });
         }
-        // Adicione este método na classe ReservaRepository
 
         public async Task<List<Reserva>> ObterPorClienteEstabelecimentoAsync(Guid idCliente, Guid idEstabelecimento)
         {

@@ -1,9 +1,8 @@
 ﻿// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
-// MUDANÇAS PRINCIPAIS:
-// 1. Timeout aumentado de 100s para 120s
-// 2. Retry automático (3 tentativas) em caso de timeout
-// 3. Mensagens de erro mais específicas para o usuário
-// 4. Logging melhorado para debugging
+// ✨ MUDANÇAS PRINCIPAIS:
+// 1. Adicionados logs [MEMORIA-DEBUG] para rastrear histórico enviado à OpenAI
+// 2. Timeout aumentado de 100s para 120s
+// 3. Retry automático (3 tentativas) em caso de timeout
 
 using System;
 using System.Collections.Generic;
@@ -32,9 +31,8 @@ namespace APIBack.Automation.Services
         private const string MensagemFallback = "Desculpe, não consegui entender agora 🤔. Pode me contar de novo, por favor?";
         private const string MensagemTimeoutFallback = "Desculpe, estou levando mais tempo que o esperado para processar 😔. Pode tentar novamente?";
 
-        // ✨ Configurações de retry
         private const int MaxRetryAttempts = 3;
-        private const int TimeoutSeconds = 120; // Aumentado de 100 para 120
+        private const int TimeoutSeconds = 120;
 
         private readonly IHttpClientFactory _httpFactory;
         private readonly ILogger<AssistantService> _logger;
@@ -81,9 +79,18 @@ namespace APIBack.Automation.Services
 
             var messages = new List<object> { new { role = "system", content = contextoTexto! } };
 
+            // ✨ ADICIONADO: Log do histórico sendo montado
             if (historico != null)
             {
-                foreach (var turn in historico)
+                var historicoList = historico.ToList();
+
+                _logger.LogWarning(
+                    "[MEMORIA-DEBUG] Conversa={Conversa} | Histórico contém {Count} turnos",
+                    idConversa,
+                    historicoList.Count);
+
+                int turnoIndex = 1;
+                foreach (var turn in historicoList)
                 {
                     if (string.IsNullOrWhiteSpace(turn.Content))
                     {
@@ -92,12 +99,39 @@ namespace APIBack.Automation.Services
 
                     var role = string.Equals(turn.Role, "assistant", StringComparison.OrdinalIgnoreCase) ? "assistant" : "user";
                     messages.Add(new { role, content = turn.Content });
+
+                    // ✨ ADICIONADO: Log de cada turno (primeiros 100 caracteres)
+                    var preview = turn.Content.Length > 100
+                        ? turn.Content.Substring(0, 100) + "..."
+                        : turn.Content;
+
+                    _logger.LogWarning(
+                        "[MEMORIA-DEBUG] Conversa={Conversa} | Turno {Index}/{Total}: {Role} = '{Preview}'",
+                        idConversa,
+                        turnoIndex,
+                        historicoList.Count,
+                        turn.Role,
+                        preview);
+
+                    turnoIndex++;
                 }
             }
 
             messages.Add(new { role = "user", content = textoUsuario });
 
-            // Obter lista de tools disponíveis
+            // ✨ ADICIONADO: Log final com total de mensagens enviadas
+            _logger.LogWarning(
+                "[MEMORIA-DEBUG] Conversa={Conversa} | Enviando {Count} mensagens para OpenAI (1 system + {Historico} histórico + 1 atual)",
+                idConversa,
+                messages.Count,
+                (historico?.Count() ?? 0));
+
+            // ✨ ADICIONADO: Log da mensagem atual do usuário
+            _logger.LogWarning(
+                "[MEMORIA-DEBUG] Conversa={Conversa} | Mensagem atual do usuário: '{Texto}'",
+                idConversa,
+                textoUsuario);
+
             var toolsArray = await _toolExecutor.GetToolsForOpenAI(idConversa);
 
             var payload = new
@@ -112,7 +146,6 @@ namespace APIBack.Automation.Services
             var json = JsonSerializer.Serialize(payload, JsonOptions);
             _logger.LogDebug("[Conversa={Conversa}] Payload enviado para OpenAI: {Payload}", idConversa, json);
 
-            // ✨ RETRY LOGIC - Tenta até 3 vezes em caso de timeout
             Exception? lastException = null;
 
             for (int attempt = 1; attempt <= MaxRetryAttempts; attempt++)
@@ -137,7 +170,6 @@ namespace APIBack.Automation.Services
 
                     var body = await response.Content.ReadAsStringAsync();
 
-                    // Verificar se OpenAI retornou tool_calls
                     using var docCheck = JsonDocument.Parse(body);
                     if (docCheck.RootElement.TryGetProperty("choices", out var choicesArray) &&
                         choicesArray.GetArrayLength() > 0)
@@ -157,10 +189,8 @@ namespace APIBack.Automation.Services
                                 idConversa,
                                 functionName);
 
-                            // Executar tool
                             var toolResult = await _toolExecutor.ExecuteToolAsync(functionName!, functionArgs!);
 
-                            // Retornar resultado como decisão de responder
                             return new AssistantDecision(
                                 Reply: toolResult,
                                 HandoverAction: "none",
@@ -176,15 +206,14 @@ namespace APIBack.Automation.Services
                     {
                         _logger.LogWarning("[Conversa={Conversa}] OpenAI retornou status {Status}: {Body}", idConversa, (int)response.StatusCode, body);
 
-                        // Se for erro 429 (rate limit) ou 503 (service unavailable), tenta retry
                         if ((int)response.StatusCode == 429 || (int)response.StatusCode == 503)
                         {
                             if (attempt < MaxRetryAttempts)
                             {
-                                var delayMs = attempt * 2000; // 2s, 4s, 6s...
+                                var delayMs = attempt * 2000;
                                 _logger.LogInformation("[Conversa={Conversa}] Aguardando {Delay}ms antes do retry", idConversa, delayMs);
                                 await Task.Delay(delayMs);
-                                continue; // Tenta novamente
+                                continue;
                             }
                         }
 
@@ -214,7 +243,6 @@ namespace APIBack.Automation.Services
                         return FallbackDecision();
                     }
 
-                    // Se não começar com {, a IA retornou texto plano - wrappear em JSON
                     var contentToSend = messageContent!.TrimStart();
                     if (!contentToSend.StartsWith("{"))
                     {
@@ -229,7 +257,6 @@ namespace APIBack.Automation.Services
 
                     iaAction.Media = SanitizeMedia(iaAction.Media, idConversa);
 
-                    // ✅ Sucesso - processar decisão da IA
                     return await ProcessarDecisaoIA(iaAction, idConversa, historico);
                 }
                 catch (TaskCanceledException ex)
@@ -240,7 +267,7 @@ namespace APIBack.Automation.Services
                     if (attempt < MaxRetryAttempts)
                     {
                         _logger.LogInformation("[Conversa={Conversa}] Tentando novamente após timeout...", idConversa);
-                        await Task.Delay(1000 * attempt); // Delay progressivo: 1s, 2s, 3s
+                        await Task.Delay(1000 * attempt);
                         continue;
                     }
                 }
@@ -267,14 +294,10 @@ namespace APIBack.Automation.Services
                 }
             }
 
-            // ❌ Todas as tentativas falharam
             _logger.LogError(lastException, "[Conversa={Conversa}] Todas as {Max} tentativas falharam ao consultar OpenAI", idConversa, MaxRetryAttempts);
             return new AssistantDecision(MensagemTimeoutFallback, "none", null, false, null, null);
         }
 
-        /// <summary>
-        /// Processa a decisão retornada pela IA
-        /// </summary>
         private async Task<AssistantDecision> ProcessarDecisaoIA(IaActionResponse iaAction, Guid idConversa, IEnumerable<AssistantChatTurn>? historico)
         {
             switch (iaAction.Acao?.ToLowerInvariant())
@@ -287,7 +310,6 @@ namespace APIBack.Automation.Services
 
                 case "confirmar_reserva":
                     {
-                        // ✨ Validação prévia já está no ToolExecutorService via ReservaValidator
                         if (iaAction.DadosReserva is null || !iaAction.DadosReserva.PossuiCamposEssenciais())
                         {
                             _logger.LogWarning("[Conversa={Conversa}] IA sugeriu confirmar reserva sem dados suficientes", idConversa);
@@ -343,7 +365,6 @@ namespace APIBack.Automation.Services
                                 iaAction.Media);
                         }
 
-                        // Validação de escalação
                         var historicoMensagens = historico?.Select(h => h.Content ?? string.Empty) ?? Array.Empty<string>();
                         var textoUsuario = historicoMensagens.LastOrDefault() ?? string.Empty;
 
@@ -383,8 +404,6 @@ namespace APIBack.Automation.Services
             }
         }
 
-        // ... (resto dos métodos permanecem iguais: TryParseIaAction, BuildInvalidFormatDecision, FallbackDecision, ExtrairRespostaDaFerramenta, SanitizeMedia, classes internas)
-
         private bool TryParseIaAction(string jsonContent, Guid idConversa, out IaActionResponse iaAction, out AssistantDecision? decisionErro)
         {
             decisionErro = null;
@@ -402,7 +421,6 @@ namespace APIBack.Automation.Services
                     return false;
                 }
 
-                // Campo 'acao' é obrigatório
                 if (!root.TryGetProperty("acao", out var acaoElement) ||
                     acaoElement.ValueKind != JsonValueKind.String ||
                     string.IsNullOrWhiteSpace(acaoElement.GetString()))
@@ -412,7 +430,6 @@ namespace APIBack.Automation.Services
                     return false;
                 }
 
-                // Campo 'reply' é obrigatório
                 if (!root.TryGetProperty("reply", out var replyElement) ||
                     (replyElement.ValueKind != JsonValueKind.String && replyElement.ValueKind != JsonValueKind.Null))
                 {
@@ -421,7 +438,6 @@ namespace APIBack.Automation.Services
                     return false;
                 }
 
-                // Campos opcionais - apenas logar, NÃO rejeitar
                 if (!root.TryGetProperty("dadosReserva", out var dadosReservaElement))
                 {
                     _logger.LogDebug("[Conversa={Conversa}] Campo 'dadosReserva' ausente, usando null", idConversa);

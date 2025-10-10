@@ -1,4 +1,9 @@
 ﻿// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
+// ✨ MUDANÇAS PRINCIPAIS:
+// 1. HandleCancelarReserva: Adiciona LimparContextoAsync após cancelar
+// 2. HandleConfirmarReserva: Adiciona LimparContextoAsync NO INÍCIO
+// 3. HandleListarReservas: Já estava OK (filtra status=Confirmado)
+
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -240,6 +245,13 @@ namespace APIBack.Automation.Services
             args.Data = args.Data?.Trim() ?? string.Empty;
             args.Hora = args.Hora?.Trim() ?? string.Empty;
 
+            // ✨ ADICIONADO: Limpar contexto antigo ANTES de criar nova reserva
+            _logger.LogInformation(
+                "[Conversa={Conversa}] Iniciando confirmação de NOVA reserva. Limpando contexto antigo.",
+                args.IdConversa);
+
+            await _conversationRepository.LimparContextoAsync(args.IdConversa);
+
             var validationResult = await _reservaValidator.ValidateReservaAsync(
                 args.IdConversa,
                 args.NomeCompleto,
@@ -421,6 +433,7 @@ namespace APIBack.Automation.Services
             var reservasExistentes = await _reservaRepository.ObterPorClienteEstabelecimentoAsync(idCliente, idEstabelecimento);
             var referenciaAtual = TimeZoneHelper.GetSaoPauloNow();
 
+            // ✨ JÁ ESTAVA OK: Filtra apenas reservas com status=Confirmado
             var reservasAtivas = reservasExistentes
                 .Where(r => r.Status == ReservaStatus.Confirmado && r.DataReserva >= referenciaAtual.Date)
                 .OrderBy(r => r.DataReserva)
@@ -432,17 +445,19 @@ namespace APIBack.Automation.Services
                 return BuildJsonReply("Não encontrei nenhuma reserva ativa no seu nome 🤔\n\nSe precisar de ajuda, é só me avisar! 😊");
             }
 
-            // Se tiver apenas 1 reserva, cancela direto
             if (reservasAtivas.Count == 1)
             {
                 var reserva = reservasAtivas.First();
                 await _reservaRepository.CancelarReservaAsync(reserva.Id);
 
+                // ✨ ADICIONADO: Limpar contexto após cancelar
+                await _conversationRepository.LimparContextoAsync(args.IdConversa);
+
                 var dataFormatada = reserva.DataReserva.ToString("dd/MM/yyyy");
                 var horaFormatada = reserva.HoraInicio.ToString(@"hh\:mm");
 
                 _logger.LogInformation(
-                    "[Conversa={Conversa}] Reserva #{IdReserva} cancelada. Motivo: {Motivo}",
+                    "[Conversa={Conversa}] Reserva #{IdReserva} cancelada. Contexto limpo. Motivo: {Motivo}",
                     args.IdConversa,
                     reserva.Id,
                     args.MotivoCliente);
@@ -458,7 +473,6 @@ namespace APIBack.Automation.Services
                 return BuildJsonReply(msg.ToString());
             }
 
-            // Se tiver múltiplas, listar com CÓDIGO
             var listaReservas = new StringBuilder();
             listaReservas.AppendLine("Você tem mais de uma reserva ativa:");
             listaReservas.AppendLine();
@@ -487,10 +501,9 @@ namespace APIBack.Automation.Services
             var idCliente = conversa.IdCliente;
             var idEstabelecimento = conversa.IdEstabelecimento;
 
-            // Usar busca inteligente
             var (reserva, mensagemErro) = await BuscarReservaInteligente(
                 args.IdConversa,
-                null, // dataTexto será inferido do contexto se necessário
+                null,
                 args.CodigoReserva,
                 idCliente,
                 idEstabelecimento);
@@ -500,7 +513,6 @@ namespace APIBack.Automation.Services
                 return BuildJsonReply(mensagemErro ?? "Não consegui identificar qual reserva alterar.");
             }
 
-            // 1. Verificar se reserva já passou
             var referenciaAtual = TimeZoneHelper.GetSaoPauloNow();
             var dataHoraReserva = reserva.DataReserva.Date.Add(reserva.HoraInicio);
 
@@ -511,7 +523,6 @@ namespace APIBack.Automation.Services
                                      "Não é possível alterar reservas passadas. Quer fazer uma nova? 😊");
             }
 
-            // 2. Verificar permissão (mesmo telefone OU tem código)
             if (!args.CodigoReserva.HasValue && reserva.IdCliente != idCliente)
             {
                 return BuildJsonReply("Não encontrei essa reserva no seu telefone. 😕\n\n" +
@@ -519,7 +530,6 @@ namespace APIBack.Automation.Services
                                      "informar o código (#123).");
             }
 
-            // 3. Validar novo horário (se informado)
             if (!string.IsNullOrWhiteSpace(args.NovoHorario))
             {
                 if (!TimeSpan.TryParseExact(args.NovoHorario, @"hh\:mm",
@@ -528,7 +538,6 @@ namespace APIBack.Automation.Services
                     return BuildJsonReply("Formato de horário inválido. Use HH:MM (ex: 19:00)");
                 }
 
-                // Validar horário de funcionamento
                 var diaSemana = reserva.DataReserva.DayOfWeek;
                 TimeSpan horaAbertura, horaFechamento;
 
@@ -561,7 +570,6 @@ namespace APIBack.Automation.Services
                 }
             }
 
-            // 4. Validar nova quantidade (se informada) - REGRA 50/110
             if (args.NovaQtdPessoas.HasValue)
             {
                 var novaQtd = args.NovaQtdPessoas.Value;
@@ -576,16 +584,13 @@ namespace APIBack.Automation.Services
                     return BuildJsonReply("Para grupos acima de 100 pessoas, entre em contato conosco. 📞");
                 }
 
-                // ✨ VALIDAR CAPACIDADE: 50 (mesmo dia) ou 110 (dias futuros)
                 var hoje = referenciaAtual.Date;
                 var ehMesmoDia = reserva.DataReserva.Date == hoje;
                 var capacidadeMaxima = ehMesmoDia ? 50 : 110;
 
-                // Buscar todas as reservas do dia
                 var reservasDia = await _reservaRepository.ObterPorEstabelecimentoDataAsync(
                     idEstabelecimento, reserva.DataReserva);
 
-                // Calcular capacidade ocupada (excluindo a reserva atual)
                 var capacidadeOcupada = reservasDia
                     .Where(r => r.Id != reserva.Id && r.Status == ReservaStatus.Confirmado)
                     .Sum(r => r.QtdPessoas ?? 0);
@@ -614,7 +619,6 @@ namespace APIBack.Automation.Services
                 }
             }
 
-            // Resto do método continua igual...
             bool houveAlteracao = false;
 
             if (!string.IsNullOrWhiteSpace(args.NovoHorario) && TimeSpan.TryParseExact(args.NovoHorario, @"hh\:mm", CultureInfo.InvariantCulture, out var novoHorario))
@@ -678,6 +682,7 @@ namespace APIBack.Automation.Services
 
             return null;
         }
+
         private async Task<(Reserva? Reserva, string? MensagemErro)> BuscarReservaInteligente(
             Guid idConversa,
             string? dataTexto,
@@ -685,7 +690,6 @@ namespace APIBack.Automation.Services
             Guid idCliente,
             Guid idEstabelecimento)
         {
-            // Log para debugging
             _logger.LogDebug(
                 "[Conversa={Conversa}] BuscarReservaInteligente: dataTexto={Data}, codigo={Codigo}",
                 idConversa, dataTexto ?? "null", codigo?.ToString() ?? "null");
@@ -697,7 +701,6 @@ namespace APIBack.Automation.Services
                 .Where(r => {
                     if (r.Status != ReservaStatus.Confirmado) return false;
 
-                    // Data+hora precisa ser futura
                     var dataHoraReserva = r.DataReserva.Date.Add(r.HoraInicio);
                     return dataHoraReserva > referenciaAtual;
                 })
@@ -710,7 +713,6 @@ namespace APIBack.Automation.Services
                 return (null, "Não encontrei reservas futuras no seu nome.\n\nQuer fazer uma nova reserva? 😊");
             }
 
-            // Busca por código (prioridade máxima)
             if (codigo.HasValue)
             {
                 var porCodigo = reservasAtivas.FirstOrDefault(r => r.Id == codigo.Value);
@@ -720,12 +722,10 @@ namespace APIBack.Automation.Services
                 return (null, $"Não encontrei a reserva #{codigo} nas suas reservas futuras.\n\nQuer que eu liste suas reservas? 😊");
             }
 
-            // Busca por data/contexto
             if (!string.IsNullOrWhiteSpace(dataTexto))
             {
                 var textoNorm = dataTexto.ToLowerInvariant().Trim();
 
-                // Tentar parsear data específica
                 if (DateTime.TryParse(dataTexto, new CultureInfo("pt-BR"), System.Globalization.DateTimeStyles.None, out var dataEspecifica))
                 {
                     var porData = reservasAtivas.Where(r => r.DataReserva.Date == dataEspecifica.Date).ToList();
@@ -748,7 +748,6 @@ namespace APIBack.Automation.Services
                     }
                 }
 
-                // Buscar por dia do mês (ex: "dia 7", "dia 15")
                 var matchDia = System.Text.RegularExpressions.Regex.Match(textoNorm, @"dia\s*(\d{1,2})");
                 if (matchDia.Success && int.TryParse(matchDia.Groups[1].Value, out var dia))
                 {
@@ -772,7 +771,6 @@ namespace APIBack.Automation.Services
                     }
                 }
 
-                // Buscar por mês (ex: "junho", "outubro")
                 var meses = new Dictionary<string, int>
                 {
                     {"janeiro", 1}, {"fevereiro", 2}, {"março", 3}, {"marco", 3},
@@ -807,13 +805,11 @@ namespace APIBack.Automation.Services
                 }
             }
 
-            // Se só tem uma reserva, retornar ela
             if (reservasAtivas.Count == 1)
             {
                 return (reservasAtivas.First(), null);
             }
 
-            // Múltiplas reservas sem contexto suficiente
             var msg = new StringBuilder();
             msg.AppendLine("📋 Você tem múltiplas reservas. Qual delas?");
             msg.AppendLine();
@@ -841,6 +837,7 @@ namespace APIBack.Automation.Services
             var reservasExistentes = await _reservaRepository.ObterPorClienteEstabelecimentoAsync(idCliente, idEstabelecimento);
             var referenciaAtual = TimeZoneHelper.GetSaoPauloNow();
 
+            // ✨ JÁ ESTAVA OK: Filtra apenas reservas com status=Confirmado
             var reservasAtivas = reservasExistentes
                 .Where(r => {
                     if (r.Status != ReservaStatus.Confirmado) return false;
@@ -851,12 +848,17 @@ namespace APIBack.Automation.Services
                 .ThenBy(r => r.HoraInicio)
                 .ToList();
 
+            // ✨ ADICIONADO: Log para confirmar filtro de status
+            _logger.LogInformation(
+                "[Conversa={Conversa}] Filtradas {Total} reservas ativas (status=Confirmado, futuras)",
+                idConversa,
+                reservasAtivas.Count);
+
             if (!reservasAtivas.Any())
             {
                 return BuildJsonReply("Não encontrei reservas ativas no seu nome.\n\nQuer fazer uma nova reserva? 😊");
             }
 
-            // ✨ FAST-PATH: Se só tem 1 reserva, vai direto para coleta de dados
             if (reservasAtivas.Count == 1)
             {
                 var reserva = reservasAtivas.First();
@@ -867,7 +869,6 @@ namespace APIBack.Automation.Services
                     "[Conversa={Conversa}] Cliente tem apenas 1 reserva. Fast-path direto para alteração.",
                     idConversa);
 
-                // Salvar contexto para aguardar dados de alteração
                 await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
                 {
                     Estado = "aguardando_dados_alteracao",
@@ -898,7 +899,6 @@ namespace APIBack.Automation.Services
                 return BuildJsonReply(msg.ToString());
             }
 
-            // ✨ Se tem múltiplas reservas, aí sim precisa listar
             var mapeamento = new Dictionary<int, long>();
             for (int i = 0; i < reservasAtivas.Count; i++)
             {

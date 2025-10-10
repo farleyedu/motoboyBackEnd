@@ -1,4 +1,7 @@
-// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
+﻿// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
+// ✨ MUDANÇAS PRINCIPAIS:
+// 1. Adicionados logs [HISTORICO-DEBUG] para rastrear busca e compactação de histórico
+
 using APIBack.Automation.Dtos;
 using APIBack.Automation.Interfaces;
 using APIBack.Automation.Models;
@@ -12,7 +15,6 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using Message = APIBack.Automation.Models.Message;
-
 
 namespace APIBack.Automation.Services
 {
@@ -61,7 +63,7 @@ namespace APIBack.Automation.Services
                 idWa: input.Mensagem.De!,
                 idMensagemWa: input.Mensagem.Id!,
                 conteudo: input.Texto,
-                displayPhoneNumber: input.PhoneNumberDisplay ?? string.Empty,  // NOME CORRETO
+                displayPhoneNumber: input.PhoneNumberDisplay ?? string.Empty,
                 dataMensagemUtc: input.DataMensagemUtc,
                 tipoOrigem: input.Mensagem.Tipo,
                 telefoneContato: telefoneNormalizado
@@ -171,7 +173,6 @@ namespace APIBack.Automation.Services
         {
             try
             {
-                // Busca os modulos ativos diretamente da tabela estabelecimentos
                 var modulosAtivos = await _estabelecimentoRepo.ObterModulosAtivosAsync(idEstabelecimento);
 
                 if (modulosAtivos.Count == 0)
@@ -215,13 +216,18 @@ namespace APIBack.Automation.Services
             return (idEstabelecimento.HasValue && idEstabelecimento != Guid.Empty) ? idEstabelecimento : null;
         }
 
-
-
         private async Task<IReadOnlyList<AssistantChatTurn>> ObterHistoricoAsync(Guid idConversa)
         {
             try
             {
                 var historico = await _mensagemRepository.GetByConversationAsync(idConversa, limit: 200);
+
+                // ✨ ADICIONADO: Log do total de mensagens buscadas no banco
+                _logger.LogWarning(
+                    "[HISTORICO-DEBUG] Conversa={Conversa} | Buscou {Total} mensagens do banco",
+                    idConversa,
+                    historico.Count);
+
                 var turnos = historico
                     .Where(m => !string.IsNullOrWhiteSpace(m.Conteudo))
                     .Select(m => new AssistantChatTurn
@@ -235,6 +241,12 @@ namespace APIBack.Automation.Services
                 // Compactar se mais de 20 turnos
                 if (turnos.Count > 20)
                 {
+                    // ✨ ADICIONADO: Log informando compactação
+                    _logger.LogWarning(
+                        "[HISTORICO-DEBUG] Conversa={Conversa} | Histórico será COMPACTADO de {Original} para ~16 turnos (1 resumo + 15 recentes)",
+                        idConversa,
+                        turnos.Count);
+
                     var turnosRecentes = turnos.TakeLast(15).ToList();
                     var turnosAntigos = turnos.Take(turnos.Count - 15).ToList();
 
@@ -251,8 +263,21 @@ namespace APIBack.Automation.Services
                     };
 
                     turnosCompactados.AddRange(turnosRecentes);
+
+                    // ✨ ADICIONADO: Log confirmando compactação
+                    _logger.LogWarning(
+                        "[HISTORICO-DEBUG] Conversa={Conversa} | Retornando {Final} turnos (após compactação)",
+                        idConversa,
+                        turnosCompactados.Count);
+
                     return turnosCompactados;
                 }
+
+                // ✨ ADICIONADO: Log quando não precisa compactar
+                _logger.LogWarning(
+                    "[HISTORICO-DEBUG] Conversa={Conversa} | Retornando {Total} turnos (sem compactação necessária)",
+                    idConversa,
+                    turnos.Count);
 
                 return turnos;
             }
@@ -315,9 +340,3 @@ namespace APIBack.Automation.Services
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
-
-
-
-
-
-
