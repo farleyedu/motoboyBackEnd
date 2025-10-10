@@ -41,6 +41,7 @@ namespace APIBack.Automation.Services
     public class CancelarReservaArgs
     {
         public Guid IdConversa { get; set; }
+        public long? CodigoReserva { get; set; }
         public string MotivoCliente { get; set; } = string.Empty;
     }
 
@@ -119,14 +120,15 @@ namespace APIBack.Automation.Services
                 new {
                     type = "function",
                     name = "cancelar_reserva",
-                    description = "Cancela uma reserva existente do cliente. Só executar após confirmação explícita do cliente.",
+                    description = "Cancela uma reserva existente do cliente. Se cliente mencionar código (#23) ou número específico, use codigoReserva. Só executar após confirmação explícita do cliente.",
                     parameters = new {
                         type = "object",
                         properties = new {
                             idConversa = new { type = "string", description = "ID único da conversa atual", @enum = new[] { idConversaString } },
+                            codigoReserva = new { type = "integer", description = "Código da reserva a cancelar (#123). Obrigatório se cliente informar número ou tiver múltiplas reservas." },
                             motivoCliente = new { type = "string", description = "Breve motivo do cancelamento informado pelo cliente" }
                         },
-                        required = new[] { "idConversa", "motivoCliente" }
+                        required = new[] { "idConversa" }
                     }
                 },
                 new {
@@ -445,6 +447,45 @@ namespace APIBack.Automation.Services
             {
                 _logger.LogInformation("[Conversa={Conversa}] Cliente tentou cancelar mas não possui reservas ativas", args.IdConversa);
                 return BuildJsonReply("Não encontrei nenhuma reserva ativa no seu nome 🤔\n\nSe precisar de ajuda, é só me avisar! 😊");
+            }
+
+            // ✨ NOVO: Se código foi fornecido, cancela diretamente
+            if (args.CodigoReserva.HasValue)
+            {
+                var reservaPorCodigo = reservasAtivas.FirstOrDefault(r => r.Id == args.CodigoReserva.Value);
+
+                if (reservaPorCodigo == null)
+                {
+                    _logger.LogWarning(
+                        "[Conversa={Conversa}] Código #{Codigo} não encontrado nas reservas ativas do cliente",
+                        args.IdConversa,
+                        args.CodigoReserva.Value);
+
+                    return BuildJsonReply($"Não encontrei a reserva #{args.CodigoReserva.Value} no seu nome. 😕\n\nQuer que eu liste suas reservas ativas? 😊");
+                }
+
+                await _reservaRepository.CancelarReservaAsync(reservaPorCodigo.Id);
+                await _conversationRepository.LimparContextoAsync(args.IdConversa);
+
+                var dataFormatada = reservaPorCodigo.DataReserva.ToString("dd/MM/yyyy");
+                var horaFormatada = reservaPorCodigo.HoraInicio.ToString(@"hh\:mm");
+
+                _logger.LogInformation(
+                    "[Conversa={Conversa}] Reserva #{IdReserva} cancelada via código. Contexto limpo. Motivo: {Motivo}",
+                    args.IdConversa,
+                    reservaPorCodigo.Id,
+                    args.MotivoCliente);
+
+                var msg = new StringBuilder();
+                msg.AppendLine("✅ Reserva cancelada com sucesso!");
+                msg.AppendLine();
+                msg.AppendLine($"🎫 Código: #{reservaPorCodigo.Id}");
+                msg.AppendLine($"📅 Data: {dataFormatada}");
+                msg.AppendLine($"⏰ Horário: {horaFormatada}");
+                msg.AppendLine();
+                msg.Append("Se mudar de ideia, estamos aqui! 😊");
+
+                return BuildJsonReply(msg.ToString());
             }
 
             if (reservasAtivas.Count == 1)
@@ -1283,7 +1324,7 @@ namespace APIBack.Automation.Services
                     type = "function",
                     function = new {
                         name = "cancelar_reserva",
-                        description = "Cancela uma reserva. Se cliente tem múltiplas, use listar_reservas primeiro.",
+                        description = "Cancela uma reserva. IMPORTANTE: Se cliente mencionar código (#23) ou número, SEMPRE envie em codigoReserva. Se tiver múltiplas reservas sem código, liste primeiro.",
                         parameters = new {
                             type = "object",
                             properties = new {
@@ -1294,7 +1335,11 @@ namespace APIBack.Automation.Services
                                 },
                                 codigoReserva = new {
                                     type = "integer",
-                                    description = "Código da reserva a cancelar. Opcional se cliente tem apenas uma."
+                                    description = "Código da reserva a cancelar (#123). OBRIGATÓRIO se cliente informou código. Opcional se tem apenas uma reserva."
+                                },
+                                motivoCliente = new {
+                                    type = "string",
+                                    description = "Breve motivo do cancelamento"
                                 }
                             },
                             required = new[] { "idConversa" }
