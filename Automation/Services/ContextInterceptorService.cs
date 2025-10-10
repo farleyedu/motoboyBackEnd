@@ -175,13 +175,26 @@ namespace APIBack.Automation.Services
                             idConversa);
 
                         var (ok, dec) = await ProcessarAlteracaoDiretaAsync(idConversa, mensagemTexto);
-                        if (ok) return (true, dec);
+                        if (ok)
+                        {
+                            return (true, dec);
+                        }
+                        else
+                        {
+                            _logger.LogWarning(
+                                "[Conversa={Conversa}] ProcessarAlteracaoDiretaAsync retornou false - deixando IA processar",
+                                idConversa);
+                            // Deixa cair no return (false, null) no final do método
+                            // NÃO imprime "múltiplas reservas sem filtro" pois É MENTIRA
+                        }
+                    }
+                    else if (reservasAtivas.Count > 1)
+                    {
+                        _logger.LogInformation(
+                            "[Conversa={Conversa}] Alteração com múltiplas reservas sem filtro - IA vai listar primeiro",
+                            idConversa);
                     }
                 }
-
-                _logger.LogInformation(
-                    "[Conversa={Conversa}] Alteração com múltiplas reservas sem filtro - IA vai listar primeiro",
-                    idConversa);
             }
             // ═══════ FIM DETECÇÃO ═══════
 
@@ -539,6 +552,9 @@ namespace APIBack.Automation.Services
             var dataPreferida = ExtrairDataPreferencial(mensagemTexto);
             if (!dataPreferida.HasValue)
             {
+                _logger.LogWarning(
+                    "[Conversa={Conversa}] ProcessarAlteracaoDiretaAsync: Não conseguiu extrair data de '{Texto}'",
+                    idConversa, mensagemTexto);
                 return (false, null); // Sem data, deixa a IA processar
             }
 
@@ -570,7 +586,51 @@ namespace APIBack.Automation.Services
 
             if (alvo == null)
             {
+                _logger.LogWarning(
+                    "[Conversa={Conversa}] ProcessarAlteracaoDiretaAsync: Nenhuma reserva encontrada para data {Data}",
+                    idConversa, dataPreferida.Value.ToString("dd/MM/yyyy"));
                 return (false, null); // Sem reserva, deixa a IA processar
+            }
+
+            // ✨ NOVO: Se não tem mudança especificada, pedir os dados
+            if (novoHorario == null && !qtd.HasValue)
+            {
+                _logger.LogInformation(
+                    "[Conversa={Conversa}] Reserva encontrada mas sem mudança especificada - pedindo dados",
+                    idConversa);
+
+                var cliente = await _clienteRepository.ObterPorIdAsync(alvo.IdCliente);
+                var nomeCliente = cliente?.Nome ?? "Cliente";
+
+                var msg = new StringBuilder();
+                msg.AppendLine($"📋 Reserva #{alvo.Id} encontrada:");
+                msg.AppendLine();
+                msg.AppendLine($"👤 Nome: {nomeCliente}");
+                msg.AppendLine($"📅 Data: {alvo.DataReserva:dd/MM/yyyy} ({alvo.DataReserva:dddd})");
+                msg.AppendLine($"⏰ Horário: {alvo.HoraInicio:hh\\:mm}");
+                msg.AppendLine($"👥 Pessoas: {alvo.QtdPessoas}");
+                msg.AppendLine();
+                msg.AppendLine("O que você quer alterar? 😊");
+                msg.AppendLine("• Horário (ex: 20h, 19:30)");
+                msg.AppendLine("• Quantidade (ex: 8 pessoas, adicionar 2)");
+
+                await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
+                {
+                    Estado = "aguardando_dados_alteracao",
+                    ReservaIdPendente = alvo.Id,
+                    DadosColetados = new Dictionary<string, object>
+                    {
+                        { "reserva_id", alvo.Id },
+                        { "data_atual", alvo.DataReserva.ToString("yyyy-MM-dd") },
+                        { "hora_atual", alvo.HoraInicio.ToString(@"hh\:mm") },
+                        { "qtd_atual", alvo.QtdPessoas ?? 0 }
+                    },
+                    ExpiracaoEstado = DateTime.UtcNow.AddMinutes(30)
+                });
+
+                var reply = msg.ToString();
+                await SalvarMensagemRespostaAsync(idConversa, reply);
+                return (true, new AssistantDecision(reply, "none", null, false, null, null));
             }
 
             var qtdAtual = alvo.QtdPessoas ?? 0;
@@ -578,7 +638,7 @@ namespace APIBack.Automation.Services
             var horaAtual = alvo.HoraInicio.ToString(@"hh\:mm");
             var horaDepois = string.IsNullOrWhiteSpace(novoHorario) ? horaAtual : novoHorario!;
 
-            var reply = BuildMsgConfirmacaoAlteracao(alvo.Id, alvo.DataReserva, horaAtual, horaDepois, qtdAtual, qtdDepois);
+            var replyConfirmacao = BuildMsgConfirmacaoAlteracao(alvo.Id, alvo.DataReserva, horaAtual, horaDepois, qtdAtual, qtdDepois);
 
             await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
             {
@@ -593,8 +653,8 @@ namespace APIBack.Automation.Services
                 ExpiracaoEstado = DateTime.UtcNow.AddMinutes(10)
             });
 
-            await SalvarMensagemRespostaAsync(idConversa, reply);
-            return (true, new AssistantDecision(reply, "none", null, false, null, null));
+            await SalvarMensagemRespostaAsync(idConversa, replyConfirmacao);
+            return (true, new AssistantDecision(replyConfirmacao, "none", null, false, null, null));
         }
 
         private DateTime? ExtrairDataPreferencial(string texto)
@@ -642,6 +702,32 @@ namespace APIBack.Automation.Services
             if (DateTime.TryParse(texto, new System.Globalization.CultureInfo("pt-BR"),
                 System.Globalization.DateTimeStyles.None, out var livre))
                 return livre.Date;
+
+            // ✨ NOVO: Suporte para "dia 11", "dia 15", etc
+            var matchDia = Regex.Match(norm, @"dia\s*(\d{1,2})");
+            if (matchDia.Success && int.TryParse(matchDia.Groups[1].Value, out var diaNumero))
+            {
+                // Tentar no mês atual
+                if (diaNumero >= 1 && diaNumero <= 31)
+                {
+                    try
+                    {
+                        var tentativa = new DateTime(referencia.Year, referencia.Month, diaNumero);
+                        if (tentativa >= referencia)
+                            return tentativa.Date;
+
+                        // Se já passou neste mês, tentar próximo mês
+                        var proximoMes = referencia.AddMonths(1);
+                        tentativa = new DateTime(proximoMes.Year, proximoMes.Month, diaNumero);
+                        return tentativa.Date;
+                    }
+                    catch
+                    {
+                        // Dia inválido para o mês (ex: 31 de fevereiro)
+                        // Continua para retornar null
+                    }
+                }
+            }
 
             return null;
         }
