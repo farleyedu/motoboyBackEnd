@@ -605,7 +605,7 @@ namespace APIBack.Automation.Services
                 TimeSpan? novoHorarioParsed = null;
                 if (!string.IsNullOrWhiteSpace(args.NovoHorario))
                 {
-                    if (!TimeSpan.TryParseExact(args.NovoHorario, @"HH\:mm", CultureInfo.InvariantCulture, out var horarioTemp))
+                    if (!TimeSpan.TryParseExact(args.NovoHorario, @"hh\:mm", CultureInfo.InvariantCulture, out var horarioTemp))
                     {
                         return BuildJsonReply("Formato de horário inválido. Use HH:MM (ex: 19:00)");
                     }
