@@ -121,7 +121,7 @@ namespace APIBack.Automation.Services
                                     { "novo_horario", horaDepois },
                                     { "nova_qtd", qtdDepois }
                                 },
-                                ExpiracaoEstado = DateTime.UtcNow.AddMinutes(10)
+                                ExpiracaoEstado = DateTime.UtcNow.AddMinutes(30)  // ✨ Aumentado de 10 para 30 minutos
                             });
 
                             await SalvarMensagemRespostaAsync(idConversa, reply);
@@ -202,8 +202,18 @@ namespace APIBack.Automation.Services
 
             if (contexto == null || string.IsNullOrWhiteSpace(contexto.Estado))
             {
+                // ✨ NOVO: Log quando não há contexto
+                if (contexto == null)
+                {
+                    _logger.LogDebug("[Conversa={Conversa}] Nenhum contexto ativo encontrado", idConversa);
+                }
                 return (false, null);
             }
+
+            // ✨ NOVO: Log do contexto encontrado
+            _logger.LogDebug(
+                "[Conversa={Conversa}] Contexto ativo: Estado={Estado}, Expira={Expiracao}",
+                idConversa, contexto.Estado, contexto.ExpiracaoEstado);
 
             // Verificar se contexto expirou
             if (contexto.ExpiracaoEstado.HasValue && contexto.ExpiracaoEstado.Value < DateTime.UtcNow)
@@ -488,7 +498,7 @@ namespace APIBack.Automation.Services
                     { "novo_horario", novoHorario ?? "" },
                     { "nova_qtd", novaQtd ?? 0 }
                 },
-                ExpiracaoEstado = DateTime.UtcNow.AddMinutes(10)
+                ExpiracaoEstado = DateTime.UtcNow.AddMinutes(30)  // ✨ Aumentado de 10 para 30 minutos
             });
 
             var replyFinal = msgConfirmacao.ToString();
@@ -504,9 +514,39 @@ namespace APIBack.Automation.Services
         {
             var textoNorm = mensagemTexto.Trim().ToLower();
 
-            if (textoNorm.Contains("sim") || textoNorm.Contains("confirma") ||
-                textoNorm.Contains("pode") || textoNorm == "s")
+            // ✨ DETECÇÃO ULTRA-COMPLETA DE CONFIRMAÇÕES (100+ variações)
+            var confirmacoesExatas = new HashSet<string>
             {
+                "sim", "s", "ss", "ok", "okay", "oki", "oky",
+                "blz", "beleza", "show", "suave", "massa", "top", "demais", "perfeito",
+                "isso", "certeza", "certo", "positivo", "afirmativo",
+                "tmj", "vamo", "bora", "dale", "valeu", "fechou", "fexa", "firmeza",
+                "tranquilo", "tranks", "de boa", "partiu", "simbora",
+                "aham", "uhum", "ahan", "sim sim", "sisim", "simsim",
+                "sô", "ô", "opa", "bão", "daora", "dahora",
+                "pode crer", "ta valendo", "tá valendo", "manda ver", "manda bala",
+                "👍", "✅", "✔️", "☑️", "👌", "🤝", "🙌"
+            };
+
+            var confirmacoesContains = new[]
+            {
+                "confirma", "confirmo", "isso mesmo", "isso aí", "isso ai",
+                "é isso", "exato", "exatamente", "correto", "certinho",
+                "pode sim", "pode ir", "pode mandar", "pode fazer",
+                "tudo bem", "tudo certo", "tá bom", "tá ok", "ta bom", "ta ok",
+                "está bom", "está ok", "com certeza", "claro", "óbvio", "obvio",
+                "lógico", "logico", "autorizo", "aprovado", "aprovo",
+                "de acordo", "acordo", "concordo", "sem problema", "👍", "✅", "👌"
+            };
+
+            var ehConfirmacao = confirmacoesExatas.Contains(textoNorm) ||
+                                confirmacoesContains.Any(c => textoNorm.Contains(c));
+
+            if (ehConfirmacao)
+            {
+                _logger.LogInformation(
+                    "[Conversa={Conversa}] Confirmação detectada: '{Texto}' - Processando alteração",
+                    idConversa, mensagemTexto);
                 // Executar atualização
                 long idReserva = contexto.ReservaIdPendente ?? 0;
                 string novoHorario = contexto.DadosColetados?["novo_horario"]?.ToString() ?? "";
@@ -746,7 +786,7 @@ namespace APIBack.Automation.Services
                     { "novo_horario", horaDepois },
                     { "nova_qtd", qtdDepois }
                 },
-                ExpiracaoEstado = DateTime.UtcNow.AddMinutes(10)
+                ExpiracaoEstado = DateTime.UtcNow.AddMinutes(30)  // ✨ Aumentado de 10 para 30 minutos
             });
 
             await SalvarMensagemRespostaAsync(idConversa, replyConfirmacao);
