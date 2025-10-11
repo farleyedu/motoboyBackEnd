@@ -530,12 +530,12 @@ namespace APIBack.Automation.Services
 
             var confirmacoesContains = new[]
             {
-                "confirma", "confirmo", "isso mesmo", "isso aí", "isso ai",
+                "eu confirmo","confirma", "confirmo", "isso mesmo", "isso aí", "isso ai",
                 "é isso", "exato", "exatamente", "correto", "certinho",
                 "pode sim", "pode ir", "pode mandar", "pode fazer",
                 "tudo bem", "tudo certo", "tá bom", "tá ok", "ta bom", "ta ok",
                 "está bom", "está ok", "com certeza", "claro", "óbvio", "obvio",
-                "lógico", "logico", "autorizo", "aprovado", "aprovo",
+                "lógico", "logico", "autorizo", "aprovado", "aprovo", 
                 "de acordo", "acordo", "concordo", "sem problema", "👍", "✅", "👌"
             };
 

@@ -125,7 +125,7 @@ namespace APIBack.Automation.Services
                         type = "object",
                         properties = new {
                             idConversa = new { type = "string", description = "ID único da conversa atual", @enum = new[] { idConversaString } },
-                            codigoReserva = new { type = "integer", description = "Código da reserva a cancelar (#123). Obrigatório se cliente informar número ou tiver múltiplas reservas." },
+                            codigoReserva = new { type = "integer", description = "Código da reserva. Extraia de: '#25', 'código 25', 'reserva 25', 'é a 25', 'a 25', '25' (número solto após pergunta), 'o 25', 'número 25'. Se cliente responde com número após você perguntar 'qual reserva', SEMPRE envie aqui." },
                             motivoCliente = new { type = "string", description = "Breve motivo do cancelamento informado pelo cliente" }
                         },
                         required = new[] { "idConversa" }
@@ -139,7 +139,7 @@ namespace APIBack.Automation.Services
                         type = "object",
                         properties = new {
                             idConversa = new { type = "string", description = "ID único da conversa atual", @enum = new[] { idConversaString } },
-                            codigoReserva = new { type = "integer", description = "Código da reserva (#123). Obrigatório se cliente mencionar." },
+                            codigoReserva = new { type = "integer", description = "Código da reserva. SEMPRE extraia se cliente mencionar número após pergunta sobre 'qual reserva'. Exemplos de input: '#25', 'código 25', 'reserva 25', 'é a 25', 'a 25', '25' (número solto), 'o 25', 'número 25'. CRÍTICO: Se cliente responde pergunta com número, SEMPRE envie aqui." },
                             novoHorario = new { type = "string", description = "Novo horário HH:mm (opcional)" },
                             novaQtdPessoas = new { type = "integer", description = "Nova quantidade de pessoas (opcional)" }
                         },
@@ -1263,7 +1263,7 @@ namespace APIBack.Automation.Services
                                 },
                                 codigoReserva = new {
                                     type = "integer",
-                                    description = "Código da reserva (#123) se cliente mencionar. Exemplo: '#20' ou 'código 20'"
+                                    description = "Código da reserva. SEMPRE extraia se cliente mencionar número após pergunta sobre 'qual reserva'. Exemplos de input: '#25', 'código 25', 'reserva 25', 'é a 25', 'a 25', '25' (número solto), 'o 25', 'número 25'. CRÍTICO: Se cliente responde pergunta com número, SEMPRE envie aqui."
                                 },
                                 filtroData = new {
                                     type = "string",
@@ -1335,7 +1335,7 @@ namespace APIBack.Automation.Services
                                 },
                                 codigoReserva = new {
                                     type = "integer",
-                                    description = "Código da reserva a cancelar (#123). OBRIGATÓRIO se cliente informou código. Opcional se tem apenas uma reserva."
+                                    description = "Código da reserva. Extraia de: '#25', 'código 25', 'reserva 25', 'é a 25', 'a 25', '25' (número solto após pergunta), 'o 25', 'número 25'. Se cliente responde com número após você perguntar 'qual reserva', SEMPRE envie aqui."
                                 },
                                 motivoCliente = new {
                                     type = "string",
