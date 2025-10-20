@@ -103,9 +103,10 @@ namespace APIBack.Automation.Services
                             var horaAtual = reserva.HoraInicio.ToString(@"hh\:mm");
                             var horaDepois = string.IsNullOrWhiteSpace(novoHorario) ? horaAtual : novoHorario!;
 
-                            var reply = BuildMsgConfirmacaoAlteracao(
+                            var reply = BuildMsgConfirmacaoAlteracaoComData(
                                 reserva.Id,
                                 reserva.DataReserva,
+                                null,  // ← dataDepois (null = mantém data atual)
                                 horaAtual,
                                 horaDepois,
                                 qtdAtual,
@@ -774,7 +775,14 @@ namespace APIBack.Automation.Services
             var horaAtual = alvo.HoraInicio.ToString(@"hh\:mm");
             var horaDepois = string.IsNullOrWhiteSpace(novoHorario) ? horaAtual : novoHorario!;
 
-            var replyConfirmacao = BuildMsgConfirmacaoAlteracao(alvo.Id, alvo.DataReserva, horaAtual, horaDepois, qtdAtual, qtdDepois);
+            var replyConfirmacao = BuildMsgConfirmacaoAlteracaoComData(
+                alvo.Id,
+                alvo.DataReserva,
+                null,  // ← dataDepois (null = mantém data atual)
+                horaAtual,
+                horaDepois,
+                qtdAtual,
+                qtdDepois);
 
             await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
             {
@@ -793,77 +801,81 @@ namespace APIBack.Automation.Services
             return (true, new AssistantDecision(replyConfirmacao, "none", null, false, null, null));
         }
 
-        private DateTime? ExtrairDataPreferencial(string texto)
+        // agora com âncora opcional: se informada, usar como base quando for "dia 12", "dd/MM" ou dia da semana
+        private DateTime? ExtrairDataPreferencial(string texto, DateTime? ancora = null)
         {
             if (string.IsNullOrWhiteSpace(texto)) return null;
-            var referencia = TimeZoneHelper.GetSaoPauloNow().Date;
-            var norm = RemoveDiacritics(texto.ToLower()).Replace("-feira", "");
 
-            if (norm.Contains("hoje")) return referencia;
-            if (norm.Contains("amanha") || norm.Contains("amanhã")) return referencia.AddDays(1);
-            if (norm.Contains("depois de amanha")) return referencia.AddDays(2);
+            var hoje = TimeZoneHelper.GetSaoPauloNow().Date;
+            var referencia = hoje; // default
+            var baseAncora = ancora?.Date;
 
+            var norm = RemoveDiacritics(texto.ToLower()).Replace("-feira", "").Trim();
+
+            // relativos
+            if (norm.Contains("hoje")) return hoje;
+            if (norm.Contains("amanha") || norm.Contains("amanhã")) return hoje.AddDays(1);
+            if (norm.Contains("depois de amanha")) return hoje.AddDays(2);
+
+            // dd/MM/yyyy
+            if (DateTime.TryParseExact(norm, "dd/MM/yyyy", System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out var absoluto))
+                return absoluto.Date;
+
+            // dd/MM (usar âncora se existir; senão hoje)
+            if (DateTime.TryParseExact(norm, "dd/MM", System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out var parcial))
+            {
+                var ano = (baseAncora ?? referencia).Year;
+                var comp = new DateTime(ano, parcial.Month, parcial.Day);
+
+                // regra da “data mais próxima” da âncora: se <= âncora, vai para próximo ano
+                if (baseAncora.HasValue && comp <= baseAncora) comp = comp.AddYears(1);
+                else if (!baseAncora.HasValue && comp < referencia) comp = comp.AddYears(1);
+
+                return comp.Date;
+            }
+
+            // dia da semana — próxima ocorrência a partir da âncora (se houver), senão hoje
             var dias = new Dictionary<string, DayOfWeek> {
-                {"domingo", DayOfWeek.Sunday}, {"segunda", DayOfWeek.Monday},
-                {"terca", DayOfWeek.Tuesday}, {"terça", DayOfWeek.Tuesday},
-                {"quarta", DayOfWeek.Wednesday}, {"quinta", DayOfWeek.Thursday},
-                {"sexta", DayOfWeek.Friday}, {"sabado", DayOfWeek.Saturday},
-                {"sábado", DayOfWeek.Saturday}
-            };
+        {"domingo", DayOfWeek.Sunday}, {"segunda", DayOfWeek.Monday},
+        {"terca", DayOfWeek.Tuesday}, {"terça", DayOfWeek.Tuesday},
+        {"quarta", DayOfWeek.Wednesday}, {"quinta", DayOfWeek.Thursday},
+        {"sexta", DayOfWeek.Friday}, {"sabado", DayOfWeek.Saturday}, {"sábado", DayOfWeek.Saturday}
+    };
             foreach (var kv in dias)
             {
                 if (norm.Contains(kv.Key))
                 {
-                    var d = referencia.AddDays(1);
-                    while (d.DayOfWeek != kv.Value) d = d.AddDays(1);
-                    if (norm.Contains("que vem") || norm.Contains("proxima") || norm.Contains("próxima"))
-                        d = d.AddDays(7);
-                    return d.Date;
+                    var origem = baseAncora ?? referencia;
+                    var delta = ((int)kv.Value - (int)origem.DayOfWeek + 7) % 7;
+                    if (delta == 0) delta = 7; // próxima ocorrência
+                    return origem.AddDays(delta).Date;
                 }
             }
 
-            if (DateTime.TryParseExact(norm, "dd/MM/yyyy", System.Globalization.CultureInfo.InvariantCulture,
-                System.Globalization.DateTimeStyles.None, out var exata))
-                return exata.Date;
-
-            if (DateTime.TryParseExact(norm, "dd/MM", System.Globalization.CultureInfo.InvariantCulture,
-                System.Globalization.DateTimeStyles.None, out var parcial))
+            // "dia 12"
+            var matchDia = Regex.Match(norm, @"dia\s*(\d{1,2})");
+            if (matchDia.Success && int.TryParse(matchDia.Groups[1].Value, out var diaNumero) && diaNumero is >= 1 and <= 31)
             {
-                var ano = referencia.Year;
-                var comp = new DateTime(ano, parcial.Month, parcial.Day);
-                if (comp < referencia) comp = comp.AddYears(1);
-                return comp.Date;
+                var origem = baseAncora ?? referencia;
+                var tentativa = new DateTime(origem.Year, origem.Month, diaNumero);
+                if (baseAncora.HasValue)
+                {
+                    // se igual/antes da âncora, vai para mês seguinte (regra que você pediu)
+                    if (tentativa <= baseAncora) tentativa = tentativa.AddMonths(1);
+                }
+                else
+                {
+                    if (tentativa < referencia) tentativa = tentativa.AddMonths(1);
+                }
+                return tentativa.Date;
             }
 
+            // parse livre pt-BR
             if (DateTime.TryParse(texto, new System.Globalization.CultureInfo("pt-BR"),
                 System.Globalization.DateTimeStyles.None, out var livre))
                 return livre.Date;
-
-            // ✨ NOVO: Suporte para "dia 11", "dia 15", etc
-            var matchDia = Regex.Match(norm, @"dia\s*(\d{1,2})");
-            if (matchDia.Success && int.TryParse(matchDia.Groups[1].Value, out var diaNumero))
-            {
-                // Tentar no mês atual
-                if (diaNumero >= 1 && diaNumero <= 31)
-                {
-                    try
-                    {
-                        var tentativa = new DateTime(referencia.Year, referencia.Month, diaNumero);
-                        if (tentativa >= referencia)
-                            return tentativa.Date;
-
-                        // Se já passou neste mês, tentar próximo mês
-                        var proximoMes = referencia.AddMonths(1);
-                        tentativa = new DateTime(proximoMes.Year, proximoMes.Month, diaNumero);
-                        return tentativa.Date;
-                    }
-                    catch
-                    {
-                        // Dia inválido para o mês (ex: 31 de fevereiro)
-                        // Continua para retornar null
-                    }
-                }
-            }
 
             return null;
         }
@@ -888,19 +900,30 @@ namespace APIBack.Automation.Services
             return sb.ToString().Normalize(System.Text.NormalizationForm.FormC);
         }
 
-        private string BuildMsgConfirmacaoAlteracao(
-            long codigoReserva,
-            DateTime data,
-            string horaAntes,
-            string horaDepois,
-            int qtdAntes,
-            int qtdDepois)
+        private string BuildMsgConfirmacaoAlteracaoComData(
+    long codigoReserva,
+    DateTime dataAntes,
+    DateTime? dataDepois,
+    string horaAntes,
+    string horaDepois,
+    int qtdAntes,
+    int qtdDepois)
         {
             var ptbr = new System.Globalization.CultureInfo("pt-BR");
             var sb = new StringBuilder();
             sb.AppendLine($"📋 Reserva #{codigoReserva} - Confirme as alterações:");
             sb.AppendLine();
-            sb.AppendLine($"📅 Data: {data:dd/MM/yyyy} ({data.ToString("dddd", ptbr)})");
+
+            sb.AppendLine("📅 DATA:");
+            if (dataDepois.HasValue && dataDepois.Value.Date != dataAntes.Date)
+            {
+                sb.AppendLine($"❌ Antes: {dataAntes:dd/MM/yyyy} ({dataAntes.ToString("dddd", ptbr)})");
+                sb.AppendLine($"✅ Depois: {dataDepois.Value:dd/MM/yyyy} ({dataDepois.Value.ToString("dddd", ptbr)})");
+            }
+            else
+            {
+                sb.AppendLine($"✔ Mantém: {dataAntes:dd/MM/yyyy} ({dataAntes.ToString("dddd", ptbr)})");
+            }
             sb.AppendLine();
 
             sb.AppendLine("⏰ HORÁRIO:");
@@ -926,10 +949,11 @@ namespace APIBack.Automation.Services
                 sb.AppendLine($"✅ Depois: {qtdDepois}");
             }
             sb.AppendLine();
-            sb.Append("Confirma essas mudanças? 😊");
 
+            sb.AppendLine("Confirmar essas mudanças? 😊");
             return sb.ToString();
         }
+
 
         private bool MensagemContemFiltro(string mensagem)
         {
