@@ -3,11 +3,14 @@ using APIBack.Automation.Dtos;
 using APIBack.Automation.Helpers;
 using APIBack.Automation.Interfaces;
 using APIBack.Automation.Models;
+using APIBack.DTOs;
+using APIBack.Model;
 using Microsoft.Extensions.Logging;
 using Microsoft.VisualStudio.TestPlatform.CommunicationUtilities;
 using Serilog;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
@@ -613,37 +616,153 @@ namespace APIBack.Automation.Services
 
             // ✨ DETECÇÃO ULTRA-COMPLETA DE CONFIRMAÇÕES (100+ variações)
             var confirmacoesExatas = new HashSet<string>
-            {
-                "sim", "s", "ss", "ok", "okay", "oki", "oky",
-                "blz", "beleza", "show", "suave", "massa", "top", "demais", "perfeito",
-                "isso", "certeza", "certo", "positivo", "afirmativo",
-                "tmj", "vamo", "bora", "dale", "valeu", "fechou", "fexa", "firmeza",
-                "tranquilo", "tranks", "de boa", "partiu", "simbora",
-                "aham", "uhum", "ahan", "sim sim", "sisim", "simsim",
-                "sô", "ô", "opa", "bão", "daora", "dahora",
-                "pode crer", "ta valendo", "tá valendo", "manda ver", "manda bala",
-                "👍", "✅", "✔️", "☑️", "👌", "🤝", "🙌"
-            };
+    {
+        "sim", "s", "ss", "ok", "okay", "oki", "oky",
+        "blz", "beleza", "show", "suave", "massa", "top", "demais", "perfeito",
+        "isso", "certeza", "certo", "positivo", "afirmativo",
+        "tmj", "vamo", "bora", "dale", "valeu", "fechou", "fexa", "firmeza",
+        "tranquilo", "tranks", "de boa", "partiu", "simbora",
+        "aham", "uhum", "ahan", "sim sim", "sisim", "simsim",
+        "sô", "ô", "opa", "bão", "daora", "dahora",
+        "pode crer", "ta valendo", "tá valendo", "manda ver", "manda bala",
+        "👍", "✅", "✔️", "☑️", "👌", "🤝", "🙌"
+    };
 
             var confirmacoesContains = new[]
             {
-                "eu confirmo","confirma", "confirmo", "isso mesmo", "isso aí", "isso ai",
-                "é isso", "exato", "exatamente", "correto", "certinho",
-                "pode sim", "pode ir", "pode mandar", "pode fazer",
-                "tudo bem", "tudo certo", "tá bom", "tá ok", "ta bom", "ta ok",
-                "está bom", "está ok", "com certeza", "claro", "óbvio", "obvio",
-                "lógico", "logico", "autorizo", "aprovado", "aprovo",
-                "de acordo", "acordo", "concordo", "sem problema", "👍", "✅", "👌"
-            };
+        "eu confirmo","confirma", "confirmo", "isso mesmo", "isso aí", "isso ai",
+        "é isso", "exato", "exatamente", "correto", "certinho",
+        "pode sim", "pode ir", "pode mandar", "pode fazer",
+        "tudo bem", "tudo certo", "tá bom", "tá ok", "ta bom", "ta ok",
+        "está bom", "está ok", "com certeza", "claro", "óbvio", "obvio",
+        "lógico", "logico", "autorizo", "aprovado", "aprovo",
+        "de acordo", "acordo", "concordo", "sem problema", "👍", "✅", "👌"
+    };
 
             var ehConfirmacao = confirmacoesExatas.Contains(textoNorm) ||
                                 confirmacoesContains.Any(c => textoNorm.Contains(c));
+
+            // ✨ NOVO: Detectar se é confirmação MAS com mudança adicional
+            var temMudancaAdicional = textoNorm.Contains("tbm") ||
+                                       textoNorm.Contains("também") ||
+                                       textoNorm.Contains("tambem") ||
+                                       (textoNorm.Contains(" e ") &&
+                                        (textoNorm.Contains("quero") || textoNorm.Contains("mudar") || textoNorm.Contains("alterar")));
+
+            if (ehConfirmacao && temMudancaAdicional)
+            {
+                _logger.LogInformation(
+                    "[Conversa={Conversa}] Confirmação detectada MAS com mudança adicional: '{Texto}'",
+                    idConversa, mensagemTexto);
+
+                // ✨ NOVO: Processar a confirmação PRIMEIRO
+                long idReserva = contexto.ReservaIdPendente ?? 0;
+                string novoHorario = contexto.DadosColetados?["novo_horario"]?.ToString() ?? "";
+                int novaQtd = int.Parse(contexto.DadosColetados?["nova_qtd"]?.ToString() ?? "0");
+
+                var reserva = await _reservaRepository.BuscarPorIdAsync(idReserva);
+
+                if (reserva != null)
+                {
+                    bool alterou = false;
+
+                    if (!string.IsNullOrWhiteSpace(novoHorario) && TimeSpan.TryParseExact(novoHorario, @"hh\:mm", null, out var timeSpan))
+                    {
+                        reserva.HoraInicio = timeSpan;
+                        alterou = true;
+                    }
+
+                    if (novaQtd > 0)
+                    {
+                        reserva.QtdPessoas = novaQtd;
+                        alterou = true;
+                    }
+
+                    if (alterou)
+                    {
+                        reserva.DataAtualizacao = DateTime.UtcNow;
+                        await _reservaRepository.AtualizarAsync(reserva);
+
+                        _logger.LogInformation(
+                            "[Conversa={Conversa}] Reserva #{Id} atualizada. Processando mudança adicional.",
+                            idConversa, reserva.Id);
+
+                        // ✨ NOVO: Extrair a parte da mudança adicional
+                        var parteAdicional = mensagemTexto;
+
+                        // Remover a confirmação inicial
+                        foreach (var conf in confirmacoesExatas)
+                        {
+                            if (textoNorm.StartsWith(conf + " "))
+                                parteAdicional = mensagemTexto.Substring(conf.Length).Trim();
+                        }
+
+                        // Detectar o que quer mudar
+                        var querMudarHorario = parteAdicional.ToLower().Contains("horário") ||
+                                               parteAdicional.ToLower().Contains("horario") ||
+                                               parteAdicional.ToLower().Contains("hora");
+
+                        var querMudarQuantidade = parteAdicional.ToLower().Contains("pessoa") ||
+                                                  parteAdicional.ToLower().Contains("quantidade");
+
+                        // Salvar contexto para nova mudança
+                        await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
+                        {
+                            Estado = "aguardando_dados_alteracao",
+                            ReservaIdPendente = reserva.Id,
+                            DadosColetados = new Dictionary<string, object>
+                    {
+                        { "reserva_id", reserva.Id },
+                        { "data_atual", reserva.DataReserva.ToString("yyyy-MM-dd") },
+                        { "hora_atual", reserva.HoraInicio.ToString(@"hh\:mm") },
+                        { "qtd_atual", reserva.QtdPessoas ?? 0 },
+                        // ✨ Manter mudanças já aplicadas
+                        { "novo_horario", novoHorario },
+                        { "nova_qtd", novaQtd }
+                    },
+                            ExpiracaoEstado = DateTime.UtcNow.AddMinutes(30)
+                        });
+
+                        var msg = new StringBuilder();
+                        msg.AppendLine("✅ Alterações confirmadas!");
+                        msg.AppendLine();
+                        msg.AppendLine($"📋 Reserva #{reserva.Id} atualizada:");
+                        msg.AppendLine($"📅 Data: {reserva.DataReserva:dd/MM/yyyy}");
+                        msg.AppendLine($"⏰ Horário: {reserva.HoraInicio:hh\\:mm}");
+                        msg.AppendLine($"👥 Pessoas: {reserva.QtdPessoas}");
+                        msg.AppendLine();
+
+                        if (querMudarHorario)
+                        {
+                            msg.AppendLine("E agora, qual o novo horário? 😊");
+                        }
+                        else if (querMudarQuantidade)
+                        {
+                            msg.AppendLine("E agora, qual a nova quantidade de pessoas? 😊");
+                        }
+                        else
+                        {
+                            msg.AppendLine("O que mais você quer alterar? 😊");
+                            msg.AppendLine("• Horário");
+                            msg.AppendLine("• Quantidade");
+                        }
+
+                        var reply = msg.ToString();
+                        await SalvarMensagemRespostaAsync(idConversa, reply);
+
+                        return (true, new AssistantDecision(reply, "none", null, false, null, null));
+                    }
+                }
+
+                // Se não conseguiu processar, volta ao fluxo normal
+            }
 
             if (ehConfirmacao)
             {
                 _logger.LogInformation(
                     "[Conversa={Conversa}] Confirmação detectada: '{Texto}' - Processando alteração",
                     idConversa, mensagemTexto);
+
                 // Executar atualização
                 long idReserva = contexto.ReservaIdPendente ?? 0;
                 string novoHorario = contexto.DadosColetados?["novo_horario"]?.ToString() ?? "";
