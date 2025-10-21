@@ -109,7 +109,14 @@ namespace APIBack.Automation.Services
                 new {
                     type = "function",
                     name = "listar_reservas",
-                    description = "Lista todas as reservas ativas do cliente. Use quando ele pedir para alterar/ver/cancelar sem especificar qual.",
+                    description = @"Lista reservas ativas do cliente.
+
+QUANDO USAR:
+- Cliente pediu para alterar/cancelar MAS tem múltiplas reservas
+- Cliente não especificou qual reserva quer alterar
+- Cliente pediu explicitamente para ver suas reservas
+
+IMPORTANTE: Após listar, aguarde cliente escolher uma antes de atualizar.",
                     parameters = new {
                         type = "object",
                         properties = new {
@@ -135,7 +142,22 @@ namespace APIBack.Automation.Services
                 new {
                     type = "function",
                     name = "atualizar_reserva",
-                    description = "Atualiza uma reserva existente quando cliente mencionar código (#123) ou quiser alterar data/horário/quantidade.",
+                    description = @"Atualiza uma reserva existente.
+
+QUANDO USAR:
+- Cliente tem 1 reserva E mencionou mudança (horário/quantidade/data)
+- Cliente mencionou código (#123) explicitamente
+- Cliente mencionou filtro claro (dia 11, sexta-feira, 15/10)
+
+QUANDO NÃO USAR:
+- Cliente tem múltiplas reservas SEM especificar qual
+- Nesse caso, chame 'listar_reservas' PRIMEIRO
+
+PARÂMETROS IMPORTANTES:
+- codigoReserva: SEMPRE envie se cliente mencionou número
+- filtroData: Envie texto exato do cliente (não formate)
+- novoHorario: Formato HH:mm
+- novaQtdPessoas: Número absoluto ou relativo (veja ehMudancaRelativa)",
                     parameters = new {
                         type = "object",
                         properties = new {
@@ -545,6 +567,160 @@ namespace APIBack.Automation.Services
 
             var idCliente = conversa.IdCliente;
             var idEstabelecimento = conversa.IdEstabelecimento;
+
+            // ============================================================
+            // ✨ NOVO: VERIFICAR SE EXISTE CONTEXTO DE ALTERAÇÃO
+            // ============================================================
+            var contexto = await _conversationRepository.ObterContextoAsync(args.IdConversa);
+
+            // ✅ CASO 1: Dados coletados pelo interceptor, precisa montar confirmação
+            if (contexto?.Estado == "pronto_para_atualizar")
+            {
+                _logger.LogInformation(
+                    "[Conversa={Conversa}] Contexto pronto_para_atualizar detectado - montando confirmação",
+                    args.IdConversa);
+
+                var resIdPronto = contexto.ReservaIdPendente ?? 0;
+                if (resIdPronto == 0)
+                {
+                    _logger.LogError("[Conversa={Conversa}] ReservaIdPendente ausente no contexto", args.IdConversa);
+                    await _conversationRepository.LimparContextoAsync(args.IdConversa);
+                    return BuildJsonReply("Ocorreu um erro. Tente novamente! 😊");
+                }
+
+                var resPronto = await _reservaRepository.BuscarPorIdAsync(resIdPronto);
+                if (resPronto == null)
+                {
+                    _logger.LogError("[Conversa={Conversa}] Reserva #{Id} não encontrada", args.IdConversa, resIdPronto);
+                    await _conversationRepository.LimparContextoAsync(args.IdConversa);
+                    return BuildJsonReply("Não encontrei a reserva. Pode tentar novamente? 😊");
+                }
+
+                // Pegar dados do contexto
+                var horaContexto = contexto.DadosColetados?["novo_horario"]?.ToString() ?? "";
+                var qtdContexto = int.Parse(contexto.DadosColetados?["nova_qtd"]?.ToString() ?? "0");
+
+                // Montar mensagem de confirmação
+                var dataPronto = resPronto.DataReserva.Date;
+                var horaPronto = resPronto.HoraInicio.ToString(@"hh\:mm");
+                var horaFinalPronto = !string.IsNullOrWhiteSpace(horaContexto) ? horaContexto : horaPronto;
+                var qtdPronto = resPronto.QtdPessoas ?? 0;
+                var qtdFinalPronto = qtdContexto > 0 ? qtdContexto : qtdPronto;
+
+                var msgConfirmacao = BuildMsgConfirmacaoAlteracao(
+                    resPronto.Id, dataPronto, dataPronto, horaPronto, horaFinalPronto, qtdPronto, qtdFinalPronto);
+
+                // Atualizar estado para aguardando confirmação
+                await _conversationRepository.SalvarContextoAsync(args.IdConversa, new ConversationContext
+                {
+                    Estado = "aguardando_confirmacao_alteracao",
+                    ReservaIdPendente = resPronto.Id,
+                    DadosColetados = new Dictionary<string, object>
+                    {
+                        { "reserva_id", resPronto.Id },
+                        { "nova_data", dataPronto.ToString("yyyy-MM-dd") },
+                        { "novo_horario", horaFinalPronto },
+                        { "nova_qtd", qtdFinalPronto }
+                    },
+                    ExpiracaoEstado = DateTime.UtcNow.AddMinutes(30)
+                });
+
+                return BuildJsonReply(msgConfirmacao);
+            }
+
+            // ✅ CASO 2: Já tem confirmação, executar atualização
+            if (contexto?.Estado == "aguardando_confirmacao_alteracao")
+            {
+                _logger.LogInformation(
+                    "[Conversa={Conversa}] Processando confirmação de alteração via tool",
+                    args.IdConversa);
+
+                // Pegar dados salvos no contexto
+                var reservaIdConf = contexto.ReservaIdPendente ?? 0;
+                if (reservaIdConf == 0)
+                {
+                    _logger.LogError("[Conversa={Conversa}] ReservaIdPendente ausente no contexto", args.IdConversa);
+                    await _conversationRepository.LimparContextoAsync(args.IdConversa);
+                    return BuildJsonReply("Ocorreu um erro ao processar a confirmação. Tente novamente! 😊");
+                }
+
+                var novaDataStr = contexto.DadosColetados?["nova_data"]?.ToString();
+                var novoHorarioConf = contexto.DadosColetados?["novo_horario"]?.ToString();
+                var novaQtdStr = contexto.DadosColetados?["nova_qtd"]?.ToString();
+
+                // Buscar reserva
+                var reservaConf = await _reservaRepository.BuscarPorIdAsync(reservaIdConf);
+                if (reservaConf == null)
+                {
+                    _logger.LogError("[Conversa={Conversa}] Reserva #{Id} não encontrada", args.IdConversa, reservaIdConf);
+                    await _conversationRepository.LimparContextoAsync(args.IdConversa);
+                    return BuildJsonReply("Não encontrei a reserva. Pode tentar novamente? 😊");
+                }
+
+                // EXECUTAR ATUALIZAÇÃO
+                bool alterouConf = false;
+
+                // Atualizar DATA (se houver)
+                if (!string.IsNullOrWhiteSpace(novaDataStr) && DateTime.TryParse(novaDataStr, out var novaDataConf))
+                {
+                    if (reservaConf.DataReserva.Date != novaDataConf.Date)
+                    {
+                        reservaConf.DataReserva = novaDataConf.Date;
+                        alterouConf = true;
+                    }
+                }
+
+                // Atualizar HORÁRIO (se houver)
+                if (!string.IsNullOrWhiteSpace(novoHorarioConf) && TimeSpan.TryParseExact(novoHorarioConf, @"hh\:mm", null, out var tsConf))
+                {
+                    if (reservaConf.HoraInicio != tsConf)
+                    {
+                        reservaConf.HoraInicio = tsConf;
+                        alterouConf = true;
+                    }
+                }
+
+                // Atualizar QUANTIDADE (se houver)
+                if (!string.IsNullOrWhiteSpace(novaQtdStr) && int.TryParse(novaQtdStr, out var novaQtdConf) && novaQtdConf > 0)
+                {
+                    if (reservaConf.QtdPessoas != novaQtdConf)
+                    {
+                        reservaConf.QtdPessoas = novaQtdConf;
+                        alterouConf = true;
+                    }
+                }
+
+                if (alterouConf)
+                {
+                    reservaConf.DataAtualizacao = DateTime.UtcNow;
+                    await _reservaRepository.AtualizarAsync(reservaConf);
+
+                    _logger.LogInformation(
+                        "[Conversa={Conversa}] Reserva #{Id} ATUALIZADA com sucesso via tool",
+                        args.IdConversa,
+                        reservaConf.Id);
+                }
+
+                // LIMPAR CONTEXTO
+                await _conversationRepository.LimparContextoAsync(args.IdConversa);
+
+                // Retornar mensagem de sucesso
+                var msgConf = new StringBuilder();
+                msgConf.AppendLine("✅ Reserva atualizada com sucesso! 🎉");
+                msgConf.AppendLine();
+                msgConf.AppendLine($"🎫 Código: #{reservaConf.Id}");
+                msgConf.AppendLine($"📅 Data: {reservaConf.DataReserva:dd/MM/yyyy}");
+                msgConf.AppendLine($"⏰ Horário: {reservaConf.HoraInicio:hh\\:mm}");
+                msgConf.AppendLine($"👥 Pessoas: {reservaConf.QtdPessoas}");
+                msgConf.AppendLine();
+                msgConf.Append("Nos vemos lá! ✨🥂");
+
+                return BuildJsonReply(msgConf.ToString());
+            }
+
+            // ============================================================
+            // FLUXO NORMAL: Localizar reserva e montar confirmação
+            // ============================================================
 
             // ------------------------------------------------------------
             // 1) Localizar a reserva alvo (por código ou filtroData)

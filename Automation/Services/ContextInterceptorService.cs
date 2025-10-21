@@ -29,17 +29,20 @@ namespace APIBack.Automation.Services
         private readonly APIBack.Repository.Interface.IReservaRepository _reservaRepository;
         private readonly IClienteRepository _clienteRepository;
         private readonly ILogger<ContextInterceptorService> _logger;
+        private readonly ToolExecutorService _toolExecutor;
 
         public ContextInterceptorService(
             IConversationRepository conversationRepository,
             APIBack.Repository.Interface.IReservaRepository reservaRepository,
             IClienteRepository clienteRepository,
-            ILogger<ContextInterceptorService> logger)
+            ILogger<ContextInterceptorService> logger,
+            ToolExecutorService toolExecutor)
         {
             _conversationRepository = conversationRepository;
             _reservaRepository = reservaRepository;
             _clienteRepository = clienteRepository;
             _logger = logger;
+            _toolExecutor = toolExecutor;
         }
 
         private async Task<List<APIBack.Model.Reserva>> ObterReservasAtivasAsync(Guid idCliente, Guid idEstabelecimento)
@@ -551,60 +554,28 @@ namespace APIBack.Automation.Services
                     qtdFinal = qtdParsed;
             }
 
-            // Montar mensagem de confirmação
-            var msgConfirmacao = new StringBuilder();
-            msgConfirmacao.AppendLine($"📋 Reserva #{idReservaFinal} - Confirme as alterações:");
-            msgConfirmacao.AppendLine();
-            msgConfirmacao.AppendLine($"📅 Data: {reservaFinal.DataReserva:dd/MM/yyyy} ({reservaFinal.DataReserva:dddd})");
-            msgConfirmacao.AppendLine();
+            // ✨ SIMPLIFICADO: Salvar contexto e deixar IA montar confirmação
+            _logger.LogInformation(
+                "[Conversa={Conversa}] Dados coletados - salvando contexto e deixando IA processar",
+                idConversa);
 
-            if (!string.IsNullOrWhiteSpace(horarioFinal) && horarioFinal != horaAtual)
-            {
-                msgConfirmacao.AppendLine("⏰ HORÁRIO:");
-                msgConfirmacao.AppendLine($"❌ Antes: {horaAtual}");
-                msgConfirmacao.AppendLine($"✅ Depois: {horarioFinal}");
-            }
-            else
-            {
-                msgConfirmacao.AppendLine($"⏰ HORÁRIO:");
-                msgConfirmacao.AppendLine($"✔️ Mantém: {horaAtual}");
-            }
-
-            msgConfirmacao.AppendLine();
-
-            if (qtdFinal > 0 && qtdFinal != qtdAtual)
-            {
-                msgConfirmacao.AppendLine("👥 PESSOAS:");
-                msgConfirmacao.AppendLine($"❌ Antes: {qtdAtual}");
-                msgConfirmacao.AppendLine($"✅ Depois: {qtdFinal}");
-            }
-            else
-            {
-                msgConfirmacao.AppendLine("👥 PESSOAS:");
-                msgConfirmacao.AppendLine($"✔️ Mantém: {qtdAtual}");
-            }
-
-            msgConfirmacao.AppendLine();
-            msgConfirmacao.Append("Confirma essas mudanças? 😊");
-
-            // Atualizar contexto com dados da confirmação (com TODAS as mudanças)
+            // Salvar contexto com dados coletados (a tool vai ler isso e montar confirmação)
             await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
             {
-                Estado = "aguardando_confirmacao_alteracao",
+                Estado = "pronto_para_atualizar",
                 ReservaIdPendente = idReservaFinal,
                 DadosColetados = new Dictionary<string, object>
-        {
-            { "reserva_id", idReservaFinal },
-            { "novo_horario", horarioFinal },
-            { "nova_qtd", qtdFinal > 0 ? qtdFinal : qtdAtual }
-        },
+                {
+                    { "reserva_id", idReservaFinal },
+                    { "novo_horario", horarioFinal },
+                    { "nova_qtd", qtdFinal > 0 ? qtdFinal : qtdAtual }
+                },
                 ExpiracaoEstado = DateTime.UtcNow.AddMinutes(30)
             });
 
-            var replyFinal = msgConfirmacao.ToString();
-            await SalvarMensagemRespostaAsync(idConversa, replyFinal);
-
-            return (true, new AssistantDecision(replyFinal, "none", null, false, null, null));
+            // NÃO intercepta - deixa IA chamar tool atualizar_reserva
+            // A tool vai ver o contexto "pronto_para_atualizar" e montar a confirmação
+            return (false, null);
         }
 
         private async Task<(bool, AssistantDecision?)> ProcessarConfirmacaoAlteracaoAsync(
@@ -649,165 +620,45 @@ namespace APIBack.Automation.Services
                                        (textoNorm.Contains(" e ") &&
                                         (textoNorm.Contains("quero") || textoNorm.Contains("mudar") || textoNorm.Contains("alterar")));
 
-            if (ehConfirmacao && temMudancaAdicional)
-            {
-                _logger.LogInformation(
-                    "[Conversa={Conversa}] Confirmação detectada MAS com mudança adicional: '{Texto}'",
-                    idConversa, mensagemTexto);
-
-                // ✨ NOVO: Processar a confirmação PRIMEIRO
-                long idReserva = contexto.ReservaIdPendente ?? 0;
-                string novoHorario = contexto.DadosColetados?["novo_horario"]?.ToString() ?? "";
-                int novaQtd = int.Parse(contexto.DadosColetados?["nova_qtd"]?.ToString() ?? "0");
-
-                var reserva = await _reservaRepository.BuscarPorIdAsync(idReserva);
-
-                if (reserva != null)
-                {
-                    bool alterou = false;
-
-                    if (!string.IsNullOrWhiteSpace(novoHorario) && TimeSpan.TryParseExact(novoHorario, @"hh\:mm", null, out var timeSpan))
-                    {
-                        reserva.HoraInicio = timeSpan;
-                        alterou = true;
-                    }
-
-                    if (novaQtd > 0)
-                    {
-                        reserva.QtdPessoas = novaQtd;
-                        alterou = true;
-                    }
-
-                    if (alterou)
-                    {
-                        reserva.DataAtualizacao = DateTime.UtcNow;
-                        await _reservaRepository.AtualizarAsync(reserva);
-
-                        _logger.LogInformation(
-                            "[Conversa={Conversa}] Reserva #{Id} atualizada. Processando mudança adicional.",
-                            idConversa, reserva.Id);
-
-                        // ✨ NOVO: Extrair a parte da mudança adicional
-                        var parteAdicional = mensagemTexto;
-
-                        // Remover a confirmação inicial
-                        foreach (var conf in confirmacoesExatas)
-                        {
-                            if (textoNorm.StartsWith(conf + " "))
-                                parteAdicional = mensagemTexto.Substring(conf.Length).Trim();
-                        }
-
-                        // Detectar o que quer mudar
-                        var querMudarHorario = parteAdicional.ToLower().Contains("horário") ||
-                                               parteAdicional.ToLower().Contains("horario") ||
-                                               parteAdicional.ToLower().Contains("hora");
-
-                        var querMudarQuantidade = parteAdicional.ToLower().Contains("pessoa") ||
-                                                  parteAdicional.ToLower().Contains("quantidade");
-
-                        // Salvar contexto para nova mudança
-                        await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
-                        {
-                            Estado = "aguardando_dados_alteracao",
-                            ReservaIdPendente = reserva.Id,
-                            DadosColetados = new Dictionary<string, object>
-                    {
-                        { "reserva_id", reserva.Id },
-                        { "data_atual", reserva.DataReserva.ToString("yyyy-MM-dd") },
-                        { "hora_atual", reserva.HoraInicio.ToString(@"hh\:mm") },
-                        { "qtd_atual", reserva.QtdPessoas ?? 0 },
-                        // ✨ Manter mudanças já aplicadas
-                        { "novo_horario", novoHorario },
-                        { "nova_qtd", novaQtd }
-                    },
-                            ExpiracaoEstado = DateTime.UtcNow.AddMinutes(30)
-                        });
-
-                        var msg = new StringBuilder();
-                        msg.AppendLine("✅ Alterações confirmadas!");
-                        msg.AppendLine();
-                        msg.AppendLine($"📋 Reserva #{reserva.Id} atualizada:");
-                        msg.AppendLine($"📅 Data: {reserva.DataReserva:dd/MM/yyyy}");
-                        msg.AppendLine($"⏰ Horário: {reserva.HoraInicio:hh\\:mm}");
-                        msg.AppendLine($"👥 Pessoas: {reserva.QtdPessoas}");
-                        msg.AppendLine();
-
-                        if (querMudarHorario)
-                        {
-                            msg.AppendLine("E agora, qual o novo horário? 😊");
-                        }
-                        else if (querMudarQuantidade)
-                        {
-                            msg.AppendLine("E agora, qual a nova quantidade de pessoas? 😊");
-                        }
-                        else
-                        {
-                            msg.AppendLine("O que mais você quer alterar? 😊");
-                            msg.AppendLine("• Horário");
-                            msg.AppendLine("• Quantidade");
-                        }
-
-                        var reply = msg.ToString();
-                        await SalvarMensagemRespostaAsync(idConversa, reply);
-
-                        return (true, new AssistantDecision(reply, "none", null, false, null, null));
-                    }
-                }
-
-                // Se não conseguiu processar, volta ao fluxo normal
-            }
-
+            // ✅ EXECUTAR: Chamar tool diretamente quando confirma
             if (ehConfirmacao)
             {
                 _logger.LogInformation(
-                    "[Conversa={Conversa}] Confirmação detectada: '{Texto}' - Processando alteração",
+                    "[Conversa={Conversa}] Confirmação detectada: '{Texto}' - Executando atualização via tool",
                     idConversa, mensagemTexto);
 
-                // Executar atualização
-                long idReserva = contexto.ReservaIdPendente ?? 0;
-                string novoHorario = contexto.DadosColetados?["novo_horario"]?.ToString() ?? "";
-                int novaQtd = int.Parse(contexto.DadosColetados?["nova_qtd"]?.ToString() ?? "0");
-
-                var reserva = await _reservaRepository.BuscarPorIdAsync(idReserva);
-
-                if (reserva != null)
+                try
                 {
-                    bool alterou = false;
-
-                    if (!string.IsNullOrWhiteSpace(novoHorario) && TimeSpan.TryParseExact(novoHorario, @"hh\:mm", null, out var timeSpan))
+                    // Montar argumentos para a tool
+                    var toolArgs = new
                     {
-                        reserva.HoraInicio = timeSpan;
-                        alterou = true;
-                    }
+                        idConversa = idConversa.ToString()
+                        // A tool vai ler o contexto "aguardando_confirmacao_alteracao" e processar
+                    };
 
-                    if (novaQtd > 0)
-                    {
-                        reserva.QtdPessoas = novaQtd;
-                        alterou = true;
-                    }
+                    var argsJson = System.Text.Json.JsonSerializer.Serialize(toolArgs);
 
-                    if (alterou)
-                    {
-                        reserva.DataAtualizacao = DateTime.UtcNow;
-                        await _reservaRepository.AtualizarAsync(reserva);
+                    // Chamar tool diretamente
+                    var toolResult = await _toolExecutor.ExecuteToolAsync("atualizar_reserva", argsJson);
 
-                        var msg = new StringBuilder();
-                        msg.AppendLine("✅ Reserva atualizada com sucesso! 🎉");
-                        msg.AppendLine();
-                        msg.AppendLine($"🎫 Código: #{reserva.Id}");
-                        msg.AppendLine($"📅 Data: {reserva.DataReserva:dd/MM/yyyy}");
-                        msg.AppendLine($"⏰ Horário: {reserva.HoraInicio:hh\\:mm}");
-                        msg.AppendLine($"👥 Pessoas: {reserva.QtdPessoas}");
-                        msg.AppendLine();
-                        msg.Append("Nos vemos lá! ✨🥂");
+                    _logger.LogInformation(
+                        "[Conversa={Conversa}] Tool atualizar_reserva executada com sucesso",
+                        idConversa);
 
-                        await _conversationRepository.LimparContextoAsync(idConversa);
+                    // Retornar resultado da tool como resposta
+                    return (true, new AssistantDecision(toolResult, "none", null, false, null, null));
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex,
+                        "[Conversa={Conversa}] Erro ao executar tool atualizar_reserva após confirmação",
+                        idConversa);
 
-                        var reply = msg.ToString();
-                        await SalvarMensagemRespostaAsync(idConversa, reply);
+                    // Limpar contexto em caso de erro
+                    await _conversationRepository.LimparContextoAsync(idConversa);
 
-                        return (true, new AssistantDecision(reply, "none", null, false, null, null));
-                    }
+                    var erroMsg = "Ops! Tive um problema ao processar a confirmação 😔\n\nPode tentar novamente?";
+                    return (true, new AssistantDecision(erroMsg, "none", null, false, null, null));
                 }
             }
             else if (textoNorm.Contains("não") || textoNorm.Contains("nao") || textoNorm == "n")
