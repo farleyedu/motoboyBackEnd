@@ -48,6 +48,56 @@ namespace APIBack.Automation.Services
             var apiKey = _options.Value.ApiKey;
             var model = string.IsNullOrWhiteSpace(_options.Value.Model) ? "gpt-4o-2024-08-06" : _options.Value.Model;
 
+            // ✨ SANITIZAÇÃO ROBUSTA DA API KEY
+            if (!string.IsNullOrWhiteSpace(apiKey))
+            {
+                var apiKeyOriginal = apiKey;
+
+                // Remove TODOS os caracteres de espaço em branco (espaços, tabs, \n, \r, etc)
+                apiKey = new string(apiKey.Where(c => !char.IsWhiteSpace(c)).ToArray());
+
+                // Log de debug (APENAS primeiros 15 caracteres por segurança)
+                var preview = apiKey.Length >= 15 ? apiKey.Substring(0, 15) : apiKey;
+                _logger.LogInformation(
+                    "[Conversa={Conversa}] [APIKEY-DEBUG] Tamanho original={TamanhoOriginal}, Tamanho limpo={TamanhoLimpo}, Preview={Preview}",
+                    idConversa,
+                    apiKeyOriginal.Length,
+                    apiKey.Length,
+                    preview + "...");
+
+                // Validação básica de formato OpenAI (sk-proj-... ou sk-...)
+                if (!apiKey.StartsWith("sk-"))
+                {
+                    _logger.LogError(
+                        "[Conversa={Conversa}] [APIKEY-ERROR] API Key não começa com 'sk-'. Preview={Preview}",
+                        idConversa,
+                        preview + "...");
+
+                    return new AssistantDecision(
+                        Reply: "Erro de configuração: API Key inválida. Contate o suporte.",
+                        HandoverAction: "none",
+                        AgentPrompt: null,
+                        ReservaConfirmada: false,
+                        Detalhes: null);
+                }
+
+                // Validação de tamanho mínimo (chaves OpenAI têm ~90+ caracteres)
+                if (apiKey.Length < 40)
+                {
+                    _logger.LogError(
+                        "[Conversa={Conversa}] [APIKEY-ERROR] API Key muito curta (tamanho={Tamanho})",
+                        idConversa,
+                        apiKey.Length);
+
+                    return new AssistantDecision(
+                        Reply: "Erro de configuração: API Key incompleta. Contate o suporte.",
+                        HandoverAction: "none",
+                        AgentPrompt: null,
+                        ReservaConfirmada: false,
+                        Detalhes: null);
+                }
+            }
+
             if (string.IsNullOrWhiteSpace(apiKey))
             {
                 _logger.LogWarning("[Conversa={Conversa}] OpenAI ApiKey não configurada; usando decisão padrão", idConversa);
