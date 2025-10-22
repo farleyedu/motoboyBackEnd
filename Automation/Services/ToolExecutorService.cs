@@ -644,9 +644,28 @@ PARÂMETROS IMPORTANTES:
                     return BuildJsonReply("Ocorreu um erro ao processar a confirmação. Tente novamente! 😊");
                 }
 
-                var novaDataStr = contexto.DadosColetados?["nova_data"]?.ToString();
-                var novoHorarioConf = contexto.DadosColetados?["novo_horario"]?.ToString();
-                var novaQtdStr = contexto.DadosColetados?["nova_qtd"]?.ToString();
+                // ✅ Usar TryGetValue porque campos são OPCIONAIS
+                // Cliente pode mudar só horário, só quantidade, ou ambos
+                string? novaDataStr = null;
+                string? novoHorarioConf = null;
+                string? novaQtdStr = null;
+
+                if (contexto.DadosColetados != null)
+                {
+                    if (contexto.DadosColetados.TryGetValue("nova_data", out var dataObj))
+                        novaDataStr = dataObj?.ToString();
+                    if (contexto.DadosColetados.TryGetValue("novo_horario", out var horarioObj))
+                        novoHorarioConf = horarioObj?.ToString();
+                    if (contexto.DadosColetados.TryGetValue("nova_qtd", out var qtdObj))
+                        novaQtdStr = qtdObj?.ToString();
+                }
+
+                _logger.LogDebug(
+                    "[Conversa={Conversa}] Dados para atualização: Data={Data}, Horario={Horario}, Qtd={Qtd}",
+                    args.IdConversa,
+                    novaDataStr ?? "não informado",
+                    novoHorarioConf ?? "não informado",
+                    novaQtdStr ?? "não informado");
 
                 // Buscar reserva
                 var reservaConf = await _reservaRepository.BuscarPorIdAsync(reservaIdConf);
