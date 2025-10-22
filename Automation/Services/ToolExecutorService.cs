@@ -926,14 +926,14 @@ PARÂMETROS IMPORTANTES:
             sb.AppendLine();
 
             sb.AppendLine("⏰ HORÁRIO:");
-            if (horaDepois == horaAntes)
-            {
-                sb.AppendLine($"✔️ Mantém: {horaAntes}");
-            }
-            else
+            if (horaDepois != horaAntes)
             {
                 sb.AppendLine($"❌ Antes: {horaAntes}");
                 sb.AppendLine($"✅ Depois: {horaDepois}");
+            }
+            else
+            {
+                sb.AppendLine($"✔️ Mantém: {horaAntes}");
             }
             sb.AppendLine();
 
