@@ -343,6 +343,8 @@ PARÂMETROS IMPORTANTES:
                 ehAtualizacao = true;
                 idReserva = reservaMesmoDia.Id;
 
+                // ✅ CORREÇÃO: Salvar nome do cliente informado na reserva
+                reservaMesmoDia.NomeCliente = args.NomeCompleto;
                 reservaMesmoDia.QtdPessoas = args.QtdPessoas;
                 reservaMesmoDia.HoraInicio = horaConvertida;
                 reservaMesmoDia.DataAtualizacao = DateTime.UtcNow;
@@ -365,6 +367,7 @@ PARÂMETROS IMPORTANTES:
                 {
                     IdCliente = idCliente,
                     IdEstabelecimento = idEstabelecimento,
+                    NomeCliente = args.NomeCompleto,  // ✅ CORREÇÃO: Salvar nome informado
                     QtdPessoas = args.QtdPessoas,
                     DataReserva = dataReserva,
                     HoraInicio = horaConvertida,
@@ -1296,8 +1299,8 @@ PARÂMETROS IMPORTANTES:
             if (reservasAtivas.Count == 1)
             {
                 var reserva = reservasAtivas.First();
-                var cliente = await _clienteRepository.ObterPorIdAsync(reserva.IdCliente);
-                var nomeCliente = cliente?.Nome ?? "Cliente";
+                // ✅ CORREÇÃO: Usar NomeCliente da reserva (nome informado no momento da reserva)
+                var nomeReserva = reserva.NomeCliente ?? "Cliente";
 
                 _logger.LogInformation(
                     "[Conversa={Conversa}] Cliente tem apenas 1 reserva. Fast-path direto para alteração.",
@@ -1320,7 +1323,7 @@ PARÂMETROS IMPORTANTES:
                 var msg = new StringBuilder();
                 msg.AppendLine($"📋 Reserva #{reserva.Id} - Informações completas:");
                 msg.AppendLine();
-                msg.AppendLine($"👤 Nome: {nomeCliente}");
+                msg.AppendLine($"👤 Nome: {nomeReserva}");
                 msg.AppendLine($"📅 Data: {reserva.DataReserva:dd/MM/yyyy} ({reserva.DataReserva:dddd})");
                 msg.AppendLine($"⏰ Horário: {reserva.HoraInicio:hh\\:mm}");
                 msg.AppendLine($"👥 Pessoas: {reserva.QtdPessoas}");

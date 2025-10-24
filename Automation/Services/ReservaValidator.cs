@@ -346,42 +346,67 @@ namespace APIBack.Automation.Services
             return TimeSpan.TryParse(horaTexto, System.Globalization.CultureInfo.InvariantCulture, out hora);
         }
 
+        /// <summary>
+        /// ✅ MELHORADO: Parse robusto de datas com suporte a: hoje, amanhã, dd/MM, dd/MM/yyyy, dias da semana, "dia X"
+        /// </summary>
         private DateTime? ParseDataRelativa(string dataTexto, DateTime referenciaAtual)
         {
             if (string.IsNullOrWhiteSpace(dataTexto))
                 return null;
 
-            var textoNormalizado = RemoveDiacritics(dataTexto.ToLowerInvariant().Trim()).Replace("-feira", string.Empty);
-            var hoje = referenciaAtual.Date;
+            var hojeSP = referenciaAtual.Date;
+            var textoNorm = RemoveDiacritics(dataTexto.ToLowerInvariant().Trim()).Replace("-feira", string.Empty);
 
-            // ✅ LOG PARA DEBUG
-            _logger.LogDebug(
-                "[ParseDataRelativa] Input: '{DataTexto}', Normalizado: '{Normalizado}', Hoje: {Hoje:yyyy-MM-dd}",
-                dataTexto, textoNormalizado, hoje);
+            _logger.LogInformation(
+                "[ParseData] Input: '{Input}' | Normalizado: '{Norm}' | Ref: {Ref:yyyy-MM-dd}",
+                dataTexto, textoNorm, hojeSP);
 
-            // Termos relativos exatos
-            if (textoNormalizado == "hoje")
+            // 1. TERMOS RELATIVOS (prioridade máxima)
+            if (textoNorm == "hoje")
             {
-                _logger.LogDebug("[ParseDataRelativa] Detectado: HOJE = {Data:yyyy-MM-dd}", hoje);
-                return hoje;
+                _logger.LogInformation("[ParseData] ✅ HOJE → {Data:yyyy-MM-dd}", hojeSP);
+                return hojeSP;
             }
 
-            if (textoNormalizado == "amanha")
+            if (textoNorm.Contains("amanha"))
             {
-                var amanha = hoje.AddDays(1);
-                _logger.LogDebug("[ParseDataRelativa] Detectado: AMANHÃ = {Data:yyyy-MM-dd}", amanha);
+                var amanha = hojeSP.AddDays(1);
+                _logger.LogInformation("[ParseData] ✅ AMANHÃ → {Data:yyyy-MM-dd}", amanha);
                 return amanha;
             }
 
-            if (textoNormalizado == "depois de amanha")
+            if (textoNorm.Contains("depois") && textoNorm.Contains("amanha"))
             {
-                var depoisDeAmanha = hoje.AddDays(2);
-                _logger.LogDebug("[ParseDataRelativa] Detectado: DEPOIS DE AMANHÃ = {Data:yyyy-MM-dd}", depoisDeAmanha);
-                return depoisDeAmanha;
+                var depoisAmanha = hojeSP.AddDays(2);
+                _logger.LogInformation("[ParseData] ✅ DEPOIS DE AMANHÃ → {Data:yyyy-MM-dd}", depoisAmanha);
+                return depoisAmanha;
             }
 
-            // Dias da semana
-            var diasDaSemana = new System.Collections.Generic.Dictionary<string, DayOfWeek>
+            // 2. FORMATOS ABSOLUTOS (dd/MM/yyyy)
+            if (DateTime.TryParseExact(textoNorm, "dd/MM/yyyy",
+                System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var dataCompleta))
+            {
+                _logger.LogInformation("[ParseData] ✅ dd/MM/yyyy → {Data:yyyy-MM-dd}", dataCompleta.Date);
+                return dataCompleta.Date;
+            }
+
+            // 3. FORMATO dd/MM (sem ano)
+            if (DateTime.TryParseExact(textoNorm, "dd/MM",
+                System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var dataSemAno))
+            {
+                var ano = hojeSP.Year;
+                var dataComAno = new DateTime(ano, dataSemAno.Month, dataSemAno.Day);
+
+                // Se ficou no passado, avançar 1 ano
+                if (dataComAno < hojeSP)
+                    dataComAno = dataComAno.AddYears(1);
+
+                _logger.LogInformation("[ParseData] ✅ dd/MM → {Data:yyyy-MM-dd}", dataComAno.Date);
+                return dataComAno.Date;
+            }
+
+            // 4. DIAS DA SEMANA (segunda, terça, quarta, quinta, sexta, sábado, domingo)
+            var diasSemana = new System.Collections.Generic.Dictionary<string, DayOfWeek>
             {
                 { "domingo", DayOfWeek.Sunday },
                 { "segunda", DayOfWeek.Monday },
@@ -392,42 +417,57 @@ namespace APIBack.Automation.Services
                 { "sabado", DayOfWeek.Saturday }
             };
 
-            foreach (var dia in diasDaSemana)
+            foreach (var (nome, diaSemana) in diasSemana)
             {
-                if (textoNormalizado.Contains(dia.Key))
+                if (textoNorm.Contains(nome))
                 {
-                    var dataResultado = hoje.AddDays(1);
-                    while (dataResultado.DayOfWeek != dia.Value)
-                        dataResultado = dataResultado.AddDays(1);
+                    // Calcular próxima ocorrência
+                    var delta = ((int)diaSemana - (int)hojeSP.DayOfWeek + 7) % 7;
+                    if (delta == 0) delta = 7; // Se é hoje, próxima semana
 
-                    if (textoNormalizado.Contains("que vem") || textoNormalizado.Contains("proxima"))
+                    var dataResultado = hojeSP.AddDays(delta);
+
+                    // Se mencionar "que vem" ou "próxima", adicionar 7 dias
+                    if (textoNorm.Contains("que vem") || textoNorm.Contains("proxima"))
                         dataResultado = dataResultado.AddDays(7);
 
-                    return dataResultado;
+                    _logger.LogInformation("[ParseData] ✅ DIA SEMANA '{Nome}' → {Data:yyyy-MM-dd}", nome, dataResultado.Date);
+                    return dataResultado.Date;
                 }
             }
 
-            // Formatos específicos
-            // Tentar formatos dd/MM/yyyy, dd/MM, yyyy-MM-dd
-            if (DateTime.TryParseExact(textoNormalizado, "dd/MM/yyyy", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var dataEspecifica))
-                return dataEspecifica.Date;
-
-            // Formato dd/MM sem ano (assumir ano atual ou próximo)
-            if (DateTime.TryParseExact(textoNormalizado, "dd/MM", System.Globalization.CultureInfo.InvariantCulture, System.Globalization.DateTimeStyles.None, out var dataSemAno))
+            // 5. "DIA X" (dia 12, dia 25, etc)
+            var matchDia = System.Text.RegularExpressions.Regex.Match(textoNorm, @"dia\s*(\d{1,2})");
+            if (matchDia.Success && int.TryParse(matchDia.Groups[1].Value, out var diaNumero))
             {
-                var anoAtual = referenciaAtual.Year;
-                var dataComAno = new DateTime(anoAtual, dataSemAno.Month, dataSemAno.Day);
+                if (diaNumero >= 1 && diaNumero <= 31)
+                {
+                    try
+                    {
+                        var tentativa = new DateTime(hojeSP.Year, hojeSP.Month, diaNumero);
 
-                // Se a data ficou no passado, assumir ano seguinte
-                if (dataComAno < referenciaAtual.Date)
-                    dataComAno = dataComAno.AddYears(1);
+                        // Se ficou no passado, próximo mês
+                        if (tentativa <= hojeSP)
+                            tentativa = tentativa.AddMonths(1);
 
-                return dataComAno.Date;
+                        _logger.LogInformation("[ParseData] ✅ DIA {Dia} → {Data:yyyy-MM-dd}", diaNumero, tentativa.Date);
+                        return tentativa.Date;
+                    }
+                    catch (ArgumentOutOfRangeException)
+                    {
+                        _logger.LogWarning("[ParseData] ❌ Dia {Dia} inválido para o mês", diaNumero);
+                    }
+                }
             }
 
-            if (DateTime.TryParse(dataTexto, new System.Globalization.CultureInfo("pt-BR"), System.Globalization.DateTimeStyles.None, out var dataOutroFormato))
-                return dataOutroFormato.Date;
+            // 6. PARSE LIVRE (último recurso)
+            if (DateTime.TryParse(dataTexto, new System.Globalization.CultureInfo("pt-BR"), System.Globalization.DateTimeStyles.None, out var dataLivre))
+            {
+                _logger.LogWarning("[ParseData] ⚠️ Parse livre → {Data:yyyy-MM-dd}", dataLivre.Date);
+                return dataLivre.Date;
+            }
 
+            _logger.LogWarning("[ParseData] ❌ FALHA ao parsear: '{Input}'", dataTexto);
             return null;
         }
 

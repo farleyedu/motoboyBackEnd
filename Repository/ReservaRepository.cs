@@ -32,11 +32,11 @@ namespace APIBack.Repository
             const string sql = @"
 INSERT INTO reservas (
   id_cliente, id_estabelecimento, id_profissional, id_servico,
-  qtd_pessoas, data_reserva, hora_inicio, hora_fim,
+  nome_cliente_reserva, qtd_pessoas, data_reserva, hora_inicio, hora_fim,
   status, observacoes)
 VALUES (
   @IdCliente, @IdEstabelecimento, @IdProfissional, @IdServico,
-  @QtdPessoas, @DataReserva, @HoraInicio, @HoraFim,
+  @NomeCliente, @QtdPessoas, @DataReserva, @HoraInicio, @HoraFim,
   @Status::status_reserva, @Observacoes)
 RETURNING id;";
 
@@ -47,6 +47,7 @@ RETURNING id;";
                 entity.IdEstabelecimento,
                 entity.IdProfissional,
                 entity.IdServico,
+                entity.NomeCliente,
                 entity.QtdPessoas,
                 DataReserva = entity.DataReserva.Date,
                 entity.HoraInicio,
@@ -64,6 +65,7 @@ RETURNING id;";
                                         id_estabelecimento AS IdEstabelecimento,
                                         id_profissional AS IdProfissional,
                                         id_servico AS IdServico,
+                                        nome_cliente_reserva AS NomeCliente,
                                         qtd_pessoas AS QtdPessoas,
                                         data_reserva AS DataReserva,
                                         hora_inicio AS HoraInicio,
@@ -87,6 +89,7 @@ RETURNING id;";
                                         id_estabelecimento AS IdEstabelecimento,
                                         id_profissional AS IdProfissional,
                                         id_servico AS IdServico,
+                                        nome_cliente_reserva AS NomeCliente,
                                         qtd_pessoas AS QtdPessoas,
                                         data_reserva AS DataReserva,
                                         hora_inicio AS HoraInicio,
@@ -110,6 +113,7 @@ RETURNING id;";
             const string sql = @"UPDATE reservas
                                    SET id_profissional = @IdProfissional,
                                        id_servico = @IdServico,
+                                       nome_cliente_reserva = @NomeCliente,
                                        qtd_pessoas = @QtdPessoas,
                                        data_reserva = @DataReserva,
                                        hora_inicio = @HoraInicio,
@@ -124,6 +128,7 @@ RETURNING id;";
                 entity.Id,
                 entity.IdProfissional,
                 entity.IdServico,
+                entity.NomeCliente,
                 entity.QtdPessoas,
                 DataReserva = entity.DataReserva.Date,
                 entity.HoraInicio,
@@ -215,6 +220,7 @@ RETURNING id;";
                             id_estabelecimento AS IdEstabelecimento,
                             id_profissional AS IdProfissional,
                             id_servico AS IdServico,
+                            nome_cliente_reserva AS NomeCliente,
                             qtd_pessoas AS QtdPessoas,
                             data_reserva AS DataReserva,
                             hora_inicio AS HoraInicio,
@@ -246,6 +252,7 @@ RETURNING id;";
                             id_estabelecimento AS IdEstabelecimento,
                             id_profissional AS IdProfissional,
                             id_servico AS IdServico,
+                            nome_cliente_reserva AS NomeCliente,
                             qtd_pessoas AS QtdPessoas,
                             data_reserva AS DataReserva,
                             hora_inicio AS HoraInicio,
@@ -274,7 +281,22 @@ RETURNING id;";
         public async Task<Reserva?> BuscarPorCodigoAsync(long codigo, Guid idEstabelecimento)
         {
             const string sql = @"
-                SELECT * FROM reservas
+                SELECT
+                    id AS Id,
+                    id_cliente AS IdCliente,
+                    id_estabelecimento AS IdEstabelecimento,
+                    id_profissional AS IdProfissional,
+                    id_servico AS IdServico,
+                    nome_cliente_reserva AS NomeCliente,
+                    qtd_pessoas AS QtdPessoas,
+                    data_reserva AS DataReserva,
+                    hora_inicio AS HoraInicio,
+                    hora_fim AS HoraFim,
+                    status AS Status,
+                    observacoes AS Observacoes,
+                    data_criacao AS DataCriacao,
+                    data_atualizacao AS DataAtualizacao
+                FROM reservas
                 WHERE id = @Codigo
                   AND id_estabelecimento = @IdEstabelecimento
                   AND status = @Status

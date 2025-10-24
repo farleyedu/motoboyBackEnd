@@ -140,13 +140,13 @@ namespace APIBack.Automation.Services
                         else
                         {
                             // Não conseguiu extrair dados, mostra a reserva e pede os dados
-                            var cliente = await _clienteRepository.ObterPorIdAsync(reserva.IdCliente);
-                            var nomeCliente = cliente?.Nome ?? "Cliente";
+                            // ✅ CORREÇÃO: Usar NomeCliente da reserva (nome informado no momento da reserva)
+                            var nomeReserva = reserva.NomeCliente ?? "Cliente";
 
                             var msg = new StringBuilder();
                             msg.AppendLine($"📋 Reserva #{reserva.Id} - Informações atuais:");
                             msg.AppendLine();
-                            msg.AppendLine($"👤 Nome: {nomeCliente}");
+                            msg.AppendLine($"👤 Nome: {nomeReserva}");
                             msg.AppendLine($"📅 Data: {reserva.DataReserva:dd/MM/yyyy} ({reserva.DataReserva:dddd})");
                             msg.AppendLine($"⏰ Horário: {reserva.HoraInicio:hh\\:mm}");
                             msg.AppendLine($"👥 Pessoas: {reserva.QtdPessoas}");
@@ -306,13 +306,13 @@ namespace APIBack.Automation.Services
             });
 
             // Montar resposta mostrando informações completas
-            var cliente = await _clienteRepository.ObterPorIdAsync(reserva.IdCliente);
-            var nomeCliente = cliente?.Nome ?? "Cliente";
+            // ✅ CORREÇÃO: Usar NomeCliente da reserva (nome informado no momento da reserva)
+            var nomeReserva = reserva.NomeCliente ?? "Cliente";
 
             var msg = new StringBuilder();
             msg.AppendLine($"📋 Reserva #{reserva.Id} - Informações completas:");
             msg.AppendLine();
-            msg.AppendLine($"👤 Nome: {nomeCliente}");
+            msg.AppendLine($"👤 Nome: {nomeReserva}");
             msg.AppendLine($"📅 Data: {reserva.DataReserva:dd/MM/yyyy} ({reserva.DataReserva:dddd})");
             msg.AppendLine($"⏰ Horário: {reserva.HoraInicio:hh\\:mm}");
             msg.AppendLine($"👥 Pessoas: {reserva.QtdPessoas}");
@@ -802,13 +802,13 @@ namespace APIBack.Automation.Services
                     "[Conversa={Conversa}] Reserva encontrada mas sem mudança especificada - pedindo dados",
                     idConversa);
 
-                var cliente = await _clienteRepository.ObterPorIdAsync(alvo.IdCliente);
-                var nomeCliente = cliente?.Nome ?? "Cliente";
+                // ✅ CORREÇÃO: Usar NomeCliente da reserva (nome informado no momento da reserva)
+                var nomeReserva = alvo.NomeCliente ?? "Cliente";
 
                 var msg = new StringBuilder();
                 msg.AppendLine($"📋 Reserva #{alvo.Id} encontrada:");
                 msg.AppendLine();
-                msg.AppendLine($"👤 Nome: {nomeCliente}");
+                msg.AppendLine($"👤 Nome: {nomeReserva}");
                 msg.AppendLine($"📅 Data: {alvo.DataReserva:dd/MM/yyyy} ({alvo.DataReserva:dddd})");
                 msg.AppendLine($"⏰ Horário: {alvo.HoraInicio:hh\\:mm}");
                 msg.AppendLine($"👥 Pessoas: {alvo.QtdPessoas}");

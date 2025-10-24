@@ -9,6 +9,12 @@ namespace APIBack.Model
         public Guid IdEstabelecimento { get; set; }
         public long? IdProfissional { get; set; }
         public long? IdServico { get; set; }
+
+        /// <summary>
+        /// Nome completo informado pelo cliente no momento da reserva
+        /// </summary>
+        public string? NomeCliente { get; set; }
+
         public int? QtdPessoas { get; set; }
         public DateTime DataReserva { get; set; }
         public TimeSpan HoraInicio { get; set; }
