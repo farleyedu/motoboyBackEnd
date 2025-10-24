@@ -10,5 +10,6 @@ namespace APIBack.Automation.Models
         public DateTime? ExpiracaoEstado { get; set; }
         public long? ReservaIdPendente { get; set; }
         public string? AcaoPendente { get; set; }
+        public Dictionary<string, object>? ReservaSnapshot { get; set; }
     }
 }

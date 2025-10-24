@@ -53,6 +53,7 @@ builder.Services.AddSingleton(dataSource);
 // Add services to the container.
 builder.Services.AddControllers();
 builder.Services.AddHttpClient();
+builder.Services.AddMemoryCache();
 builder.Services.AddScoped<IUsuarioRepository, UsuarioRepository>();
 builder.Services.AddScoped<IUsuarioService, UsuarioService>();
 builder.Services.AddScoped<IPedidoRepository, PedidoRepository>();
@@ -102,6 +103,10 @@ builder.Services.AddScoped<ConversationProcessor>();
 builder.Services.AddScoped<IAResponseHandler>();
 builder.Services.AddScoped<WhatsAppSender>();
 builder.Services.AddScoped<ContextInterceptorService>();
+builder.Services.AddSingleton<IWebhookMessageCache, WebhookMessageCache>();
+builder.Services.AddSingleton<WebhookMessageQueue>();
+builder.Services.AddSingleton<IWebhookDispatchService, WebhookDispatchService>();
+builder.Services.AddHostedService<WebhookProcessingWorker>();
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
 
 

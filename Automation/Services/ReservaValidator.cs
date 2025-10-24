@@ -361,25 +361,25 @@ namespace APIBack.Automation.Services
                 "[ParseData] Input: '{Input}' | Normalizado: '{Norm}' | Ref: {Ref:yyyy-MM-dd}",
                 dataTexto, textoNorm, hojeSP);
 
-            // 1. TERMOS RELATIVOS (prioridade máxima)
+            // 1. TERMOS RELATIVOS (prioridade maxima)
             if (textoNorm == "hoje")
             {
-                _logger.LogInformation("[ParseData] ✅ HOJE → {Data:yyyy-MM-dd}", hojeSP);
+                _logger.LogInformation("[ParseData] HOJE -> {Data:yyyy-MM-dd}", hojeSP);
                 return hojeSP;
-            }
-
-            if (textoNorm.Contains("amanha"))
-            {
-                var amanha = hojeSP.AddDays(1);
-                _logger.LogInformation("[ParseData] ✅ AMANHÃ → {Data:yyyy-MM-dd}", amanha);
-                return amanha;
             }
 
             if (textoNorm.Contains("depois") && textoNorm.Contains("amanha"))
             {
                 var depoisAmanha = hojeSP.AddDays(2);
-                _logger.LogInformation("[ParseData] ✅ DEPOIS DE AMANHÃ → {Data:yyyy-MM-dd}", depoisAmanha);
+                _logger.LogInformation("[ParseData] DEPOIS DE AMANHA -> {Data:yyyy-MM-dd}", depoisAmanha);
                 return depoisAmanha;
+            }
+
+            if (textoNorm.Contains("amanha"))
+            {
+                var amanha = hojeSP.AddDays(1);
+                _logger.LogInformation("[ParseData] AMANHA -> {Data:yyyy-MM-dd}", amanha);
+                return amanha;
             }
 
             // 2. FORMATOS ABSOLUTOS (dd/MM/yyyy)
@@ -436,74 +436,36 @@ namespace APIBack.Automation.Services
                 }
             }
 
-            // 5. "DIA X" (dia 12, dia 25, etc)
-            var matchDia = System.Text.RegularExpressions.Regex.Match(textoNorm, @"dia\s*(\d{1,2})");
-            if (matchDia.Success && int.TryParse(matchDia.Groups[1].Value, out var diaNumero))
+            // 5. "DIA X" ou numeros isolados
+            if (DateParsingHelper.TryExtractDayNumber(textoNorm, out var diaExtraido))
             {
-                if (diaNumero >= 1 && diaNumero <= 31)
+                try
                 {
-                    try
-                    {
-                        var mesAtual = hojeSP.Month;
-                        var anoAtual = hojeSP.Year;
+                    var mesAtual = hojeSP.Month;
+                    var anoAtual = hojeSP.Year;
 
-                        // Se dia já passou este mês, usar próximo mês
-                        if (diaNumero < hojeSP.Day)
+                    if (diaExtraido < hojeSP.Day)
+                    {
+                        mesAtual++;
+                        if (mesAtual > 12)
                         {
-                            mesAtual++;
-                            if (mesAtual > 12)
-                            {
-                                mesAtual = 1;
-                                anoAtual++;
-                            }
+                            mesAtual = 1;
+                            anoAtual++;
                         }
+                    }
 
-                        var dataCalculada = new DateTime(anoAtual, mesAtual, diaNumero);
-                        _logger.LogInformation("[ParseData] ✅ DIA {Dia} → {Data:yyyy-MM-dd}", diaNumero, dataCalculada.Date);
-                        return dataCalculada.Date;
-                    }
-                    catch (ArgumentOutOfRangeException ex)
-                    {
-                        _logger.LogWarning("[ParseData] ❌ Dia {Dia} inválido para o mês - {Erro}", diaNumero, ex.Message);
-                        return null;
-                    }
+                    var dataCalculada = new DateTime(anoAtual, mesAtual, diaExtraido);
+                    _logger.LogInformation("[ParseData] DIA DETECTADO {Dia} -> {Data:yyyy-MM-dd}", diaExtraido, dataCalculada.Date);
+                    return dataCalculada.Date;
+                }
+                catch (ArgumentOutOfRangeException ex)
+                {
+                    _logger.LogWarning("[ParseData] Dia {Dia} invalido para o mes - {Erro}", diaExtraido, ex.Message);
+                    return null;
                 }
             }
 
-            // 6. APENAS NÚMEROS (interpretar como dia do mês: "02", "15")
-            if (System.Text.RegularExpressions.Regex.IsMatch(textoNorm, @"^\d{1,2}$"))
-            {
-                if (int.TryParse(textoNorm, out var diaIsolado) && diaIsolado >= 1 && diaIsolado <= 31)
-                {
-                    try
-                    {
-                        var mesAtual = hojeSP.Month;
-                        var anoAtual = hojeSP.Year;
-
-                        // Se dia já passou, usar próximo mês
-                        if (diaIsolado < hojeSP.Day)
-                        {
-                            mesAtual++;
-                            if (mesAtual > 12)
-                            {
-                                mesAtual = 1;
-                                anoAtual++;
-                            }
-                        }
-
-                        var dataCalculada = new DateTime(anoAtual, mesAtual, diaIsolado);
-                        _logger.LogInformation("[ParseData] ✅ NÚMERO ISOLADO {Numero} → {Data:yyyy-MM-dd}", diaIsolado, dataCalculada.Date);
-                        return dataCalculada.Date;
-                    }
-                    catch (ArgumentOutOfRangeException ex)
-                    {
-                        _logger.LogWarning("[ParseData] ❌ Número de dia inválido: {Numero} - {Erro}", diaIsolado, ex.Message);
-                        return null;
-                    }
-                }
-            }
-
-            // 7. PARSE LIVRE (último recurso)
+            // 6. PARSE LIVRE (ultimo recurso)
             if (DateTime.TryParse(dataTexto, new System.Globalization.CultureInfo("pt-BR"), System.Globalization.DateTimeStyles.None, out var dataLivre))
             {
                 _logger.LogWarning("[ParseData] ⚠️ Parse livre → {Data:yyyy-MM-dd}", dataLivre.Date);

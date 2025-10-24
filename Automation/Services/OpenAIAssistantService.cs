@@ -51,27 +51,23 @@ namespace APIBack.Automation.Services
             // ✨ SANITIZAÇÃO ROBUSTA DA API KEY
             if (!string.IsNullOrWhiteSpace(apiKey))
             {
-                var apiKeyOriginal = apiKey;
+                var apiKeyOriginalLength = apiKey.Length;
 
                 // Remove TODOS os caracteres de espaço em branco (espaços, tabs, \n, \r, etc)
                 apiKey = new string(apiKey.Where(c => !char.IsWhiteSpace(c)).ToArray());
 
-                // Log de debug (APENAS primeiros 15 caracteres por segurança)
-                var preview = apiKey.Length >= 15 ? apiKey.Substring(0, 15) : apiKey;
-                _logger.LogInformation(
-                    "[Conversa={Conversa}] [APIKEY-DEBUG] Tamanho original={TamanhoOriginal}, Tamanho limpo={TamanhoLimpo}, Preview={Preview}",
+                _logger.LogDebug(
+                    "[Conversa={Conversa}] [APIKEY-DEBUG] Tamanho original={TamanhoOriginal}, Tamanho limpo={TamanhoLimpo}",
                     idConversa,
-                    apiKeyOriginal.Length,
-                    apiKey.Length,
-                    preview + "...");
+                    apiKeyOriginalLength,
+                    apiKey.Length);
 
                 // Validação básica de formato OpenAI (sk-proj-... ou sk-...)
                 if (!apiKey.StartsWith("sk-"))
                 {
                     _logger.LogError(
-                        "[Conversa={Conversa}] [APIKEY-ERROR] API Key não começa com 'sk-'. Preview={Preview}",
-                        idConversa,
-                        preview + "...");
+                        "[Conversa={Conversa}] [APIKEY-ERROR] API Key não começa com 'sk-'",
+                        idConversa);
 
                     return new AssistantDecision(
                         Reply: "Erro de configuração: API Key inválida. Contate o suporte.",
@@ -190,26 +186,31 @@ Regras gerais:
             {
                 model,
                 input = messages.ToArray(),
-                text = new
+                response_format = new
                 {
-                    format = new
+                    type = "json_schema",
+                    json_schema = new
                     {
-                        type = "json_schema",
-                        name = "assistant_decision",
+                        name = "assistant_response",
                         schema = new
                         {
                             type = "object",
-                            additionalProperties = false,
                             properties = new
                             {
-                                reply = new { type = "string", minLength = 1 },
-                                agentPrompt = new { type = new[] { "string", "null" } },
-                                nomeCompleto = new { type = new[] { "string", "null" } },
-                                qtdPessoas = new { type = new[] { "integer", "null" } },
-                                data = new { type = new[] { "string", "null" } },
-                                hora = new { type = new[] { "string", "null" } }
+                                reply = new
+                                {
+                                    type = "string",
+                                    description = "Resposta principal para o usuario"
+                                },
+                                handover_action = new
+                                {
+                                    type = "string",
+                                    @enum = new[] { "none", "human", "agent" },
+                                    description = "Acao de handover: none, human ou agent"
+                                }
                             },
-                            required = new[] { "reply", "agentPrompt", "nomeCompleto", "qtdPessoas", "data", "hora" }
+                            required = new[] { "reply", "handover_action" },
+                            additionalProperties = false
                         }
                     }
                 },
@@ -217,14 +218,20 @@ Regras gerais:
             };
 
             var json = JsonSerializer.Serialize(payload, JsonOptions);
-            _logger.LogInformation("[Conversa={Conversa}] Payload enviado para OpenAI: {Payload}", idConversa, json);
+            var payloadPreview = json.Length > 200 ? json.Substring(0, 200) + "..." : json;
+            _logger.LogTrace(
+                "[Conversa={Conversa}] Payload enviado para OpenAI (len={Length}): {Preview}",
+                idConversa,
+                json.Length,
+                payloadPreview);
             using var content = new StringContent(json, Encoding.UTF8, "application/json");
 
             try
             {
                 var response = await client.PostAsync("https://api.openai.com/v1/responses", content);
                 var body = await response.Content.ReadAsStringAsync();
-                _logger.LogInformation("[Conversa={Conversa}] Resposta bruta da OpenAI: {Body}", idConversa, body);
+                var responsePreview = body.Length > 200 ? body.Substring(0, 200) + "..." : body;
+                _logger.LogTrace("[Conversa={Conversa}] Resposta bruta da OpenAI (len={Length}): {Preview}", idConversa, body.Length, responsePreview);
 
                 if (!response.IsSuccessStatusCode)
                 {
@@ -249,15 +256,50 @@ Regras gerais:
                         try
                         {
                             var decision = JsonSerializer.Deserialize<AssistantDecision>(rawJson, JsonOptions);
-                            if (decision != null)
+
+                            if (decision == null)
                             {
-                                _logger.LogInformation("[Conversa={Conversa}] JSON da IA desserializado com sucesso", idConversa);
-                                return decision;
+                                throw new JsonException("Resposta nula apos desserializacao");
                             }
+
+                            if (string.IsNullOrWhiteSpace(decision.Reply))
+                            {
+                                throw new JsonException("Campo 'reply' vazio ou nulo");
+                            }
+
+                            if (string.IsNullOrWhiteSpace(decision.HandoverAction))
+                            {
+                                throw new JsonException("Campo 'handover_action' vazio ou nulo");
+                            }
+
+                            _logger.LogInformation(
+                                "[Conversa={Conversa}] IA processou mensagem com sucesso (action={Action})",
+                                idConversa,
+                                decision.HandoverAction);
+
+                            return decision;
+                        }
+                        catch (JsonException ex)
+                        {
+                            _logger.LogWarning(
+                                ex,
+                                "[Conversa={Conversa}] IA retornou formato invalido - usando fallback. Conteudo: {Preview}",
+                                idConversa,
+                                TruncarConteudo(rawJson, 200));
+
+                            return new AssistantDecision(
+                                Reply: "Desculpe, tive um problema ao processar sua mensagem. Pode reformular ou tentar novamente?",
+                                HandoverAction: "none",
+                                AgentPrompt: null,
+                                ReservaConfirmada: false,
+                                Detalhes: null);
                         }
                         catch (Exception ex)
                         {
-                            _logger.LogError(ex, "[Conversa={Conversa}] Falha ao desserializar JSON direto. Conteúdo: {Raw}", idConversa, rawJson);
+                            _logger.LogError(
+                                ex,
+                                "[Conversa={Conversa}] Erro inesperado ao interpretar JSON da IA",
+                                idConversa);
                         }
 
                         // fallback: tenta regex/parse do jeito antigo

@@ -1,7 +1,6 @@
 ﻿// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
 using System;
 using System.Text.Json;
-using System.Diagnostics;
 using System.Threading.Tasks;
 using APIBack.Automation.Dtos;
 using APIBack.Automation.Infra;
@@ -21,31 +20,25 @@ namespace APIBack.Automation.Controllers
     {
         private readonly ILogger<WaWebhookController> _logger;
         private readonly WebhookValidatorService _validator;
-        private readonly ConversationProcessor _conversationProcessor;
-        private readonly IAResponseHandler _iaResponseHandler;
-        private readonly IAssistantService? _assistant;
+        private readonly IWebhookDispatchService _dispatcher;
+        private readonly IWebhookMessageCache _messageCache;
         private readonly IOptions<AutomationOptions> _opcoes;
         private readonly IWhatsAppTokenProvider _waTokenProvider;
-        private readonly ContextInterceptorService _contextInterceptor;
 
         public WaWebhookController(
             ILogger<WaWebhookController> logger,
             WebhookValidatorService validator,
-            ConversationProcessor conversationProcessor,
-            IAResponseHandler iaResponseHandler,
-            IAssistantService? assistant,
+            IWebhookDispatchService dispatcher,
+            IWebhookMessageCache messageCache,
             IOptions<AutomationOptions> opcoes,
-            IWhatsAppTokenProvider waTokenProvider,
-            ContextInterceptorService contextInterceptor)
+            IWhatsAppTokenProvider waTokenProvider)
         {
             _logger = logger;
             _validator = validator;
-            _conversationProcessor = conversationProcessor;
-            _iaResponseHandler = iaResponseHandler;
-            _assistant = assistant;
+            _dispatcher = dispatcher;
+            _messageCache = messageCache;
             _opcoes = opcoes;
             _waTokenProvider = waTokenProvider;
-            _contextInterceptor = contextInterceptor;
         }
 
         [HttpGet("webhook")]
@@ -119,6 +112,12 @@ namespace APIBack.Automation.Controllers
                                 continue;
                             }
 
+                            if (!_messageCache.TryRegister(mensagem.Id))
+                            {
+                                _logger.LogInformation("[Webhook] Mensagem duplicada ignorada (id={MensagemId})", mensagem.Id);
+                                continue;
+                            }
+
                             DateTime? dataMsgUtc = null;
                             if (!string.IsNullOrWhiteSpace(mensagem.CarimboTempo) && long.TryParse(mensagem.CarimboTempo, out var unix))
                             {
@@ -140,49 +139,12 @@ namespace APIBack.Automation.Controllers
                                 DataMensagemUtc: dataMsgUtc,
                                 Valor: valor);
 
-                            var processamento = await _conversationProcessor.ProcessAsync(input);
-                            if (processamento.ShouldIgnore)
-                            {
-                                _logger.LogInformation("Mensagem ignorada pelo ConversationProcessor (from={From})", mensagem.De);
-                                continue;
-                            }
-
-                            var idConversa = processamento.IdConversa ?? Guid.Empty;
-
-                            // Tentar interceptar mensagem se há contexto ativo
-                            var (intercepted, interceptedDecision) = await _contextInterceptor.TryInterceptAsync(
-                                idConversa,
-                                processamento.TextoUsuario);
-
-                            if (intercepted && interceptedDecision != null)
-                            {
-                                _logger.LogInformation("[Conversa={Conversa}] Mensagem interceptada por contexto ativo", idConversa);
-                                await _iaResponseHandler.HandleAsync(interceptedDecision, processamento);
-                                continue;
-                            }
-
-                            // Se não foi interceptada, segue fluxo normal com IA
-                            var stopwatch = Stopwatch.StartNew();
-                            var decision = _assistant != null
-                                ? await _assistant.GerarDecisaoComHistoricoAsync(
-                                    idConversa,
-                                    processamento.TextoUsuario,
-                                    processamento.Historico,
-                                    processamento.Contexto)
-                                : new AssistantDecision(
-                                    Reply: processamento.TextoUsuario,
-                                    HandoverAction: "none",
-                                    AgentPrompt: null,
-                                    ReservaConfirmada: false,
-                                    Detalhes: null);
-                            stopwatch.Stop();
-                            _logger.LogInformation("[Conversa={Conversa}] Latencia IA: {Latency} ms", idConversa, stopwatch.ElapsedMilliseconds);
-
-                            await _iaResponseHandler.HandleAsync(decision, processamento);
+                            await _dispatcher.EnqueueAsync(input, HttpContext.RequestAborted);
+                            _logger.LogDebug("[Webhook] Mensagem {MensagemId} enfileirada (from={From})", mensagem.Id, mensagem.De);
                         }
                         catch (Exception ex)
                         {
-                            _logger.LogError(ex, "Erro ao processar mensagem individual {MensagemId} de {De}", mensagem?.Id, mensagem?.De);
+                            _logger.LogError(ex, "Erro ao preparar mensagem {MensagemId} de {De}", mensagem?.Id, mensagem?.De);
                         }
                     }
                 }

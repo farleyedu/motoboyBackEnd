@@ -722,54 +722,77 @@ PARÂMETROS IMPORTANTES:
                         args.IdConversa,
                         reservaConf.Id);
                 }
+                else
+                {
+                    _logger.LogInformation(
+                        "[Conversa={Conversa}] Nenhuma alteracao aplicada na reserva #{Id}",
+                        args.IdConversa,
+                        reservaConf.Id);
+                }
 
-                // LIMPAR CONTEXTO
+                var mensagemFinal =
+                    $"✅ Reserva alterada com sucesso! 🎉\n\n" +
+                    $"🎫 Código: #{reservaConf.Id}\n" +
+                    $"📅 {DateFormattingHelper.FormatarDataHorario(reservaConf.DataReserva, reservaConf.HoraInicio)}\n" +
+                    $"👥 {reservaConf.QtdPessoas ?? 0} pessoas";
+
                 await _conversationRepository.LimparContextoAsync(args.IdConversa);
 
-                // Retornar mensagem de sucesso
-                var msgConf = new StringBuilder();
-                msgConf.AppendLine("✅ Reserva atualizada com sucesso! 🎉");
-                msgConf.AppendLine();
-                msgConf.AppendLine($"🎫 Código: #{reservaConf.Id}");
-                msgConf.AppendLine($"📅 Data: {reservaConf.DataReserva:dd/MM/yyyy}");
-                msgConf.AppendLine($"⏰ Horário: {reservaConf.HoraInicio:hh\\:mm}");
-                msgConf.AppendLine($"👥 Pessoas: {reservaConf.QtdPessoas}");
-                msgConf.AppendLine();
-                msgConf.Append("Nos vemos lá! ✨🥂");
+                _logger.LogInformation(
+                    "[Tool][Conversa={Conversa}] Alteração finalizada - contexto limpo",
+                    args.IdConversa);
 
-                return BuildJsonReply(msgConf.ToString());
+                return BuildJsonReply(mensagemFinal);
             }
 
-            // ============================================================
-            // FLUXO NORMAL: Localizar reserva e montar confirmação
-            // ============================================================
+        // ============================================================
+        // FLUXO NORMAL: validar snapshot e montar confirmação
+        // ============================================================
 
-            // ------------------------------------------------------------
-            // 1) Localizar a reserva alvo (por código ou filtroData)
-            // ------------------------------------------------------------
-            APIBack.Model.Reserva? reserva;
-            if (args.CodigoReserva.HasValue)
-            {
-                reserva = await _reservaRepository.BuscarPorIdAsync(args.CodigoReserva.Value);
-            }
-            else if (!string.IsNullOrWhiteSpace(args.FiltroData))
-            {
-                // reaproveite sua lógica existente de localizar por data
-                var lista = await _reservaRepository.ObterPorClienteEstabelecimentoAsync(idCliente, idEstabelecimento);
-                var futuras = lista.Where(r => r.Status == APIBack.Model.ReservaStatus.Confirmado &&
-                                               r.DataReserva.Date.Add(r.HoraInicio) > TimeZoneHelper.GetSaoPauloNow())
-                                   .OrderBy(r => r.DataReserva.Date.Add(r.HoraInicio))
-                                   .ToList();
-                // heurística simples: pega a primeira que bate com o filtro textual já usado no projeto (mantendo comportamento)
-                reserva = futuras.FirstOrDefault();
-            }
-            else
-            {
-                return BuildJsonReply("Qual reserva você quer atualizar? Se preferir, me informe o código (#123).");
-            }
+        if (contexto?.ReservaSnapshot == null || !contexto.ReservaIdPendente.HasValue)
+        {
+            _logger.LogWarning(
+                "[Tool][Conversa={Conversa}] Contexto sem snapshot valido - solicitando nova selecao",
+                args.IdConversa);
 
-            if (reserva == null)
-                return BuildJsonReply("Não encontrei a reserva indicada. Pode me enviar o código (#123) ou a data dela?");
+            return BuildJsonReply("Desculpe, perdi o contexto da reserva. Pode selecionar a reserva novamente, por favor?");
+        }
+
+        var reservaIdSnapshot = contexto.ReservaIdPendente.Value;
+
+        if (args.CodigoReserva.HasValue && args.CodigoReserva.Value != reservaIdSnapshot)
+        {
+            _logger.LogWarning(
+                "[Tool][Conversa={Conversa}] ID informado ({Recebido}) difere do snapshot ({Esperado})",
+                args.IdConversa,
+                args.CodigoReserva.Value,
+                reservaIdSnapshot);
+
+            return BuildJsonReply("A reserva informada não corresponde à seleção atual. Vamos tentar novamente? 😊");
+        }
+
+        var snapshot = contexto.ReservaSnapshot;
+        var dataSnapshot = DateTime.Parse(snapshot["data"].ToString()!, CultureInfo.InvariantCulture);
+        var horaSnapshot = TimeSpan.Parse(snapshot["hora"].ToString()!, CultureInfo.InvariantCulture);
+        var qtdSnapshot = Convert.ToInt32(snapshot["qtd_pessoas"]);
+
+        _logger.LogDebug(
+            "[Tool][Conversa={Conversa}] Snapshot validado - Reserva #{Id}, Cliente={ClienteId}, Status={Status}",
+            args.IdConversa,
+            snapshot.TryGetValue("id", out var idSnap) ? idSnap : reservaIdSnapshot,
+            snapshot.TryGetValue("cliente_id", out var clienteSnap) ? clienteSnap : "desconhecido",
+            snapshot.TryGetValue("status", out var statusSnap) ? statusSnap : "desconhecido");
+
+        var reserva = await _reservaRepository.BuscarPorIdAsync(reservaIdSnapshot);
+        if (reserva == null)
+        {
+            _logger.LogWarning(
+                "[Tool][Conversa={Conversa}] Reserva #{Id} nao encontrada ao aplicar alteracao",
+                args.IdConversa,
+                reservaIdSnapshot);
+
+            return BuildJsonReply("Não encontrei a reserva selecionada. Pode escolher novamente, por favor?");
+        }
 
             // ------------------------------------------------------------
             // 2) Resolver NOVA DATA (se informada) usando ÂNCORA = data da reserva atual
@@ -809,8 +832,8 @@ PARÂMETROS IMPORTANTES:
             }
 
             // ✅ Validação simplificada
-            var dataAlvo = (novaDataCalculada ?? reserva.DataReserva).Date;
-            var horaAlvo = (novoHorarioParsed ?? reserva.HoraInicio);
+            var dataAlvo = (novaDataCalculada ?? dataSnapshot).Date;
+            var horaAlvo = novoHorarioParsed ?? horaSnapshot;
 
             // Validar se data não é no passado
             var agora = TimeZoneHelper.GetSaoPauloNow();
@@ -824,12 +847,12 @@ PARÂMETROS IMPORTANTES:
             // ------------------------------------------------------------
             // 4) Mostrar comparação ANTES × DEPOIS e aguardar confirmação (padrão do projeto)
             // ------------------------------------------------------------
-            var dataAntes = reserva.DataReserva.Date;
-            var dataDepois = novaDataCalculada ?? dataAntes;
-            var horaAntes = reserva.HoraInicio.ToString(@"hh\:mm");
-            var horaDepois = (novoHorarioParsed ?? reserva.HoraInicio).ToString(@"hh\:mm");
-            var qtdAntes = reserva?.QtdPessoas;
-            var qtdDepois = novaQtdAbsoluta ?? qtdAntes;
+            var dataAntes = dataSnapshot.Date;
+            var dataDepois = (novaDataCalculada ?? dataSnapshot).Date;
+            var horaAntes = horaSnapshot.ToString(@"hh\:mm");
+            var horaDepois = (novoHorarioParsed ?? horaSnapshot).ToString(@"hh\:mm");
+            var qtdAntes = qtdSnapshot;
+            var qtdDepois = novaQtdAbsoluta ?? qtdSnapshot;
 
             var resumo = BuildMsgConfirmacaoAlteracao(
                 reserva.Id, dataAntes, dataDepois, horaAntes, horaDepois, qtdAntes, qtdDepois);

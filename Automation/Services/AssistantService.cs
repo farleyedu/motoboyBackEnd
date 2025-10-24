@@ -65,27 +65,23 @@ namespace APIBack.Automation.Services
             // ✨ SANITIZAÇÃO ROBUSTA DA API KEY
             if (!string.IsNullOrWhiteSpace(apiKey))
             {
-                var apiKeyOriginal = apiKey;
+                var apiKeyOriginalLength = apiKey.Length;
 
                 // Remove TODOS os caracteres de espaço em branco (espaços, tabs, \n, \r, etc)
                 apiKey = new string(apiKey.Where(c => !char.IsWhiteSpace(c)).ToArray());
 
-                // Log de debug (APENAS primeiros 15 caracteres por segurança)
-                var preview = apiKey.Length >= 15 ? apiKey.Substring(0, 15) : apiKey;
-                _logger.LogInformation(
-                    "[Conversa={Conversa}] [APIKEY-DEBUG] Tamanho original={TamanhoOriginal}, Tamanho limpo={TamanhoLimpo}, Preview={Preview}",
+                _logger.LogDebug(
+                    "[Conversa={Conversa}] [APIKEY-DEBUG] Tamanho original={TamanhoOriginal}, Tamanho limpo={TamanhoLimpo}",
                     idConversa,
-                    apiKeyOriginal.Length,
-                    apiKey.Length,
-                    preview + "...");
+                    apiKeyOriginalLength,
+                    apiKey.Length);
 
                 // Validação básica de formato OpenAI (sk-proj-... ou sk-...)
                 if (!apiKey.StartsWith("sk-"))
                 {
                     _logger.LogError(
-                        "[Conversa={Conversa}] [APIKEY-ERROR] API Key não começa com 'sk-'. Preview={Preview}",
-                        idConversa,
-                        preview + "...");
+                        "[Conversa={Conversa}] [APIKEY-ERROR] API Key não começa com 'sk-'",
+                        idConversa);
 
                     return new AssistantDecision(
                         "Erro de configuração: API Key inválida. Contate o suporte.",
@@ -136,8 +132,8 @@ namespace APIBack.Automation.Services
             {
                 var historicoList = historico.ToList();
 
-                _logger.LogWarning(
-                    "[MEMORIA-DEBUG] Conversa={Conversa} | Histórico contém {Count} turnos",
+                _logger.LogDebug(
+                    "[MEMORIA-DEBUG] Conversa={Conversa} | Historico contem {Count} turnos",
                     idConversa,
                     historicoList.Count);
 
@@ -152,18 +148,13 @@ namespace APIBack.Automation.Services
                     var role = string.Equals(turn.Role, "assistant", StringComparison.OrdinalIgnoreCase) ? "assistant" : "user";
                     messages.Add(new { role, content = turn.Content });
 
-                    // ✨ ADICIONADO: Log de cada turno (primeiros 100 caracteres)
-                    var preview = turn.Content.Length > 100
-                        ? turn.Content.Substring(0, 100) + "..."
-                        : turn.Content;
-
-                    _logger.LogWarning(
-                        "[MEMORIA-DEBUG] Conversa={Conversa} | Turno {Index}/{Total}: {Role} = '{Preview}'",
+                    _logger.LogTrace(
+                        "[MEMORIA-DEBUG] Conversa={Conversa} | Turno {Index}/{Total}: {Role} length={Length}",
                         idConversa,
                         turnoIndex,
                         historicoList.Count,
                         turn.Role,
-                        preview);
+                        turn.Content.Length);
 
                     turnoIndex++;
                 }
@@ -172,17 +163,19 @@ namespace APIBack.Automation.Services
             messages.Add(new { role = "user", content = textoUsuario });
 
             // ✨ ADICIONADO: Log final com total de mensagens enviadas
-            _logger.LogWarning(
+            _logger.LogDebug(
                 "[MEMORIA-DEBUG] Conversa={Conversa} | Enviando {Count} mensagens para OpenAI (1 system + {Historico} histórico + 1 atual)",
                 idConversa,
                 messages.Count,
                 (historico?.Count() ?? 0));
 
             // ✨ ADICIONADO: Log da mensagem atual do usuário
-            _logger.LogWarning(
-                "[MEMORIA-DEBUG] Conversa={Conversa} | Mensagem atual do usuário: '{Texto}'",
+            var userPreview = textoUsuario.Length > 120 ? textoUsuario.Substring(0, 120) + "..." : textoUsuario;
+            _logger.LogDebug(
+                "[MEMORIA-DEBUG] Conversa={Conversa} | Mensagem atual do usuario ({Length} chars): '{Preview}'",
                 idConversa,
-                textoUsuario);
+                textoUsuario.Length,
+                userPreview);
 
             var toolsArray = await _toolExecutor.GetToolsForOpenAI(idConversa);
 
@@ -196,7 +189,11 @@ namespace APIBack.Automation.Services
             };
 
             var json = JsonSerializer.Serialize(payload, JsonOptions);
-            _logger.LogDebug("[Conversa={Conversa}] Payload enviado para OpenAI: {Payload}", idConversa, json);
+            var payloadPreview = json.Length > 200 ? json.Substring(0, 200) + "..." : json;
+            _logger.LogTrace("[Conversa={Conversa}] Payload enviado para OpenAI (len={Length}): {Preview}",
+                idConversa,
+                json.Length,
+                payloadPreview);
 
             Exception? lastException = null;
 
