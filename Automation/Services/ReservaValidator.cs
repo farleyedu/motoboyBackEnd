@@ -403,7 +403,7 @@ namespace APIBack.Automation.Services
 
                 _logger.LogInformation("[ParseData] ✅ dd/MM → {Data:yyyy-MM-dd}", dataComAno.Date);
                 return dataComAno.Date;
-            }
+            }   
 
             // 4. DIAS DA SEMANA (segunda, terça, quarta, quinta, sexta, sábado, domingo)
             var diasSemana = new System.Collections.Generic.Dictionary<string, DayOfWeek>
