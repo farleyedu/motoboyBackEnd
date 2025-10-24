@@ -444,23 +444,66 @@ namespace APIBack.Automation.Services
                 {
                     try
                     {
-                        var tentativa = new DateTime(hojeSP.Year, hojeSP.Month, diaNumero);
+                        var mesAtual = hojeSP.Month;
+                        var anoAtual = hojeSP.Year;
 
-                        // Se ficou no passado, próximo mês
-                        if (tentativa <= hojeSP)
-                            tentativa = tentativa.AddMonths(1);
+                        // Se dia já passou este mês, usar próximo mês
+                        if (diaNumero < hojeSP.Day)
+                        {
+                            mesAtual++;
+                            if (mesAtual > 12)
+                            {
+                                mesAtual = 1;
+                                anoAtual++;
+                            }
+                        }
 
-                        _logger.LogInformation("[ParseData] ✅ DIA {Dia} → {Data:yyyy-MM-dd}", diaNumero, tentativa.Date);
-                        return tentativa.Date;
+                        var dataCalculada = new DateTime(anoAtual, mesAtual, diaNumero);
+                        _logger.LogInformation("[ParseData] ✅ DIA {Dia} → {Data:yyyy-MM-dd}", diaNumero, dataCalculada.Date);
+                        return dataCalculada.Date;
                     }
-                    catch (ArgumentOutOfRangeException)
+                    catch (ArgumentOutOfRangeException ex)
                     {
-                        _logger.LogWarning("[ParseData] ❌ Dia {Dia} inválido para o mês", diaNumero);
+                        _logger.LogWarning("[ParseData] ❌ Dia {Dia} inválido para o mês - {Erro}", diaNumero, ex.Message);
+                        return null;
                     }
                 }
             }
 
-            // 6. PARSE LIVRE (último recurso)
+            // 6. APENAS NÚMEROS (interpretar como dia do mês: "02", "15")
+            if (System.Text.RegularExpressions.Regex.IsMatch(textoNorm, @"^\d{1,2}$"))
+            {
+                if (int.TryParse(textoNorm, out var diaIsolado) && diaIsolado >= 1 && diaIsolado <= 31)
+                {
+                    try
+                    {
+                        var mesAtual = hojeSP.Month;
+                        var anoAtual = hojeSP.Year;
+
+                        // Se dia já passou, usar próximo mês
+                        if (diaIsolado < hojeSP.Day)
+                        {
+                            mesAtual++;
+                            if (mesAtual > 12)
+                            {
+                                mesAtual = 1;
+                                anoAtual++;
+                            }
+                        }
+
+                        var dataCalculada = new DateTime(anoAtual, mesAtual, diaIsolado);
+                        _logger.LogInformation("[ParseData] ✅ NÚMERO ISOLADO {Numero} → {Data:yyyy-MM-dd}", diaIsolado, dataCalculada.Date);
+                        return dataCalculada.Date;
+                    }
+                    catch (ArgumentOutOfRangeException ex)
+                    {
+                        _logger.LogWarning("[ParseData] ❌ Número de dia inválido: {Numero} - {Erro}", diaIsolado, ex.Message);
+                        return null;
+                    }
+                }
+            }
+
+            // 7. PARSE LIVRE (último recurso)
             if (DateTime.TryParse(dataTexto, new System.Globalization.CultureInfo("pt-BR"), System.Globalization.DateTimeStyles.None, out var dataLivre))
             {
                 _logger.LogWarning("[ParseData] ⚠️ Parse livre → {Data:yyyy-MM-dd}", dataLivre.Date);
