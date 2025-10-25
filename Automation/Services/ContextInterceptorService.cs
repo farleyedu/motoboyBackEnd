@@ -247,13 +247,30 @@ namespace APIBack.Automation.Services
                 "[Conversa={Conversa}] Contexto ativo: Estado={Estado}, Expira={Expiracao}",
                 idConversa, contexto.Estado, contexto.ExpiracaoEstado);
 
-            // Verificar se contexto expirou
-            if (contexto.ExpiracaoEstado.HasValue && contexto.ExpiracaoEstado.Value < DateTime.UtcNow)
+            // ===== BUG 1 FIX: Verificar expiração com log detalhado =====
+            if (contexto.ExpiracaoEstado.HasValue)
             {
-                _logger.LogInformation("[Conversa={Conversa}] Contexto expirado, limpando", idConversa);
-                await _conversationRepository.LimparContextoAsync(idConversa);
-                return (false, null);
+                var agora = DateTime.UtcNow;
+                var tempoRestante = contexto.ExpiracaoEstado.Value - agora;
+
+                _logger.LogDebug(
+                    "[Conversa={Conversa}] Verificação de expiração: Agora={Agora:yyyy-MM-dd HH:mm:ss} UTC, Expira={Expira:yyyy-MM-dd HH:mm:ss} UTC, Restante={Restante}min",
+                    idConversa,
+                    agora,
+                    contexto.ExpiracaoEstado.Value,
+                    tempoRestante.TotalMinutes);
+
+                if (contexto.ExpiracaoEstado.Value < agora)
+                {
+                    _logger.LogInformation(
+                        "[Conversa={Conversa}] Contexto expirado (restava {Restante}min), limpando",
+                        idConversa,
+                        tempoRestante.TotalMinutes);
+                    await _conversationRepository.LimparContextoAsync(idConversa);
+                    return (false, null);
+                }
             }
+            // ===== FIM BUG 1 FIX =====
 
             switch (contexto.Estado)
             {

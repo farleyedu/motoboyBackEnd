@@ -794,16 +794,32 @@ PARÂMETROS IMPORTANTES:
             return BuildJsonReply("Não encontrei a reserva selecionada. Pode escolher novamente, por favor?");
         }
 
-            // ------------------------------------------------------------
-            // 2) Resolver NOVA DATA (se informada) usando ÂNCORA = data da reserva atual
-            // ------------------------------------------------------------
+            // ===== BUG 4 FIX: Usar snapshot como âncora e referência =====
+            // 2) Resolver NOVA DATA (se informada) usando ÂNCORA = data do SNAPSHOT
             DateTime? novaDataCalculada = null;
             if (!string.IsNullOrWhiteSpace(args.NovaData))
             {
-                novaDataCalculada = ResolverDataComAncora(args.NovaData!, reserva.DataReserva.Date, TimeZoneHelper.GetSaoPauloNow().Date);
+                // IMPORTANTE: Usar dataSnapshot como âncora (data atual da reserva)
+                novaDataCalculada = ResolverDataComAncora(args.NovaData!, dataSnapshot, TimeZoneHelper.GetSaoPauloNow().Date);
+
                 if (!novaDataCalculada.HasValue)
-                    return BuildJsonReply("Não consegui entender a nova data. Pode mandar no formato 12/11, 'dia 12' ou 'próxima sexta'? 😊");
+                {
+                    _logger.LogWarning(
+                        "[Tool][Conversa={Conversa}] Falha ao parsear nova data: '{NovaData}' (âncora: {Ancora:yyyy-MM-dd})",
+                        args.IdConversa,
+                        args.NovaData,
+                        dataSnapshot);
+
+                    return BuildJsonReply($"Não consegui entender a data '{args.NovaData}'. Pode informar no formato dd/MM ou dd/MM/yyyy?");
+                }
+
+                _logger.LogInformation(
+                    "[Tool][Conversa={Conversa}] Nova data calculada: {NovaData:yyyy-MM-dd} (a partir de '{Entrada}')",
+                    args.IdConversa,
+                    novaDataCalculada.Value,
+                    args.NovaData);
             }
+            // ===== FIM BUG 4 FIX =====
 
             // ------------------------------------------------------------
             // 3) Validar regras gerais (reutilizando ReservaValidator)
@@ -831,9 +847,16 @@ PARÂMETROS IMPORTANTES:
                 novaQtdAbsoluta = args.NovaQtdPessoas.Value;
             }
 
-            // ✅ Validação simplificada
-            var dataAlvo = (novaDataCalculada ?? dataSnapshot).Date;
+            // ===== BUG 4 FIX: Determinar valores finais (snapshot se não houver mudança) =====
+            var dataAlvo = novaDataCalculada ?? dataSnapshot;
             var horaAlvo = novoHorarioParsed ?? horaSnapshot;
+
+            _logger.LogInformation(
+                "[Tool][Conversa={Conversa}] Valores finais - Data: {Data:yyyy-MM-dd}, Hora: {Hora}",
+                args.IdConversa,
+                dataAlvo,
+                horaAlvo);
+            // ===== FIM BUG 4 FIX =====
 
             // Validar se data não é no passado
             var agora = TimeZoneHelper.GetSaoPauloNow();

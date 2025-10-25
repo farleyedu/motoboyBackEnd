@@ -182,10 +182,11 @@ Regras gerais:
             var tools = _toolExecutor.GetDeclaredTools(idConversa);
             _logger.LogInformation("[Conversa={Conversa}] Enviando {Count} tools para OpenAI", idConversa, tools.Length);
 
+            // ===== BUG 2 FIX: Garantir ResponseFormat estruturado =====
             var payload = new
             {
                 model,
-                input = messages.ToArray(),
+                messages = messages.ToArray(),  // ⬅️ CORREÇÃO: Era "input", deve ser "messages"
                 response_format = new
                 {
                     type = "json_schema",
@@ -211,11 +212,17 @@ Regras gerais:
                             },
                             required = new[] { "reply", "handover_action" },
                             additionalProperties = false
-                        }
+                        },
+                        strict = true  // ⬅️ CRÍTICO: Força o schema rigoroso
                     }
                 },
                 tools
             };
+
+            _logger.LogDebug(
+                "[Conversa={Conversa}] ResponseFormat configurado com json_schema strict=true",
+                idConversa);
+            // ===== FIM BUG 2 FIX =====
 
             var json = JsonSerializer.Serialize(payload, JsonOptions);
             var payloadPreview = json.Length > 200 ? json.Substring(0, 200) + "..." : json;
@@ -228,7 +235,9 @@ Regras gerais:
 
             try
             {
-                var response = await client.PostAsync("https://api.openai.com/v1/responses", content);
+                // ===== BUG 2 FIX: Endpoint correto da OpenAI =====
+                var response = await client.PostAsync("https://api.openai.com/v1/chat/completions", content);  // ⬅️ CORREÇÃO: Era /responses, deve ser /chat/completions
+                // ===== FIM BUG 2 FIX =====
                 var body = await response.Content.ReadAsStringAsync();
                 var responsePreview = body.Length > 200 ? body.Substring(0, 200) + "..." : body;
                 _logger.LogTrace("[Conversa={Conversa}] Resposta bruta da OpenAI (len={Length}): {Preview}", idConversa, body.Length, responsePreview);
@@ -239,19 +248,56 @@ Regras gerais:
                     return new AssistantDecision("Desculpe, não consegui formular uma resposta agora.", "none", null, false, null);
                 }
 
+                // ===== BUG 2 FIX: Parsear resposta correta do /chat/completions =====
                 using var doc = JsonDocument.Parse(body);
-                var outputArray = doc.RootElement.GetProperty("output");
+                var choices = doc.RootElement.GetProperty("choices");
 
-                foreach (var item in outputArray.EnumerateArray())
+                foreach (var choice in choices.EnumerateArray())
                 {
-                    var type = item.GetProperty("type").GetString();
+                    var message = choice.GetProperty("message");
 
-                    if (type == "message")
+                    // Verificar se há tool calls
+                    if (message.TryGetProperty("tool_calls", out var toolCalls) && toolCalls.GetArrayLength() > 0)
                     {
-                        var rawJson = item
-                            .GetProperty("content")[0]
-                            .GetProperty("text")
-                            .GetString();
+                        var firstTool = toolCalls[0];
+                        var function = firstTool.GetProperty("function");
+                        var toolName = function.GetProperty("name").GetString();
+                        var args = function.GetProperty("arguments").GetString();
+
+                        _logger.LogInformation(
+                            "[Conversa={Conversa}] IA chamou tool: {ToolName}",
+                            idConversa,
+                            toolName);
+
+                        var result = await _toolExecutor.ExecuteToolAsync(toolName!, args!);
+
+                        return new AssistantDecision(
+                            Reply: result,
+                            HandoverAction: toolName,
+                            AgentPrompt: null,
+                            ReservaConfirmada: toolName == "confirmar_reserva",
+                            Detalhes: null
+                        );
+                    }
+
+                    // Mensagem normal com JSON estruturado
+                    if (message.TryGetProperty("content", out var contentProp))
+                    {
+                        var rawJson = contentProp.GetString();
+
+                        if (string.IsNullOrWhiteSpace(rawJson))
+                        {
+                            _logger.LogError(
+                                "[Conversa={Conversa}] IA retornou conteúdo vazio",
+                                idConversa);
+
+                            return new AssistantDecision(
+                                Reply: "Desculpe, tive um problema ao processar. Pode tentar novamente? 😊",
+                                HandoverAction: "none",
+                                AgentPrompt: null,
+                                ReservaConfirmada: false,
+                                Detalhes: null);
+                        }
 
                         try
                         {
@@ -259,7 +305,7 @@ Regras gerais:
 
                             if (decision == null)
                             {
-                                throw new JsonException("Resposta nula apos desserializacao");
+                                throw new JsonException("Resposta nula após desserialização");
                             }
 
                             if (string.IsNullOrWhiteSpace(decision.Reply))
@@ -281,18 +327,21 @@ Regras gerais:
                         }
                         catch (JsonException ex)
                         {
-                            _logger.LogWarning(
+                            // ===== BUG 2 FIX: NÃO converter texto para JSON =====
+                            _logger.LogError(
                                 ex,
-                                "[Conversa={Conversa}] IA retornou formato invalido - usando fallback. Conteudo: {Preview}",
+                                "[Conversa={Conversa}] IA retornou formato inválido. ResponseFormat NÃO está funcionando. Resposta: {Response}",
                                 idConversa,
-                                TruncarConteudo(rawJson, 200));
+                                TruncarConteudo(rawJson, 300));
 
+                            // Usar fallback conforme especificado na Tarefa 4
                             return new AssistantDecision(
-                                Reply: "Desculpe, tive um problema ao processar sua mensagem. Pode reformular ou tentar novamente?",
+                                Reply: "Desculpe, tive um problema ao processar. Pode tentar novamente? 😊",
                                 HandoverAction: "none",
                                 AgentPrompt: null,
                                 ReservaConfirmada: false,
                                 Detalhes: null);
+                            // ===== FIM BUG 2 FIX =====
                         }
                         catch (Exception ex)
                         {
@@ -300,26 +349,14 @@ Regras gerais:
                                 ex,
                                 "[Conversa={Conversa}] Erro inesperado ao interpretar JSON da IA",
                                 idConversa);
+
+                            return new AssistantDecision(
+                                Reply: "Desculpe, ocorreu um erro ao processar sua mensagem. Pode tentar novamente? 😊",
+                                HandoverAction: "none",
+                                AgentPrompt: null,
+                                ReservaConfirmada: false,
+                                Detalhes: null);
                         }
-
-                        // fallback: tenta regex/parse do jeito antigo
-                        return await InterpretarResposta(rawJson, idConversa);
-                    }
-                    else if (type == "tool_call" || type == "function_call")
-                    {
-                        var toolName = item.GetProperty("name").GetString();
-                        var args = item.GetProperty("arguments").GetRawText();
-
-                        var result = await _toolExecutor.ExecuteToolAsync(toolName!, args);
-
-                        // 🔹 Sempre devolver JSON padronizado
-                        return new AssistantDecision(
-                            Reply: result,
-                            HandoverAction: toolName,
-                            AgentPrompt: null,
-                            ReservaConfirmada: toolName == "confirmar_reserva",
-                            Detalhes: null
-                        );
                     }
                 }
 
