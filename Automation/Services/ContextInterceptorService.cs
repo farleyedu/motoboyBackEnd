@@ -296,7 +296,6 @@ namespace APIBack.Automation.Services
             ConversationContext contexto)
         {
             var numeroEscolhido = ExtrairNumeroEscolha(mensagemTexto);
-
             if (!numeroEscolhido.HasValue)
             {
                 // Não conseguiu extrair número, não intercepta (deixa IA processar)
@@ -311,17 +310,15 @@ namespace APIBack.Automation.Services
             }
 
             var mapeamento = JsonSerializer.Deserialize<Dictionary<int, long>>(mapeamentoJson.ToString()!);
-
             if (mapeamento == null || !mapeamento.TryGetValue(numeroEscolhido.Value, out var idReserva))
             {
-                var reply = "Não encontrei essa opção. Pode me dizer o número da reserva? (1, 2, 3...) ??";
+                var reply = "Não encontrei essa opção. Pode me dizer o número da reserva? (1, 2, 3...) 😊";
                 await SalvarMensagemRespostaAsync(idConversa, reply);
                 return (true, new AssistantDecision(reply, "none", null, false, null, null));
             }
 
             // Buscar reserva completa
             var reserva = await _reservaRepository.BuscarPorIdAsync(idReserva);
-
             if (reserva == null)
             {
                 _logger.LogWarning("[Conversa={Conversa}] Reserva {IdReserva} não encontrada", idConversa, idReserva);
@@ -329,45 +326,51 @@ namespace APIBack.Automation.Services
                 return (false, null);
             }
 
-            // Atualizar contexto com reserva escolhida
+            // ✅ CORREÇÃO: Salvar contexto COM SNAPSHOT
             await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
             {
                 Estado = "aguardando_dados_alteracao",
                 ReservaIdPendente = idReserva,
                 DadosColetados = new Dictionary<string, object>
-                {
-                    { "reserva_id", idReserva },
-                    { "data_atual", reserva.DataReserva.ToString("yyyy-MM-dd") },
-                    { "hora_atual", reserva.HoraInicio.ToString(@"hh\:mm") },
-                    { "qtd_atual", reserva.QtdPessoas ?? 0 }
-                },
+        {
+            { "reserva_id", idReserva },
+            { "data_atual", reserva.DataReserva.ToString("yyyy-MM-dd") },
+            { "hora_atual", reserva.HoraInicio.ToString(@"hh\:mm") },
+            { "qtd_atual", reserva.QtdPessoas ?? 0 }
+        },
+                ReservaSnapshot = new Dictionary<string, object>
+        {
+            { "id", idReserva },
+            { "data", reserva.DataReserva.ToString("yyyy-MM-dd") },
+            { "hora", reserva.HoraInicio.ToString(@"hh\:mm") },
+            { "qtd_pessoas", reserva.QtdPessoas ?? 0 },
+            { "cliente_id", reserva.IdCliente },
+            { "status", reserva.Status.ToString() }
+        },
                 ExpiracaoEstado = DateTime.UtcNow.AddMinutes(30)
             });
 
-            // Montar resposta mostrando informações completas
-            // ? CORREÇÃO: Usar NomeCliente da reserva (nome informado no momento da reserva)
+            // Mostrar informações da reserva
             var nomeReserva = reserva.NomeCliente ?? "Cliente";
 
             var msg = new StringBuilder();
-            msg.AppendLine($"?? Reserva #{reserva.Id} - Informações completas:");
+            msg.AppendLine($"📋 Reserva #{reserva.Id} - Informações completas:");
             msg.AppendLine();
-            msg.AppendLine($"?? Nome: {nomeReserva}");
-            msg.AppendLine($"?? Data: {reserva.DataReserva:dd/MM/yyyy} ({reserva.DataReserva:dddd})");
-            msg.AppendLine($"? Horário: {reserva.HoraInicio:hh\\:mm}");
-            msg.AppendLine($"?? Pessoas: {reserva.QtdPessoas}");
-            msg.AppendLine($"?? Código: #{reserva.Id}");
+            msg.AppendLine($"👤 Nome: {nomeReserva}");
+            msg.AppendLine($"📅 Data: {DateFormattingHelper.FormatarDataCurta(reserva.DataReserva)}");
+            msg.AppendLine($"⏰ Horário: {reserva.HoraInicio:hh\\:mm}");
+            msg.AppendLine($"👥 Pessoas: {reserva.QtdPessoas}");
+            msg.AppendLine($"🎫 Código: #{reserva.Id}");
             msg.AppendLine();
-            msg.AppendLine("O que você quer alterar? ??");
+            msg.AppendLine("O que você quer alterar? 😊");
             msg.AppendLine("• Horário");
             msg.AppendLine("• Quantidade de pessoas");
             msg.AppendLine("• Data");
 
             var replyText = msg.ToString();
             await SalvarMensagemRespostaAsync(idConversa, replyText);
-
             return (true, new AssistantDecision(replyText, "none", null, false, null, null));
         }
-
         private async Task<(bool, AssistantDecision?)> ProcessarDadosAlteracaoAsync(
             Guid idConversa,
             string mensagemTexto,
@@ -912,15 +915,16 @@ namespace APIBack.Automation.Services
         {
             if (string.IsNullOrWhiteSpace(texto)) return null;
 
-            var referencia = baseReferencia.Date; // base temporal da mensagem
+            var hoje = TimeZoneHelper.GetSaoPauloNow().Date;
+            var referencia = baseReferencia.Date;
             var baseAncora = ancora?.Date;
 
             var norm = RemoveDiacritics(texto.ToLower()).Replace("-feira", "").Trim();
 
             // relativos
-            if (norm.Contains("hoje")) return referencia;
-            if (norm.Contains("amanha") || norm.Contains("amanhã")) return referencia.AddDays(1);
-            if (norm.Contains("depois de amanha")) return referencia.AddDays(2);
+            if (norm.Contains("hoje")) return hoje;
+            if (norm.Contains("amanha") || norm.Contains("amanhã")) return hoje.AddDays(1);
+            if (norm.Contains("depois de amanha")) return hoje.AddDays(2);
 
             // dd/MM/yyyy
             if (DateTime.TryParseExact(norm, "dd/MM/yyyy", System.Globalization.CultureInfo.InvariantCulture,
@@ -932,59 +936,45 @@ namespace APIBack.Automation.Services
                 System.Globalization.DateTimeStyles.None, out var parcial))
             {
                 var ano = (baseAncora ?? referencia).Year;
-                var comp = new DateTime(ano, parcial.Month, parcial.Day);
-
-                // regra da “data mais próxima” da âncora: se <= âncora, vai para próximo ano
-                if (baseAncora.HasValue && comp <= baseAncora) comp = comp.AddYears(1);
-                else if (!baseAncora.HasValue && comp < referencia) comp = comp.AddYears(1);
-
-                return comp.Date;
+                var tentativa = new DateTime(ano, parcial.Month, parcial.Day).Date;
+                if (tentativa < referencia) tentativa = tentativa.AddYears(1);
+                return tentativa;
             }
 
-            // dia da semana — próxima ocorrência a partir da âncora (se houver), senão hoje
-            var dias = new Dictionary<string, DayOfWeek> {
-        {"domingo", DayOfWeek.Sunday}, {"segunda", DayOfWeek.Monday},
-        {"terca", DayOfWeek.Tuesday}, {"terça", DayOfWeek.Tuesday},
-        {"quarta", DayOfWeek.Wednesday}, {"quinta", DayOfWeek.Thursday},
-        {"sexta", DayOfWeek.Friday}, {"sabado", DayOfWeek.Saturday}, {"sábado", DayOfWeek.Saturday}
-    };
+            // dias da semana
+            var dias = new Dictionary<string, DayOfWeek>
+            {
+                ["domingo"] = DayOfWeek.Sunday,
+                ["segunda"] = DayOfWeek.Monday,
+                ["terca"] = DayOfWeek.Tuesday,
+                ["quarta"] = DayOfWeek.Wednesday,
+                ["quinta"] = DayOfWeek.Thursday,
+                ["sexta"] = DayOfWeek.Friday,
+                ["sabado"] = DayOfWeek.Saturday
+            };
+
             foreach (var kv in dias)
             {
                 if (norm.Contains(kv.Key))
                 {
                     var origem = baseAncora ?? referencia;
                     var delta = ((int)kv.Value - (int)origem.DayOfWeek + 7) % 7;
-                    if (delta == 0) delta = 7; // próxima ocorrência
+                    if (delta == 0) delta = 7;
                     return origem.AddDays(delta).Date;
                 }
             }
 
-            // "dia 12"
-            var matchDia = Regex.Match(norm, @"dia\s*(\d{1,2})");
-            if (matchDia.Success && int.TryParse(matchDia.Groups[1].Value, out var diaNumero) && diaNumero is >= 1 and <= 31)
+            if (DateTime.TryParse(
+                    texto,
+                    new System.Globalization.CultureInfo("pt-BR"),
+                    System.Globalization.DateTimeStyles.None,
+                    out var livre))
             {
-                var origem = baseAncora ?? referencia;
-                var tentativa = new DateTime(origem.Year, origem.Month, diaNumero);
-                if (baseAncora.HasValue)
-                {
-                    // se igual/antes da âncora, vai para mês seguinte (regra que você pediu)
-                    if (tentativa <= baseAncora) tentativa = tentativa.AddMonths(1);
-                }
-                else
-                {
-                    if (tentativa < referencia) tentativa = tentativa.AddMonths(1);
-                }
-                return tentativa.Date;
-            }
-
-            // parse livre pt-BR
-            if (DateTime.TryParse(texto, new System.Globalization.CultureInfo("pt-BR"),
-                System.Globalization.DateTimeStyles.None, out var livre))
                 return livre.Date;
+            }
 
             return null;
         }
-
         private int? ExtrairDiaNumerico(string texto)
         {
             if (string.IsNullOrWhiteSpace(texto)) return null;

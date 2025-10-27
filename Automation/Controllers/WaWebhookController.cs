@@ -11,6 +11,7 @@ using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using Microsoft.Extensions.Hosting;
 
 namespace APIBack.Automation.Controllers
 {
@@ -24,6 +25,7 @@ namespace APIBack.Automation.Controllers
         private readonly IWebhookMessageCache _messageCache;
         private readonly IOptions<AutomationOptions> _opcoes;
         private readonly IWhatsAppTokenProvider _waTokenProvider;
+        private readonly IHostEnvironment _hostEnvironment;
 
         public WaWebhookController(
             ILogger<WaWebhookController> logger,
@@ -31,7 +33,8 @@ namespace APIBack.Automation.Controllers
             IWebhookDispatchService dispatcher,
             IWebhookMessageCache messageCache,
             IOptions<AutomationOptions> opcoes,
-            IWhatsAppTokenProvider waTokenProvider)
+            IWhatsAppTokenProvider waTokenProvider,
+            IHostEnvironment hostEnvironment)
         {
             _logger = logger;
             _validator = validator;
@@ -39,6 +42,7 @@ namespace APIBack.Automation.Controllers
             _messageCache = messageCache;
             _opcoes = opcoes;
             _waTokenProvider = waTokenProvider;
+            _hostEnvironment = hostEnvironment;
         }
 
         [HttpGet("webhook")]
@@ -62,6 +66,8 @@ namespace APIBack.Automation.Controllers
         public async Task<IActionResult> Webhook()
         {
             string payload;
+            var isDevelopment = _hostEnvironment.IsDevelopment();
+
             try
             {
                 payload = await _validator.ReadBodyAsync(Request);
@@ -107,15 +113,30 @@ namespace APIBack.Automation.Controllers
                     {
                         try
                         {
+                            var originalMessageId = mensagem?.Id;
+
                             if (mensagem?.Texto?.Corpo == null || string.IsNullOrWhiteSpace(mensagem.Id) || string.IsNullOrWhiteSpace(mensagem.De))
                             {
                                 continue;
                             }
 
-                            if (!_messageCache.TryRegister(mensagem.Id))
+                            if (isDevelopment)
                             {
-                                _logger.LogInformation("[Webhook] Mensagem duplicada ignorada (id={MensagemId})", mensagem.Id);
-                                continue;
+                                if (!_messageCache.TryRegister(mensagem.Id))
+                                {
+                                    var novoId = $"local-{Guid.NewGuid():N}";
+                                    _logger.LogDebug("[Webhook][DEV] Mensagem duplicada detectada (id={MensagemId}); substituindo por {NovoId}", originalMessageId, novoId);
+                                    mensagem.Id = novoId;
+                                    _messageCache.TryRegister(mensagem.Id);
+                                }
+                            }
+                            else
+                            {
+                                if (!_messageCache.TryRegister(mensagem.Id))
+                                {
+                                    _logger.LogInformation("[Webhook] Mensagem duplicada ignorada (id={MensagemId})", mensagem.Id);
+                                    continue;
+                                }
                             }
 
                             DateTime? dataMsgUtc = null;

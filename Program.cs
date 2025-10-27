@@ -20,6 +20,14 @@ using APIBack.Model; // Namespace onde seu enum ReservaStatus está
 
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Load local-only overrides when not running on Render (e.g., developer machine)
+var runningOnRender = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("RENDER")) ||
+                      !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("RENDER_EXTERNAL_URL"));
+if (!runningOnRender)
+{
+    builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
+}
 // ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
 // Serilog basic console logger
 Log.Logger = new LoggerConfiguration()
