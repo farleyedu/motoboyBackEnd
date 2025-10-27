@@ -371,253 +371,260 @@ namespace APIBack.Automation.Services
             await SalvarMensagemRespostaAsync(idConversa, replyText);
             return (true, new AssistantDecision(replyText, "none", null, false, null, null));
         }
+        // ============================================
+        // CORREÇÃO: Assinatura do método estava errada
+        // O método original NÃO recebe baseReferencia como parâmetro
+        // Ele está dentro de TryInterceptAsync que já tem baseReferencia
+        // ============================================
+
         private async Task<(bool, AssistantDecision?)> ProcessarDadosAlteracaoAsync(
             Guid idConversa,
             string mensagemTexto,
             ConversationContext contexto)
         {
-            var textoLower = mensagemTexto.ToLower().Trim();
+            // ✅ baseReferencia deve ser obtido aqui
+            var baseReferencia = TimeZoneHelper.GetSaoPauloNow();
 
-            // ? NOVO: Detectar INTENÇÕES (o que o cliente QUER mudar)
-            var querMudarHorario = textoLower.Contains("horário") || textoLower.Contains("horario") ||
-                                   textoLower.Contains("hora") || textoLower.Contains("mudar hora");
+            _logger.LogInformation(
+                "[ProcessarDadosAlteracaoAsync][Conversa={Conversa}] INÍCIO - Mensagem: '{Mensagem}'",
+                idConversa, mensagemTexto);
 
-            var querMudarQuantidade = textoLower.Contains("pessoa") || textoLower.Contains("pessoas") ||
-                                      textoLower.Contains("quantidade") || textoLower.Contains("qtd") ||
-                                      textoLower.Contains("adicionar") || textoLower.Contains("tirar") ||
-                                      textoLower.Contains("mudar quantidade");
-
-            var querMudarData = textoLower.Contains("data") || textoLower.Contains("dia") ||
-                                textoLower.Contains("mudar data") || textoLower.Contains("trocar dia");
-
-            // Extrair novos dados (horário, quantidade)
-            var novoHorario = ExtrairHorario(mensagemTexto);
-            var novaQtd = ExtrairQuantidade(mensagemTexto);
-
-            // ? NOVO: Detectar se é mudança ADICIONAL (usa "tbm", "também", "e")
-            var ehMudancaAdicional = textoLower.Contains("tbm") || textoLower.Contains("também") ||
-                                     textoLower.Contains("tambem") ||
-                                     (textoLower.Contains(" e ") && (querMudarHorario || querMudarQuantidade));
-
-            // ? NOVO: Se é mudança adicional, recuperar mudanças anteriores do contexto
-            Dictionary<string, object> mudancasAcumuladas = new();
-
-            if (ehMudancaAdicional && contexto.DadosColetados != null)
+            var idReserva = contexto.ReservaIdPendente ?? 0;
+            if (idReserva == 0)
             {
-                // Recuperar mudanças anteriores
-                if (contexto.DadosColetados.TryGetValue("novo_horario", out var horarioAnterior))
-                {
-                    var horarioStr = horarioAnterior?.ToString();
-                    if (!string.IsNullOrWhiteSpace(horarioStr) && horarioStr != "")
-                        mudancasAcumuladas["novo_horario"] = horarioStr;
-                }
-
-                if (contexto.DadosColetados.TryGetValue("nova_qtd", out var qtdAnterior))
-                {
-                    var qtdStr = qtdAnterior?.ToString();
-                    if (!string.IsNullOrWhiteSpace(qtdStr) && int.TryParse(qtdStr, out var qtdInt) && qtdInt > 0)
-                        mudancasAcumuladas["nova_qtd"] = qtdInt;
-                }
-
-                _logger.LogInformation(
-                    "[Conversa={Conversa}] Mudança ADICIONAL detectada. Recuperando mudanças anteriores: Horário={Horario}, Qtd={Qtd}",
-                    idConversa,
-                    mudancasAcumuladas.GetValueOrDefault("novo_horario", "nenhum"),
-                    mudancasAcumuladas.GetValueOrDefault("nova_qtd", "nenhuma"));
+                _logger.LogWarning("[Conversa={Conversa}] ReservaIdPendente é zero", idConversa);
+                await _conversationRepository.LimparContextoAsync(idConversa);
+                return (false, null);
             }
 
-            // ? NOVO: Se cliente manifestou intenção MAS não passou valor, perguntar especificamente
-            if (novoHorario == null && !novaQtd.HasValue)
+            var reserva = await _reservaRepository.BuscarPorIdAsync(idReserva);
+            if (reserva == null)
             {
-                long idReserva = contexto.ReservaIdPendente ?? 0;
-                if (idReserva == 0)
-                {
-                    _logger.LogWarning("[Conversa={Conversa}] ReservaIdPendente não encontrada no contexto", idConversa);
-                    await _conversationRepository.LimparContextoAsync(idConversa);
-                    return (false, null);
-                }
+                _logger.LogWarning("[Conversa={Conversa}] Reserva {IdReserva} não encontrada", idConversa, idReserva);
+                await _conversationRepository.LimparContextoAsync(idConversa);
+                return (false, null);
+            }
 
-                var reserva = await _reservaRepository.BuscarPorIdAsync(idReserva);
-                if (reserva == null)
-                {
-                    _logger.LogWarning("[Conversa={Conversa}] Reserva {IdReserva} não encontrada", idConversa, idReserva);
-                    await _conversationRepository.LimparContextoAsync(idConversa);
-                    return (false, null);
-                }
+            // Recuperar dados já coletados
+            var dadosContexto = contexto.DadosColetados ?? new Dictionary<string, object>();
 
-                // ? NOVO: MANTER mudanças anteriores ao perguntar nova
-                var dadosContexto = new Dictionary<string, object>
-        {
-            { "reserva_id", idReserva },
-            { "data_atual", reserva.DataReserva.ToString("yyyy-MM-dd") },
-            { "hora_atual", reserva.HoraInicio.ToString(@"hh\:mm") },
-            { "qtd_atual", reserva.QtdPessoas ?? 0 }
-        };
+            _logger.LogDebug(
+                "[ProcessarDadosAlteracaoAsync][Conversa={Conversa}] Dados contexto atuais: {Dados}",
+                idConversa,
+                string.Join(", ", dadosContexto.Keys));
 
-                // ? CRÍTICO: Adicionar mudanças acumuladas ao contexto
-                foreach (var mudanca in mudancasAcumuladas)
-                {
-                    dadosContexto[mudanca.Key] = mudanca.Value;
-                    _logger.LogInformation(
-                        "[Conversa={Conversa}] Mantendo mudança anterior no contexto: {Key}={Value}",
-                        idConversa, mudanca.Key, mudanca.Value);
-                }
+            // Extrair novos dados da mensagem
+            var novoHorario = ExtrairHorario(mensagemTexto);
+            var novaQtd = ExtrairQuantidade(mensagemTexto);
+            var novaData = ExtrairDataPreferencial(mensagemTexto, baseReferencia, reserva.DataReserva);
 
-                // Se cliente quer mudar DATA
-                if (querMudarData)
-                {
-                    _logger.LogInformation(
-                        "[Conversa={Conversa}] Cliente quer mudar DATA mas não especificou - perguntando",
-                        idConversa);
+            _logger.LogInformation(
+                "[ProcessarDadosAlteracaoAsync][Conversa={Conversa}] Extração: Horario={Horario}, Qtd={Qtd}, Data={Data}",
+                idConversa,
+                novoHorario ?? "null",
+                novaQtd?.ToString() ?? "null",
+                novaData?.ToString("yyyy-MM-dd") ?? "null");
 
-                    var msg = new StringBuilder();
-                    msg.AppendLine($"?? Data atual da reserva #{idReserva}:");
-                    msg.AppendLine($"{reserva.DataReserva:dd/MM/yyyy} ({reserva.DataReserva:dddd})");
-                    msg.AppendLine();
-                    msg.AppendLine("Qual a nova data que você prefere? ??");
-                    msg.AppendLine("(Ex: dia 15, 20/10, sexta-feira)");
+            // Atualizar dados coletados
+            bool houveMudanca = false;
 
-                    // ? NOVO: Salvar contexto COM mudanças acumuladas
-                    await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
-                    {
-                        Estado = "aguardando_dados_alteracao",
-                        ReservaIdPendente = idReserva,
-                        DadosColetados = dadosContexto,
-                        ExpiracaoEstado = DateTime.UtcNow.AddMinutes(30)
-                    });
+            if (novoHorario != null)
+            {
+                dadosContexto["novo_horario"] = novoHorario;
+                houveMudanca = true;
+                _logger.LogDebug("[ProcessarDadosAlteracaoAsync][Conversa={Conversa}] Salvou novo_horario: {Horario}", idConversa, novoHorario);
+            }
 
-                    var reply = msg.ToString();
-                    await SalvarMensagemRespostaAsync(idConversa, reply);
-                    return (true, new AssistantDecision(reply, "none", null, false, null, null));
-                }
+            if (novaQtd.HasValue)
+            {
+                // Verificar se é delta ou absoluto
+                var textoMin = mensagemTexto.ToLower();
+                var isDelta = textoMin.Contains("adicionar") || textoMin.Contains("somar") ||
+                             textoMin.Contains("a mais") || textoMin.Contains("a+") || textoMin.Contains("+");
 
-                // Se cliente quer mudar HORÁRIO
-                if (querMudarHorario)
-                {
-                    _logger.LogInformation(
-                        "[Conversa={Conversa}] Cliente quer mudar HORÁRIO mas não especificou - perguntando (mudanças anteriores mantidas)",
-                        idConversa);
+                var qtdAtual = reserva.QtdPessoas ?? 0;
+                var qtdFinal = isDelta ? Math.Max(0, qtdAtual + novaQtd.Value) : novaQtd.Value;
 
-                    var msg = new StringBuilder();
-                    msg.AppendLine($"? Horário atual da reserva #{idReserva}:");
-                    msg.AppendLine($"{reserva.HoraInicio:hh\\:mm}");
-                    msg.AppendLine();
-                    msg.AppendLine("Qual o novo horário? ??");
-                    msg.AppendLine("(Ex: 20h, 19:30, 21h30)");
+                dadosContexto["nova_qtd"] = qtdFinal;
+                houveMudanca = true;
 
-                    // ? NOVO: Salvar contexto COM mudanças acumuladas
-                    await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
-                    {
-                        Estado = "aguardando_dados_alteracao",
-                        ReservaIdPendente = idReserva,
-                        DadosColetados = dadosContexto,
-                        ExpiracaoEstado = DateTime.UtcNow.AddMinutes(30)
-                    });
+                _logger.LogDebug(
+                    "[ProcessarDadosAlteracaoAsync][Conversa={Conversa}] Salvou nova_qtd: {Qtd} (isDelta={IsDelta})",
+                    idConversa, qtdFinal, isDelta);
+            }
 
-                    var reply = msg.ToString();
-                    await SalvarMensagemRespostaAsync(idConversa, reply);
-                    return (true, new AssistantDecision(reply, "none", null, false, null, null));
-                }
+            if (novaData.HasValue)
+            {
+                dadosContexto["nova_data"] = novaData.Value.ToString("yyyy-MM-dd");
+                dadosContexto["data_especificada"] = true;
+                houveMudanca = true;
 
-                // Se cliente quer mudar QUANTIDADE
-                if (querMudarQuantidade)
-                {
-                    _logger.LogInformation(
-                        "[Conversa={Conversa}] Cliente quer mudar QUANTIDADE mas não especificou - perguntando (mudanças anteriores mantidas)",
-                        idConversa);
-
-                    var qtdReserva = reserva.QtdPessoas ?? 0;
-
-                    var msgQtd = new StringBuilder();
-                    msgQtd.AppendLine($"?? Quantidade atual da reserva #{idReserva}:");
-                    msgQtd.AppendLine($"{qtdReserva} pessoas");
-                    msgQtd.AppendLine();
-                    msgQtd.AppendLine("Qual a nova quantidade? ??");
-                    msgQtd.AppendLine("(Ex: 8 pessoas, adicionar 2, tirar 1)");
-
-                    // ? NOVO: Salvar contexto COM mudanças acumuladas
-                    await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
-                    {
-                        Estado = "aguardando_dados_alteracao",
-                        ReservaIdPendente = idReserva,
-                        DadosColetados = dadosContexto,
-                        ExpiracaoEstado = DateTime.UtcNow.AddMinutes(30)
-                    });
-
-                    var replyQtd = msgQtd.ToString();
-                    await SalvarMensagemRespostaAsync(idConversa, replyQtd);
-                    return (true, new AssistantDecision(replyQtd, "none", null, false, null, null));
-                }
-
-                // Se não manifestou nenhuma intenção clara, não intercepta (deixa IA processar)
                 _logger.LogInformation(
-                    "[Conversa={Conversa}] Não conseguiu extrair dados nem detectar intenção clara - deixando IA processar",
+                    "[ProcessarDadosAlteracaoAsync][Conversa={Conversa}] ✅ Salvou nova_data: {Data:yyyy-MM-dd}",
+                    idConversa, novaData.Value);
+            }
+
+            // Verificar se cliente disse que quer mudar algo mas não especificou
+            var textoLower = mensagemTexto.ToLower();
+            var querMudarHorario = (textoLower.Contains("horário") || textoLower.Contains("horario") ||
+                                    textoLower.Contains("hora")) && novoHorario == null;
+            var querMudarQtd = (textoLower.Contains("pessoa") || textoLower.Contains("gente") ||
+                                textoLower.Contains("quantidade")) && !novaQtd.HasValue;
+            var querMudarData = (textoLower.Contains("data") || textoLower.Contains("dia")) &&
+                                !novaData.HasValue && !dadosContexto.ContainsKey("data_especificada");
+
+            _logger.LogDebug(
+                "[ProcessarDadosAlteracaoAsync][Conversa={Conversa}] Flags: querMudarHorario={Horario}, querMudarQtd={Qtd}, querMudarData={Data}",
+                idConversa, querMudarHorario, querMudarQtd, querMudarData);
+
+            // Se disse que quer mudar mas não especificou, perguntar
+            if (querMudarHorario)
+            {
+                _logger.LogInformation(
+                    "[ProcessarDadosAlteracaoAsync][Conversa={Conversa}] Cliente quer mudar HORÁRIO mas não especificou",
+                    idConversa);
+
+                var msg = $"⏰ Horário atual: {reserva.HoraInicio:hh\\:mm}\n\n" +
+                          $"Qual o novo horário? 😊\n" +
+                          $"(Ex: 20h, 19:30, 21h30)";
+
+                await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
+                {
+                    Estado = "aguardando_dados_alteracao",
+                    ReservaIdPendente = idReserva,
+                    DadosColetados = dadosContexto,
+                    ReservaSnapshot = contexto.ReservaSnapshot,
+                    ExpiracaoEstado = DateTime.UtcNow.AddMinutes(30)
+                });
+
+                await SalvarMensagemRespostaAsync(idConversa, msg);
+                return (true, new AssistantDecision(msg, "none", null, false, null, null));
+            }
+
+            if (querMudarQtd)
+            {
+                _logger.LogInformation(
+                    "[ProcessarDadosAlteracaoAsync][Conversa={Conversa}] Cliente quer mudar QUANTIDADE mas não especificou",
+                    idConversa);
+
+                var msg = $"👥 Quantidade atual: {reserva.QtdPessoas} pessoas\n\n" +
+                          $"Quantas pessoas agora? 😊\n" +
+                          $"(Ex: 8 pessoas, adicionar 2)";
+
+                await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
+                {
+                    Estado = "aguardando_dados_alteracao",
+                    ReservaIdPendente = idReserva,
+                    DadosColetados = dadosContexto,
+                    ReservaSnapshot = contexto.ReservaSnapshot,
+                    ExpiracaoEstado = DateTime.UtcNow.AddMinutes(30)
+                });
+
+                await SalvarMensagemRespostaAsync(idConversa, msg);
+                return (true, new AssistantDecision(msg, "none", null, false, null, null));
+            }
+
+            if (querMudarData)
+            {
+                _logger.LogInformation(
+                    "[ProcessarDadosAlteracaoAsync][Conversa={Conversa}] Cliente quer mudar DATA mas não especificou - perguntando",
+                    idConversa);
+
+                var msg = new StringBuilder();
+                msg.AppendLine($"📅 Data atual da reserva #{idReserva}:");
+                msg.AppendLine(DateFormattingHelper.FormatarDataCurta(reserva.DataReserva));
+                msg.AppendLine();
+                msg.AppendLine("Qual a nova data que você prefere? 😊");
+                msg.AppendLine("(Ex: dia 15, 20/10, sexta-feira)");
+
+                await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
+                {
+                    Estado = "aguardando_dados_alteracao",
+                    ReservaIdPendente = idReserva,
+                    DadosColetados = dadosContexto,
+                    ReservaSnapshot = contexto.ReservaSnapshot,
+                    ExpiracaoEstado = DateTime.UtcNow.AddMinutes(30)
+                });
+
+                var reply = msg.ToString();
+                await SalvarMensagemRespostaAsync(idConversa, reply);
+
+                _logger.LogDebug(
+                    "[ProcessarDadosAlteracaoAsync][Conversa={Conversa}] Perguntando nova data ao usuário",
+                    idConversa);
+
+                return (true, new AssistantDecision(reply, "none", null, false, null, null));
+            }
+
+            // Se não houve mudança E não está pedindo algo específico, não intercepta
+            if (!houveMudanca)
+            {
+                _logger.LogInformation(
+                    "[ProcessarDadosAlteracaoAsync][Conversa={Conversa}] Nenhuma mudança detectada - deixando IA processar",
                     idConversa);
                 return (false, null);
             }
 
-            // ? NOVO: Aplicar mudanças acumuladas + novas mudanças
-            if (!string.IsNullOrWhiteSpace(novoHorario))
-                mudancasAcumuladas["novo_horario"] = novoHorario;
-
-            if (novaQtd.HasValue)
-                mudancasAcumuladas["nova_qtd"] = novaQtd.Value;
-
-            long idReservaFinal = contexto.ReservaIdPendente ?? 0;
-            if (idReservaFinal == 0)
-            {
-                _logger.LogWarning("[Conversa={Conversa}] ReservaIdPendente não encontrada no contexto", idConversa);
-                await _conversationRepository.LimparContextoAsync(idConversa);
-                return (false, null);
-            }
-
-            string horaAtual = contexto.DadosColetados?["hora_atual"]?.ToString() ?? "";
-            int qtdAtual = int.Parse(contexto.DadosColetados?["qtd_atual"]?.ToString() ?? "0");
-            string dataAtual = contexto.DadosColetados?["data_atual"]?.ToString() ?? "";
-
-            var reservaFinal = await _reservaRepository.BuscarPorIdAsync(idReservaFinal);
-
-            if (reservaFinal == null)
-            {
-                _logger.LogWarning("[Conversa={Conversa}] Reserva {IdReserva} não encontrada", idConversa, idReservaFinal);
-                await _conversationRepository.LimparContextoAsync(idConversa);
-                return (false, null);
-            }
-
-            // ? NOVO: Pegar valores finais das mudanças acumuladas
-            var horarioFinal = mudancasAcumuladas.GetValueOrDefault("novo_horario")?.ToString() ?? "";
-            var qtdFinal = 0;
-
-            if (mudancasAcumuladas.TryGetValue("nova_qtd", out var qtdObj))
-            {
-                if (qtdObj is int qtdInt)
-                    qtdFinal = qtdInt;
-                else if (int.TryParse(qtdObj?.ToString(), out var qtdParsed))
-                    qtdFinal = qtdParsed;
-            }
-
-            // ? SIMPLIFICADO: Salvar contexto e deixar IA montar confirmação
+            // Construir resumo das alterações
             _logger.LogInformation(
-                "[Conversa={Conversa}] Dados coletados - salvando contexto e deixando IA processar",
+                "[ProcessarDadosAlteracaoAsync][Conversa={Conversa}] Mudanças coletadas - montando confirmação",
                 idConversa);
 
-            // Salvar contexto com dados coletados (a tool vai ler isso e montar confirmação)
+            var dataAtual = reserva.DataReserva;
+            var horaAtual = reserva.HoraInicio.ToString(@"hh\:mm");
+            var qtdAtualFinal = reserva.QtdPessoas ?? 0;
+
+            DateTime? dataFinal = null;
+            if (dadosContexto.TryGetValue("nova_data", out var dataObj))
+            {
+                if (DateTime.TryParse(dataObj.ToString(), out var dataParsed))
+                {
+                    dataFinal = dataParsed;
+                    _logger.LogDebug("[ProcessarDadosAlteracaoAsync][Conversa={Conversa}] Data final: {Data:yyyy-MM-dd}", idConversa, dataFinal);
+                }
+            }
+
+            var horaFinal = dadosContexto.TryGetValue("novo_horario", out var horaObj)
+                ? horaObj.ToString()
+                : horaAtual;
+
+            var qtdFinalValue = dadosContexto.TryGetValue("nova_qtd", out var qtdObj)
+                ? Convert.ToInt32(qtdObj)
+                : qtdAtualFinal;
+
+            _logger.LogInformation(
+                "[ProcessarDadosAlteracaoAsync][Conversa={Conversa}] Valores finais - Data: {Data}, Hora: {Hora}, Qtd: {Qtd}",
+                idConversa,
+                dataFinal?.ToString("yyyy-MM-dd") ?? "mantém",
+                horaFinal,
+                qtdFinalValue);
+
+            var resumo = BuildMsgConfirmacaoAlteracaoComData(
+                idReserva,
+                dataAtual,
+                dataFinal,
+                horaAtual,
+                horaFinal!,
+                qtdAtualFinal,
+                qtdFinalValue);
+
+            // Salvar contexto com estado de confirmação
             await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
             {
-                Estado = "pronto_para_atualizar",
-                ReservaIdPendente = idReservaFinal,
-                DadosColetados = new Dictionary<string, object>
-                {
-                    { "reserva_id", idReservaFinal },
-                    { "novo_horario", horarioFinal },
-                    { "nova_qtd", qtdFinal > 0 ? qtdFinal : qtdAtual }
-                },
+                Estado = "aguardando_confirmacao_alteracao",
+                ReservaIdPendente = idReserva,
+                DadosColetados = dadosContexto,
+                ReservaSnapshot = contexto.ReservaSnapshot,
                 ExpiracaoEstado = DateTime.UtcNow.AddMinutes(30)
             });
 
-            // NÃO intercepta - deixa IA chamar tool atualizar_reserva
-            // A tool vai ver o contexto "pronto_para_atualizar" e montar a confirmação
-            return (false, null);
+            await SalvarMensagemRespostaAsync(idConversa, resumo);
+
+            _logger.LogInformation(
+                "[ProcessarDadosAlteracaoAsync][Conversa={Conversa}] ✅ FIM - Aguardando confirmação",
+                idConversa);
+
+            return (true, new AssistantDecision(resumo, "none", null, false, null, null));
         }
 
         private async Task<(bool, AssistantDecision?)> ProcessarConfirmacaoAlteracaoAsync(
@@ -915,33 +922,112 @@ namespace APIBack.Automation.Services
         {
             if (string.IsNullOrWhiteSpace(texto)) return null;
 
-            var hoje = TimeZoneHelper.GetSaoPauloNow().Date;
             var referencia = baseReferencia.Date;
             var baseAncora = ancora?.Date;
 
             var norm = RemoveDiacritics(texto.ToLower()).Replace("-feira", "").Trim();
 
-            // relativos
-            if (norm.Contains("hoje")) return hoje;
-            if (norm.Contains("amanha") || norm.Contains("amanhã")) return hoje.AddDays(1);
-            if (norm.Contains("depois de amanha")) return hoje.AddDays(2);
+            // ✅ LOG PARA DEBUG
+            _logger.LogDebug(
+                "[ExtrairDataPreferencial] Input: '{Texto}' | Normalizado: '{Norm}' | Base: {Base:yyyy-MM-dd} | Ancora: {Ancora}",
+                texto, norm, referencia, baseAncora?.ToString("yyyy-MM-dd") ?? "null");
 
-            // dd/MM/yyyy
-            if (DateTime.TryParseExact(norm, "dd/MM/yyyy", System.Globalization.CultureInfo.InvariantCulture,
-                System.Globalization.DateTimeStyles.None, out var absoluto))
-                return absoluto.Date;
+            // 1. TERMOS RELATIVOS (prioridade máxima)
+            if (norm == "hoje")
+            {
+                _logger.LogDebug("[ExtrairDataPreferencial] ✅ HOJE -> {Data:yyyy-MM-dd}", referencia);
+                return referencia;
+            }
 
-            // dd/MM (usar âncora se existir; senão hoje)
-            if (DateTime.TryParseExact(norm, "dd/MM", System.Globalization.CultureInfo.InvariantCulture,
+            if (norm.Contains("depois") && norm.Contains("amanha"))
+            {
+                var depoisAmanha = referencia.AddDays(2);
+                _logger.LogDebug("[ExtrairDataPreferencial] ✅ DEPOIS DE AMANHÃ -> {Data:yyyy-MM-dd}", depoisAmanha);
+                return depoisAmanha;
+            }
+
+            if (norm.Contains("amanha"))
+            {
+                var amanha = referencia.AddDays(1);
+                _logger.LogDebug("[ExtrairDataPreferencial] ✅ AMANHÃ -> {Data:yyyy-MM-dd}", amanha);
+                return amanha;
+            }
+
+            // 2. FORMATOS ABSOLUTOS (dd/MM/yyyy)
+            if (DateTime.TryParseExact(norm, "dd/MM/yyyy",
+                System.Globalization.CultureInfo.InvariantCulture,
+                System.Globalization.DateTimeStyles.None, out var dataCompleta))
+            {
+                _logger.LogDebug("[ExtrairDataPreferencial] ✅ dd/MM/yyyy -> {Data:yyyy-MM-dd}", dataCompleta);
+                return dataCompleta.Date;
+            }
+
+            // 3. FORMATO dd/MM (assume ano da âncora ou da referência)
+            if (DateTime.TryParseExact(norm, "dd/MM",
+                System.Globalization.CultureInfo.InvariantCulture,
                 System.Globalization.DateTimeStyles.None, out var parcial))
             {
                 var ano = (baseAncora ?? referencia).Year;
                 var tentativa = new DateTime(ano, parcial.Month, parcial.Day).Date;
-                if (tentativa < referencia) tentativa = tentativa.AddYears(1);
+
+                // Se a data já passou no ano atual, vai para o próximo ano
+                if (tentativa < referencia)
+                {
+                    tentativa = tentativa.AddYears(1);
+                }
+
+                _logger.LogDebug("[ExtrairDataPreferencial] ✅ dd/MM -> {Data:yyyy-MM-dd}", tentativa);
                 return tentativa;
             }
 
-            // dias da semana
+            // 4. ✅ CRÍTICO: "DIA X" ou números isolados usando helper
+            _logger.LogDebug("[ExtrairDataPreferencial] Tentando extrair dia via DateParsingHelper...");
+
+            if (DateParsingHelper.TryExtractDayNumber(norm, out var diaExtraido))
+            {
+                _logger.LogDebug("[ExtrairDataPreferencial] Helper retornou dia: {Dia}", diaExtraido);
+
+                var mesAtual = referencia.Month;
+                var anoAtual = referencia.Year;
+
+                // Se o dia já passou no mês atual, vai para o próximo mês
+                if (diaExtraido < referencia.Day)
+                {
+                    _logger.LogDebug(
+                        "[ExtrairDataPreferencial] Dia {Dia} < dia atual {DiaAtual}, avançando para próximo mês",
+                        diaExtraido, referencia.Day);
+
+                    mesAtual++;
+                    if (mesAtual > 12)
+                    {
+                        mesAtual = 1;
+                        anoAtual++;
+                    }
+                }
+
+                try
+                {
+                    var dataCalculada = new DateTime(anoAtual, mesAtual, diaExtraido).Date;
+                    _logger.LogInformation(
+                        "[ExtrairDataPreferencial] ✅ DIA DETECTADO via helper: {Data:yyyy-MM-dd} (entrada: '{Texto}')",
+                        dataCalculada, texto);
+                    return dataCalculada;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(
+                        ex,
+                        "[ExtrairDataPreferencial] ❌ Dia inválido: {Dia}/{Mes}/{Ano}",
+                        diaExtraido, mesAtual, anoAtual);
+                    return null;
+                }
+            }
+            else
+            {
+                _logger.LogDebug("[ExtrairDataPreferencial] Helper não conseguiu extrair dia numérico");
+            }
+
+            // 5. DIAS DA SEMANA
             var dias = new Dictionary<string, DayOfWeek>
             {
                 ["domingo"] = DayOfWeek.Sunday,
@@ -960,19 +1046,30 @@ namespace APIBack.Automation.Services
                     var origem = baseAncora ?? referencia;
                     var delta = ((int)kv.Value - (int)origem.DayOfWeek + 7) % 7;
                     if (delta == 0) delta = 7;
-                    return origem.AddDays(delta).Date;
+                    var resultado = origem.AddDays(delta).Date;
+
+                    _logger.LogDebug(
+                        "[ExtrairDataPreferencial] ✅ Dia da semana '{DiaSemana}' -> {Data:yyyy-MM-dd}",
+                        kv.Key, resultado);
+                    return resultado;
                 }
             }
 
+            // 6. FALLBACK: parse livre com cultura PT-BR
             if (DateTime.TryParse(
                     texto,
                     new System.Globalization.CultureInfo("pt-BR"),
                     System.Globalization.DateTimeStyles.None,
                     out var livre))
             {
+                _logger.LogDebug("[ExtrairDataPreferencial] ✅ Parse livre PT-BR -> {Data:yyyy-MM-dd}", livre);
                 return livre.Date;
             }
 
+            // ❌ NÃO CONSEGUIU PARSEAR
+            _logger.LogWarning(
+                "[ExtrairDataPreferencial] ❌ NÃO CONSEGUIU parsear nenhum formato: '{Texto}' (normalizado: '{Norm}')",
+                texto, norm);
             return null;
         }
         private int? ExtrairDiaNumerico(string texto)

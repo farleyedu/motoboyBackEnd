@@ -423,17 +423,6 @@ PARÂMETROS IMPORTANTES:
             builder.AppendLine($"⏰ Horário: {horaFormatada}");
             builder.AppendLine($"👥 Pessoas: {args.QtdPessoas}");
             builder.AppendLine();
-
-            if (validationResult.VagasDisponiveis.HasValue)
-            {
-                var vagasRestantes = validationResult.VagasDisponiveis.Value - args.QtdPessoas;
-                if (vagasRestantes >= 0)
-                {
-                    builder.AppendLine($"📊 Vagas restantes neste dia: {vagasRestantes} pessoas");
-                    builder.AppendLine();
-                }
-            }
-
             builder.AppendLine($"🎫 Seu código de reserva é o #{idReserva}.");
             builder.AppendLine("Caso precise alterar ou cancelar, é só nos informar este número para agilizar o atendimento!");
             builder.AppendLine();
