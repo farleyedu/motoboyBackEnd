@@ -5,6 +5,7 @@ namespace APIBack.Model
     public class Reserva
     {
         public long Id { get; set; }
+        public string Codigo { get; set; } = null!;
         public Guid IdCliente { get; set; }
         public Guid IdEstabelecimento { get; set; }
         public long? IdProfissional { get; set; }

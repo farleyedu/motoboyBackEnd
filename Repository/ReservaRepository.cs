@@ -1,11 +1,10 @@
 ﻿using APIBack.Model;
 using APIBack.Repository.Interface;
 using Dapper;
-using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 using System;
 using System.Collections.Generic;
-using System.Data.Common;
 using System.Threading.Tasks;
 
 namespace APIBack.Repository
@@ -13,10 +12,12 @@ namespace APIBack.Repository
     public class ReservaRepository : IReservaRepository
     {
         private readonly NpgsqlDataSource _dataSource;
+        private readonly ILogger<ReservaRepository> _logger;
 
-        public ReservaRepository(NpgsqlDataSource dataSource)
+        public ReservaRepository(NpgsqlDataSource dataSource, ILogger<ReservaRepository> logger)
         {
             _dataSource = dataSource;
+            _logger = logger;
         }
 
         private static string ToPgStatus(ReservaStatus s) => s switch
@@ -29,12 +30,17 @@ namespace APIBack.Repository
 
         public async Task<long> AdicionarAsync(Reserva entity)
         {
+            entity.Codigo = await GerarCodigoUnicoAsync();
+            _logger.LogInformation("[AdicionarAsync] Reserva criada com codigo: {Codigo}", entity.Codigo);
+
             const string sql = @"
 INSERT INTO reservas (
+  codigo,
   id_cliente, id_estabelecimento, id_profissional, id_servico,
   nome_cliente_reserva, qtd_pessoas, data_reserva, hora_inicio, hora_fim,
   status, observacoes)
 VALUES (
+  @Codigo,
   @IdCliente, @IdEstabelecimento, @IdProfissional, @IdServico,
   @NomeCliente, @QtdPessoas, @DataReserva, @HoraInicio, @HoraFim,
   @Status::status_reserva, @Observacoes)
@@ -43,6 +49,7 @@ RETURNING id;";
             await using var connection = await _dataSource.OpenConnectionAsync();
             return await connection.ExecuteScalarAsync<long>(sql, new
             {
+                entity.Codigo,
                 entity.IdCliente,
                 entity.IdEstabelecimento,
                 entity.IdProfissional,
@@ -61,6 +68,7 @@ RETURNING id;";
         {
             const string sql = @"SELECT
                                         id AS Id,
+                                        codigo AS Codigo,
                                         id_cliente AS IdCliente,
                                         id_estabelecimento AS IdEstabelecimento,
                                         id_profissional AS IdProfissional,
@@ -85,6 +93,7 @@ RETURNING id;";
         {
             const string sql = @"SELECT
                                         id AS Id,
+                                        codigo AS Codigo,
                                         id_cliente AS IdCliente,
                                         id_estabelecimento AS IdEstabelecimento,
                                         id_profissional AS IdProfissional,
@@ -216,6 +225,7 @@ RETURNING id;";
         {
             const string sql = @"SELECT
                             id AS Id,
+                            codigo AS Codigo,
                             id_cliente AS IdCliente,
                             id_estabelecimento AS IdEstabelecimento,
                             id_profissional AS IdProfissional,
@@ -248,6 +258,7 @@ RETURNING id;";
         {
             const string sql = @"SELECT
                             id AS Id,
+                            codigo AS Codigo,
                             id_cliente AS IdCliente,
                             id_estabelecimento AS IdEstabelecimento,
                             id_profissional AS IdProfissional,
@@ -280,9 +291,96 @@ RETURNING id;";
 
         public async Task<Reserva?> BuscarPorCodigoAsync(long codigo, Guid idEstabelecimento)
         {
+            var codigoFormatado = codigo.ToString("D4");
+            var reserva = await BuscarPorCodigoAsync(codigoFormatado);
+
+            if (reserva == null)
+            {
+                return null;
+            }
+
+            if (reserva.IdEstabelecimento != idEstabelecimento || reserva.Status != ReservaStatus.Confirmado)
+            {
+                return null;
+            }
+
+            return reserva;
+        }
+
+        public async Task<string> GerarCodigoUnicoAsync()
+        {
+            const int codigoInicial = 1035;
+            const int maxTentativas = 100;
+
+            await using var connection = await _dataSource.OpenConnectionAsync();
+
+            var maiorCodigoStr = await connection.ExecuteScalarAsync<string?>(@"
+SELECT codigo
+  FROM reservas
+ WHERE codigo IS NOT NULL
+ ORDER BY codigo DESC
+ LIMIT 1;");
+
+            int proximoCodigo;
+
+            if (string.IsNullOrWhiteSpace(maiorCodigoStr))
+            {
+                proximoCodigo = codigoInicial;
+                _logger.LogInformation("[GerarCodigoUnico] Primeira reserva - iniciando em {Codigo}", proximoCodigo);
+            }
+            else if (int.TryParse(maiorCodigoStr, out var maiorCodigo))
+            {
+                proximoCodigo = maiorCodigo + 1;
+                _logger.LogDebug("[GerarCodigoUnico] Maior codigo existente: {MaiorCodigo}, proximo: {ProximoCodigo}",
+                    maiorCodigo, proximoCodigo);
+            }
+            else
+            {
+                proximoCodigo = codigoInicial;
+                _logger.LogWarning("[GerarCodigoUnico] Nao foi possivel interpretar maior codigo '{MaiorCodigo}', usando valor inicial {Inicial}",
+                    maiorCodigoStr, codigoInicial);
+            }
+
+            if (proximoCodigo > 9999)
+            {
+                throw new InvalidOperationException("Codigo excedeu o limite de 9999. Expanda o range de codigos.");
+            }
+
+            for (int tentativa = 0; tentativa < maxTentativas; tentativa++)
+            {
+                if (proximoCodigo > 9999)
+                {
+                    throw new InvalidOperationException("Codigo excedeu o limite de 9999. Expanda o range de codigos.");
+                }
+
+                var codigo = proximoCodigo.ToString("D4");
+
+                var existe = await connection.ExecuteScalarAsync<bool>(
+                    "SELECT EXISTS (SELECT 1 FROM reservas WHERE codigo = @Codigo);",
+                    new { Codigo = codigo });
+
+                if (!existe)
+                {
+                    _logger.LogInformation("[GerarCodigoUnico] Codigo gerado: {Codigo}", codigo);
+                    return codigo;
+                }
+
+                proximoCodigo++;
+                _logger.LogDebug("[GerarCodigoUnico] Codigo {Codigo} ja existe, tentativa {Tentativa}/{Max}",
+                    codigo, tentativa + 1, maxTentativas);
+            }
+
+            throw new InvalidOperationException($"Nao foi possivel gerar codigo unico apos {maxTentativas} tentativas");
+        }
+
+        public async Task<Reserva?> BuscarPorCodigoAsync(string codigo)
+        {
+            _logger.LogDebug("[BuscarPorCodigo] Buscando reserva com codigo: {Codigo}", codigo);
+
             const string sql = @"
                 SELECT
                     id AS Id,
+                    codigo AS Codigo,
                     id_cliente AS IdCliente,
                     id_estabelecimento AS IdEstabelecimento,
                     id_profissional AS IdProfissional,
@@ -297,18 +395,35 @@ RETURNING id;";
                     data_criacao AS DataCriacao,
                     data_atualizacao AS DataAtualizacao
                 FROM reservas
-                WHERE id = @Codigo
-                  AND id_estabelecimento = @IdEstabelecimento
-                  AND status = @Status
+                WHERE codigo = @Codigo
                 LIMIT 1;";
 
-            await using var cx = await _dataSource.OpenConnectionAsync();
-            return await cx.QueryFirstOrDefaultAsync<Reserva>(sql, new
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            var reserva = await connection.QueryFirstOrDefaultAsync<Reserva>(sql, new { Codigo = codigo });
+
+            if (reserva == null)
             {
-                Codigo = codigo,
-                IdEstabelecimento = idEstabelecimento,
-                Status = ToPgStatus(ReservaStatus.Confirmado)
-            });
+                _logger.LogWarning("[BuscarPorCodigo] Reserva nao encontrada: {Codigo}", codigo);
+            }
+            else
+            {
+                _logger.LogDebug("[BuscarPorCodigo] Reserva encontrada: {Codigo} | Id={Id}", codigo, reserva.Id);
+            }
+
+            return reserva;
+        }
+
+        public async Task<bool> ValidarCodigoUnicoAsync(string codigo)
+        {
+            const string sql = "SELECT EXISTS (SELECT 1 FROM reservas WHERE codigo = @Codigo);";
+
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            var existe = await connection.ExecuteScalarAsync<bool>(sql, new { Codigo = codigo });
+
+            _logger.LogDebug("[ValidarCodigoUnico] Codigo {Codigo}: {Status}",
+                codigo, existe ? "JÁ EXISTE" : "DISPONÍVEL");
+
+            return !existe;
         }
     }
 }
