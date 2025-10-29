@@ -1,0 +1,10 @@
+﻿{
+    "files.autoGuessEncoding":  false,
+    "files.encoding":  "utf8",
+    "[csharp]":  {
+                     "files.encoding":  "utf8"
+                 },
+    "[json]":  {
+                   "files.encoding":  "utf8"
+               }
+}

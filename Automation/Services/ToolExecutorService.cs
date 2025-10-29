@@ -1,4 +1,4 @@
-﻿// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
+// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
 // ✨ MUDANÇAS PRINCIPAIS:
 // 1. HandleCancelarReserva: Adiciona LimparContextoAsync após cancelar
 // 2. HandleConfirmarReserva: Adiciona LimparContextoAsync NO INÍCIO
@@ -423,7 +423,10 @@ PARÂMETROS IMPORTANTES:
             builder.AppendLine($"⏰ Horário: {horaFormatada}");
             builder.AppendLine($"👥 Pessoas: {args.QtdPessoas}");
             builder.AppendLine();
-            builder.AppendLine($"🎫 Seu código de reserva é o #{idReserva}.");
+            // Buscar a reserva recém-criada para pegar o Codigo
+            var reservaCriada = await _reservaRepository.BuscarPorIdAsync(idReserva);
+            var codigoExibir = reservaCriada?.Codigo ?? idReserva.ToString();
+            builder.AppendLine($"🎫 Seu código de reserva é o #{codigoExibir}.");
             builder.AppendLine("Caso precise alterar ou cancelar, é só nos informar este número para agilizar o atendimento!");
             builder.AppendLine();
             builder.AppendLine("⚠️ Atenção: Para que todos tenham uma ótima experiência, sua mesa ficará reservada por até 15 minutos após o horário marcado. Agradecemos a compreensão!");
@@ -497,7 +500,7 @@ PARÂMETROS IMPORTANTES:
                 var msg = new StringBuilder();
                 msg.AppendLine("✅ Reserva cancelada com sucesso!");
                 msg.AppendLine();
-                msg.AppendLine($"🎫 Código: #{reservaPorCodigo.Id}");
+                msg.AppendLine($"🎫 Código: #{reservaPorCodigo.Codigo}");
                 msg.AppendLine($"📅 Data: {dataFormatada}");
                 msg.AppendLine($"⏰ Horário: {horaFormatada}");
                 msg.AppendLine();
@@ -507,888 +510,59 @@ PARÂMETROS IMPORTANTES:
             }
 
             if (reservasAtivas.Count == 1)
-            {
-                var reserva = reservasAtivas.First();
-                await _reservaRepository.CancelarReservaAsync(reserva.Id);
-
-                // ✨ ADICIONADO: Limpar contexto após cancelar
-                await _conversationRepository.LimparContextoAsync(args.IdConversa);
-
-                var dataFormatada = reserva.DataReserva.ToString("dd/MM/yyyy");
-                var horaFormatada = reserva.HoraInicio.ToString(@"hh\:mm");
-
-                _logger.LogInformation(
-                    "[Conversa={Conversa}] Reserva #{IdReserva} cancelada. Contexto limpo. Motivo: {Motivo}",
-                    args.IdConversa,
-                    reserva.Id,
-                    args.MotivoCliente);
-
-                var msg = new StringBuilder();
-                msg.AppendLine("✅ Reserva cancelada com sucesso!");
-                msg.AppendLine();
-                msg.AppendLine($"📅 Data: {dataFormatada}");
-                msg.AppendLine($"⏰ Horário: {horaFormatada}");
-                msg.AppendLine();
-                msg.Append("Se mudar de ideia, estamos aqui! 😊");
-
-                return BuildJsonReply(msg.ToString());
-            }
-
-            var listaReservas = new StringBuilder();
-            listaReservas.AppendLine("Você tem mais de uma reserva ativa:");
-            listaReservas.AppendLine();
-            foreach (var r in reservasAtivas)
-            {
-                var diaSemana = r.DataReserva.ToString("dddd", new CultureInfo("pt-BR"));
-                listaReservas.AppendLine($"🎫 #{r.Id}");
-                listaReservas.AppendLine($"📅 {r.DataReserva:dd/MM/yyyy} ({diaSemana})");
-                listaReservas.AppendLine($"⏰ {r.HoraInicio:hh\\:mm}");
-                listaReservas.AppendLine($"👥 {r.QtdPessoas} pessoas");
-                listaReservas.AppendLine();
-            }
-            listaReservas.Append("Qual delas você quer cancelar? Informe o código (#) ou a data 😊");
-
-            return BuildJsonReply(listaReservas.ToString());
-        }
-
-        private async Task<string> HandleAtualizarReserva(AtualizarReservaArgs args)
         {
-            var conversa = await _conversationRepository.ObterPorIdAsync(args.IdConversa);
-            if (conversa == null)
-                return BuildJsonReply("Não consegui localizar nossa conversa.\n\nPode tentar novamente? 😊");
-
-            var idCliente = conversa.IdCliente;
-            var idEstabelecimento = conversa.IdEstabelecimento;
-
-            // ============================================================
-            // ✨ NOVO: VERIFICAR SE EXISTE CONTEXTO DE ALTERAÇÃO
-            // ============================================================
-            var contexto = await _conversationRepository.ObterContextoAsync(args.IdConversa);
-
-            // ✅ CASO 1: Dados coletados pelo interceptor, precisa montar confirmação
-            if (contexto?.Estado == "pronto_para_atualizar")
-            {
-                _logger.LogInformation(
-                    "[Conversa={Conversa}] Contexto pronto_para_atualizar detectado - montando confirmação",
-                    args.IdConversa);
-
-                var resIdPronto = contexto.ReservaIdPendente ?? 0;
-                if (resIdPronto == 0)
-                {
-                    _logger.LogError("[Conversa={Conversa}] ReservaIdPendente ausente no contexto", args.IdConversa);
-                    await _conversationRepository.LimparContextoAsync(args.IdConversa);
-                    return BuildJsonReply("Ocorreu um erro. Tente novamente! 😊");
-                }
-
-                var resPronto = await _reservaRepository.BuscarPorIdAsync(resIdPronto);
-                if (resPronto == null)
-                {
-                    _logger.LogError("[Conversa={Conversa}] Reserva #{Id} não encontrada", args.IdConversa, resIdPronto);
-                    await _conversationRepository.LimparContextoAsync(args.IdConversa);
-                    return BuildJsonReply("Não encontrei a reserva. Pode tentar novamente? 😊");
-                }
-
-                // Pegar dados do contexto
-                var horaContexto = contexto.DadosColetados?["novo_horario"]?.ToString() ?? "";
-                var qtdContexto = int.Parse(contexto.DadosColetados?["nova_qtd"]?.ToString() ?? "0");
-
-                // Montar mensagem de confirmação
-                var dataPronto = resPronto.DataReserva.Date;
-                var horaPronto = resPronto.HoraInicio.ToString(@"hh\:mm");
-                var horaFinalPronto = !string.IsNullOrWhiteSpace(horaContexto) ? horaContexto : horaPronto;
-                var qtdPronto = resPronto.QtdPessoas ?? 0;
-                var qtdFinalPronto = qtdContexto > 0 ? qtdContexto : qtdPronto;
-
-                var msgConfirmacao = BuildMsgConfirmacaoAlteracao(
-                    resPronto.Id, dataPronto, dataPronto, horaPronto, horaFinalPronto, qtdPronto, qtdFinalPronto);
-
-                // Atualizar estado para aguardando confirmação
-                await _conversationRepository.SalvarContextoAsync(args.IdConversa, new ConversationContext
-                {
-                    Estado = "aguardando_confirmacao_alteracao",
-                    ReservaIdPendente = resPronto.Id,
-                    DadosColetados = new Dictionary<string, object>
-                    {
-                        { "reserva_id", resPronto.Id },
-                        { "nova_data", dataPronto.ToString("yyyy-MM-dd") },
-                        { "novo_horario", horaFinalPronto },
-                        { "nova_qtd", qtdFinalPronto }
-                    },
-                    ExpiracaoEstado = DateTime.UtcNow.AddMinutes(30)
-                });
-
-                return BuildJsonReply(msgConfirmacao);
-            }
-
-            // ✅ CASO 2: Já tem confirmação, executar atualização
-            if (contexto?.Estado == "aguardando_confirmacao_alteracao")
-            {
-                _logger.LogInformation(
-                    "[Conversa={Conversa}] Processando confirmação de alteração via tool",
-                    args.IdConversa);
-
-                // Pegar dados salvos no contexto
-                var reservaIdConf = contexto.ReservaIdPendente ?? 0;
-                if (reservaIdConf == 0)
-                {
-                    _logger.LogError("[Conversa={Conversa}] ReservaIdPendente ausente no contexto", args.IdConversa);
-                    await _conversationRepository.LimparContextoAsync(args.IdConversa);
-                    return BuildJsonReply("Ocorreu um erro ao processar a confirmação. Tente novamente! 😊");
-                }
-
-                // ✅ Usar TryGetValue porque campos são OPCIONAIS
-                // Cliente pode mudar só horário, só quantidade, ou ambos
-                string? novaDataStr = null;
-                string? novoHorarioConf = null;
-                string? novaQtdStr = null;
-
-                if (contexto.DadosColetados != null)
-                {
-                    if (contexto.DadosColetados.TryGetValue("nova_data", out var dataObj))
-                        novaDataStr = dataObj?.ToString();
-                    if (contexto.DadosColetados.TryGetValue("novo_horario", out var horarioObj))
-                        novoHorarioConf = horarioObj?.ToString();
-                    if (contexto.DadosColetados.TryGetValue("nova_qtd", out var qtdObj))
-                        novaQtdStr = qtdObj?.ToString();
-                }
-
-                _logger.LogDebug(
-                    "[Conversa={Conversa}] Dados para atualização: Data={Data}, Horario={Horario}, Qtd={Qtd}",
-                    args.IdConversa,
-                    novaDataStr ?? "não informado",
-                    novoHorarioConf ?? "não informado",
-                    novaQtdStr ?? "não informado");
-
-                // Buscar reserva
-                var reservaConf = await _reservaRepository.BuscarPorIdAsync(reservaIdConf);
-                if (reservaConf == null)
-                {
-                    _logger.LogError("[Conversa={Conversa}] Reserva #{Id} não encontrada", args.IdConversa, reservaIdConf);
-                    await _conversationRepository.LimparContextoAsync(args.IdConversa);
-                    return BuildJsonReply("Não encontrei a reserva. Pode tentar novamente? 😊");
-                }
-
-                // EXECUTAR ATUALIZAÇÃO
-                bool alterouConf = false;
-
-                // Atualizar DATA (se houver)
-                if (!string.IsNullOrWhiteSpace(novaDataStr) && DateTime.TryParse(novaDataStr, out var novaDataConf))
-                {
-                    if (reservaConf.DataReserva.Date != novaDataConf.Date)
-                    {
-                        reservaConf.DataReserva = novaDataConf.Date;
-                        alterouConf = true;
-                    }
-                }
-
-                // Atualizar HORÁRIO (se houver)
-                if (!string.IsNullOrWhiteSpace(novoHorarioConf) && TimeSpan.TryParseExact(novoHorarioConf, @"hh\:mm", null, out var tsConf))
-                {
-                    if (reservaConf.HoraInicio != tsConf)
-                    {
-                        reservaConf.HoraInicio = tsConf;
-                        alterouConf = true;
-                    }
-                }
-
-                // Atualizar QUANTIDADE (se houver)
-                if (!string.IsNullOrWhiteSpace(novaQtdStr) && int.TryParse(novaQtdStr, out var novaQtdConf) && novaQtdConf > 0)
-                {
-                    if (reservaConf.QtdPessoas != novaQtdConf)
-                    {
-                        reservaConf.QtdPessoas = novaQtdConf;
-                        alterouConf = true;
-                    }
-                }
-
-                if (alterouConf)
-                {
-                    reservaConf.DataAtualizacao = DateTime.UtcNow;
-                    await _reservaRepository.AtualizarAsync(reservaConf);
-
-                    _logger.LogInformation(
-                        "[Conversa={Conversa}] Reserva #{Id} ATUALIZADA com sucesso via tool",
-                        args.IdConversa,
-                        reservaConf.Id);
-                }
-                else
-                {
-                    _logger.LogInformation(
-                        "[Conversa={Conversa}] Nenhuma alteracao aplicada na reserva #{Id}",
-                        args.IdConversa,
-                        reservaConf.Id);
-                }
-
-                var mensagemFinal =
-                    $"✅ Reserva alterada com sucesso! 🎉\n\n" +
-                    $"🎫 Código: #{reservaConf.Id}\n" +
-                    $"📅 {DateFormattingHelper.FormatarDataHorario(reservaConf.DataReserva, reservaConf.HoraInicio)}\n" +
-                    $"👥 {reservaConf.QtdPessoas ?? 0} pessoas";
-
-                await _conversationRepository.LimparContextoAsync(args.IdConversa);
-
-                _logger.LogInformation(
-                    "[Tool][Conversa={Conversa}] Alteração finalizada - contexto limpo",
-                    args.IdConversa);
-
-                return BuildJsonReply(mensagemFinal);
-            }
-
-        // ============================================================
-        // FLUXO NORMAL: validar snapshot e montar confirmação
-        // ============================================================
-
-        if (contexto?.ReservaSnapshot == null || !contexto.ReservaIdPendente.HasValue)
-        {
-            _logger.LogWarning(
-                "[Tool][Conversa={Conversa}] Contexto sem snapshot valido - solicitando nova selecao",
-                args.IdConversa);
-
-            return BuildJsonReply("Desculpe, perdi o contexto da reserva. Pode selecionar a reserva novamente, por favor?");
-        }
-
-        var reservaIdSnapshot = contexto.ReservaIdPendente.Value;
-
-        if (args.CodigoReserva.HasValue && args.CodigoReserva.Value != reservaIdSnapshot)
-        {
-            _logger.LogWarning(
-                "[Tool][Conversa={Conversa}] ID informado ({Recebido}) difere do snapshot ({Esperado})",
-                args.IdConversa,
-                args.CodigoReserva.Value,
-                reservaIdSnapshot);
-
-            return BuildJsonReply("A reserva informada não corresponde à seleção atual. Vamos tentar novamente? 😊");
-        }
-
-        var snapshot = contexto.ReservaSnapshot;
-        var dataSnapshot = DateTime.Parse(snapshot["data"].ToString()!, CultureInfo.InvariantCulture);
-        var horaSnapshot = TimeSpan.Parse(snapshot["hora"].ToString()!, CultureInfo.InvariantCulture);
-        var qtdSnapshot = Convert.ToInt32(snapshot["qtd_pessoas"]);
-
-        _logger.LogDebug(
-            "[Tool][Conversa={Conversa}] Snapshot validado - Reserva #{Id}, Cliente={ClienteId}, Status={Status}",
-            args.IdConversa,
-            snapshot.TryGetValue("id", out var idSnap) ? idSnap : reservaIdSnapshot,
-            snapshot.TryGetValue("cliente_id", out var clienteSnap) ? clienteSnap : "desconhecido",
-            snapshot.TryGetValue("status", out var statusSnap) ? statusSnap : "desconhecido");
-
-        var reserva = await _reservaRepository.BuscarPorIdAsync(reservaIdSnapshot);
-        if (reserva == null)
-        {
-            _logger.LogWarning(
-                "[Tool][Conversa={Conversa}] Reserva #{Id} nao encontrada ao aplicar alteracao",
-                args.IdConversa,
-                reservaIdSnapshot);
-
-            return BuildJsonReply("Não encontrei a reserva selecionada. Pode escolher novamente, por favor?");
-        }
-
-            // ===== BUG 4 FIX: Usar snapshot como âncora e referência =====
-            // 2) Resolver NOVA DATA (se informada) usando ÂNCORA = data do SNAPSHOT
-            DateTime? novaDataCalculada = null;
-            if (!string.IsNullOrWhiteSpace(args.NovaData))
-            {
-                // IMPORTANTE: Usar dataSnapshot como âncora (data atual da reserva)
-                novaDataCalculada = ResolverDataComAncora(args.NovaData!, dataSnapshot, TimeZoneHelper.GetSaoPauloNow().Date);
-
-                if (!novaDataCalculada.HasValue)
-                {
-                    _logger.LogWarning(
-                        "[Tool][Conversa={Conversa}] Falha ao parsear nova data: '{NovaData}' (âncora: {Ancora:yyyy-MM-dd})",
-                        args.IdConversa,
-                        args.NovaData,
-                        dataSnapshot);
-
-                    return BuildJsonReply($"Não consegui entender a data '{args.NovaData}'. Pode informar no formato dd/MM ou dd/MM/yyyy?");
-                }
-
-                _logger.LogInformation(
-                    "[Tool][Conversa={Conversa}] Nova data calculada: {NovaData:yyyy-MM-dd} (a partir de '{Entrada}')",
-                    args.IdConversa,
-                    novaDataCalculada.Value,
-                    args.NovaData);
-            }
-            // ===== FIM BUG 4 FIX =====
-
-            // ------------------------------------------------------------
-            // 3) Validar regras gerais (reutilizando ReservaValidator)
-            // ------------------------------------------------------------
-            // Hora (se houver)
-            TimeSpan? novoHorarioParsed = null;
-            if (!string.IsNullOrWhiteSpace(args.NovoHorario))
-            {
-                if (!TimeSpan.TryParseExact(args.NovoHorario.Trim(), @"hh\:mm", CultureInfo.InvariantCulture, out var horarioTemp))
-                    return BuildJsonReply("Formato de horário inválido. Use HH:MM (ex.: 19:00)");
-
-                // ✅ Validação simplificada de horário (11h-23h)
-                if (horarioTemp.Hours < 11 || horarioTemp.Hours >= 23)
-                    return BuildJsonReply("Esse horário está fora do nosso expediente (11h-23h). Quer tentar outro? 😊");
-
-                novoHorarioParsed = horarioTemp;
-            }
-
-            // Qtd (se houver)
-            int? novaQtdAbsoluta = null;
-            if (args.NovaQtdPessoas.HasValue)
-            {
-                if (args.NovaQtdPessoas.Value <= 0 || args.NovaQtdPessoas.Value > 110)
-                    return BuildJsonReply("Quantidade inválida. Trabalhamos com até 110 pessoas por dia. 😊");
-                novaQtdAbsoluta = args.NovaQtdPessoas.Value;
-            }
-
-            // ===== BUG 4 FIX: Determinar valores finais (snapshot se não houver mudança) =====
-            var dataAlvo = novaDataCalculada ?? dataSnapshot;
-            var horaAlvo = novoHorarioParsed ?? horaSnapshot;
+            var reserva = reservasAtivas.First();
+            var nomeReserva = reserva.NomeCliente ?? "Cliente";
 
             _logger.LogInformation(
-                "[Tool][Conversa={Conversa}] Valores finais - Data: {Data:yyyy-MM-dd}, Hora: {Hora}",
-                args.IdConversa,
-                dataAlvo,
-                horaAlvo);
-            // ===== FIM BUG 4 FIX =====
+                "[Conversa={Conversa}] Cliente tem 1 reserva - mostrando com menu A/B/C",
+                idConversa);
 
-            // Validar se data não é no passado
-            var agora = TimeZoneHelper.GetSaoPauloNow();
-            if (dataAlvo.Add(horaAlvo) < agora)
-                return BuildJsonReply("Não podemos agendar para uma data/hora no passado. Escolha outra data! 😊");
-
-            // Validar quantidade (validação extra, caso necessário)
-            if (novaQtdAbsoluta.HasValue && (novaQtdAbsoluta.Value <= 0 || novaQtdAbsoluta.Value > 110))
-                return BuildJsonReply("Quantidade inválida. Trabalhamos com até 110 pessoas por dia. 😊");
-
-            // ------------------------------------------------------------
-            // 4) Mostrar comparação ANTES × DEPOIS e aguardar confirmação (padrão do projeto)
-            // ------------------------------------------------------------
-            var dataAntes = dataSnapshot.Date;
-            var dataDepois = (novaDataCalculada ?? dataSnapshot).Date;
-            var horaAntes = horaSnapshot.ToString(@"hh\:mm");
-            var horaDepois = (novoHorarioParsed ?? horaSnapshot).ToString(@"hh\:mm");
-            var qtdAntes = qtdSnapshot;
-            var qtdDepois = novaQtdAbsoluta ?? qtdSnapshot;
-
-            var resumo = BuildMsgConfirmacaoAlteracao(
-                reserva.Id, dataAntes, dataDepois, horaAntes, horaDepois, qtdAntes, qtdDepois);
-
-            // salvar contexto p/ confirmação
-            await _conversationRepository.SalvarContextoAsync(args.IdConversa, new ConversationContext
+            // Salvar contexto com informações da reserva para facilitar escolha
+            await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
             {
-                Estado = "aguardando_confirmacao_alteracao",
+                Estado = "aguardando_escolha_acao",
                 ReservaIdPendente = reserva.Id,
                 DadosColetados = new Dictionary<string, object>
-        {
-            { "reserva_id", reserva.Id },
-            { "nova_data", dataDepois.ToString("yyyy-MM-dd") }, // ⬅️ salvar a data calculada
-            { "novo_horario", horaDepois },
-            { "nova_qtd", qtdDepois }
-        },
+                {
+                    { "reserva_id", reserva.Id },
+                    { "data_atual", reserva.DataReserva.ToString("yyyy-MM-dd") },
+                    { "hora_atual", reserva.HoraInicio.ToString(@"hh\:mm") },
+                    { "qtd_atual", reserva.QtdPessoas ?? 0 }
+                },
                 ExpiracaoEstado = DateTime.UtcNow.AddMinutes(30)
             });
 
-            return BuildJsonReply(resumo);
-        }
-
-        // Helper local — mesma lógica usada no Interceptor (âncora = data da reserva)
-        private static DateTime? ResolverDataComAncora(string texto, DateTime ancora, DateTime hojeSP)
-        {
-            var norm = texto.ToLower().Normalize(NormalizationForm.FormD);
-            norm = new string(norm.Where(ch => System.Globalization.CharUnicodeInfo.GetUnicodeCategory(ch) != System.Globalization.UnicodeCategory.NonSpacingMark).ToArray());
-            norm = norm.Replace("-feira", "").Trim();
-
-            // hoje/amanhã
-            if (norm.Contains("hoje")) return hojeSP;
-            if (norm.Contains("amanha")) return hojeSP.AddDays(1);
-
-            // dd/MM ou dd/MM/yyyy
-            if (DateTime.TryParseExact(norm, "dd/MM/yyyy", CultureInfo.InvariantCulture, DateTimeStyles.None, out var d1)) return d1.Date;
-            if (DateTime.TryParseExact(norm, "dd/MM", CultureInfo.InvariantCulture, DateTimeStyles.None, out var d2))
-            {
-                var comp = new DateTime(ancora.Year, d2.Month, d2.Day);
-                if (comp <= ancora) comp = comp.AddYears(1);
-                return comp.Date;
-            }
-
-            // "dia 12"
-            var m = System.Text.RegularExpressions.Regex.Match(norm, @"dia\s*(\d{1,2})");
-            if (m.Success && int.TryParse(m.Groups[1].Value, out var dia))
-            {
-                var tentativa = new DateTime(ancora.Year, ancora.Month, dia);
-                if (tentativa <= ancora) tentativa = tentativa.AddMonths(1);
-                return tentativa.Date;
-            }
-
-            // dia da semana
-            var dias = new Dictionary<string, DayOfWeek> {
-        {"domingo", DayOfWeek.Sunday},{"segunda", DayOfWeek.Monday},{"terca", DayOfWeek.Tuesday},
-        {"terça", DayOfWeek.Tuesday},{"quarta", DayOfWeek.Wednesday},{"quinta", DayOfWeek.Thursday},
-        {"sexta", DayOfWeek.Friday},{"sabado", DayOfWeek.Saturday},{"sábado", DayOfWeek.Saturday}
-    };
-            foreach (var kv in dias)
-            {
-                if (norm.Contains(kv.Key))
-                {
-                    var delta = ((int)kv.Value - (int)ancora.DayOfWeek + 7) % 7;
-                    if (delta == 0) delta = 7; // próxima ocorrência
-                    return ancora.AddDays(delta).Date;
-                }
-            }
-
-            // fallback
-            if (DateTime.TryParse(texto, new CultureInfo("pt-BR"), DateTimeStyles.None, out var livre)) return livre.Date;
-            return null;
-        }
-
-        private string BuildMsgConfirmacaoAlteracao(
-    long codigoReserva,
-    DateTime dataAntes,
-    DateTime dataDepois,
-    string horaAntes,
-    string horaDepois,
-    int? qtdAntes,
-    int? qtdDepois)
-        {
-            var ptbr = new CultureInfo("pt-BR");
-            var sb = new StringBuilder();
-            sb.AppendLine($"📋 Reserva #{codigoReserva} - Confirme as alterações:");
-            sb.AppendLine();
-
-            sb.AppendLine("📅 DATA:");
-            if (dataDepois.Date != dataAntes.Date)
-            {
-                sb.AppendLine($"❌ Antes: {dataAntes:dd/MM/yyyy} ({dataAntes.ToString("dddd", ptbr)})");
-                sb.AppendLine($"✅ Depois: {dataDepois:dd/MM/yyyy} ({dataDepois.ToString("dddd", ptbr)})");
-            }
-            else
-            {
-                sb.AppendLine($"✔️ Mantém: {dataAntes:dd/MM/yyyy} ({dataAntes.ToString("dddd", ptbr)})");
-            }
-            sb.AppendLine();
-
-            sb.AppendLine("⏰ HORÁRIO:");
-            if (horaDepois != horaAntes)
-            {
-                sb.AppendLine($"❌ Antes: {horaAntes}");
-                sb.AppendLine($"✅ Depois: {horaDepois}");
-            }
-            else
-            {
-                sb.AppendLine($"✔️ Mantém: {horaAntes}");
-            }
-            sb.AppendLine();
-
-            sb.AppendLine("👥 PESSOAS:");
-            if (qtdDepois == qtdAntes)
-            {
-                sb.AppendLine($"✔️ Mantém: {qtdAntes}");
-            }
-            else
-            {
-                sb.AppendLine($"❌ Antes: {qtdAntes}");
-                sb.AppendLine($"✅ Depois: {qtdDepois}");
-            }
-            sb.AppendLine();
-
-            sb.AppendLine("Confirmar essas mudanças? 😊");
-            return sb.ToString();
-        }
-
-        private static long? ExtractReservaCode(string mensagem)
-        {
-            if (string.IsNullOrWhiteSpace(mensagem))
-                return null;
-
-            var match = System.Text.RegularExpressions.Regex.Match(
-                mensagem,
-                @"#(\d+)|c[oó]digo\s*(\d+)|reserva\s*(\d+)",
-                System.Text.RegularExpressions.RegexOptions.IgnoreCase
-            );
-
-            if (match.Success)
-            {
-                var grupo = match.Groups.Cast<System.Text.RegularExpressions.Group>()
-                    .Skip(1)
-                    .FirstOrDefault(g => g.Success);
-
-                if (long.TryParse(grupo?.Value, out var codigo))
-                    return codigo;
-            }
-
-            return null;
-        }
-
-        private (int? QtdPessoas, bool EhRelativa, string? Horario) ExtrairMudancasDoTexto(string texto)
-        {
-            if (string.IsNullOrWhiteSpace(texto))
-                return (null, false, null);
-
-            var textoNorm = texto.ToLowerInvariant().Trim();
-            int? qtdPessoas = null;
-            bool ehRelativa = false;
-            string? horario = null;
-
-            // Detectar QUANTIDADE - Relativa (adicionar/tirar)
-            var matchAdicionar = System.Text.RegularExpressions.Regex.Match(
-                textoNorm,
-                @"(?:adicionar|add|mais|incluir)\s+(\d+)\s*(?:pessoa|pessoas)?",
-                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-
-            if (matchAdicionar.Success)
-            {
-                qtdPessoas = int.Parse(matchAdicionar.Groups[1].Value);
-                ehRelativa = true;
-            }
-
-            var matchTirar = System.Text.RegularExpressions.Regex.Match(
-                textoNorm,
-                @"(?:tirar|remover|menos|reduzir)\s+(\d+)\s*(?:pessoa|pessoas)?",
-                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-
-            if (matchTirar.Success)
-            {
-                qtdPessoas = -int.Parse(matchTirar.Groups[1].Value);
-                ehRelativa = true;
-            }
-
-            // Detectar QUANTIDADE - Absoluta
-            if (!qtdPessoas.HasValue)
-            {
-                var matchAbsoluta = System.Text.RegularExpressions.Regex.Match(
-                    textoNorm,
-                    @"(?:para|pra|serão?|serem?|total de)?\s*(\d+)\s*(?:pessoa|pessoas)",
-                    System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-
-                if (matchAbsoluta.Success)
-                {
-                    qtdPessoas = int.Parse(matchAbsoluta.Groups[1].Value);
-                    ehRelativa = false;
-                }
-            }
-
-            // Detectar HORÁRIO
-            // Formato: 20h, 20:00, 8pm, vinte horas
-            var matchHorario = System.Text.RegularExpressions.Regex.Match(
-                textoNorm,
-                @"(?:às|as|para|pra|horário|horario)?\s*(\d{1,2})(?::(\d{2})|h)?(?:\s*(?:pm|am))?",
-                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-
-            if (matchHorario.Success)
-            {
-                var hora = int.Parse(matchHorario.Groups[1].Value);
-                var minuto = matchHorario.Groups[2].Success ? int.Parse(matchHorario.Groups[2].Value) : 0;
-
-                // Conversão PM/AM
-                if (textoNorm.Contains("pm") && hora < 12)
-                    hora += 12;
-                else if (textoNorm.Contains("am") && hora == 12)
-                    hora = 0;
-
-                if (hora >= 0 && hora <= 23 && minuto >= 0 && minuto <= 59)
-                {
-                    horario = $"{hora:D2}:{minuto:D2}";
-                }
-            }
-
-            return (qtdPessoas, ehRelativa, horario);
-        }
-
-        private string MontarMensagemConfirmacao(
-            Reserva reserva,
-            Cliente cliente,
-            string? novoHorario,
-            int? novaQtd,
-            bool ehRelativa)
-        {
-            var qtdAtual = reserva.QtdPessoas ?? 0;
-            var horaAtual = reserva.HoraInicio.ToString(@"hh\:mm");
-            var nomeCliente = cliente?.Nome ?? "Cliente";
-
             var msg = new StringBuilder();
-            msg.AppendLine($"📋 Reserva #{reserva.Id} - Confirme as alterações:");
+            msg.AppendLine("📋 Sua reserva ativa:");
             msg.AppendLine();
-            msg.AppendLine($"👤 Nome: {nomeCliente}");
+            msg.AppendLine($"🎫 Código: #{reserva.Codigo}");
+            msg.AppendLine($"👤 Nome: {nomeReserva}");
             msg.AppendLine($"📅 Data: {reserva.DataReserva:dd/MM/yyyy} ({reserva.DataReserva:dddd})");
+            msg.AppendLine($"⏰ Horário: {reserva.HoraInicio:hh\\:mm}");
+            msg.AppendLine($"👥 Pessoas: {reserva.QtdPessoas}");
             msg.AppendLine();
-
-            // HORÁRIO
-            if (!string.IsNullOrWhiteSpace(novoHorario))
-            {
-                msg.AppendLine("⏰ HORÁRIO:");
-                msg.AppendLine($"❌ Antes: {horaAtual}");
-                msg.AppendLine($"✅ Depois: {novoHorario}");
-            }
-            else
-            {
-                msg.AppendLine("⏰ HORÁRIO:");
-                msg.AppendLine($"✔️ Mantém: {horaAtual}");
-            }
-
+            msg.AppendLine("━━━━━━━━━━━━━━━━━━━━━━");
+            msg.AppendLine("O que você quer fazer? 😊");
             msg.AppendLine();
-
-            // QUANTIDADE
-            if (novaQtd.HasValue)
-            {
-                msg.AppendLine("👥 PESSOAS:");
-                msg.AppendLine($"❌ Antes: {qtdAtual}");
-
-                if (ehRelativa)
-                {
-                    var mudanca = novaQtd.Value;
-                    var qtdFinal = qtdAtual + mudanca;
-                    var sinal = mudanca > 0 ? "+" : "";
-                    msg.AppendLine($"✅ Depois: {qtdFinal} ({qtdAtual} {sinal}{mudanca})");
-                }
-                else
-                {
-                    msg.AppendLine($"✅ Depois: {novaQtd}");
-                }
-            }
-            else
-            {
-                msg.AppendLine("👥 PESSOAS:");
-                msg.AppendLine($"✔️ Mantém: {qtdAtual}");
-            }
-
+            msg.AppendLine("A) 🆕 Criar nova reserva");
+            msg.AppendLine("B) ❌ Cancelar esta reserva");
+            msg.AppendLine("C) ✏️ Alterar esta reserva");
             msg.AppendLine();
-            msg.Append("Confirma essas mudanças? 😊");
+            msg.Append("Responda com a letra (A, B ou C) 📝");
 
-            return msg.ToString();
+            return BuildJsonReply(msg.ToString());
         }
-
-        private async Task<(Reserva? Reserva, string? MensagemErro)> BuscarReservaInteligente(
-            Guid idConversa,
-            string? dataTexto,
-            long? codigo,
-            Guid idCliente,
-            Guid idEstabelecimento)
+        else
         {
-            _logger.LogDebug(
-                "[Conversa={Conversa}] BuscarReservaInteligente: dataTexto={Data}, codigo={Codigo}",
-                idConversa, dataTexto ?? "null", codigo?.ToString() ?? "null");
-
-            var reservasExistentes = await _reservaRepository.ObterPorClienteEstabelecimentoAsync(idCliente, idEstabelecimento);
-            var referenciaAtual = TimeZoneHelper.GetSaoPauloNow();
-
-            var reservasAtivas = reservasExistentes
-                .Where(r =>
-                {
-                    if (r.Status != ReservaStatus.Confirmado) return false;
-
-                    var dataHoraReserva = r.DataReserva.Date.Add(r.HoraInicio);
-                    return dataHoraReserva > referenciaAtual;
-                })
-                .OrderBy(r => r.DataReserva)
-                .ThenBy(r => r.HoraInicio)
-                .ToList();
-
-            if (!reservasAtivas.Any())
-            {
-                return (null, "Não encontrei reservas futuras no seu nome.\n\nQuer fazer uma nova reserva? 😊");
-            }
-
-            if (codigo.HasValue)
-            {
-                var porCodigo = reservasAtivas.FirstOrDefault(r => r.Id == codigo.Value);
-                if (porCodigo != null)
-                    return (porCodigo, null);
-
-                return (null, $"Não encontrei a reserva #{codigo} nas suas reservas futuras.\n\nQuer que eu liste suas reservas? 😊");
-            }
-
-            if (!string.IsNullOrWhiteSpace(dataTexto))
-            {
-                var textoNorm = dataTexto.ToLowerInvariant().Trim();
-
-                if (DateTime.TryParse(dataTexto, new CultureInfo("pt-BR"), System.Globalization.DateTimeStyles.None, out var dataEspecifica))
-                {
-                    var porData = reservasAtivas.Where(r => r.DataReserva.Date == dataEspecifica.Date).ToList();
-
-                    if (porData.Count == 1)
-                        return (porData.First(), null);
-
-                    if (porData.Count > 1)
-                    {
-                        var lista = new StringBuilder();
-                        lista.AppendLine($"Encontrei {porData.Count} reservas para {dataEspecifica:dd/MM/yyyy}:");
-                        lista.AppendLine();
-                        foreach (var r in porData)
-                        {
-                            lista.AppendLine($"🎫 #{r.Id} - {r.HoraInicio:hh\\:mm} - {r.QtdPessoas} pessoas");
-                        }
-                        lista.AppendLine();
-                        lista.Append("Qual delas? Informe o código (#) 😊");
-                        return (null, lista.ToString());
-                    }
-                }
-
-                var matchDia = System.Text.RegularExpressions.Regex.Match(textoNorm, @"dia\s*(\d{1,2})");
-                if (matchDia.Success && int.TryParse(matchDia.Groups[1].Value, out var dia))
-                {
-                    var porDia = reservasAtivas.Where(r => r.DataReserva.Day == dia).ToList();
-
-                    if (porDia.Count == 1)
-                        return (porDia.First(), null);
-
-                    if (porDia.Count > 1)
-                    {
-                        var lista = new StringBuilder();
-                        lista.AppendLine($"Encontrei {porDia.Count} reservas para o dia {dia}:");
-                        lista.AppendLine();
-                        foreach (var r in porDia)
-                        {
-                            lista.AppendLine($"🎫 #{r.Id} - {r.DataReserva:dd/MM/yyyy} - {r.HoraInicio:hh\\:mm}");
-                        }
-                        lista.AppendLine();
-                        lista.Append("Qual delas? Informe o código (#) ou a data completa 😊");
-                        return (null, lista.ToString());
-                    }
-                }
-
-                var meses = new Dictionary<string, int>
-                {
-                    {"janeiro", 1}, {"fevereiro", 2}, {"março", 3}, {"marco", 3},
-                    {"abril", 4}, {"maio", 5}, {"junho", 6},
-                    {"julho", 7}, {"agosto", 8}, {"setembro", 9},
-                    {"outubro", 10}, {"novembro", 11}, {"dezembro", 12}
-                };
-
-                foreach (var mes in meses)
-                {
-                    if (textoNorm.Contains(mes.Key))
-                    {
-                        var porMes = reservasAtivas.Where(r => r.DataReserva.Month == mes.Value).ToList();
-
-                        if (porMes.Count == 1)
-                            return (porMes.First(), null);
-
-                        if (porMes.Count > 1)
-                        {
-                            var lista = new StringBuilder();
-                            lista.AppendLine($"Encontrei {porMes.Count} reservas em {mes.Key}:");
-                            lista.AppendLine();
-                            foreach (var r in porMes)
-                            {
-                                lista.AppendLine($"🎫 #{r.Id} - {r.DataReserva:dd/MM/yyyy} ({r.DataReserva:dddd}) - {r.HoraInicio:hh\\:mm}");
-                            }
-                            lista.AppendLine();
-                            lista.Append("Qual delas? Informe o código (#) ou a data 😊");
-                            return (null, lista.ToString());
-                        }
-                    }
-                }
-            }
-
-            if (reservasAtivas.Count == 1)
-            {
-                return (reservasAtivas.First(), null);
-            }
-
-            var msg = new StringBuilder();
-            msg.AppendLine("📋 Você tem múltiplas reservas. Qual delas?");
-            msg.AppendLine();
-            foreach (var r in reservasAtivas)
-            {
-                msg.AppendLine($"🎫 #{r.Id} - {r.DataReserva:dd/MM/yyyy} às {r.HoraInicio:hh\\:mm}");
-            }
-            msg.AppendLine();
-            msg.Append("Informe o código (#) ou a data 😊");
-
-            return (null, msg.ToString());
-        }
-
-        private async Task<string> HandleListarReservas(Guid idConversa)
-        {
-            var conversa = await _conversationRepository.ObterPorIdAsync(idConversa);
-            if (conversa == null)
-            {
-                return BuildJsonReply("Não consegui localizar nossa conversa.");
-            }
-
-            var idCliente = conversa.IdCliente;
-            var idEstabelecimento = conversa.IdEstabelecimento;
-
-            var reservasExistentes = await _reservaRepository.ObterPorClienteEstabelecimentoAsync(idCliente, idEstabelecimento);
-            var referenciaAtual = TimeZoneHelper.GetSaoPauloNow();
-
-            // ✨ JÁ ESTAVA OK: Filtra apenas reservas com status=Confirmado
-            var reservasAtivas = reservasExistentes
-                .Where(r =>
-                {
-                    if (r.Status != ReservaStatus.Confirmado) return false;
-                    var dataHoraReserva = r.DataReserva.Date.Add(r.HoraInicio);
-                    return dataHoraReserva > referenciaAtual;
-                })
-                .OrderBy(r => r.DataReserva)
-                .ThenBy(r => r.HoraInicio)
-                .ToList();
-
-            // ✨ ADICIONADO: Log para confirmar filtro de status
-            _logger.LogInformation(
-                "[Conversa={Conversa}] Filtradas {Total} reservas ativas (status=Confirmado, futuras)",
-                idConversa,
-                reservasAtivas.Count);
-
-            if (!reservasAtivas.Any())
-            {
-                return BuildJsonReply("Não encontrei reservas ativas no seu nome.\n\nQuer fazer uma nova reserva? 😊");
-            }
-
-            if (reservasAtivas.Count == 1)
-            {
-                var reserva = reservasAtivas.First();
-                // ✅ CORREÇÃO: Usar NomeCliente da reserva (nome informado no momento da reserva)
-                var nomeReserva = reserva.NomeCliente ?? "Cliente";
-
-                _logger.LogInformation(
-                    "[Conversa={Conversa}] Cliente tem apenas 1 reserva. Fast-path direto para alteração.",
-                    idConversa);
-
-                await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
-                {
-                    Estado = "aguardando_dados_alteracao",
-                    ReservaIdPendente = reserva.Id,
-                    DadosColetados = new Dictionary<string, object>
-                    {
-                        { "reserva_id", reserva.Id },
-                        { "data_atual", reserva.DataReserva.ToString("yyyy-MM-dd") },
-                        { "hora_atual", reserva.HoraInicio.ToString(@"hh\:mm") },
-                        { "qtd_atual", reserva.QtdPessoas ?? 0 }
-                    },
-                    ExpiracaoEstado = DateTime.UtcNow.AddMinutes(30)
-                });
-
-                var msg = new StringBuilder();
-                msg.AppendLine($"📋 Reserva #{reserva.Id} - Informações completas:");
-                msg.AppendLine();
-                msg.AppendLine($"👤 Nome: {nomeReserva}");
-                msg.AppendLine($"📅 Data: {reserva.DataReserva:dd/MM/yyyy} ({reserva.DataReserva:dddd})");
-                msg.AppendLine($"⏰ Horário: {reserva.HoraInicio:hh\\:mm}");
-                msg.AppendLine($"👥 Pessoas: {reserva.QtdPessoas}");
-                msg.AppendLine($"🎫 Código: #{reserva.Id}");
-                msg.AppendLine();
-                msg.AppendLine("O que você quer alterar? 😊");
-                msg.AppendLine("• Horário");
-                msg.AppendLine("• Quantidade de pessoas");
-
-                return BuildJsonReply(msg.ToString());
-            }
-
-            var mapeamento = new Dictionary<int, long>();
-            for (int i = 0; i < reservasAtivas.Count; i++)
-            {
-                mapeamento[i + 1] = reservasAtivas[i].Id;
-            }
-
+            // Salvar contexto sem amarrar reserva específica ainda
             await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
             {
-                Estado = "aguardando_escolha_reserva",
+                Estado = "aguardando_escolha_acao",
                 DadosColetados = new Dictionary<string, object>
                 {
-                    { "mapeamento_reservas", System.Text.Json.JsonSerializer.Serialize(mapeamento) },
-                    { "reservas_json", System.Text.Json.JsonSerializer.Serialize(reservasAtivas.Select(r => new {
-                        r.Id,
-                        r.DataReserva,
-                        r.HoraInicio,
-                        r.QtdPessoas
-                    }).ToList()) }
+                    { "tem_multiplas_reservas", true },
+                    { "total_reservas", reservasAtivas.Count }
                 },
                 ExpiracaoEstado = DateTime.UtcNow.AddMinutes(30)
             });
@@ -1399,7 +573,7 @@ PARÂMETROS IMPORTANTES:
 
             foreach (var r in reservasAtivas)
             {
-                msgLista.AppendLine($"🎫 Reserva #{r.Id}");
+                msgLista.AppendLine($"🎫 Reserva #{r.Codigo}");
                 msgLista.AppendLine($"📅 {r.DataReserva:dd/MM/yyyy} ({r.DataReserva:dddd})");
                 msgLista.AppendLine($"⏰ {r.HoraInicio:hh\\:mm}");
                 msgLista.AppendLine($"👥 {r.QtdPessoas} pessoas");
@@ -1407,17 +581,16 @@ PARÂMETROS IMPORTANTES:
             }
 
             msgLista.AppendLine("━━━━━━━━━━━━━━━━━━━━━━");
+            msgLista.AppendLine("O que você quer fazer? 😊");
             msgLista.AppendLine();
-            msgLista.AppendLine("💬 Qual você quer alterar?");
-            msgLista.Append("Responda com o código da reserva (ex: #24, 24) ou a data (ex: dia 11, 11/10)");
-
-            return BuildJsonReply(msgLista.ToString());
-
-            msgLista.Append("Qual você quer alterar? Digite o número (1, 2...) 😊");
+            msgLista.AppendLine("A) 🆕 Criar nova reserva");
+            msgLista.AppendLine("B) ❌ Cancelar uma reserva");
+            msgLista.AppendLine("C) ✏️ Alterar uma reserva");
+            msgLista.AppendLine();
+            msgLista.Append("Responda com a letra (A, B ou C) 📝");
 
             return BuildJsonReply(msgLista.ToString());
         }
-
         public Task<object[]> GetToolsForOpenAI(Guid idConversa)
         {
             var idConversaString = idConversa.ToString();
