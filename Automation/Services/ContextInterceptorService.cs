@@ -558,31 +558,188 @@ namespace APIBack.Automation.Services
         {
             var textoNorm = mensagemTexto?.Trim().ToLowerInvariant() ?? string.Empty;
 
+            // 1️⃣ TENTAR LETRA PRIMEIRO (mantém comportamento atual)
             var letra = ExtrairOpcaoLetra(textoNorm);
-            if (string.IsNullOrEmpty(letra))
+            
+            if (!string.IsNullOrEmpty(letra))
             {
+                var letraUpper = letra.ToUpperInvariant();
+                
                 _logger.LogInformation(
-                    "[Conversa={Conversa}] Nenhuma letra válida identificada na resposta: '{Texto}'",
-                    idConversa,
-                    mensagemTexto);
+                    "[Conversa={Conversa}] Cliente escolheu opção do menu por LETRA: {Letra}",
+                    idConversa, letraUpper);
 
-                return (false, null);
+                return letraUpper switch
+                {
+                    "A" => await ProcessarOpcaoA_CriarReserva(idConversa),
+                    "B" => await ProcessarOpcaoB_CancelarReserva(idConversa, contexto, mensagemTexto),
+                    "C" => await ProcessarOpcaoC_AlterarReserva(idConversa, contexto, mensagemTexto),
+                    _ => await ReexibirMenuPorOpcaoInvalida(idConversa, contexto, letraUpper)
+                };
             }
 
-            var letraUpper = letra.ToUpperInvariant();
-
-            _logger.LogInformation(
-                "[Conversa={Conversa}] Cliente escolheu opção do menu: {Letra}",
-                idConversa,
-                letraUpper);
-
-            return letraUpper switch
+            // 2️⃣ DETECTAR INTENÇÃO POR PALAVRA-CHAVE
+            var intencao = DetectarIntencaoPorPalavra(textoNorm);
+            
+            if (intencao != null)
             {
-                "A" => await ProcessarOpcaoA_CriarReserva(idConversa),
-                "B" => await ProcessarOpcaoB_CancelarReserva(idConversa, contexto),
-                "C" => await ProcessarOpcaoC_AlterarReserva(idConversa, contexto),
-                _ => TratarLetraInvalida(idConversa, letraUpper)
-            };
+                _logger.LogInformation(
+                    "[Conversa={Conversa}] Cliente escolheu opção por PALAVRA-CHAVE: {Intencao}",
+                    idConversa, intencao);
+
+                return intencao switch
+                {
+                    "criar" => await ProcessarOpcaoA_CriarReserva(idConversa),
+                    "cancelar" => await ProcessarOpcaoB_CancelarReserva(idConversa, contexto, mensagemTexto),
+                    "alterar" => await ProcessarOpcaoC_AlterarReserva(idConversa, contexto, mensagemTexto),
+                    _ => await ReexibirMenuPorNaoEntendimento(idConversa, contexto)
+                };
+            }
+
+            // 3️⃣ NÃO ENTENDEU - RE-EXIBIR MENU + ATUALIZAR CONTEXTO
+            _logger.LogWarning(
+                "[Conversa={Conversa}] Não conseguiu interpretar escolha: '{Texto}' - re-exibindo menu",
+                idConversa, mensagemTexto);
+
+            return await ReexibirMenuPorNaoEntendimento(idConversa, contexto);
+        }
+
+        /// <summary>
+        /// Detecta intenção do cliente por palavras-chave na mensagem
+        /// </summary>
+        private string? DetectarIntencaoPorPalavra(string textoNormalizado)
+        {
+            // CRIAR/NOVA
+            if (textoNormalizado.Contains("criar") || 
+                textoNormalizado.Contains("nova") ||
+                textoNormalizado.Contains("fazer") || 
+                textoNormalizado.Contains("agendar") ||
+                textoNormalizado.Contains("marcar") ||
+                textoNormalizado.Contains("reservar"))
+            {
+                _logger.LogDebug("[DetectarIntencaoPorPalavra] Intenção detectada: CRIAR");
+                return "criar";
+            }
+
+            // CANCELAR
+            if (textoNormalizado.Contains("cancelar") || 
+                textoNormalizado.Contains("desmarcar") ||
+                textoNormalizado.Contains("apagar") || 
+                textoNormalizado.Contains("remover") ||
+                textoNormalizado.Contains("excluir"))
+            {
+                _logger.LogDebug("[DetectarIntencaoPorPalavra] Intenção detectada: CANCELAR");
+                return "cancelar";
+            }
+
+            // ALTERAR
+            if (textoNormalizado.Contains("alterar") || 
+                textoNormalizado.Contains("mudar") ||
+                textoNormalizado.Contains("modificar") || 
+                textoNormalizado.Contains("atualizar") ||
+                textoNormalizado.Contains("trocar") ||
+                textoNormalizado.Contains("reagendar") ||
+                textoNormalizado.Contains("ajustar"))
+            {
+                _logger.LogDebug("[DetectarIntencaoPorPalavra] Intenção detectada: ALTERAR");
+                return "alterar";
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Re-exibe o menu quando não entende a resposta + atualiza contexto
+        /// </summary>
+        private async Task<(bool, AssistantDecision?)> ReexibirMenuPorNaoEntendimento(
+            Guid idConversa,
+            ConversationContext contexto)
+        {
+            _logger.LogInformation(
+                "[Conversa={Conversa}] Re-exibindo menu por não entendimento",
+                idConversa);
+
+            // ✅ ATUALIZAR CONTEXTO (renovar expiração)
+            await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
+            {
+                Estado = contexto.Estado, // Mantém estado atual
+                ReservaIdPendente = contexto.ReservaIdPendente,
+                DadosColetados = contexto.DadosColetados,
+                ReservaSnapshot = contexto.ReservaSnapshot,
+                ExpiracaoEstado = DateTime.UtcNow.AddMinutes(30) // ✅ Renova expiração
+            });
+
+            var temReservaUnica = contexto.ReservaIdPendente.HasValue && contexto.ReservaIdPendente.Value > 0;
+            var temMultiplas = ExtrairFlagBooleana(contexto.DadosColetados, "tem_multiplas_reservas");
+
+            // Montar mensagem de re-exibição
+            var msg = new StringBuilder();
+            msg.AppendLine("❓ Não entendi sua resposta.");
+            msg.AppendLine();
+            msg.AppendLine("Por favor, escolha uma das opções:");
+            msg.AppendLine();
+            msg.AppendLine("A) 🆕 Criar nova reserva");
+            
+            if (temReservaUnica && !temMultiplas)
+            {
+                msg.AppendLine("B) ❌ Cancelar sua reserva");
+                msg.AppendLine("C) ✏️ Alterar sua reserva");
+            }
+            else
+            {
+                msg.AppendLine("B) ❌ Cancelar uma reserva");
+                msg.AppendLine("C) ✏️ Alterar uma reserva");
+            }
+            
+            msg.AppendLine();
+            msg.AppendLine("Responda com a letra (A, B ou C) ou use palavras como:");
+            msg.AppendLine("• \"criar nova\"");
+            msg.AppendLine("• \"cancelar\"");
+            msg.AppendLine("• \"alterar\"");
+
+            var resposta = msg.ToString();
+            await SalvarMensagemRespostaAsync(idConversa, resposta);
+
+            return (true, new AssistantDecision(resposta, "none", null, false, null, null));
+        }
+
+        /// <summary>
+        /// Re-exibe menu quando letra está fora do range válido
+        /// </summary>
+        private async Task<(bool, AssistantDecision?)> ReexibirMenuPorOpcaoInvalida(
+            Guid idConversa,
+            ConversationContext contexto,
+            string letraInvalida)
+        {
+            _logger.LogWarning(
+                "[Conversa={Conversa}] Letra inválida recebida: {Letra} - re-exibindo menu",
+                idConversa, letraInvalida);
+
+            // ✅ ATUALIZAR CONTEXTO
+            await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
+            {
+                Estado = contexto.Estado,
+                ReservaIdPendente = contexto.ReservaIdPendente,
+                DadosColetados = contexto.DadosColetados,
+                ReservaSnapshot = contexto.ReservaSnapshot,
+                ExpiracaoEstado = DateTime.UtcNow.AddMinutes(30)
+            });
+
+            var msg = new StringBuilder();
+            msg.AppendLine($"❌ A opção '{letraInvalida}' não é válida.");
+            msg.AppendLine();
+            msg.AppendLine("Por favor, escolha uma destas opções:");
+            msg.AppendLine();
+            msg.AppendLine("A) 🆕 Criar nova reserva");
+            msg.AppendLine("B) ❌ Cancelar uma reserva");
+            msg.AppendLine("C) ✏️ Alterar uma reserva");
+            msg.AppendLine();
+            msg.AppendLine("Responda com A, B ou C 📝");
+
+            var resposta = msg.ToString();
+            await SalvarMensagemRespostaAsync(idConversa, resposta);
+
+            return (true, new AssistantDecision(resposta, "none", null, false, null, null));
         }
 
         private async Task<(bool, AssistantDecision?)> ProcessarOpcaoA_CriarReserva(Guid idConversa)
@@ -604,12 +761,47 @@ namespace APIBack.Automation.Services
 
         private async Task<(bool, AssistantDecision?)> ProcessarOpcaoB_CancelarReserva(
             Guid idConversa,
-            ConversationContext contexto)
+            ConversationContext contexto,
+            string mensagemOriginal)
         {
             _logger.LogInformation(
                 "[Conversa={Conversa}] Opção B selecionada - iniciar fluxo de cancelamento",
                 idConversa);
 
+            // ✅ NOVO: Verificar se tem código direto na mensagem
+            var codigoDireto = ExtrairCodigoReserva(mensagemOriginal);
+            
+            if (!string.IsNullOrEmpty(codigoDireto))
+            {
+                _logger.LogInformation(
+                    "[Conversa={Conversa}] Código direto detectado no cancelamento: {Codigo}",
+                    idConversa, codigoDireto);
+
+                // Processar cancelamento direto via tool
+                try
+                {
+                    var toolArgs = new
+                    {
+                        idConversa = idConversa.ToString(),
+                        codigoReserva = long.Parse(codigoDireto)
+                    };
+
+                    var argsJson = JsonSerializer.Serialize(toolArgs);
+                    var toolResult = await _toolExecutor.ExecuteToolAsync("cancelar_reserva", argsJson);
+
+                    // ✅ ATUALIZAR CONTEXTO: Limpar
+                    await _conversationRepository.LimparContextoAsync(idConversa);
+
+                    return (true, new AssistantDecision(toolResult, "none", null, false, null, null));
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "[Conversa={Conversa}] Erro ao cancelar via código direto", idConversa);
+                    // Continua fluxo normal se falhar
+                }
+            }
+
+            // ✅ ATUALIZAR CONTEXTO antes de processar
             var temReservaUnica = contexto.ReservaIdPendente.HasValue && contexto.ReservaIdPendente.Value > 0;
             var temMultiplas = ExtrairFlagBooleana(contexto.DadosColetados, "tem_multiplas_reservas");
 
@@ -619,6 +811,7 @@ namespace APIBack.Automation.Services
                 {
                     Estado = "aguardando_confirmacao_cancelamento",
                     ReservaIdPendente = contexto.ReservaIdPendente,
+                    DadosColetados = contexto.DadosColetados,
                     ExpiracaoEstado = DateTime.UtcNow.AddMinutes(30)
                 });
 
@@ -627,13 +820,13 @@ namespace APIBack.Automation.Services
                     "Confirma o cancelamento? (sim/não)";
 
                 await SalvarMensagemRespostaAsync(idConversa, mensagem);
-
                 return (true, new AssistantDecision(mensagem, "none", null, false, null, null));
             }
 
             await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
             {
                 Estado = "aguardando_codigo_cancelamento",
+                DadosColetados = contexto.DadosColetados,
                 ExpiracaoEstado = DateTime.UtcNow.AddMinutes(30)
             });
 
@@ -642,18 +835,44 @@ namespace APIBack.Automation.Services
                 "Informe o código da reserva (ex: #1234 ou 1234)";
 
             await SalvarMensagemRespostaAsync(idConversa, mensagemSolicitacaoCodigo);
-
             return (true, new AssistantDecision(mensagemSolicitacaoCodigo, "none", null, false, null, null));
         }
 
         private async Task<(bool, AssistantDecision?)> ProcessarOpcaoC_AlterarReserva(
             Guid idConversa,
-            ConversationContext contexto)
+            ConversationContext contexto,
+            string mensagemOriginal)
         {
             _logger.LogInformation(
                 "[Conversa={Conversa}] Opção C selecionada - iniciar fluxo de alteração",
                 idConversa);
 
+            // ✅ NOVO: Se tem filtro, usar fast-path direto
+            var temFiltro = MensagemContemFiltro(mensagemOriginal);
+            
+            if (temFiltro)
+            {
+                _logger.LogInformation(
+                    "[Conversa={Conversa}] Filtro detectado na alteração - usando ProcessarAlteracaoDiretaAsync",
+                    idConversa);
+
+                var baseReferencia = TimeZoneHelper.GetSaoPauloNow();
+                var (sucesso, decisao) = await ProcessarAlteracaoDiretaAsync(
+                    idConversa, 
+                    mensagemOriginal, 
+                    baseReferencia);
+
+                if (sucesso && decisao != null)
+                {
+                    return (true, decisao);
+                }
+
+                _logger.LogWarning(
+                    "[Conversa={Conversa}] ProcessarAlteracaoDiretaAsync falhou - continuando fluxo normal",
+                    idConversa);
+            }
+
+            // ✅ ATUALIZAR CONTEXTO antes de processar
             var temReservaUnica = contexto.ReservaIdPendente.HasValue && contexto.ReservaIdPendente.Value > 0;
             var temMultiplas = ExtrairFlagBooleana(contexto.DadosColetados, "tem_multiplas_reservas");
 
@@ -675,13 +894,13 @@ namespace APIBack.Automation.Services
                     "• Quantidade de pessoas";
 
                 await SalvarMensagemRespostaAsync(idConversa, mensagem);
-
                 return (true, new AssistantDecision(mensagem, "none", null, false, null, null));
             }
 
             await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
             {
                 Estado = "aguardando_codigo_alteracao",
+                DadosColetados = contexto.DadosColetados,
                 ExpiracaoEstado = DateTime.UtcNow.AddMinutes(30)
             });
 
@@ -690,18 +909,7 @@ namespace APIBack.Automation.Services
                 "Informe o código da reserva (ex: #1234 ou 1234)";
 
             await SalvarMensagemRespostaAsync(idConversa, mensagemSolicitacaoCodigo);
-
             return (true, new AssistantDecision(mensagemSolicitacaoCodigo, "none", null, false, null, null));
-        }
-
-        private (bool, AssistantDecision?) TratarLetraInvalida(Guid idConversa, string letra)
-        {
-            _logger.LogWarning(
-                "[Conversa={Conversa}] Letra inválida recebida na escolha de ação: {Letra}",
-                idConversa,
-                letra);
-
-            return (false, null);
         }
 
         private static bool ExtrairFlagBooleana(IDictionary<string, object>? dados, string chave)
@@ -718,13 +926,13 @@ namespace APIBack.Automation.Services
                     {
                         JsonValueKind.True => true,
                         JsonValueKind.False => false,
-                        JsonValueKind.String when bool.TryParse(json.GetString(), out var parsed) => parsed,
+                        JsonValueKind.String when bool.TryParse(json.GetString(), out var boolValue) => boolValue,
                         JsonValueKind.Number => json.TryGetInt32(out var numero) && numero != 0,
                         _ => false
                     };
                 default:
-                    if (valor is string str && bool.TryParse(str, out var parsed))
-                        return parsed;
+                    if (valor is string str && bool.TryParse(str, out var strBool))
+                        return strBool;
 
                     if (valor is IConvertible convertible)
                     {
@@ -1341,6 +1549,90 @@ namespace APIBack.Automation.Services
                 var amanha = referencia.AddDays(1);
                 _logger.LogDebug("[ExtrairDataPreferencial] ✅ AMANHÃ -> {Data:yyyy-MM-dd}", amanha);
                 return amanha;
+            }
+
+            // 1.5. FORMATO "DIA X" - Prioridade antes de formatos numéricos
+            var matchDiaTexto = Regex.Match(norm, @"dia\s*(\d{1,2})");
+            if (matchDiaTexto.Success)
+            {
+                int dia = int.Parse(matchDiaTexto.Groups[1].Value);
+                
+                var mesAtual = referencia.Month;
+                var anoAtual = referencia.Year;
+                
+                // Se o dia já passou no mês atual, avança para o próximo mês
+                if (dia < referencia.Day)
+                {
+                    _logger.LogDebug(
+                        "[ExtrairDataPreferencial] Dia {Dia} < dia atual {DiaAtual}, avançando para próximo mês",
+                        dia, referencia.Day);
+                    
+                    mesAtual++;
+                    if (mesAtual > 12)
+                    {
+                        mesAtual = 1;
+                        anoAtual++;
+                    }
+                }
+                
+                try
+                {
+                    var dataCalculada = new DateTime(anoAtual, mesAtual, dia).Date;
+                    _logger.LogInformation(
+                        "[ExtrairDataPreferencial] ✅ DIA X detectado: {Data:yyyy-MM-dd} (entrada: '{Texto}')",
+                        dataCalculada, texto);
+                    return dataCalculada;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(
+                        ex,
+                        "[ExtrairDataPreferencial] ❌ Dia inválido: {Dia}/{Mes}/{Ano}",
+                        dia, mesAtual, anoAtual);
+                    return null;
+                }
+            }
+
+            // 1.6. NÚMERO ISOLADO (1-31) - Apenas números sozinhos na mensagem
+            if (Regex.IsMatch(norm, @"^\s*(\d{1,2})\s*$"))
+            {
+                if (int.TryParse(norm.Trim(), out int diaNumero) && diaNumero >= 1 && diaNumero <= 31)
+                {
+                    var mesAtual = referencia.Month;
+                    var anoAtual = referencia.Year;
+                    
+                    // Se o dia já passou no mês atual, avança para o próximo mês
+                    if (diaNumero < referencia.Day)
+                    {
+                        _logger.LogDebug(
+                            "[ExtrairDataPreferencial] Dia {Dia} < dia atual {DiaAtual}, avançando para próximo mês",
+                            diaNumero, referencia.Day);
+                        
+                        mesAtual++;
+                        if (mesAtual > 12)
+                        {
+                            mesAtual = 1;
+                            anoAtual++;
+                        }
+                    }
+                    
+                    try
+                    {
+                        var dataCalculada = new DateTime(anoAtual, mesAtual, diaNumero).Date;
+                        _logger.LogInformation(
+                            "[ExtrairDataPreferencial] ✅ NÚMERO ISOLADO como dia: {Data:yyyy-MM-dd} (entrada: '{Texto}')",
+                            dataCalculada, texto);
+                        return dataCalculada;
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(
+                            ex,
+                            "[ExtrairDataPreferencial] ❌ Dia inválido: {Dia}/{Mes}/{Ano}",
+                            diaNumero, mesAtual, anoAtual);
+                        return null;
+                    }
+                }
             }
 
             // 2. FORMATOS ABSOLUTOS (dd/MM/yyyy)
