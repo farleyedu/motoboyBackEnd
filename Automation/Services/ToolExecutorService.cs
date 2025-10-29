@@ -463,7 +463,7 @@ PARÂMETROS IMPORTANTES:
 
             if (args.CodigoReserva.HasValue)
             {
-                var reservaPorCodigo = reservasAtivas.FirstOrDefault(r => r.Id == args.CodigoReserva.Value);
+                var reservaPorCodigo = reservasAtivas.FirstOrDefault(r => r.Codigo == args.CodigoReserva.Value.ToString());
 
                 if (reservaPorCodigo == null)
                 {
@@ -583,18 +583,176 @@ PARÂMETROS IMPORTANTES:
 
         private async Task<string> HandleAtualizarReserva(AtualizarReservaArgs args)
         {
-            // TODO: Implementar método completo HandleAtualizarReserva
-            // Este é um placeholder - você precisará do código completo do método original
-
             _logger.LogInformation(
                 "[Conversa={Conversa}] HandleAtualizarReserva chamado - Código={Codigo}, Filtro={Filtro}",
                 args.IdConversa,
                 args.CodigoReserva,
                 args.FiltroData);
 
-            return BuildJsonReply("Método HandleAtualizarReserva precisa ser implementado completamente.");
-        }
+            var conversa = await _conversationRepository.ObterPorIdAsync(args.IdConversa);
+            if (conversa == null)
+            {
+                return BuildJsonReply("Não consegui localizar nossa conversa.\n\nPode tentar novamente? 😊");
+            }
 
+            var idCliente = conversa.IdCliente;
+            var idEstabelecimento = conversa.IdEstabelecimento;
+
+            if (idCliente == Guid.Empty || idEstabelecimento == Guid.Empty)
+            {
+                return BuildJsonReply("Não consegui identificar seus dados.\n\nPode tentar novamente? 😊");
+            }
+
+            var reservasExistentes = await _reservaRepository.ObterPorClienteEstabelecimentoAsync(idCliente, idEstabelecimento);
+            var referenciaAtual = TimeZoneHelper.GetSaoPauloNow();
+
+            var reservasAtivas = reservasExistentes
+                .Where(r => r.Status == ReservaStatus.Confirmado && r.DataReserva >= referenciaAtual.Date)
+                .OrderBy(r => r.DataReserva)
+                .ToList();
+
+            if (!reservasAtivas.Any())
+            {
+                _logger.LogInformation("[Conversa={Conversa}] Cliente não possui reservas ativas para atualizar", args.IdConversa);
+                return BuildJsonReply("Não encontrei nenhuma reserva ativa no seu nome 🤔\n\nQuer fazer uma nova reserva? 😊");
+            }
+
+            // 🔍 BUSCAR RESERVA POR CÓDIGO (se fornecido)
+            Reserva? reservaParaAtualizar = null;
+
+            if (args.CodigoReserva.HasValue)
+            {
+                reservaParaAtualizar = reservasAtivas.FirstOrDefault(r => r.Codigo == args.CodigoReserva.Value.ToString());
+
+                if (reservaParaAtualizar == null)
+                {
+                    _logger.LogWarning(
+                        "[Conversa={Conversa}] Código #{Codigo} não encontrado nas reservas ativas",
+                        args.IdConversa,
+                        args.CodigoReserva.Value);
+
+                    return BuildJsonReply($"Não encontrei a reserva #{args.CodigoReserva.Value} no seu nome. 😕\n\nQuer que eu liste suas reservas ativas? 😊");
+                }
+            }
+            else if (reservasAtivas.Count == 1)
+            {
+                // Cliente tem apenas 1 reserva - usar ela
+                reservaParaAtualizar = reservasAtivas.First();
+            }
+            else
+            {
+                // Múltiplas reservas sem código - pedir para especificar
+                _logger.LogInformation(
+                    "[Conversa={Conversa}] Cliente tem {Count} reservas mas não especificou qual - pedindo código",
+                    args.IdConversa,
+                    reservasAtivas.Count);
+
+                var msgLista = new StringBuilder();
+                msgLista.AppendLine($"📋 Você tem {reservasAtivas.Count} reservas ativas:");
+                msgLista.AppendLine();
+
+                foreach (var r in reservasAtivas)
+                {
+                    msgLista.AppendLine($"🎫 Reserva #{r.Codigo}");
+                    msgLista.AppendLine($"📅 {r.DataReserva:dd/MM/yyyy} ({r.DataReserva:dddd})");
+                    msgLista.AppendLine($"⏰ {r.HoraInicio:hh\\:mm}");
+                    msgLista.AppendLine($"👥 {r.QtdPessoas} pessoas");
+                    msgLista.AppendLine();
+                }
+
+                msgLista.Append("Qual reserva você quer alterar? Me informe o código 😊");
+
+                return BuildJsonReply(msgLista.ToString());
+            }
+
+            // ✅ APLICAR ALTERAÇÕES
+            bool houveAlteracao = false;
+            var alteracoes = new StringBuilder();
+            alteracoes.AppendLine($"✅ Reserva #{reservaParaAtualizar.Codigo} atualizada com sucesso!");
+            alteracoes.AppendLine();
+
+            // Atualizar HORÁRIO
+            if (!string.IsNullOrWhiteSpace(args.NovoHorario))
+            {
+                if (TimeSpan.TryParseExact(args.NovoHorario, @"hh\:mm", CultureInfo.InvariantCulture, out var novoHorario))
+                {
+                    var horarioAntigo = reservaParaAtualizar.HoraInicio;
+                    reservaParaAtualizar.HoraInicio = novoHorario;
+                    alteracoes.AppendLine($"⏰ Horário: {horarioAntigo:hh\\:mm} → {novoHorario:hh\\:mm}");
+                    houveAlteracao = true;
+                }
+            }
+
+            // Atualizar QUANTIDADE DE PESSOAS
+            if (args.NovaQtdPessoas.HasValue)
+            {
+                var qtdAtual = reservaParaAtualizar.QtdPessoas ?? 0;
+                int qtdFinal;
+
+                if (args.EhMudancaRelativa == true)
+                {
+                    // Mudança relativa: adicionar/tirar
+                    qtdFinal = qtdAtual + args.NovaQtdPessoas.Value;
+                }
+                else
+                {
+                    // Mudança absoluta: valor final
+                    qtdFinal = args.NovaQtdPessoas.Value;
+                }
+
+                if (qtdFinal < 1)
+                {
+                    return BuildJsonReply("Não é possível ter menos de 1 pessoa na reserva 😅\n\nQual seria a quantidade correta? 😊");
+                }
+
+                if (qtdFinal > 100)
+                {
+                    return BuildJsonReply("Para grupos grandes (mais de 100 pessoas), por favor entre em contato diretamente conosco! 😊");
+                }
+
+                if (qtdAtual != qtdFinal)
+                {
+                    reservaParaAtualizar.QtdPessoas = qtdFinal;
+                    alteracoes.AppendLine($"👥 Pessoas: {qtdAtual} → {qtdFinal}");
+                    houveAlteracao = true;
+                }
+            }
+
+            // Atualizar DATA (se fornecida)
+            if (!string.IsNullOrWhiteSpace(args.NovaData))
+            {
+                // TODO: Implementar parse de data usando ParseDataRelativa
+                // Por enquanto, informar que precisa de implementação
+                return BuildJsonReply("Alteração de data será implementada em breve. Por enquanto, você pode alterar horário e quantidade de pessoas. 😊");
+            }
+
+            if (!houveAlteracao)
+            {
+                return BuildJsonReply("Nenhuma alteração foi especificada. O que você gostaria de mudar? 😊");
+            }
+
+            // 💾 SALVAR NO BANCO
+            reservaParaAtualizar.DataAtualizacao = DateTime.UtcNow;
+            await _reservaRepository.AtualizarAsync(reservaParaAtualizar);
+
+            _logger.LogInformation(
+                "[Conversa={Conversa}] Reserva #{Codigo} atualizada com sucesso",
+                args.IdConversa,
+                reservaParaAtualizar.Codigo);
+
+            // Limpar contexto após alteração bem-sucedida
+            await _conversationRepository.LimparContextoAsync(args.IdConversa);
+
+            alteracoes.AppendLine();
+            alteracoes.AppendLine("📋 Dados atualizados:");
+            alteracoes.AppendLine($"📅 Data: {reservaParaAtualizar.DataReserva:dd/MM/yyyy}");
+            alteracoes.AppendLine($"⏰ Horário: {reservaParaAtualizar.HoraInicio:hh\\:mm}");
+            alteracoes.AppendLine($"👥 Pessoas: {reservaParaAtualizar.QtdPessoas}");
+            alteracoes.AppendLine();
+            alteracoes.Append("Nos vemos lá! 😊✨");
+
+            return BuildJsonReply(alteracoes.ToString());
+        }
         private async Task<string> HandleListarReservas(Guid idConversa)
         {
             var conversa = await _conversationRepository.ObterPorIdAsync(idConversa);

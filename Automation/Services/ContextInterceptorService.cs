@@ -93,6 +93,60 @@ namespace APIBack.Automation.Services
             }
 
             // ------- DETECÇÃO INTELIGENTE DE FILTROS -------
+
+            // ═══════ INTERCEPTADOR DIRETO: "cancelar/alterar a reserva 1035" ═══════
+            var textoParaIntercept = mensagemTexto?.ToLower().Trim() ?? "";
+
+            // 1) Detectar "cancelar a reserva 1035"
+            var matchCancelar = Regex.Match(textoParaIntercept, @"(?:quero\s+)?cancelar\s+(?:a\s+)?reserva\s+#?(\d{3,5})");
+            if (matchCancelar.Success && long.TryParse(matchCancelar.Groups[1].Value, out var codigoCancelar))
+            {
+                _logger.LogInformation(
+                    "[Conversa={Conversa}] ✅ INTERCEPTADO: 'cancelar a reserva {Codigo}' - chamando tool diretamente",
+                    idConversa, codigoCancelar);
+
+                var cancelarArgsObj = new CancelarReservaArgs
+                {
+                    IdConversa = idConversa,
+                    CodigoReserva = codigoCancelar,
+                    MotivoCliente = "Solicitação direta do cliente"
+                };
+
+                var cancelarJson = JsonSerializer.Serialize(cancelarArgsObj);
+                var resultado = await _toolExecutor.ExecuteToolAsync("cancelar_reserva", cancelarJson);
+
+                var respostaObj = JsonSerializer.Deserialize<Dictionary<string, object>>(resultado);
+                var reply = respostaObj?["reply"]?.ToString() ?? "Reserva processada.";
+
+                await SalvarMensagemRespostaAsync(idConversa, reply);
+                return (true, new AssistantDecision(reply, "cancelar_reserva", null, false, null, null));
+            }
+
+            // 2) Detectar "alterar/mudar a reserva 1035"
+            var matchAlterar = Regex.Match(textoParaIntercept, @"(?:quero\s+)?(?:alterar|mudar|modificar)\s+(?:a\s+)?reserva\s+#?(\d{3,5})");
+            if (matchAlterar.Success && long.TryParse(matchAlterar.Groups[1].Value, out var codigoAlterar))
+            {
+                _logger.LogInformation(
+                    "[Conversa={Conversa}] ✅ INTERCEPTADO: 'alterar a reserva {Codigo}' - chamando tool diretamente",
+                    idConversa, codigoAlterar);
+
+                var atualizarArgsObj = new AtualizarReservaArgs
+                {
+                    IdConversa = idConversa,
+                    CodigoReserva = codigoAlterar
+                };
+
+                var atualizarJson = JsonSerializer.Serialize(atualizarArgsObj);
+                var resultado = await _toolExecutor.ExecuteToolAsync("atualizar_reserva", atualizarJson);
+
+                var respostaObj = JsonSerializer.Deserialize<Dictionary<string, object>>(resultado);
+                var reply = respostaObj?["reply"]?.ToString() ?? "Reserva processada.";
+
+                await SalvarMensagemRespostaAsync(idConversa, reply);
+                return (true, new AssistantDecision(reply, "atualizar_reserva", null, false, null, null));
+            }
+            // ═══════ FIM INTERCEPTADOR DIRETO ═══════
+
             var textoLower = mensagemTexto.ToLower();
             var ehAlteracao = textoLower.Contains("alterar") ||
                                textoLower.Contains("mudar") ||
@@ -1871,23 +1925,32 @@ namespace APIBack.Automation.Services
         /// <summary>
         /// Extrai letra de escolha (A, B, C...) da mensagem.
         /// </summary>
-        private string? ExtrairOpcaoLetra(string texto)
+        private string? ExtrairOpcaoLetra(string textoNormalizado)
         {
-            if (string.IsNullOrWhiteSpace(texto)) return null;
+            // Normalizar ainda mais: remover acentos
+            var texto = textoNormalizado
+                .Replace("ã", "a")
+                .Replace("á", "a")
+                .Replace("ç", "c")
+                .Replace("é", "e")
+                .Replace("ó", "o")
+                .Replace("ú", "u")
+                .Replace("í", "i");
 
-            var textoNorm = texto.ToUpperInvariant().Trim();
-            var match = Regex.Match(textoNorm, @"(?:^|[^A-Z])([A-Z])(?:[^A-Z]|$)");
+            // Padrões que aceitam:
+            // - "a", "b", "c" (letra sozinha)
+            // - "opcao a", "opção b" (com ou sem acento)
+            // - "letra a", "letra b"
+            // - "a opcao a", "escolho b"
+
+            var match = Regex.Match(texto, @"\b([abc])\b", RegexOptions.IgnoreCase);
             if (match.Success)
             {
-                var letra = match.Groups[1].Value;
-                _logger.LogDebug("[ExtrairOpcaoLetra] Letra extraída: {Letra}", letra);
-                return letra;
+                return match.Groups[1].Value.ToUpper();
             }
 
-            _logger.LogDebug("[ExtrairOpcaoLetra] Nenhuma letra encontrada em: '{Texto}'", texto);
             return null;
         }
-
         /// <summary>
         /// Converte letra de opção para índice de lista (A=0, B=1, ...).
         /// </summary>
