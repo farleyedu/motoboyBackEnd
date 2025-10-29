@@ -1,9 +1,3 @@
-// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
-// ✨ MUDANÇAS PRINCIPAIS:
-// 1. HandleCancelarReserva: Adiciona LimparContextoAsync após cancelar
-// 2. HandleConfirmarReserva: Adiciona LimparContextoAsync NO INÍCIO
-// 3. HandleListarReservas: Já estava OK (filtra status=Confirmado)
-
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -49,11 +43,11 @@ namespace APIBack.Automation.Services
     {
         public Guid IdConversa { get; set; }
         public long? CodigoReserva { get; set; }
-        public string? FiltroData { get; set; }        // Data mencionada: "dia 11", "15/10", "sexta"
-        public string? NovaData { get; set; }          // ⬅️ NOVO: aceitar mudança de DATA (texto do cliente, sem formatar)
+        public string? FiltroData { get; set; }
+        public string? NovaData { get; set; }
         public string? NovoHorario { get; set; }
         public int? NovaQtdPessoas { get; set; }
-        public bool? EhMudancaRelativa { get; set; }   // true = "adicionar/tirar", false = número absoluto
+        public bool? EhMudancaRelativa { get; set; }
     }
 
     public class ToolExecutorService
@@ -275,7 +269,6 @@ PARÂMETROS IMPORTANTES:
             args.Data = args.Data?.Trim() ?? string.Empty;
             args.Hora = args.Hora?.Trim() ?? string.Empty;
 
-            // ✨ ADICIONADO: Limpar contexto antigo ANTES de criar nova reserva
             _logger.LogInformation(
                 "[Conversa={Conversa}] Iniciando confirmação de NOVA reserva. Limpando contexto antigo.",
                 args.IdConversa);
@@ -343,7 +336,6 @@ PARÂMETROS IMPORTANTES:
                 ehAtualizacao = true;
                 idReserva = reservaMesmoDia.Id;
 
-                // ✅ CORREÇÃO: Salvar nome do cliente informado na reserva
                 reservaMesmoDia.NomeCliente = args.NomeCompleto;
                 reservaMesmoDia.QtdPessoas = args.QtdPessoas;
                 reservaMesmoDia.HoraInicio = horaConvertida;
@@ -367,7 +359,7 @@ PARÂMETROS IMPORTANTES:
                 {
                     IdCliente = idCliente,
                     IdEstabelecimento = idEstabelecimento,
-                    NomeCliente = args.NomeCompleto,  // ✅ CORREÇÃO: Salvar nome informado
+                    NomeCliente = args.NomeCompleto,
                     QtdPessoas = args.QtdPessoas,
                     DataReserva = dataReserva,
                     HoraInicio = horaConvertida,
@@ -423,7 +415,7 @@ PARÂMETROS IMPORTANTES:
             builder.AppendLine($"⏰ Horário: {horaFormatada}");
             builder.AppendLine($"👥 Pessoas: {args.QtdPessoas}");
             builder.AppendLine();
-            // Buscar a reserva recém-criada para pegar o Codigo
+
             var reservaCriada = await _reservaRepository.BuscarPorIdAsync(idReserva);
             var codigoExibir = reservaCriada?.Codigo ?? idReserva.ToString();
             builder.AppendLine($"🎫 Seu código de reserva é o #{codigoExibir}.");
@@ -458,7 +450,6 @@ PARÂMETROS IMPORTANTES:
             var reservasExistentes = await _reservaRepository.ObterPorClienteEstabelecimentoAsync(idCliente, idEstabelecimento);
             var referenciaAtual = TimeZoneHelper.GetSaoPauloNow();
 
-            // ✨ JÁ ESTAVA OK: Filtra apenas reservas com status=Confirmado
             var reservasAtivas = reservasExistentes
                 .Where(r => r.Status == ReservaStatus.Confirmado && r.DataReserva >= referenciaAtual.Date)
                 .OrderBy(r => r.DataReserva)
@@ -470,7 +461,6 @@ PARÂMETROS IMPORTANTES:
                 return BuildJsonReply("Não encontrei nenhuma reserva ativa no seu nome 🤔\n\nSe precisar de ajuda, é só me avisar! 😊");
             }
 
-            // ✨ NOVO: Se código foi fornecido, cancela diretamente
             if (args.CodigoReserva.HasValue)
             {
                 var reservaPorCodigo = reservasAtivas.FirstOrDefault(r => r.Id == args.CodigoReserva.Value);
@@ -510,87 +500,213 @@ PARÂMETROS IMPORTANTES:
             }
 
             if (reservasAtivas.Count == 1)
+            {
+                var reserva = reservasAtivas.First();
+                var nomeReserva = reserva.NomeCliente ?? "Cliente";
+
+                _logger.LogInformation(
+                    "[Conversa={Conversa}] Cliente tem 1 reserva - mostrando com menu A/B/C",
+                    args.IdConversa);
+
+                await _conversationRepository.SalvarContextoAsync(args.IdConversa, new ConversationContext
+                {
+                    Estado = "aguardando_escolha_acao",
+                    ReservaIdPendente = reserva.Id,
+                    DadosColetados = new Dictionary<string, object>
+                    {
+                        { "reserva_id", reserva.Id },
+                        { "data_atual", reserva.DataReserva.ToString("yyyy-MM-dd") },
+                        { "hora_atual", reserva.HoraInicio.ToString(@"hh\:mm") },
+                        { "qtd_atual", reserva.QtdPessoas ?? 0 }
+                    },
+                    ExpiracaoEstado = DateTime.UtcNow.AddMinutes(30)
+                });
+
+                var msg = new StringBuilder();
+                msg.AppendLine("📋 Sua reserva ativa:");
+                msg.AppendLine();
+                msg.AppendLine($"🎫 Código: #{reserva.Codigo}");
+                msg.AppendLine($"👤 Nome: {nomeReserva}");
+                msg.AppendLine($"📅 Data: {reserva.DataReserva:dd/MM/yyyy} ({reserva.DataReserva:dddd})");
+                msg.AppendLine($"⏰ Horário: {reserva.HoraInicio:hh\\:mm}");
+                msg.AppendLine($"👥 Pessoas: {reserva.QtdPessoas}");
+                msg.AppendLine();
+                msg.AppendLine("━━━━━━━━━━━━━━━━━━━━━━");
+                msg.AppendLine("O que você quer fazer? 😊");
+                msg.AppendLine();
+                msg.AppendLine("A) 🆕 Criar nova reserva");
+                msg.AppendLine("B) ❌ Cancelar esta reserva");
+                msg.AppendLine("C) ✏️ Alterar esta reserva");
+                msg.AppendLine();
+                msg.Append("Responda com a letra (A, B ou C) 📝");
+
+                return BuildJsonReply(msg.ToString());
+            }
+            else
+            {
+                await _conversationRepository.SalvarContextoAsync(args.IdConversa, new ConversationContext
+                {
+                    Estado = "aguardando_escolha_acao",
+                    DadosColetados = new Dictionary<string, object>
+                    {
+                        { "tem_multiplas_reservas", true },
+                        { "total_reservas", reservasAtivas.Count }
+                    },
+                    ExpiracaoEstado = DateTime.UtcNow.AddMinutes(30)
+                });
+
+                var msgLista = new StringBuilder();
+                msgLista.AppendLine($"📋 Você tem {reservasAtivas.Count} reservas ativas:");
+                msgLista.AppendLine();
+
+                foreach (var r in reservasAtivas)
+                {
+                    msgLista.AppendLine($"🎫 Reserva #{r.Codigo}");
+                    msgLista.AppendLine($"📅 {r.DataReserva:dd/MM/yyyy} ({r.DataReserva:dddd})");
+                    msgLista.AppendLine($"⏰ {r.HoraInicio:hh\\:mm}");
+                    msgLista.AppendLine($"👥 {r.QtdPessoas} pessoas");
+                    msgLista.AppendLine();
+                }
+
+                msgLista.AppendLine("━━━━━━━━━━━━━━━━━━━━━━");
+                msgLista.AppendLine("O que você quer fazer? 😊");
+                msgLista.AppendLine();
+                msgLista.AppendLine("A) 🆕 Criar nova reserva");
+                msgLista.AppendLine("B) ❌ Cancelar uma reserva");
+                msgLista.AppendLine("C) ✏️ Alterar uma reserva");
+                msgLista.AppendLine();
+                msgLista.Append("Responda com a letra (A, B ou C) 📝");
+
+                return BuildJsonReply(msgLista.ToString());
+            }
+        }
+
+        private async Task<string> HandleAtualizarReserva(AtualizarReservaArgs args)
         {
-            var reserva = reservasAtivas.First();
-            var nomeReserva = reserva.NomeCliente ?? "Cliente";
+            // TODO: Implementar método completo HandleAtualizarReserva
+            // Este é um placeholder - você precisará do código completo do método original
 
             _logger.LogInformation(
-                "[Conversa={Conversa}] Cliente tem 1 reserva - mostrando com menu A/B/C",
-                idConversa);
+                "[Conversa={Conversa}] HandleAtualizarReserva chamado - Código={Codigo}, Filtro={Filtro}",
+                args.IdConversa,
+                args.CodigoReserva,
+                args.FiltroData);
 
-            // Salvar contexto com informações da reserva para facilitar escolha
-            await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
-            {
-                Estado = "aguardando_escolha_acao",
-                ReservaIdPendente = reserva.Id,
-                DadosColetados = new Dictionary<string, object>
-                {
-                    { "reserva_id", reserva.Id },
-                    { "data_atual", reserva.DataReserva.ToString("yyyy-MM-dd") },
-                    { "hora_atual", reserva.HoraInicio.ToString(@"hh\:mm") },
-                    { "qtd_atual", reserva.QtdPessoas ?? 0 }
-                },
-                ExpiracaoEstado = DateTime.UtcNow.AddMinutes(30)
-            });
-
-            var msg = new StringBuilder();
-            msg.AppendLine("📋 Sua reserva ativa:");
-            msg.AppendLine();
-            msg.AppendLine($"🎫 Código: #{reserva.Codigo}");
-            msg.AppendLine($"👤 Nome: {nomeReserva}");
-            msg.AppendLine($"📅 Data: {reserva.DataReserva:dd/MM/yyyy} ({reserva.DataReserva:dddd})");
-            msg.AppendLine($"⏰ Horário: {reserva.HoraInicio:hh\\:mm}");
-            msg.AppendLine($"👥 Pessoas: {reserva.QtdPessoas}");
-            msg.AppendLine();
-            msg.AppendLine("━━━━━━━━━━━━━━━━━━━━━━");
-            msg.AppendLine("O que você quer fazer? 😊");
-            msg.AppendLine();
-            msg.AppendLine("A) 🆕 Criar nova reserva");
-            msg.AppendLine("B) ❌ Cancelar esta reserva");
-            msg.AppendLine("C) ✏️ Alterar esta reserva");
-            msg.AppendLine();
-            msg.Append("Responda com a letra (A, B ou C) 📝");
-
-            return BuildJsonReply(msg.ToString());
+            return BuildJsonReply("Método HandleAtualizarReserva precisa ser implementado completamente.");
         }
-        else
+
+        private async Task<string> HandleListarReservas(Guid idConversa)
         {
-            // Salvar contexto sem amarrar reserva específica ainda
-            await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
+            var conversa = await _conversationRepository.ObterPorIdAsync(idConversa);
+            if (conversa == null)
             {
-                Estado = "aguardando_escolha_acao",
-                DadosColetados = new Dictionary<string, object>
-                {
-                    { "tem_multiplas_reservas", true },
-                    { "total_reservas", reservasAtivas.Count }
-                },
-                ExpiracaoEstado = DateTime.UtcNow.AddMinutes(30)
-            });
-
-            var msgLista = new StringBuilder();
-            msgLista.AppendLine($"📋 Você tem {reservasAtivas.Count} reservas ativas:");
-            msgLista.AppendLine();
-
-            foreach (var r in reservasAtivas)
-            {
-                msgLista.AppendLine($"🎫 Reserva #{r.Codigo}");
-                msgLista.AppendLine($"📅 {r.DataReserva:dd/MM/yyyy} ({r.DataReserva:dddd})");
-                msgLista.AppendLine($"⏰ {r.HoraInicio:hh\\:mm}");
-                msgLista.AppendLine($"👥 {r.QtdPessoas} pessoas");
-                msgLista.AppendLine();
+                return BuildJsonReply("Não consegui localizar nossa conversa.\n\nPode tentar novamente? 😊");
             }
 
-            msgLista.AppendLine("━━━━━━━━━━━━━━━━━━━━━━");
-            msgLista.AppendLine("O que você quer fazer? 😊");
-            msgLista.AppendLine();
-            msgLista.AppendLine("A) 🆕 Criar nova reserva");
-            msgLista.AppendLine("B) ❌ Cancelar uma reserva");
-            msgLista.AppendLine("C) ✏️ Alterar uma reserva");
-            msgLista.AppendLine();
-            msgLista.Append("Responda com a letra (A, B ou C) 📝");
+            var idCliente = conversa.IdCliente;
+            var idEstabelecimento = conversa.IdEstabelecimento;
 
-            return BuildJsonReply(msgLista.ToString());
+            if (idCliente == Guid.Empty || idEstabelecimento == Guid.Empty)
+            {
+                return BuildJsonReply("Não consegui identificar seus dados.\n\nPode tentar novamente? 😊");
+            }
+
+            var reservasExistentes = await _reservaRepository.ObterPorClienteEstabelecimentoAsync(idCliente, idEstabelecimento);
+            var referenciaAtual = TimeZoneHelper.GetSaoPauloNow();
+
+            var reservasAtivas = reservasExistentes
+                .Where(r => r.Status == ReservaStatus.Confirmado && r.DataReserva >= referenciaAtual.Date)
+                .OrderBy(r => r.DataReserva)
+                .ToList();
+
+            if (!reservasAtivas.Any())
+            {
+                _logger.LogInformation("[Conversa={Conversa}] Cliente não possui reservas ativas", idConversa);
+                return BuildJsonReply("Você não tem nenhuma reserva ativa no momento 🤔\n\nQuer fazer uma nova reserva? 😊");
+            }
+
+            if (reservasAtivas.Count == 1)
+            {
+                var reserva = reservasAtivas.First();
+                var nomeReserva = reserva.NomeCliente ?? "Cliente";
+
+                _logger.LogInformation(
+                    "[Conversa={Conversa}] Cliente tem 1 reserva - mostrando com menu A/B/C",
+                    idConversa);
+
+                await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
+                {
+                    Estado = "aguardando_escolha_acao",
+                    ReservaIdPendente = reserva.Id,
+                    DadosColetados = new Dictionary<string, object>
+                    {
+                        { "reserva_id", reserva.Id },
+                        { "data_atual", reserva.DataReserva.ToString("yyyy-MM-dd") },
+                        { "hora_atual", reserva.HoraInicio.ToString(@"hh\:mm") },
+                        { "qtd_atual", reserva.QtdPessoas ?? 0 }
+                    },
+                    ExpiracaoEstado = DateTime.UtcNow.AddMinutes(30)
+                });
+
+                var msg = new StringBuilder();
+                msg.AppendLine("📋 Sua reserva ativa:");
+                msg.AppendLine();
+                msg.AppendLine($"🎫 Código: #{reserva.Codigo}");
+                msg.AppendLine($"👤 Nome: {nomeReserva}");
+                msg.AppendLine($"📅 Data: {reserva.DataReserva:dd/MM/yyyy} ({reserva.DataReserva:dddd})");
+                msg.AppendLine($"⏰ Horário: {reserva.HoraInicio:hh\\:mm}");
+                msg.AppendLine($"👥 Pessoas: {reserva.QtdPessoas}");
+                msg.AppendLine();
+                msg.AppendLine("━━━━━━━━━━━━━━━━━━━━━━");
+                msg.AppendLine("O que você quer fazer? 😊");
+                msg.AppendLine();
+                msg.AppendLine("A) 🆕 Criar nova reserva");
+                msg.AppendLine("B) ❌ Cancelar esta reserva");
+                msg.AppendLine("C) ✏️ Alterar esta reserva");
+                msg.AppendLine();
+                msg.Append("Responda com a letra (A, B ou C) 📝");
+
+                return BuildJsonReply(msg.ToString());
+            }
+            else
+            {
+                await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
+                {
+                    Estado = "aguardando_escolha_acao",
+                    DadosColetados = new Dictionary<string, object>
+                    {
+                        { "tem_multiplas_reservas", true },
+                        { "total_reservas", reservasAtivas.Count }
+                    },
+                    ExpiracaoEstado = DateTime.UtcNow.AddMinutes(30)
+                });
+
+                var msgLista = new StringBuilder();
+                msgLista.AppendLine($"📋 Você tem {reservasAtivas.Count} reservas ativas:");
+                msgLista.AppendLine();
+
+                foreach (var r in reservasAtivas)
+                {
+                    msgLista.AppendLine($"🎫 Reserva #{r.Codigo}");
+                    msgLista.AppendLine($"📅 {r.DataReserva:dd/MM/yyyy} ({r.DataReserva:dddd})");
+                    msgLista.AppendLine($"⏰ {r.HoraInicio:hh\\:mm}");
+                    msgLista.AppendLine($"👥 {r.QtdPessoas} pessoas");
+                    msgLista.AppendLine();
+                }
+
+                msgLista.AppendLine("━━━━━━━━━━━━━━━━━━━━━━");
+                msgLista.AppendLine("O que você quer fazer? 😊");
+                msgLista.AppendLine();
+                msgLista.AppendLine("A) 🆕 Criar nova reserva");
+                msgLista.AppendLine("B) ❌ Cancelar uma reserva");
+                msgLista.AppendLine("C) ✏️ Alterar uma reserva");
+                msgLista.AppendLine();
+                msgLista.Append("Responda com a letra (A, B ou C) 📝");
+
+                return BuildJsonReply(msgLista.ToString());
+            }
         }
+
         public Task<object[]> GetToolsForOpenAI(Guid idConversa)
         {
             var idConversaString = idConversa.ToString();
@@ -751,4 +867,3 @@ PARÂMETROS IMPORTANTES:
         }
     }
 }
-// ================= ZIPPYGO AUTOMATION SECTION (END) =================
