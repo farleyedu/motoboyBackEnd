@@ -537,8 +537,9 @@ PARÂMETROS IMPORTANTES:
                 msg.AppendLine("A) 🆕 Criar nova reserva");
                 msg.AppendLine("B) ❌ Cancelar esta reserva");
                 msg.AppendLine("C) ✏️ Alterar esta reserva");
+                msg.AppendLine("D) 💬 Perguntar sobre cardápio, endereço, horários...");
                 msg.AppendLine();
-                msg.Append("Responda com a letra (A, B ou C) 📝");
+                msg.Append("Responda com a letra (A, B, C ou D) 📝");
 
                 return BuildJsonReply(msg.ToString());
             }
@@ -574,8 +575,9 @@ PARÂMETROS IMPORTANTES:
                 msgLista.AppendLine("A) 🆕 Criar nova reserva");
                 msgLista.AppendLine("B) ❌ Cancelar uma reserva");
                 msgLista.AppendLine("C) ✏️ Alterar uma reserva");
+                msgLista.AppendLine("D) 💬 Perguntar sobre cardápio, endereço, horários...");
                 msgLista.AppendLine();
-                msgLista.Append("Responda com a letra (A, B ou C) 📝");
+                msgLista.Append("Responda com a letra (A, B, C ou D) 📝");
 
                 return BuildJsonReply(msgLista.ToString());
             }
@@ -821,8 +823,9 @@ PARÂMETROS IMPORTANTES:
                 msg.AppendLine("A) 🆕 Criar nova reserva");
                 msg.AppendLine("B) ❌ Cancelar esta reserva");
                 msg.AppendLine("C) ✏️ Alterar esta reserva");
+                msg.AppendLine("D) 💬 Perguntar sobre cardápio, endereço, horários...");
                 msg.AppendLine();
-                msg.Append("Responda com a letra (A, B ou C) 📝");
+                msg.Append("Responda com a letra (A, B, C ou D) 📝");
 
                 return BuildJsonReply(msg.ToString());
             }
@@ -858,8 +861,9 @@ PARÂMETROS IMPORTANTES:
                 msgLista.AppendLine("A) 🆕 Criar nova reserva");
                 msgLista.AppendLine("B) ❌ Cancelar uma reserva");
                 msgLista.AppendLine("C) ✏️ Alterar uma reserva");
+                msgLista.AppendLine("D) 💬 Perguntar sobre cardápio, endereço, horários...");
                 msgLista.AppendLine();
-                msgLista.Append("Responda com a letra (A, B ou C) 📝");
+                msgLista.Append("Responda com a letra (A, B, C ou D) 📝");
 
                 return BuildJsonReply(msgLista.ToString());
             }

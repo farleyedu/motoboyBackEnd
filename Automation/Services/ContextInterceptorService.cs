@@ -147,6 +147,180 @@ namespace APIBack.Automation.Services
             }
             // ═══════ FIM INTERCEPTADOR DIRETO ═══════
 
+            // ═══════ INTERCEPTADOR: PALAVRAS-CHAVE DE "OUTROS ASSUNTOS" ═══════
+            var textoParaDeteccao = mensagemTexto?.ToLower().Trim() ?? "";
+
+            var palavrasChaveOutrosAssuntos = new[]
+            {
+                // Cardápio
+                "cardapio", "cardápio", "menu", "pratos", "comida", "comidas",
+                "bebida", "bebidas", "drink", "drinks", "vinho", "vinhos",
+                "sobremesa", "sobremesas", "entrada", "entradas",
+                "prato do dia", "especialidade", "especialidades",
+                "vegano", "vegetariano", "sem gluten", "sem glúten",
+
+                // Localização
+                "endereco", "endereço", "localizacao", "localização",
+                "onde fica", "onde é", "onde vocês ficam",
+                "como chegar", "como ir", "mapa", "rota",
+                "perto de", "bairro", "rua", "cep",
+
+                // Horário
+                "horario", "horário", "abre", "fecha", "funciona",
+                "aberto", "fechado", "que horas",
+                "domingo", "segunda", "terca", "terça", "quarta", "quinta", "sexta", "sabado", "sábado",
+
+                // Contato
+                "telefone", "contato", "whatsapp", "email", "instagram",
+
+                // Pagamento
+                "pagamento", "pagar", "aceita", "cartao", "cartão", "pix", "dinheiro",
+
+                // Estacionamento
+                "estacionamento", "estacionar", "vaga", "vagas",
+
+                // Eventos
+                "evento", "promocao", "promoção", "desconto", "happy hour",
+
+                // Gerais
+                "disponibilidade", "lotado", "delivery", "quanto custa", "preco", "preço"
+            };
+
+            var temPalavraChave = palavrasChaveOutrosAssuntos.Any(palavra =>
+                textoParaDeteccao.Contains(palavra));
+
+            if (!temPalavraChave)
+            {
+                var padroesRegex = new[]
+                {
+                    @"qual\s+(o|a|e|é)\s+",
+                    @"onde\s+(fica|e|é|esta|está)",
+                    @"voce(s)?\s+tem",
+                    @"voce(s)?\s+aceita",
+                    @"quanto\s+(custa|é|e)",
+                    @"como\s+(funciona|e|é)"
+                };
+
+                temPalavraChave = padroesRegex.Any(padrao =>
+                    Regex.IsMatch(textoParaDeteccao, padrao, RegexOptions.IgnoreCase));
+            }
+
+            if (temPalavraChave)
+            {
+                var contextoAtual = await _conversationRepository.ObterContextoAsync(idConversa);
+
+                if (contextoAtual != null && !string.IsNullOrWhiteSpace(contextoAtual.Estado))
+                {
+                    var estadosQuePodemPausar = new[]
+                    {
+                        "aguardando_escolha_acao",
+                        "aguardando_escolha_reserva",
+                        "aguardando_dados_alteracao",
+                        "aguardando_confirmacao_alteracao"
+                    };
+
+                    if (estadosQuePodemPausar.Contains(contextoAtual.Estado))
+                    {
+                        _logger.LogInformation(
+                            "[Conversa={Conversa}] 🔑 PALAVRA-CHAVE detectada: '{Mensagem}' - Pausando contexto '{Estado}'",
+                            idConversa, mensagemTexto, contextoAtual.Estado);
+
+                        var contextoPreservado = new ConversationContext
+                        {
+                            Estado = "pausado_para_outros_assuntos",
+                            ReservaIdPendente = contextoAtual.ReservaIdPendente,
+                            DadosColetados = contextoAtual.DadosColetados ?? new Dictionary<string, object>(),
+                            ReservaSnapshot = contextoAtual.ReservaSnapshot,
+                            ExpiracaoEstado = DateTime.UtcNow.AddHours(2)
+                        };
+
+                        contextoPreservado.DadosColetados["estado_anterior"] = contextoAtual.Estado;
+                        contextoPreservado.DadosColetados["pausado_em"] = DateTime.UtcNow.ToString("o");
+
+                        await _conversationRepository.SalvarContextoAsync(idConversa, contextoPreservado);
+
+                        return (false, null);
+                    }
+                }
+            }
+            // ═══════ FIM INTERCEPTADOR PALAVRAS-CHAVE ═══════
+
+            // ═══════ INTERCEPTADOR: VOLTAR PARA RESERVAS ═══════
+            var comandosVoltar = new[]
+            {
+                "voltar", "voltando", "retornar",
+                "voltar para reserva", "voltar pra reserva",
+                "e a reserva", "e minha reserva",
+                "sobre a reserva", "minha reserva",
+                "quero alterar", "quero cancelar",
+                "continuar alteracao", "continuar alteração"
+            };
+
+            var querVoltar = comandosVoltar.Any(cmd => textoParaDeteccao.Contains(cmd));
+
+            if (querVoltar)
+            {
+                var contextoPausado = await _conversationRepository.ObterContextoAsync(idConversa);
+
+                if (contextoPausado != null && contextoPausado.Estado == "pausado_para_outros_assuntos")
+                {
+                    _logger.LogInformation(
+                        "[Conversa={Conversa}] 🔄 COMANDO VOLTAR detectado - restaurando contexto de reservas",
+                        idConversa);
+
+                    var estadoAnterior = contextoPausado.DadosColetados?.ContainsKey("estado_anterior") == true
+                        ? contextoPausado.DadosColetados["estado_anterior"]?.ToString()
+                        : "aguardando_escolha_acao";
+
+                    var contextoRestaurado = new ConversationContext
+                    {
+                        Estado = estadoAnterior ?? "aguardando_escolha_acao",
+                        ReservaIdPendente = contextoPausado.ReservaIdPendente,
+                        DadosColetados = contextoPausado.DadosColetados,
+                        ReservaSnapshot = contextoPausado.ReservaSnapshot,
+                        ExpiracaoEstado = DateTime.UtcNow.AddMinutes(30)
+                    };
+
+                    if (contextoRestaurado.DadosColetados != null)
+                    {
+                        contextoRestaurado.DadosColetados.Remove("estado_anterior");
+                        contextoRestaurado.DadosColetados.Remove("pausado_em");
+                    }
+
+                    await _conversationRepository.SalvarContextoAsync(idConversa, contextoRestaurado);
+
+                    string mensagemRetorno;
+
+                    if (contextoPausado.ReservaIdPendente.HasValue && contextoPausado.ReservaIdPendente.Value > 0)
+                    {
+                        var reserva = await _reservaRepository.BuscarPorIdAsync(contextoPausado.ReservaIdPendente.Value);
+
+                        if (reserva != null)
+                        {
+                            mensagemRetorno =
+                                $"✅ Voltando para sua reserva #{reserva.Codigo}!\n\n" +
+                                $"📅 Data: {reserva.DataReserva:dd/MM/yyyy} ({reserva.DataReserva:dddd})\n" +
+                                $"⏰ Horário: {reserva.HoraInicio:hh\\:mm}\n" +
+                                $"👥 Pessoas: {reserva.QtdPessoas}\n\n" +
+                                "O que você gostaria de fazer? 😊";
+                        }
+                        else
+                        {
+                            mensagemRetorno = "Pronto! Voltando para suas reservas. Como posso ajudar? 😊";
+                        }
+                    }
+                    else
+                    {
+                        mensagemRetorno = "Pronto! Voltando para suas reservas. Como posso ajudar? 😊";
+                    }
+
+                    await SalvarMensagemRespostaAsync(idConversa, mensagemRetorno);
+
+                    return (true, new AssistantDecision(mensagemRetorno, "none", null, false, null, null));
+                }
+            }
+            // ═══════ FIM INTERCEPTADOR VOLTAR ═══════
+
             var textoLower = mensagemTexto.ToLower();
             var ehAlteracao = textoLower.Contains("alterar") ||
                                textoLower.Contains("mudar") ||
@@ -628,6 +802,7 @@ namespace APIBack.Automation.Services
                     "A" => await ProcessarOpcaoA_CriarReserva(idConversa),
                     "B" => await ProcessarOpcaoB_CancelarReserva(idConversa, contexto, mensagemTexto),
                     "C" => await ProcessarOpcaoC_AlterarReserva(idConversa, contexto, mensagemTexto),
+                    "D" => await ProcessarOpcaoD_OutrosAssuntos(idConversa, contexto),
                     _ => await ReexibirMenuPorOpcaoInvalida(idConversa, contexto, letraUpper)
                 };
             }
@@ -964,6 +1139,51 @@ namespace APIBack.Automation.Services
 
             await SalvarMensagemRespostaAsync(idConversa, mensagemSolicitacaoCodigo);
             return (true, new AssistantDecision(mensagemSolicitacaoCodigo, "none", null, false, null, null));
+        }
+
+        private async Task<(bool, AssistantDecision?)> ProcessarOpcaoD_OutrosAssuntos(
+            Guid idConversa,
+            ConversationContext contexto)
+        {
+            _logger.LogInformation(
+                "[Conversa={Conversa}] 💬 Opção D selecionada - pausando contexto para outros assuntos",
+                idConversa);
+
+            var contextoPreservado = new ConversationContext
+            {
+                Estado = "pausado_para_outros_assuntos",
+                ReservaIdPendente = contexto.ReservaIdPendente,
+                DadosColetados = contexto.DadosColetados ?? new Dictionary<string, object>(),
+                ReservaSnapshot = contexto.ReservaSnapshot,
+                ExpiracaoEstado = DateTime.UtcNow.AddHours(2)
+            };
+
+            contextoPreservado.DadosColetados["estado_anterior"] = contexto.Estado ?? "desconhecido";
+            contextoPreservado.DadosColetados["pausado_em"] = DateTime.UtcNow.ToString("o");
+
+            await _conversationRepository.SalvarContextoAsync(idConversa, contextoPreservado);
+
+            _logger.LogInformation(
+                "[Conversa={Conversa}] ✅ Contexto pausado preservando: ReservaId={ReservaId}, EstadoAnterior={EstadoAnterior}",
+                idConversa,
+                contexto.ReservaIdPendente,
+                contexto.Estado);
+
+            var mensagem =
+                "Perfeito! Fique à vontade para perguntar 😊\n\n" +
+                "Posso te ajudar com:\n\n" +
+                "🍽️ Cardápio e pratos especiais\n" +
+                "📍 Endereço e localização\n" +
+                "🕐 Horários de funcionamento\n" +
+                "💳 Formas de pagamento\n" +
+                "🎉 Eventos e promoções\n" +
+                "📞 Contato e redes sociais\n" +
+                "🚗 Estacionamento\n\n" +
+                "💡 Quando quiser voltar para suas reservas, é só me avisar! 😊";
+
+            await SalvarMensagemRespostaAsync(idConversa, mensagem);
+
+            return (true, new AssistantDecision(mensagem, "none", null, false, null, null));
         }
 
         private static bool ExtrairFlagBooleana(IDictionary<string, object>? dados, string chave)
@@ -1938,12 +2158,12 @@ namespace APIBack.Automation.Services
                 .Replace("í", "i");
 
             // Padrões que aceitam:
-            // - "a", "b", "c" (letra sozinha)
+            // - "a", "b", "c", "d" (letra sozinha)
             // - "opcao a", "opção b" (com ou sem acento)
             // - "letra a", "letra b"
             // - "a opcao a", "escolho b"
 
-            var match = Regex.Match(texto, @"\b([abc])\b", RegexOptions.IgnoreCase);
+            var match = Regex.Match(texto, @"\b([abcd])\b", RegexOptions.IgnoreCase);
             if (match.Success)
             {
                 return match.Groups[1].Value.ToUpper();
