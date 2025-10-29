@@ -1,4 +1,4 @@
-// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
+﻿// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
 using APIBack.Automation.Dtos;
 using APIBack.Automation.Helpers;
 using APIBack.Automation.Interfaces;
@@ -20,8 +20,8 @@ using System.Threading.Tasks;
 namespace APIBack.Automation.Services
 {
     /// <summary>
-    /// ServiÃ§o responsÃ¡vel por interceptar mensagens quando hÃ¡ contexto de conversa ativo
-    /// (ex: escolha de reserva, alteraÃ§Ã£o de dados, confirmaÃ§Ã£o)
+    /// Serviço responsável por interceptar mensagens quando há contexto de conversa ativo
+    /// (ex: escolha de reserva, alteração de dados, confirmação)
     /// </summary>
     public class ContextInterceptorService
     {
@@ -66,7 +66,7 @@ namespace APIBack.Automation.Services
         }
 
         /// <summary>
-        /// Verifica se hÃ¡ contexto ativo e intercepta a mensagem se necessÃ¡rio
+        /// Verifica se há contexto ativo e intercepta a mensagem se necessário
         /// </summary>
         /// <returns>True se a mensagem foi interceptada e processada, False se deve seguir para IA</returns>
         public async Task<(bool Intercepted, AssistantDecision? Decision)> TryInterceptAsync(
@@ -92,7 +92,7 @@ namespace APIBack.Automation.Services
                     baseReferencia);
             }
 
-            // ------- DETECÃ‡ÃƒO INTELIGENTE DE FILTROS -------
+            // ------- DETECÇÃO INTELIGENTE DE FILTROS -------
             var textoLower = mensagemTexto.ToLower();
             var ehAlteracao = textoLower.Contains("alterar") ||
                                textoLower.Contains("mudar") ||
@@ -109,7 +109,7 @@ namespace APIBack.Automation.Services
                 {
                     var reservasAtivas = await ObterReservasAtivasAsync(conversa.IdCliente, conversa.IdEstabelecimento, baseReferencia);
 
-                    // ? Se tem APENAS 1 reserva, nÃ£o precisa de filtro!
+                    // ? Se tem APENAS 1 reserva, não precisa de filtro!
                     if (reservasAtivas.Count == 1)
                     {
                         _logger.LogInformation(
@@ -122,7 +122,7 @@ namespace APIBack.Automation.Services
                         var novoHorario = ExtrairHorario(mensagemTexto);
                         var novaQtd = ExtrairQuantidade(mensagemTexto);
 
-                        // Se conseguiu extrair dados, monta confirmaÃ§Ã£o
+                        // Se conseguiu extrair dados, monta confirmação
                         if (novoHorario != null || novaQtd.HasValue)
                         {
                             var textoMin = mensagemTexto.ToLower();
@@ -137,7 +137,7 @@ namespace APIBack.Automation.Services
                             var reply = BuildMsgConfirmacaoAlteracaoComData(
                                 reserva.Id,
                                 reserva.DataReserva,
-                                null,  // ? dataDepois (null = mantÃ©m data atual)
+                                null,  // ? dataDepois (null = mantém data atual)
                                 horaAtual,
                                 horaDepois,
                                 qtdAtual,
@@ -161,21 +161,21 @@ namespace APIBack.Automation.Services
                         }
                         else
                         {
-                            // NÃ£o conseguiu extrair dados, mostra a reserva e pede os dados
-                            // ? CORREÃ‡ÃƒO: Usar NomeCliente da reserva (nome informado no momento da reserva)
+                            // Não conseguiu extrair dados, mostra a reserva e pede os dados
+                            // ? CORREÇÃO: Usar NomeCliente da reserva (nome informado no momento da reserva)
                             var nomeReserva = reserva.NomeCliente ?? "Cliente";
 
                             var msg = new StringBuilder();
-                            msg.AppendLine($"ðŸ“‹ Reserva #{reserva.Codigo} - InformaÃ§Ãµes atuais:");
+                            msg.AppendLine($"📋 Reserva #{reserva.Codigo} - Informações atuais:");
                             msg.AppendLine();
-                            msg.AppendLine($"ðŸ‘¤ Nome: {nomeReserva}");
-                            msg.AppendLine($"ðŸ“… Data: {DateFormattingHelper.FormatarDataCurta(reserva.DataReserva)}");
-                            msg.AppendLine($"â° HorÃ¡rio: {reserva.HoraInicio:hh\\:mm}");
-                            msg.AppendLine($"ðŸ‘¥ Pessoas: {reserva.QtdPessoas}");
+                            msg.AppendLine($"👤 Nome: {nomeReserva}");
+                            msg.AppendLine($"📅 Data: {DateFormattingHelper.FormatarDataCurta(reserva.DataReserva)}");
+                            msg.AppendLine($"⏰ Horário: {reserva.HoraInicio:hh\\:mm}");
+                            msg.AppendLine($"👥 Pessoas: {reserva.QtdPessoas}");
                             msg.AppendLine();
-                            msg.AppendLine("O que vocÃª quer alterar? ðŸ™‚");
-                            msg.AppendLine("â€¢ HorÃ¡rio (ex: 20h, 19:30)");
-                            msg.AppendLine("â€¢ Quantidade (ex: 8 pessoas, adicionar 2)");
+                            msg.AppendLine("O que você quer alterar? 🙂");
+                            msg.AppendLine("• Horário (ex: 20h, 19:30)");
+                            msg.AppendLine("• Quantidade (ex: 8 pessoas, adicionar 2)");
 
                             await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
                             {
@@ -197,7 +197,7 @@ namespace APIBack.Automation.Services
                         }
                     }
 
-                    // ? Se tem mÃºltiplas reservas E tem filtro, processa direto
+                    // ? Se tem múltiplas reservas E tem filtro, processa direto
                     var temFiltro = MensagemContemFiltro(mensagemTexto);
 
                     if (temFiltro)
@@ -216,25 +216,25 @@ namespace APIBack.Automation.Services
                             _logger.LogWarning(
                                 "[Conversa={Conversa}] ProcessarAlteracaoDiretaAsync retornou false - deixando IA processar",
                                 idConversa);
-                            // Deixa cair no return (false, null) no final do mÃ©todo
-                            // NÃƒO imprime "mÃºltiplas reservas sem filtro" pois Ã‰ MENTIRA
+                            // Deixa cair no return (false, null) no final do método
+                            // NÃO imprime "múltiplas reservas sem filtro" pois É MENTIRA
                         }
                     }
                     else if (reservasAtivas.Count > 1)
                     {
                         _logger.LogInformation(
-                            "[Conversa={Conversa}] AlteraÃ§Ã£o com mÃºltiplas reservas sem filtro - IA vai listar primeiro",
+                            "[Conversa={Conversa}] Alteração com múltiplas reservas sem filtro - IA vai listar primeiro",
                             idConversa);
                     }
                 }
             }
-            // ------- FIM DETECÃ‡ÃƒO -------
+            // ------- FIM DETECÇÃO -------
 
             var contexto = await _conversationRepository.ObterContextoAsync(idConversa);
 
             if (contexto == null || string.IsNullOrWhiteSpace(contexto.Estado))
             {
-                // ? NOVO: Log quando nÃ£o hÃ¡ contexto
+                // ? NOVO: Log quando não há contexto
                 if (contexto == null)
                 {
                     _logger.LogDebug("[Conversa={Conversa}] Nenhum contexto ativo encontrado", idConversa);
@@ -247,14 +247,14 @@ namespace APIBack.Automation.Services
                 "[Conversa={Conversa}] Contexto ativo: Estado={Estado}, Expira={Expiracao}",
                 idConversa, contexto.Estado, contexto.ExpiracaoEstado);
 
-            // ===== BUG 1 FIX: Verificar expiraÃ§Ã£o com log detalhado =====
+            // ===== BUG 1 FIX: Verificar expiração com log detalhado =====
             if (contexto.ExpiracaoEstado.HasValue)
             {
                 var agora = DateTime.UtcNow;
                 var tempoRestante = contexto.ExpiracaoEstado.Value - agora;
 
                 _logger.LogDebug(
-                    "[Conversa={Conversa}] VerificaÃ§Ã£o de expiraÃ§Ã£o: Agora={Agora:yyyy-MM-dd HH:mm:ss} UTC, Expira={Expira:yyyy-MM-dd HH:mm:ss} UTC, Restante={Restante}min",
+                    "[Conversa={Conversa}] Verificação de expiração: Agora={Agora:yyyy-MM-dd HH:mm:ss} UTC, Expira={Expira:yyyy-MM-dd HH:mm:ss} UTC, Restante={Restante}min",
                     idConversa,
                     agora,
                     contexto.ExpiracaoEstado.Value,
@@ -277,7 +277,7 @@ namespace APIBack.Automation.Services
                 case "aguardando_escolha_acao":
                 {
                     _logger.LogInformation(
-                        "[Conversa={Conversa}] Estado: aguardando escolha de aÃ§Ã£o (A/B/C)",
+                        "[Conversa={Conversa}] Estado: aguardando escolha de ação (A/B/C)",
                         idConversa);
 
                     var (interceptado, decisao) = await ProcessarEscolhaAcaoAsync(idConversa, mensagemTexto, contexto);
@@ -294,7 +294,7 @@ namespace APIBack.Automation.Services
                         !contexto.DadosColetados.TryGetValue("reservas_ids", out var reservasIdsObj))
                     {
                         _logger.LogWarning(
-                            "[Conversa={Conversa}] DadosColetados nÃ£o tem lista de IDs - limpando contexto",
+                            "[Conversa={Conversa}] DadosColetados não tem lista de IDs - limpando contexto",
                             idConversa);
                         await _conversationRepository.LimparContextoAsync(idConversa);
                         return (false, null);
@@ -382,7 +382,7 @@ namespace APIBack.Automation.Services
                     }
 
                     _logger.LogInformation(
-                        "[Conversa={Conversa}][Reserva=#{Codigo}] Reserva selecionada - entrando em fluxo de alteraÃ§Ã£o",
+                        "[Conversa={Conversa}][Reserva=#{Codigo}] Reserva selecionada - entrando em fluxo de alteração",
                         idConversa,
                         reservaSelecionada.Codigo);
 
@@ -413,17 +413,17 @@ namespace APIBack.Automation.Services
 
                     var nomeSelecionada = reservaSelecionada.NomeCliente ?? "Cliente";
                     var msg = new StringBuilder();
-                    msg.AppendLine($"ðŸ“‹ Reserva #{reservaSelecionada.Codigo} - informaÃ§Ãµes atuais:");
+                    msg.AppendLine($"📋 Reserva #{reservaSelecionada.Codigo} - informações atuais:");
                     msg.AppendLine();
-                    msg.AppendLine($"ðŸ‘¤ Nome: {nomeSelecionada}");
-                    msg.AppendLine($"ðŸ“… Data: {DateFormattingHelper.FormatarDataCurta(reservaSelecionada.DataReserva)}");
-                    msg.AppendLine($"â° HorÃ¡rio: {reservaSelecionada.HoraInicio.ToString(@"hh\:mm")}");
-                    msg.AppendLine($"ðŸ‘¥ Pessoas: {reservaSelecionada.QtdPessoas}");
+                    msg.AppendLine($"👤 Nome: {nomeSelecionada}");
+                    msg.AppendLine($"📅 Data: {DateFormattingHelper.FormatarDataCurta(reservaSelecionada.DataReserva)}");
+                    msg.AppendLine($"⏰ Horário: {reservaSelecionada.HoraInicio.ToString(@"hh\:mm")}");
+                    msg.AppendLine($"👥 Pessoas: {reservaSelecionada.QtdPessoas}");
                     msg.AppendLine();
-                    msg.AppendLine("O que vocÃª quer alterar? ðŸ˜Š");
-                    msg.AppendLine("â€¢ HorÃ¡rio");
-                    msg.AppendLine("â€¢ Quantidade de pessoas");
-                    msg.AppendLine("â€¢ Data");
+                    msg.AppendLine("O que você quer alterar? 😊");
+                    msg.AppendLine("• Horário");
+                    msg.AppendLine("• Quantidade de pessoas");
+                    msg.AppendLine("• Data");
 
                     var resposta = msg.ToString();
                     await SalvarMensagemRespostaAsync(idConversa, resposta);
@@ -444,8 +444,8 @@ namespace APIBack.Automation.Services
             }
         }
         /// <summary>
-        /// Processa a escolha do usuÃ¡rio quando hÃ¡ mÃºltiplas reservas.
-        /// Aceita: nÃºmero (1-3), letra (A-C), cÃ³digo (#1234), ou data (15/10)
+        /// Processa a escolha do usuário quando há múltiplas reservas.
+        /// Aceita: número (1-3), letra (A-C), código (#1234), ou data (15/10)
         /// </summary>
         private async Task<(bool Encontrou, Reserva? ReservaSelecionada)> ProcessarEscolhaReservaAsync(
             Guid idConversa,
@@ -458,18 +458,18 @@ namespace APIBack.Automation.Services
                 "[ProcessarEscolhaReservaAsync][Conversa={Conversa}] Processando escolha: '{Texto}' (Total reservas: {Total})",
                 idConversa, mensagemTexto, reservasDisponiveis.Count);
 
-            // ===== MÃ‰TODO 1: NÃºmero direto (1, 2, 3) =====
+            // ===== MÉTODO 1: Número direto (1, 2, 3) =====
             var numeroEscolha = ExtrairNumeroEscolha(textoNorm);
             if (numeroEscolha.HasValue && numeroEscolha.Value >= 1 && numeroEscolha.Value <= reservasDisponiveis.Count)
             {
                 var reserva = reservasDisponiveis[numeroEscolha.Value - 1];
                 _logger.LogInformation(
-                    "[ProcessarEscolhaReservaAsync][Conversa={Conversa}] âœ… Escolha por NÃšMERO: {Numero} â†’ Reserva #{Codigo}",
+                    "[ProcessarEscolhaReservaAsync][Conversa={Conversa}] ✅ Escolha por NÚMERO: {Numero} → Reserva #{Codigo}",
                     idConversa, numeroEscolha.Value, reserva.Codigo);
                 return (true, reserva);
             }
 
-            // ===== MÃ‰TODO 2: Letra (A, B, C) =====
+            // ===== MÉTODO 2: Letra (A, B, C) =====
             var letraEscolha = ExtrairOpcaoLetra(textoNorm);
             if (!string.IsNullOrEmpty(letraEscolha))
             {
@@ -478,13 +478,13 @@ namespace APIBack.Automation.Services
                 {
                     var reserva = reservasDisponiveis[indice.Value];
                     _logger.LogInformation(
-                        "[ProcessarEscolhaReservaAsync][Conversa={Conversa}] âœ… Escolha por LETRA: {Letra} â†’ Reserva #{Codigo}",
+                        "[ProcessarEscolhaReservaAsync][Conversa={Conversa}] ✅ Escolha por LETRA: {Letra} → Reserva #{Codigo}",
                         idConversa, letraEscolha, reserva.Codigo);
                     return (true, reserva);
                 }
             }
 
-            // ===== MÃ‰TODO 3: CÃ³digo da reserva (#1234 ou 1234) =====
+            // ===== MÉTODO 3: Código da reserva (#1234 ou 1234) =====
             var codigoEscolhido = ExtrairCodigoReserva(textoNorm);
             if (!string.IsNullOrEmpty(codigoEscolhido))
             {
@@ -492,24 +492,24 @@ namespace APIBack.Automation.Services
                 if (reserva != null)
                 {
                     _logger.LogInformation(
-                        "[ProcessarEscolhaReservaAsync][Conversa={Conversa}] âœ… Escolha por CÃ“DIGO: {Codigo}",
+                        "[ProcessarEscolhaReservaAsync][Conversa={Conversa}] ✅ Escolha por CÓDIGO: {Codigo}",
                         idConversa, codigoEscolhido);
                     return (true, reserva);
                 }
                 else
                 {
                     _logger.LogWarning(
-                        "[ProcessarEscolhaReservaAsync][Conversa={Conversa}] âŒ CÃ³digo {Codigo} nÃ£o encontrado nas reservas disponÃ­veis",
+                        "[ProcessarEscolhaReservaAsync][Conversa={Conversa}] ❌ Código {Codigo} não encontrado nas reservas disponíveis",
                         idConversa, codigoEscolhido);
 
-                    var msgErro = $"âŒ NÃ£o encontrei a reserva #{codigoEscolhido}.\n\n" +
+                    var msgErro = $"❌ Não encontrei a reserva #{codigoEscolhido}.\n\n" +
                                   BuildMsgListagemReservas(reservasDisponiveis);
                     await SalvarMensagemRespostaAsync(idConversa, msgErro);
                     return (true, null);
                 }
             }
 
-            // ===== MÃ‰TODO 4: Data (15/10 ou dd/MM) =====
+            // ===== MÉTODO 4: Data (15/10 ou dd/MM) =====
             var dataEscolhida = ExtrairDataReserva(textoNorm);
             if (dataEscolhida.HasValue)
             {
@@ -517,34 +517,34 @@ namespace APIBack.Automation.Services
                 if (reserva != null)
                 {
                     _logger.LogInformation(
-                        "[ProcessarEscolhaReservaAsync][Conversa={Conversa}] âœ… Escolha por DATA: {Data:dd/MM} â†’ Reserva #{Codigo}",
+                        "[ProcessarEscolhaReservaAsync][Conversa={Conversa}] ✅ Escolha por DATA: {Data:dd/MM} → Reserva #{Codigo}",
                         idConversa, dataEscolhida.Value, reserva.Codigo);
                     return (true, reserva);
                 }
                 else
                 {
                     _logger.LogWarning(
-                        "[ProcessarEscolhaReservaAsync][Conversa={Conversa}] âŒ Nenhuma reserva encontrada para data {Data:dd/MM}",
+                        "[ProcessarEscolhaReservaAsync][Conversa={Conversa}] ❌ Nenhuma reserva encontrada para data {Data:dd/MM}",
                         idConversa, dataEscolhida.Value);
 
-                    var msgErro = $"âŒ NÃ£o encontrei reserva para {dataEscolhida.Value:dd/MM}.\n\n" +
+                    var msgErro = $"❌ Não encontrei reserva para {dataEscolhida.Value:dd/MM}.\n\n" +
                                   BuildMsgListagemReservas(reservasDisponiveis);
                     await SalvarMensagemRespostaAsync(idConversa, msgErro);
                     return (true, null);
                 }
             }
 
-            // ===== NENHUM MÃ‰TODO FUNCIONOU =====
+            // ===== NENHUM MÉTODO FUNCIONOU =====
             _logger.LogWarning(
-                "[ProcessarEscolhaReservaAsync][Conversa={Conversa}] âŒ NÃ£o conseguiu interpretar escolha: '{Texto}'",
+                "[ProcessarEscolhaReservaAsync][Conversa={Conversa}] ❌ Não conseguiu interpretar escolha: '{Texto}'",
                 idConversa, mensagemTexto);
 
-            var msgAjuda = "â“ NÃ£o entendi qual reserva vocÃª quer alterar.\n\n" +
-                           "VocÃª pode escolher de 3 formas:\n" +
-                           "â€¢ NÃºmero da opÃ§Ã£o (1, 2, 3)\n" +
-                           "â€¢ Letra da opÃ§Ã£o (A, B, C)\n" +
-                           "â€¢ CÃ³digo da reserva (#1234)\n" +
-                           "â€¢ Data (15/10)\n\n" +
+            var msgAjuda = "❓ Não entendi qual reserva você quer alterar.\n\n" +
+                           "Você pode escolher de 3 formas:\n" +
+                           "• Número da opção (1, 2, 3)\n" +
+                           "• Letra da opção (A, B, C)\n" +
+                           "• Código da reserva (#1234)\n" +
+                           "• Data (15/10)\n\n" +
                            BuildMsgListagemReservas(reservasDisponiveis);
 
             await SalvarMensagemRespostaAsync(idConversa, msgAjuda);
@@ -723,8 +723,8 @@ namespace APIBack.Automation.Services
                         _ => false
                     };
                 default:
-                    if (valor is string str && bool.TryParse(str, out var parsedStr))
-                        return parsedStr;
+                    if (valor is string str && bool.TryParse(str, out var parsed))
+                        return parsed;
 
                     if (valor is IConvertible convertible)
                     {
@@ -740,22 +740,24 @@ namespace APIBack.Automation.Services
 
                     return false;
             }
-        }        private async Task<(bool, AssistantDecision?)> ProcessarDadosAlteracaoAsync(
+        }
+
+        private async Task<(bool, AssistantDecision?)> ProcessarDadosAlteracaoAsync(
             Guid idConversa,
             string mensagemTexto,
             ConversationContext contexto)
         {
-            // âœ… baseReferencia deve ser obtido aqui
+            // ✅ baseReferencia deve ser obtido aqui
             var baseReferencia = TimeZoneHelper.GetSaoPauloNow();
 
             _logger.LogInformation(
-                "[ProcessarDadosAlteracaoAsync][Conversa={Conversa}] INÃCIO - Mensagem: '{Mensagem}'",
+                "[ProcessarDadosAlteracaoAsync][Conversa={Conversa}] INÍCIO - Mensagem: '{Mensagem}'",
                 idConversa, mensagemTexto);
 
             var idReserva = contexto.ReservaIdPendente ?? 0;
             if (idReserva == 0)
             {
-                _logger.LogWarning("[Conversa={Conversa}] ReservaIdPendente Ã© zero", idConversa);
+                _logger.LogWarning("[Conversa={Conversa}] ReservaIdPendente é zero", idConversa);
                 await _conversationRepository.LimparContextoAsync(idConversa);
                 return (false, null);
             }
@@ -763,14 +765,14 @@ namespace APIBack.Automation.Services
             var reserva = await _reservaRepository.BuscarPorIdAsync(idReserva);
             if (reserva == null)
             {
-                _logger.LogWarning("[Conversa={Conversa}] Reserva {IdReserva} nÃ£o encontrada", idConversa, idReserva);
+                _logger.LogWarning("[Conversa={Conversa}] Reserva {IdReserva} não encontrada", idConversa, idReserva);
                 await _conversationRepository.LimparContextoAsync(idConversa);
                 return (false, null);
             }
 
             var codigoReserva = reserva.Codigo;
 
-            // Recuperar dados jÃ¡ coletados
+            // Recuperar dados já coletados
             var dadosContexto = contexto.DadosColetados ?? new Dictionary<string, object>();
 
             _logger.LogDebug(
@@ -784,7 +786,7 @@ namespace APIBack.Automation.Services
             var novaData = ExtrairDataPreferencial(mensagemTexto, baseReferencia, reserva.DataReserva);
 
             _logger.LogInformation(
-                "[ProcessarDadosAlteracaoAsync][Conversa={Conversa}][Reserva=#{Codigo}] ExtraÃ§Ã£o: Horario={Horario}, Qtd={Qtd}, Data={Data}",
+                "[ProcessarDadosAlteracaoAsync][Conversa={Conversa}][Reserva=#{Codigo}] Extração: Horario={Horario}, Qtd={Qtd}, Data={Data}",
                 idConversa, codigoReserva,
                 novoHorario ?? "null",
                 novaQtd?.ToString() ?? "null",
@@ -802,7 +804,7 @@ namespace APIBack.Automation.Services
 
             if (novaQtd.HasValue)
             {
-                // Verificar se Ã© delta ou absoluto
+                // Verificar se é delta ou absoluto
                 var textoMin = mensagemTexto.ToLower();
                 var isDelta = textoMin.Contains("adicionar") || textoMin.Contains("somar") ||
                              textoMin.Contains("a mais") || textoMin.Contains("a+") || textoMin.Contains("+");
@@ -825,13 +827,13 @@ namespace APIBack.Automation.Services
                 houveMudanca = true;
 
                 _logger.LogInformation(
-                    "[ProcessarDadosAlteracaoAsync][Conversa={Conversa}][Reserva=#{Codigo}] âœ… Salvou nova_data: {Data:yyyy-MM-dd}",
+                    "[ProcessarDadosAlteracaoAsync][Conversa={Conversa}][Reserva=#{Codigo}] ✅ Salvou nova_data: {Data:yyyy-MM-dd}",
                     idConversa, codigoReserva, novaData.Value);
             }
 
-            // Verificar se cliente disse que quer mudar algo mas nÃ£o especificou
+            // Verificar se cliente disse que quer mudar algo mas não especificou
             var textoLower = mensagemTexto.ToLower();
-            var querMudarHorario = (textoLower.Contains("horÃ¡rio") || textoLower.Contains("horario") ||
+            var querMudarHorario = (textoLower.Contains("horário") || textoLower.Contains("horario") ||
                                     textoLower.Contains("hora")) && novoHorario == null;
             var querMudarQtd = (textoLower.Contains("pessoa") || textoLower.Contains("gente") ||
                                 textoLower.Contains("quantidade")) && !novaQtd.HasValue;
@@ -842,15 +844,15 @@ namespace APIBack.Automation.Services
                 "[ProcessarDadosAlteracaoAsync][Conversa={Conversa}][Reserva=#{Codigo}] Flags: querMudarHorario={Horario}, querMudarQtd={Qtd}, querMudarData={Data}",
                 idConversa, codigoReserva, querMudarHorario, querMudarQtd, querMudarData);
 
-            // Se disse que quer mudar mas nÃ£o especificou, perguntar
+            // Se disse que quer mudar mas não especificou, perguntar
             if (querMudarHorario)
             {
                 _logger.LogInformation(
-                    "[ProcessarDadosAlteracaoAsync][Conversa={Conversa}][Reserva=#{Codigo}] Cliente quer mudar HORÃRIO mas nÃ£o especificou",
+                    "[ProcessarDadosAlteracaoAsync][Conversa={Conversa}][Reserva=#{Codigo}] Cliente quer mudar HORÁRIO mas não especificou",
                     idConversa, codigoReserva);
 
-                var msg = $"â° HorÃ¡rio atual: {reserva.HoraInicio:hh\\:mm}\n\n" +
-                          $"Qual o novo horÃ¡rio? ðŸ˜Š\n" +
+                var msg = $"⏰ Horário atual: {reserva.HoraInicio:hh\\:mm}\n\n" +
+                          $"Qual o novo horário? 😊\n" +
                           $"(Ex: 20h, 19:30, 21h30)";
 
                 await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
@@ -869,11 +871,11 @@ namespace APIBack.Automation.Services
             if (querMudarQtd)
             {
                 _logger.LogInformation(
-                    "[ProcessarDadosAlteracaoAsync][Conversa={Conversa}][Reserva=#{Codigo}] Cliente quer mudar QUANTIDADE mas nÃ£o especificou",
+                    "[ProcessarDadosAlteracaoAsync][Conversa={Conversa}][Reserva=#{Codigo}] Cliente quer mudar QUANTIDADE mas não especificou",
                     idConversa, codigoReserva);
 
-                var msg = $"ðŸ‘¥ Quantidade atual: {reserva.QtdPessoas} pessoas\n\n" +
-                          $"Quantas pessoas agora? ðŸ˜Š\n" +
+                var msg = $"👥 Quantidade atual: {reserva.QtdPessoas} pessoas\n\n" +
+                          $"Quantas pessoas agora? 😊\n" +
                           $"(Ex: 8 pessoas, adicionar 2)";
 
                 await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
@@ -892,14 +894,14 @@ namespace APIBack.Automation.Services
             if (querMudarData)
             {
                 _logger.LogInformation(
-                    "[ProcessarDadosAlteracaoAsync][Conversa={Conversa}][Reserva=#{Codigo}] Cliente quer mudar DATA mas nÃ£o especificou - perguntando",
+                    "[ProcessarDadosAlteracaoAsync][Conversa={Conversa}][Reserva=#{Codigo}] Cliente quer mudar DATA mas não especificou - perguntando",
                     idConversa, codigoReserva);
 
                 var msg = new StringBuilder();
-                msg.AppendLine($"ðŸ“… Data atual da reserva #{reserva.Codigo}:");
+                msg.AppendLine($"📅 Data atual da reserva #{reserva.Codigo}:");
                 msg.AppendLine(DateFormattingHelper.FormatarDataCurta(reserva.DataReserva));
                 msg.AppendLine();
-                msg.AppendLine("Qual a nova data que vocÃª prefere? ðŸ™‚");
+                msg.AppendLine("Qual a nova data que você prefere? 🙂");
                 msg.AppendLine("(Ex: dia 15, 20/10, sexta-feira)");
 
                 await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
@@ -915,24 +917,24 @@ namespace APIBack.Automation.Services
                 await SalvarMensagemRespostaAsync(idConversa, reply);
 
                 _logger.LogDebug(
-                    "[ProcessarDadosAlteracaoAsync][Conversa={Conversa}][Reserva=#{Codigo}] Perguntando nova data ao usuÃ¡rio",
+                    "[ProcessarDadosAlteracaoAsync][Conversa={Conversa}][Reserva=#{Codigo}] Perguntando nova data ao usuário",
                     idConversa, codigoReserva);
 
                 return (true, new AssistantDecision(reply, "none", null, false, null, null));
             }
 
-            // Se nÃ£o houve mudanÃ§a E nÃ£o estÃ¡ pedindo algo especÃ­fico, nÃ£o intercepta
+            // Se não houve mudança E não está pedindo algo específico, não intercepta
             if (!houveMudanca)
             {
                 _logger.LogInformation(
-                    "[ProcessarDadosAlteracaoAsync][Conversa={Conversa}][Reserva=#{Codigo}] Nenhuma mudanÃ§a detectada - deixando IA processar",
+                    "[ProcessarDadosAlteracaoAsync][Conversa={Conversa}][Reserva=#{Codigo}] Nenhuma mudança detectada - deixando IA processar",
                     idConversa, codigoReserva);
                 return (false, null);
             }
 
-            // Construir resumo das alteraÃ§Ãµes
+            // Construir resumo das alterações
             _logger.LogInformation(
-                "[ProcessarDadosAlteracaoAsync][Conversa={Conversa}][Reserva=#{Codigo}] MudanÃ§as coletadas - montando confirmaÃ§Ã£o",
+                "[ProcessarDadosAlteracaoAsync][Conversa={Conversa}][Reserva=#{Codigo}] Mudanças coletadas - montando confirmação",
                 idConversa, codigoReserva);
 
             var dataAtual = reserva.DataReserva;
@@ -960,7 +962,7 @@ namespace APIBack.Automation.Services
             _logger.LogInformation(
                 "[ProcessarDadosAlteracaoAsync][Conversa={Conversa}][Reserva=#{Codigo}] Valores finais - Data: {Data}, Hora: {Hora}, Qtd: {Qtd}",
                 idConversa, codigoReserva,
-                dataFinal?.ToString("yyyy-MM-dd") ?? "mantÃ©m",
+                dataFinal?.ToString("yyyy-MM-dd") ?? "mantém",
                 horaFinal,
                 qtdFinalValue);
 
@@ -973,7 +975,7 @@ namespace APIBack.Automation.Services
                 qtdAtualFinal,
                 qtdFinalValue);
 
-            // Salvar contexto com estado de confirmaÃ§Ã£o
+            // Salvar contexto com estado de confirmação
             await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
             {
                 Estado = "aguardando_confirmacao_alteracao",
@@ -986,7 +988,7 @@ namespace APIBack.Automation.Services
             await SalvarMensagemRespostaAsync(idConversa, resumo);
 
             _logger.LogInformation(
-                "[ProcessarDadosAlteracaoAsync][Conversa={Conversa}][Reserva=#{Codigo}] âœ… FIM - Aguardando confirmaÃ§Ã£o",
+                "[ProcessarDadosAlteracaoAsync][Conversa={Conversa}][Reserva=#{Codigo}] ✅ FIM - Aguardando confirmação",
                 idConversa, codigoReserva);
 
             return (true, new AssistantDecision(resumo, "none", null, false, null, null));
@@ -1017,12 +1019,12 @@ namespace APIBack.Automation.Services
                 }
                 catch (Exception ex)
                 {
-                    _logger.LogWarning(ex, "[ProcessarConfirmacaoAlteracaoAsync][Conversa={Conversa}][Reserva=#{Codigo}] Falha ao carregar reserva para confirmaÃ§Ã£o", idConversa);
+                    _logger.LogWarning(ex, "[ProcessarConfirmacaoAlteracaoAsync][Conversa={Conversa}][Reserva=#{Codigo}] Falha ao carregar reserva para confirmação", idConversa);
                     codigoReserva = idReservaContexto.ToString();
                 }
             }
 
-            // ? DETECÃ‡ÃƒO ULTRA-COMPLETA DE CONFIRMAÃ‡Ã•ES (100+ variaÃ§Ãµes)
+            // ? DETECÇÃO ULTRA-COMPLETA DE CONFIRMAÇÕES (100+ variações)
             var confirmacoesExatas = new HashSet<string>
     {
         "sim", "s", "ss", "ok", "okay", "oki", "oky",
@@ -1031,28 +1033,28 @@ namespace APIBack.Automation.Services
         "tmj", "vamo", "bora", "dale", "valeu", "fechou", "fexa", "firmeza",
         "tranquilo", "tranks", "de boa", "partiu", "simbora",
         "aham", "uhum", "ahan", "sim sim", "sisim", "simsim",
-        "sÃ´", "Ã´", "opa", "bÃ£o", "daora", "dahora",
-        "pode crer", "ta valendo", "tÃ¡ valendo", "manda ver", "manda bala",
-        "ðŸ‘", "ðŸ‘Œ", "ðŸ‘", "ðŸ˜„", "ðŸ˜", "ðŸ™‚", "ðŸ™Œ"
+        "sô", "ô", "opa", "bão", "daora", "dahora",
+        "pode crer", "ta valendo", "tá valendo", "manda ver", "manda bala",
+        "👍", "👌", "👏", "😄", "😁", "🙂", "🙌"
     };
 
             var confirmacoesContains = new[]
             {
-        "eu confirmo","confirma", "confirmo", "isso mesmo", "isso aÃ­", "isso ai",
-        "Ã© isso", "exato", "exatamente", "correto", "certinho",
+        "eu confirmo","confirma", "confirmo", "isso mesmo", "isso aí", "isso ai",
+        "é isso", "exato", "exatamente", "correto", "certinho",
         "pode sim", "pode ir", "pode mandar", "pode fazer",
-        "tudo bem", "tudo certo", "tÃ¡ bom", "tÃ¡ ok", "ta bom", "ta ok",
-        "estÃ¡ bom", "estÃ¡ ok", "com certeza", "claro", "Ã³bvio", "obvio",
-        "lÃ³gico", "logico", "autorizo", "aprovado", "aprovo",
-        "de acordo", "acordo", "concordo", "sem problema", "ðŸ‘", "ðŸ‘Œ", "ðŸ™Œ"
+        "tudo bem", "tudo certo", "tá bom", "tá ok", "ta bom", "ta ok",
+        "está bom", "está ok", "com certeza", "claro", "óbvio", "obvio",
+        "lógico", "logico", "autorizo", "aprovado", "aprovo",
+        "de acordo", "acordo", "concordo", "sem problema", "👍", "👌", "🙌"
     };
 
             var ehConfirmacao = confirmacoesExatas.Contains(textoNorm) ||
                                 confirmacoesContains.Any(c => textoNorm.Contains(c));
 
-            // ? NOVO: Detectar se Ã© confirmaÃ§Ã£o MAS com mudanÃ§a adicional
+            // ? NOVO: Detectar se é confirmação MAS com mudança adicional
             var temMudancaAdicional = textoNorm.Contains("tbm") ||
-                                       textoNorm.Contains("tambÃ©m") ||
+                                       textoNorm.Contains("também") ||
                                        textoNorm.Contains("tambem") ||
                                        (textoNorm.Contains(" e ") &&
                                         (textoNorm.Contains("quero") || textoNorm.Contains("mudar") || textoNorm.Contains("alterar")));
@@ -1061,7 +1063,7 @@ namespace APIBack.Automation.Services
             if (ehConfirmacao)
             {
                 _logger.LogInformation(
-                    "[Conversa={Conversa}] ConfirmaÃ§Ã£o detectada: '{Texto}' - Executando atualizaÃ§Ã£o via tool",
+                    "[Conversa={Conversa}] Confirmação detectada: '{Texto}' - Executando atualização via tool",
                     idConversa, mensagemTexto);
 
                 try
@@ -1088,26 +1090,26 @@ namespace APIBack.Automation.Services
                 catch (Exception ex)
                 {
                     _logger.LogError(ex,
-                        "[Conversa={Conversa}] Erro ao executar tool atualizar_reserva apÃ³s confirmaÃ§Ã£o",
+                        "[Conversa={Conversa}] Erro ao executar tool atualizar_reserva após confirmação",
                         idConversa);
 
                     // Limpar contexto em caso de erro
                     await _conversationRepository.LimparContextoAsync(idConversa);
 
-                    var erroMsg = "Ops! Tive um problema ao processar a confirmaÃ§Ã£o ðŸ˜µâ€ðŸ’«\n\nPode tentar novamente?";
+                    var erroMsg = "Ops! Tive um problema ao processar a confirmação 😵‍💫\n\nPode tentar novamente?";
                     return (true, new AssistantDecision(erroMsg, "none", null, false, null, null));
                 }
             }
-            else if (textoNorm.Contains("nÃ£o") || textoNorm.Contains("nao") || textoNorm == "n")
+            else if (textoNorm.Contains("não") || textoNorm.Contains("nao") || textoNorm == "n")
             {
                 await _conversationRepository.LimparContextoAsync(idConversa);
-                var reply = "Tudo bem! Sua reserva permanece como estava. Se precisar de algo, estou aqui! ðŸ¤—";
+                var reply = "Tudo bem! Sua reserva permanece como estava. Se precisar de algo, estou aqui! 🤗";
                 await SalvarMensagemRespostaAsync(idConversa, reply);
 
                 return (true, new AssistantDecision(reply, "none", null, false, null, null));
             }
 
-            // NÃ£o conseguiu interpretar confirmaÃ§Ã£o, nÃ£o intercepta
+            // Não conseguiu interpretar confirmação, não intercepta
             return (false, null);
         }
 
@@ -1115,7 +1117,7 @@ namespace APIBack.Automation.Services
         {
             texto = texto.ToLower().Trim();
 
-            // NÃºmero direto
+            // Número direto
             if (int.TryParse(texto, out var numero))
                 return numero;
 
@@ -1124,7 +1126,7 @@ namespace APIBack.Automation.Services
             {
                 { "primeiro", 1 }, { "primeira", 1 }, { "um", 1 }, { "1", 1 },
                 { "segundo", 2 }, { "segunda", 2 }, { "dois", 2 }, { "2", 2 },
-                { "terceiro", 3 }, { "terceira", 3 }, { "tres", 3 }, { "trÃªs", 3 }, { "3", 3 },
+                { "terceiro", 3 }, { "terceira", 3 }, { "tres", 3 }, { "três", 3 }, { "3", 3 },
                 { "quarto", 4 }, { "quarta", 4 }, { "quatro", 4 }, { "4", 4 },
                 { "quinto", 5 }, { "quinta", 5 }, { "cinco", 5 }, { "5", 5 }
             };
@@ -1173,8 +1175,8 @@ namespace APIBack.Automation.Services
 
         private async Task SalvarMensagemRespostaAsync(Guid idConversa, string conteudo)
         {
-            // Nota: A mensagem serÃ¡ salva e enviada pelo IAResponseHandler
-            // Este mÃ©todo apenas registra que o contexto gerou uma resposta
+            // Nota: A mensagem será salva e enviada pelo IAResponseHandler
+            // Este método apenas registra que o contexto gerou uma resposta
             _logger.LogInformation("[Conversa={Conversa}] Resposta preparada pelo contexto interceptor", idConversa);
             await Task.CompletedTask;
         }
@@ -1194,7 +1196,7 @@ namespace APIBack.Automation.Services
             if (!dataPreferida.HasValue)
             {
                 _logger.LogWarning(
-                    "[Conversa={Conversa}] ProcessarAlteracaoDiretaAsync: NÃ£o conseguiu extrair data de '{Texto}'",
+                    "[Conversa={Conversa}] ProcessarAlteracaoDiretaAsync: Não conseguiu extrair data de '{Texto}'",
                     idConversa, mensagemTexto);
                 return (false, null); // Sem data, deixa a IA processar
             }
@@ -1233,27 +1235,27 @@ namespace APIBack.Automation.Services
                 return (false, null); // Sem reserva, deixa a IA processar
             }
 
-            // ? NOVO: Se nÃ£o tem mudanÃ§a especificada, pedir os dados
+            // ? NOVO: Se não tem mudança especificada, pedir os dados
             if (novoHorario == null && !qtd.HasValue)
             {
                 _logger.LogInformation(
-                    "[Conversa={Conversa}] Reserva encontrada mas sem mudanÃ§a especificada - pedindo dados",
+                    "[Conversa={Conversa}] Reserva encontrada mas sem mudança especificada - pedindo dados",
                     idConversa);
 
-                // ? CORREÃ‡ÃƒO: Usar NomeCliente da reserva (nome informado no momento da reserva)
+                // ? CORREÇÃO: Usar NomeCliente da reserva (nome informado no momento da reserva)
                 var nomeReserva = alvo.NomeCliente ?? "Cliente";
 
                 var msg = new StringBuilder();
-                msg.AppendLine($"ðŸ“‹ Reserva #{alvo.Codigo} encontrada:");
+                msg.AppendLine($"📋 Reserva #{alvo.Codigo} encontrada:");
                 msg.AppendLine();
-                msg.AppendLine($"ðŸ‘¤ Nome: {nomeReserva}");
-                msg.AppendLine($"ðŸ“… Data: {DateFormattingHelper.FormatarDataCurta(alvo.DataReserva)}");
-                msg.AppendLine($"â° HorÃ¡rio: {alvo.HoraInicio:hh\\:mm}");
-                msg.AppendLine($"ðŸ‘¥ Pessoas: {alvo.QtdPessoas}");
+                msg.AppendLine($"👤 Nome: {nomeReserva}");
+                msg.AppendLine($"📅 Data: {DateFormattingHelper.FormatarDataCurta(alvo.DataReserva)}");
+                msg.AppendLine($"⏰ Horário: {alvo.HoraInicio:hh\\:mm}");
+                msg.AppendLine($"👥 Pessoas: {alvo.QtdPessoas}");
                 msg.AppendLine();
-                msg.AppendLine("O que vocÃª quer alterar? ðŸ™‚");
-                msg.AppendLine("â€¢ HorÃ¡rio (ex: 20h, 19:30)");
-                msg.AppendLine("â€¢ Quantidade (ex: 8 pessoas, adicionar 2)");
+                msg.AppendLine("O que você quer alterar? 🙂");
+                msg.AppendLine("• Horário (ex: 20h, 19:30)");
+                msg.AppendLine("• Quantidade (ex: 8 pessoas, adicionar 2)");
 
                 await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
                 {
@@ -1282,7 +1284,7 @@ namespace APIBack.Automation.Services
             var replyConfirmacao = BuildMsgConfirmacaoAlteracaoComData(
                 alvo.Id,
                 alvo.DataReserva,
-                null,  // ? dataDepois (null = mantÃ©m data atual)
+                null,  // ? dataDepois (null = mantém data atual)
                 horaAtual,
                 horaDepois,
                 qtdAtual,
@@ -1305,7 +1307,7 @@ namespace APIBack.Automation.Services
             return (true, new AssistantDecision(replyConfirmacao, "none", null, false, null, null));
         }
 
-        // agora com Ã¢ncora opcional: se informada, usar como base quando for "dia 12", "dd/MM" ou dia da semana
+        // agora com âncora opcional: se informada, usar como base quando for "dia 12", "dd/MM" ou dia da semana
         private DateTime? ExtrairDataPreferencial(string texto, DateTime baseReferencia, DateTime? ancora = null)
         {
             if (string.IsNullOrWhiteSpace(texto)) return null;
@@ -1315,29 +1317,29 @@ namespace APIBack.Automation.Services
 
             var norm = RemoveDiacritics(texto.ToLower()).Replace("-feira", "").Trim();
 
-            // âœ… LOG PARA DEBUG
+            // ✅ LOG PARA DEBUG
             _logger.LogDebug(
                 "[ExtrairDataPreferencial] Input: '{Texto}' | Normalizado: '{Norm}' | Base: {Base:yyyy-MM-dd} | Ancora: {Ancora}",
                 texto, norm, referencia, baseAncora?.ToString("yyyy-MM-dd") ?? "null");
 
-            // 1. TERMOS RELATIVOS (prioridade mÃ¡xima)
+            // 1. TERMOS RELATIVOS (prioridade máxima)
             if (norm == "hoje")
             {
-                _logger.LogDebug("[ExtrairDataPreferencial] âœ… HOJE -> {Data:yyyy-MM-dd}", referencia);
+                _logger.LogDebug("[ExtrairDataPreferencial] ✅ HOJE -> {Data:yyyy-MM-dd}", referencia);
                 return referencia;
             }
 
             if (norm.Contains("depois") && norm.Contains("amanha"))
             {
                 var depoisAmanha = referencia.AddDays(2);
-                _logger.LogDebug("[ExtrairDataPreferencial] âœ… DEPOIS DE AMANHÃƒ -> {Data:yyyy-MM-dd}", depoisAmanha);
+                _logger.LogDebug("[ExtrairDataPreferencial] ✅ DEPOIS DE AMANHÃ -> {Data:yyyy-MM-dd}", depoisAmanha);
                 return depoisAmanha;
             }
 
             if (norm.Contains("amanha"))
             {
                 var amanha = referencia.AddDays(1);
-                _logger.LogDebug("[ExtrairDataPreferencial] âœ… AMANHÃƒ -> {Data:yyyy-MM-dd}", amanha);
+                _logger.LogDebug("[ExtrairDataPreferencial] ✅ AMANHÃ -> {Data:yyyy-MM-dd}", amanha);
                 return amanha;
             }
 
@@ -1346,11 +1348,11 @@ namespace APIBack.Automation.Services
                 System.Globalization.CultureInfo.InvariantCulture,
                 System.Globalization.DateTimeStyles.None, out var dataCompleta))
             {
-                _logger.LogDebug("[ExtrairDataPreferencial] âœ… dd/MM/yyyy -> {Data:yyyy-MM-dd}", dataCompleta);
+                _logger.LogDebug("[ExtrairDataPreferencial] ✅ dd/MM/yyyy -> {Data:yyyy-MM-dd}", dataCompleta);
                 return dataCompleta.Date;
             }
 
-            // 3. FORMATO dd/MM (assume ano da Ã¢ncora ou da referÃªncia)
+            // 3. FORMATO dd/MM (assume ano da âncora ou da referência)
             if (DateTime.TryParseExact(norm, "dd/MM",
                 System.Globalization.CultureInfo.InvariantCulture,
                 System.Globalization.DateTimeStyles.None, out var parcial))
@@ -1358,17 +1360,17 @@ namespace APIBack.Automation.Services
                 var ano = (baseAncora ?? referencia).Year;
                 var tentativa = new DateTime(ano, parcial.Month, parcial.Day).Date;
 
-                // Se a data jÃ¡ passou no ano atual, vai para o prÃ³ximo ano
+                // Se a data já passou no ano atual, vai para o próximo ano
                 if (tentativa < referencia)
                 {
                     tentativa = tentativa.AddYears(1);
                 }
 
-                _logger.LogDebug("[ExtrairDataPreferencial] âœ… dd/MM -> {Data:yyyy-MM-dd}", tentativa);
+                _logger.LogDebug("[ExtrairDataPreferencial] ✅ dd/MM -> {Data:yyyy-MM-dd}", tentativa);
                 return tentativa;
             }
 
-            // 4. âœ… CRÃTICO: "DIA X" ou nÃºmeros isolados usando helper
+            // 4. ✅ CRÍTICO: "DIA X" ou números isolados usando helper
             _logger.LogDebug("[ExtrairDataPreferencial] Tentando extrair dia via DateParsingHelper...");
 
             if (DateParsingHelper.TryExtractDayNumber(norm, out var diaExtraido))
@@ -1378,11 +1380,11 @@ namespace APIBack.Automation.Services
                 var mesAtual = referencia.Month;
                 var anoAtual = referencia.Year;
 
-                // Se o dia jÃ¡ passou no mÃªs atual, vai para o prÃ³ximo mÃªs
+                // Se o dia já passou no mês atual, vai para o próximo mês
                 if (diaExtraido < referencia.Day)
                 {
                     _logger.LogDebug(
-                        "[ExtrairDataPreferencial] Dia {Dia} < dia atual {DiaAtual}, avanÃ§ando para prÃ³ximo mÃªs",
+                        "[ExtrairDataPreferencial] Dia {Dia} < dia atual {DiaAtual}, avançando para próximo mês",
                         diaExtraido, referencia.Day);
 
                     mesAtual++;
@@ -1397,7 +1399,7 @@ namespace APIBack.Automation.Services
                 {
                     var dataCalculada = new DateTime(anoAtual, mesAtual, diaExtraido).Date;
                     _logger.LogInformation(
-                        "[ExtrairDataPreferencial] âœ… DIA DETECTADO via helper: {Data:yyyy-MM-dd} (entrada: '{Texto}')",
+                        "[ExtrairDataPreferencial] ✅ DIA DETECTADO via helper: {Data:yyyy-MM-dd} (entrada: '{Texto}')",
                         dataCalculada, texto);
                     return dataCalculada;
                 }
@@ -1405,14 +1407,14 @@ namespace APIBack.Automation.Services
                 {
                     _logger.LogWarning(
                         ex,
-                        "[ExtrairDataPreferencial] âŒ Dia invÃ¡lido: {Dia}/{Mes}/{Ano}",
+                        "[ExtrairDataPreferencial] ❌ Dia inválido: {Dia}/{Mes}/{Ano}",
                         diaExtraido, mesAtual, anoAtual);
                     return null;
                 }
             }
             else
             {
-                _logger.LogDebug("[ExtrairDataPreferencial] Helper nÃ£o conseguiu extrair dia numÃ©rico");
+                _logger.LogDebug("[ExtrairDataPreferencial] Helper não conseguiu extrair dia numérico");
             }
 
             // 5. DIAS DA SEMANA
@@ -1437,7 +1439,7 @@ namespace APIBack.Automation.Services
                     var resultado = origem.AddDays(delta).Date;
 
                     _logger.LogDebug(
-                        "[ExtrairDataPreferencial] âœ… Dia da semana '{DiaSemana}' -> {Data:yyyy-MM-dd}",
+                        "[ExtrairDataPreferencial] ✅ Dia da semana '{DiaSemana}' -> {Data:yyyy-MM-dd}",
                         kv.Key, resultado);
                     return resultado;
                 }
@@ -1450,13 +1452,13 @@ namespace APIBack.Automation.Services
                     System.Globalization.DateTimeStyles.None,
                     out var livre))
             {
-                _logger.LogDebug("[ExtrairDataPreferencial] âœ… Parse livre PT-BR -> {Data:yyyy-MM-dd}", livre);
+                _logger.LogDebug("[ExtrairDataPreferencial] ✅ Parse livre PT-BR -> {Data:yyyy-MM-dd}", livre);
                 return livre.Date;
             }
 
-            // âŒ NÃƒO CONSEGUIU PARSEAR
+            // ❌ NÃO CONSEGUIU PARSEAR
             _logger.LogWarning(
-                "[ExtrairDataPreferencial] âŒ NÃƒO CONSEGUIU parsear nenhum formato: '{Texto}' (normalizado: '{Norm}')",
+                "[ExtrairDataPreferencial] ❌ NÃO CONSEGUIU parsear nenhum formato: '{Texto}' (normalizado: '{Norm}')",
                 texto, norm);
             return null;
         }
@@ -1489,55 +1491,55 @@ namespace APIBack.Automation.Services
     int qtdAntes,
     int qtdDepois)
         {
-            // Nota: codigoReserva aqui representa o Id (long). Em fases futuras vamos buscar o CÃ³digo (string) no banco.
+            // Nota: codigoReserva aqui representa o Id (long). Em fases futuras vamos buscar o Código (string) no banco.
             var codigoExibicao = codigoReserva.ToString();
             var ptbr = new System.Globalization.CultureInfo("pt-BR");
             var sb = new StringBuilder();
-            sb.AppendLine($"ðŸ“‹ Reserva #{codigoExibicao} - Confirme as alteraÃ§Ãµes:");
+            sb.AppendLine($"📋 Reserva #{codigoExibicao} - Confirme as alterações:");
             sb.AppendLine();
 
-            sb.AppendLine("ðŸ“… DATA:");
+            sb.AppendLine("📅 DATA:");
             if (dataDepois.HasValue && dataDepois.Value.Date != dataAntes.Date)
             {
-                sb.AppendLine($"â†© Antes: {dataAntes:dd/MM/yyyy} ({dataAntes.ToString("dddd", ptbr)})");
-                sb.AppendLine($"âž¡ Depois: {dataDepois.Value:dd/MM/yyyy} ({dataDepois.Value.ToString("dddd", ptbr)})");
+                sb.AppendLine($"↩ Antes: {dataAntes:dd/MM/yyyy} ({dataAntes.ToString("dddd", ptbr)})");
+                sb.AppendLine($"➡ Depois: {dataDepois.Value:dd/MM/yyyy} ({dataDepois.Value.ToString("dddd", ptbr)})");
             }
             else
             {
-                sb.AppendLine($"âœ” MantÃ©m: {dataAntes:dd/MM/yyyy} ({dataAntes.ToString("dddd", ptbr)})");
+                sb.AppendLine($"✔ Mantém: {dataAntes:dd/MM/yyyy} ({dataAntes.ToString("dddd", ptbr)})");
             }
             sb.AppendLine();
 
-            sb.AppendLine("â° HORÃRIO:");
+            sb.AppendLine("⏰ HORÁRIO:");
             if (horaDepois == horaAntes)
             {
-                sb.AppendLine($"âœ” MantÃ©m: {horaAntes}");
+                sb.AppendLine($"✔ Mantém: {horaAntes}");
             }
             else
             {
-                sb.AppendLine($"â†© Antes: {horaAntes}");
-                sb.AppendLine($"âž¡ Depois: {horaDepois}");
+                sb.AppendLine($"↩ Antes: {horaAntes}");
+                sb.AppendLine($"➡ Depois: {horaDepois}");
             }
             sb.AppendLine();
 
-            sb.AppendLine("ðŸ‘¥ PESSOAS:");
+            sb.AppendLine("👥 PESSOAS:");
             if (qtdDepois == qtdAntes)
             {
-                sb.AppendLine($"âœ” MantÃ©m: {qtdAntes}");
+                sb.AppendLine($"✔ Mantém: {qtdAntes}");
             }
             else
             {
-                sb.AppendLine($"â†© Antes: {qtdAntes}");
-                sb.AppendLine($"âž¡ Depois: {qtdDepois}");
+                sb.AppendLine($"↩ Antes: {qtdAntes}");
+                sb.AppendLine($"➡ Depois: {qtdDepois}");
             }
             sb.AppendLine();
 
-            sb.AppendLine("Confirmar essas mudanÃ§as? âœ…");
+            sb.AppendLine("Confirmar essas mudanças? ✅");
             return sb.ToString();
         }
 
         /// <summary>
-        /// Extrai cÃ³digo de reserva (4 dÃ­gitos) da mensagem.
+        /// Extrai código de reserva (4 dígitos) da mensagem.
         /// Aceita formatos: #1234, 1234, codigo 1234, reserva 1234.
         /// </summary>
         private string? ExtrairCodigoReserva(string texto)
@@ -1550,15 +1552,15 @@ namespace APIBack.Automation.Services
             if (match.Success)
             {
                 var codigo = match.Groups[1].Value;
-                _logger.LogDebug("[ExtrairCodigoReserva] CÃ³digo extraÃ­do com #: {Codigo}", codigo);
+                _logger.LogDebug("[ExtrairCodigoReserva] Código extraído com #: {Codigo}", codigo);
                 return codigo;
             }
 
-            match = Regex.Match(textoNorm, "(?:codigo|cÃ³digo|reserva|resÃ©rva)\\s*(\\d{4})\\b");
+            match = Regex.Match(textoNorm, "(?:codigo|código|reserva|resérva)\\s*(\\d{4})\\b");
             if (match.Success)
             {
                 var codigo = match.Groups[1].Value;
-                _logger.LogDebug("[ExtrairCodigoReserva] CÃ³digo extraÃ­do apÃ³s palavra-chave: {Codigo}", codigo);
+                _logger.LogDebug("[ExtrairCodigoReserva] Código extraído após palavra-chave: {Codigo}", codigo);
                 return codigo;
             }
 
@@ -1566,11 +1568,11 @@ namespace APIBack.Automation.Services
             if (match.Success)
             {
                 var codigo = match.Groups[1].Value;
-                _logger.LogDebug("[ExtrairCodigoReserva] CÃ³digo isolado extraÃ­do: {Codigo}", codigo);
+                _logger.LogDebug("[ExtrairCodigoReserva] Código isolado extraído: {Codigo}", codigo);
                 return codigo;
             }
 
-            _logger.LogDebug("[ExtrairCodigoReserva] Nenhum cÃ³digo encontrado em: '{Texto}'", texto);
+            _logger.LogDebug("[ExtrairCodigoReserva] Nenhum código encontrado em: '{Texto}'", texto);
             return null;
         }
 
@@ -1586,7 +1588,7 @@ namespace APIBack.Automation.Services
             if (match.Success)
             {
                 var letra = match.Groups[1].Value;
-                _logger.LogDebug("[ExtrairOpcaoLetra] Letra extraÃ­da: {Letra}", letra);
+                _logger.LogDebug("[ExtrairOpcaoLetra] Letra extraída: {Letra}", letra);
                 return letra;
             }
 
@@ -1595,7 +1597,7 @@ namespace APIBack.Automation.Services
         }
 
         /// <summary>
-        /// Converte letra de opÃ§Ã£o para Ã­ndice de lista (A=0, B=1, ...).
+        /// Converte letra de opção para índice de lista (A=0, B=1, ...).
         /// </summary>
         private int? MapearLetraParaIndice(string letra, int totalReservas)
         {
@@ -1609,13 +1611,13 @@ namespace APIBack.Automation.Services
                 return null;
             }
 
-            _logger.LogDebug("[MapearLetraParaIndice] Letra {Letra} â†’ Ãndice {Indice}", letra, indice);
+            _logger.LogDebug("[MapearLetraParaIndice] Letra {Letra} → Índice {Indice}", letra, indice);
             return indice;
         }
 
         /// <summary>
         /// Extrai data no formato dd/MM da mensagem.
-        /// Se a data jÃ¡ passou neste ano, assume o prÃ³ximo ano.
+        /// Se a data já passou neste ano, assume o próximo ano.
         /// </summary>
         private DateTime? ExtrairDataReserva(string texto)
         {
@@ -1629,7 +1631,7 @@ namespace APIBack.Automation.Services
 
             if (dia < 1 || dia > 31 || mes < 1 || mes > 12)
             {
-                _logger.LogWarning("[ExtrairDataReserva] Data invÃ¡lida: {Dia}/{Mes}", dia, mes);
+                _logger.LogWarning("[ExtrairDataReserva] Data inválida: {Dia}/{Mes}", dia, mes);
                 return null;
             }
 
@@ -1642,7 +1644,7 @@ namespace APIBack.Automation.Services
                     data = data.AddYears(1);
                 }
 
-                _logger.LogDebug("[ExtrairDataReserva] Data extraÃ­da: {Data:yyyy-MM-dd} (texto='{Texto}')", data, texto);
+                _logger.LogDebug("[ExtrairDataReserva] Data extraída: {Data:yyyy-MM-dd} (texto='{Texto}')", data, texto);
                 return data.Date;
             }
             catch (Exception ex)
@@ -1655,21 +1657,21 @@ namespace APIBack.Automation.Services
         private string BuildMsgListagemReservas(List<Reserva> reservas)
         {
             var msg = new StringBuilder();
-            msg.AppendLine("ðŸ“‹ Suas reservas ativas:");
+            msg.AppendLine("📋 Suas reservas ativas:");
             msg.AppendLine();
 
             char opcao = 'A';
             foreach (var r in reservas)
             {
-                msg.AppendLine($"OpÃ§Ã£o {opcao} - Reserva #{r.Codigo}");
-                msg.AppendLine($"ðŸ“… {DateFormattingHelper.FormatarDataCurta(r.DataReserva)} Ã s {r.HoraInicio.ToString(@"hh\:mm")}");
-                msg.AppendLine($"ðŸ‘¥ {r.QtdPessoas} pessoas");
+                msg.AppendLine($"Opção {opcao} - Reserva #{r.Codigo}");
+                msg.AppendLine($"📅 {DateFormattingHelper.FormatarDataCurta(r.DataReserva)} às {r.HoraInicio.ToString(@"hh\:mm")}");
+                msg.AppendLine($"👥 {r.QtdPessoas} pessoas");
                 msg.AppendLine();
                 opcao++;
             }
 
-            msg.AppendLine("â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”");
-            msg.AppendLine("Qual vocÃª quer alterar?");
+            msg.AppendLine("━━━━━━━━━━━━━━━━━━━━━━");
+            msg.AppendLine("Qual você quer alterar?");
 
             if (reservas.Count > 0)
             {
@@ -1677,10 +1679,10 @@ namespace APIBack.Automation.Services
             }
 
             msg.AppendLine();
-            msg.AppendLine("â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”â”");
-            msg.AppendLine("Outras opÃ§Ãµes:");
-            msg.AppendLine("1ï¸âƒ£ Fazer nova reserva");
-            msg.AppendLine("2ï¸âƒ£ Encerrar atendimento");
+            msg.AppendLine("━━━━━━━━━━━━━━━━━━━━━━");
+            msg.AppendLine("Outras opções:");
+            msg.AppendLine("1️⃣ Fazer nova reserva");
+            msg.AppendLine("2️⃣ Encerrar atendimento");
 
             return msg.ToString();
         }
@@ -1692,46 +1694,46 @@ namespace APIBack.Automation.Services
 
             var textoLower = mensagem.ToLower();
 
-            // Detectar cÃ³digo (#16, "cÃ³digo 16", "reserva 16")
+            // Detectar código (#16, "código 16", "reserva 16")
             if (Regex.IsMatch(textoLower,
-                @"#\d+|c[oÃ³]digo\s*\d+|reserva\s*\d+"))
+                @"#\d+|c[oó]digo\s*\d+|reserva\s*\d+"))
             {
-                _logger.LogInformation("[ContextInterceptor] Filtro detectado: CÃ“DIGO");
+                _logger.LogInformation("[ContextInterceptor] Filtro detectado: CÓDIGO");
                 return true;
             }
 
-            // Detectar dia especÃ­fico ("dia 15", "15/10")
+            // Detectar dia específico ("dia 15", "15/10")
             if (Regex.IsMatch(textoLower,
                 @"dia\s*\d{1,2}|\d{1,2}/\d{1,2}|\d{1,2}\s+de\s+\w+"))
             {
-                _logger.LogInformation("[ContextInterceptor] Filtro detectado: DIA ESPECÃFICO");
+                _logger.LogInformation("[ContextInterceptor] Filtro detectado: DIA ESPECÍFICO");
                 return true;
             }
 
             // Detectar dia da semana
-            var diasSemana = new[] { "domingo", "segunda", "terÃ§a", "terca",
-                "quarta", "quinta", "sexta", "sÃ¡bado", "sabado" };
+            var diasSemana = new[] { "domingo", "segunda", "terça", "terca",
+                "quarta", "quinta", "sexta", "sábado", "sabado" };
             if (diasSemana.Any(dia => textoLower.Contains(dia)))
             {
                 _logger.LogInformation("[ContextInterceptor] Filtro detectado: DIA DA SEMANA");
                 return true;
             }
 
-            // Detectar referÃªncia temporal
-            if (textoLower.Contains("hoje") || textoLower.Contains("amanhÃ£") ||
+            // Detectar referência temporal
+            if (textoLower.Contains("hoje") || textoLower.Contains("amanhã") ||
                 textoLower.Contains("amanha"))
             {
                 _logger.LogInformation("[ContextInterceptor] Filtro detectado: TEMPORAL");
                 return true;
             }
 
-            // Detectar mÃªs
-            var meses = new[] { "janeiro", "fevereiro", "marÃ§o", "marco",
+            // Detectar mês
+            var meses = new[] { "janeiro", "fevereiro", "março", "marco",
                 "abril", "maio", "junho", "julho", "agosto", "setembro",
                 "outubro", "novembro", "dezembro" };
             if (meses.Any(mes => textoLower.Contains(mes)))
             {
-                _logger.LogInformation("[ContextInterceptor] Filtro detectado: MÃŠS");
+                _logger.LogInformation("[ContextInterceptor] Filtro detectado: MÊS");
                 return true;
             }
 
