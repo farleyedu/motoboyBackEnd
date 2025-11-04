@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using APIBack.DTOs;
 using APIBack.Repository.Interface;
 using Dapper;
 using Microsoft.Extensions.Configuration;
@@ -97,6 +98,34 @@ namespace APIBack.Repository
             var barbers = connection.Query<dynamic>(sqlBarbeiros, new { EstabelecimentoId = estabelecimentoId });
 
             return (reservations, barbers);
+        }
+
+        /// <summary>
+        /// Obtém métricas consolidadas das reservas confirmadas de um dia específico.
+        /// </summary>
+        public MetricasDiaDTO GetMetricasDia(DateTime data)
+        {
+            using var connection = new NpgsqlConnection(_connectionString);
+
+            const string sql = @"
+                SELECT 
+                    COUNT(*) AS quantidadeConfirmadas,
+                    COALESCE(SUM(qtd_pessoas), 0) AS totalPessoas
+                FROM reservas
+                WHERE data_reserva = @Data
+                  AND status = 'confirmada'
+            ";
+
+            var resultado = connection.QuerySingleOrDefault<MetricasDiaDTO>(sql, new
+            {
+                Data = data.Date
+            });
+
+            return resultado ?? new MetricasDiaDTO
+            {
+                QuantidadeConfirmadas = 0,
+                TotalPessoas = 0
+            };
         }
     }
 }

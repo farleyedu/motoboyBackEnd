@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using APIBack.DTOs;
 
 namespace APIBack.Repository.Interface
 {
@@ -14,6 +15,11 @@ namespace APIBack.Repository.Interface
         /// Obtém reservas de barbearia + lista de barbeiros ativos
         /// </summary>
         (IEnumerable<dynamic> reservations, IEnumerable<dynamic> barbers) GetReservasBarbearia(int month, int year, Guid estabelecimentoId);
+
+        /// <summary>
+        /// Obtém métricas consolidadas das reservas confirmadas de um dia específico.
+        /// </summary>
+        MetricasDiaDTO GetMetricasDia(DateTime data);
     }
 }
 
