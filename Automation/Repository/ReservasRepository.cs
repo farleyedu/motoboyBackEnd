@@ -113,7 +113,7 @@ namespace APIBack.Repository
                     COALESCE(SUM(qtd_pessoas), 0) AS totalPessoas
                 FROM reservas
                 WHERE data_reserva = @Data
-                  AND status = 'confirmada'
+                  AND status = 'confirmado'
             ";
 
             var resultado = connection.QuerySingleOrDefault<MetricasDiaDTO>(sql, new
