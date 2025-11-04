@@ -103,8 +103,8 @@ if (DateTime.TryParse(Convert.ToString(value), out DateTime parsed))            
         private static bool EhConfirmada(dynamic reserva)
         {
             var status = Convert.ToString(reserva?.status) ?? string.Empty;
-            return status.Equals("confirmada", StringComparison.OrdinalIgnoreCase);
-        }
+return status.Equals("confirmada", StringComparison.OrdinalIgnoreCase) ||
+       status.Equals("confirmado", StringComparison.OrdinalIgnoreCase);        }
 
         private static int ExtrairQuantidadePessoas(dynamic reserva)
         {
