@@ -15,7 +15,7 @@ namespace APIBack.Repository
         {
             "confirmado",
             "confirmada",
-            "conclu\u00EDdo",
+            "concluído",
             "concluido"
         };
 
@@ -122,7 +122,7 @@ namespace APIBack.Repository
                     COALESCE(SUM(qtd_pessoas), 0) AS totalPessoas
                 FROM reservas
                 WHERE data_reserva = @Data
-                  AND status = ANY(@StatusList)
+                  AND status::text = ANY(@StatusList)
             ";
 
             var resultado = connection.QuerySingleOrDefault<MetricasDiaDTO>(sql, new
@@ -187,4 +187,5 @@ namespace APIBack.Repository
         }
     }
 }
+
 
