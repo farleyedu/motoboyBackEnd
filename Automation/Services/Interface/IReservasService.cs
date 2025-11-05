@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using APIBack.DTOs;
 
 namespace APIBack.Service.Interface
@@ -20,6 +21,15 @@ namespace APIBack.Service.Interface
         /// Obtém métricas de um dia específico (reservas confirmadas e total de pessoas).
         /// </summary>
         MetricasDiaDTO GetMetricasDia(DateTime data);
+
+        /// <summary>
+        /// Atualiza o status de uma reserva para concluído.
+        /// </summary>
+        Task MarcarChegadaAsync(int id);
+
+        /// <summary>
+        /// Gera o arquivo Excel com as reservas do dia informado.
+        /// </summary>
+        Task<byte[]> ExportarDiaAsync(DateOnly data);
     }
 }
-

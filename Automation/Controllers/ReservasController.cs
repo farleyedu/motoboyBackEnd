@@ -1,5 +1,6 @@
 using System;
 using System.Globalization;
+using System.Threading.Tasks;
 using APIBack.Service.Interface;
 using Microsoft.AspNetCore.Mvc;
 
@@ -17,7 +18,7 @@ namespace APIBack.Automation.Controllers
         }
 
         /// <summary>
-        /// GET: api/reservas?month=11&amp;year=2025&amp;estabelecimentoId=uuid
+        /// GET: api/reservas?month=11&year=2025&estabelecimentoId=uuid
         /// Retorna reservas de restaurante agrupadas por dia.
         /// </summary>
         [HttpGet]
@@ -69,7 +70,7 @@ namespace APIBack.Automation.Controllers
         }
 
         /// <summary>
-        /// GET: api/reservas/barbearia?month=11&amp;year=2025&amp;estabelecimentoId=uuid
+        /// GET: api/reservas/barbearia?month=11&year=2025&estabelecimentoId=uuid
         /// Retorna reservas de barbearia + lista de barbeiros.
         /// </summary>
         [HttpGet("barbearia")]
@@ -154,6 +155,67 @@ namespace APIBack.Automation.Controllers
                 return StatusCode(500, new
                 {
                     error = "Erro ao consultar metricas do dia."
+                });
+            }
+        }
+
+        /// <summary>
+        /// PUT: api/reservas/{id}/chegada
+        /// Atualiza o status da reserva para concluído.
+        /// </summary>
+        [HttpPut("{id:int}/chegada")]
+        public async Task<IActionResult> MarcarChegada(int id)
+        {
+            try
+            {
+                await _reservasService.MarcarChegadaAsync(id);
+                return NoContent();
+            }
+            catch (InvalidOperationException ex)
+            {
+                return NotFound(new { error = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Erro ao marcar chegada: {ex.Message}");
+                return StatusCode(500, new
+                {
+                    error = "Erro ao atualizar status da reserva."
+                });
+            }
+        }
+
+        /// <summary>
+        /// GET: api/reservas/exportar?data=2025-11-05
+        /// Exporta as reservas do dia informado em formato Excel.
+        /// </summary>
+        [HttpGet("exportar")]
+        public async Task<IActionResult> Exportar([FromQuery] DateOnly? data)
+        {
+            try
+            {
+                if (!data.HasValue)
+                {
+                    return BadRequest(new
+                    {
+                        error = "Parametro 'data' e obrigatorio no formato yyyy-MM-dd."
+                    });
+                }
+
+                var arquivo = await _reservasService.ExportarDiaAsync(data.Value);
+                var nomeArquivo = $"reservas_{data:yyyy-MM-dd}.xlsx";
+
+                return File(
+                    fileContents: arquivo,
+                    contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    fileDownloadName: nomeArquivo);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Erro ao exportar reservas: {ex.Message}");
+                return StatusCode(500, new
+                {
+                    error = "Erro ao gerar planilha de reservas."
                 });
             }
         }

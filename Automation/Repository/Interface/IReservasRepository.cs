@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
 using APIBack.DTOs;
 
 namespace APIBack.Repository.Interface
@@ -17,9 +18,18 @@ namespace APIBack.Repository.Interface
         (IEnumerable<dynamic> reservations, IEnumerable<dynamic> barbers) GetReservasBarbearia(int month, int year, Guid estabelecimentoId);
 
         /// <summary>
+        /// Atualiza o status de uma reserva específica.
+        /// </summary>
+        Task<bool> AtualizarStatusAsync(int id, string novoStatus);
+
+        /// <summary>
+        /// Lista reservas de um dia específico incluindo telefone do cliente.
+        /// </summary>
+        Task<IEnumerable<dynamic>> ListarPorDiaAsync(DateOnly data);
+
+        /// <summary>
         /// Obtém métricas consolidadas das reservas confirmadas de um dia específico.
         /// </summary>
         MetricasDiaDTO GetMetricasDia(DateTime data);
     }
 }
-
