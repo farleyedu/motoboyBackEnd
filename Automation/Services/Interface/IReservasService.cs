@@ -31,5 +31,10 @@ namespace APIBack.Service.Interface
         /// Gera o arquivo Excel com as reservas do dia informado.
         /// </summary>
         Task<byte[]> ExportarDiaAsync(DateOnly data);
+
+        /// <summary>
+        /// Obtém métricas agregadas por períodos (dia, semana, quinzena, mês).
+        /// </summary>
+        MetricasMesDTO GetMetricasMes(int month, int year, Guid estabelecimentoId);
     }
 }

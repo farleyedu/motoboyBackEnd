@@ -110,6 +110,34 @@ namespace APIBack.Repository
         }
 
         /// <summary>
+        /// Conta total de reservas e pessoas confirmadas em um período específico.
+        /// </summary>
+        public (int totalReservas, int totalPessoas) ContarReservasPorPeriodo(DateTime dataInicio, DateTime dataFim, Guid estabelecimentoId)
+        {
+            using var connection = new NpgsqlConnection(_connectionString);
+
+            const string sql = @"
+                SELECT 
+                    COUNT(*) AS total_reservas,
+                    COALESCE(SUM(qtd_pessoas), 0) AS total_pessoas
+                FROM reservas
+                WHERE id_estabelecimento = @EstabelecimentoId
+                  AND data_reserva BETWEEN @DataInicio AND @DataFim
+                  AND status::text = ANY(@StatusList)
+            ";
+
+            var resultado = connection.QuerySingleOrDefault<(int total_reservas, int total_pessoas)>(sql, new
+            {
+                EstabelecimentoId = estabelecimentoId,
+                DataInicio = dataInicio,
+                DataFim = dataFim,
+                StatusList = StatusesConsiderados
+            });
+
+            return resultado == default ? (0, 0) : (resultado.total_reservas, resultado.total_pessoas);
+        }
+
+        /// <summary>
         /// Obtem metricas consolidadas das reservas confirmadas de um dia especifico.
         /// </summary>
         public MetricasDiaDTO GetMetricasDia(DateTime data)

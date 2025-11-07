@@ -92,6 +92,22 @@ namespace APIBack.Service
         }
 
         /// <summary>
+        /// Obtém métricas agregadas por períodos (dia, semana, quinzena, mês).
+        /// </summary>
+        public MetricasMesDTO GetMetricasMes(int month, int year, Guid estabelecimentoId)
+        {
+            var hoje = DateTime.Today;
+            var isMesAtual = hoje.Year == year && hoje.Month == month;
+
+            if (!isMesAtual)
+            {
+                return CalcularMetricasMesCompleto(month, year, estabelecimentoId);
+            }
+
+            return CalcularMetricasPeriodos(month, year, estabelecimentoId, hoje);
+        }
+
+        /// <summary>
         /// Atualiza o status da reserva para concluido.
         /// </summary>
         public async Task MarcarChegadaAsync(int id)
@@ -298,6 +314,99 @@ namespace APIBack.Service
             }
 
             return int.TryParse(Convert.ToString(value), out int parsedQuantidade) ? parsedQuantidade : 0;
+        }
+
+        private MetricasMesDTO CalcularMetricasMesCompleto(int month, int year, Guid estabelecimentoId)
+        {
+            var inicioMes = new DateTime(year, month, 1);
+            var fimMes = new DateTime(year, month, DateTime.DaysInMonth(year, month), 23, 59, 59);
+
+            var (totalReservas, totalPessoas) = _reservasRepository.ContarReservasPorPeriodo(inicioMes, fimMes, estabelecimentoId);
+
+            return new MetricasMesDTO
+            {
+                IsMesAtual = false,
+                MesSelecionado = new PeriodoMetricaDTO
+                {
+                    TotalReservas = totalReservas,
+                    TotalPessoas = totalPessoas,
+                    DataInicio = inicioMes,
+                    DataFim = fimMes
+                }
+            };
+        }
+
+        private MetricasMesDTO CalcularMetricasPeriodos(int month, int year, Guid estabelecimentoId, DateTime hoje)
+        {
+            var inicioHoje = hoje.Date;
+            var fimHoje = hoje.Date.AddDays(1).AddTicks(-1);
+            var (reservasHoje, pessoasHoje) = _reservasRepository.ContarReservasPorPeriodo(inicioHoje, fimHoje, estabelecimentoId);
+
+            var inicioSemana = GetStartOfWeek(hoje);
+            var fimSemana = inicioSemana.AddDays(7).AddTicks(-1);
+            var (reservasSemana, pessoasSemana) = _reservasRepository.ContarReservasPorPeriodo(inicioSemana, fimSemana, estabelecimentoId);
+
+            var (inicioQuinzena, fimQuinzena, numeroQuinzena) = GetQuinzenaAtual(hoje);
+            var (reservasQuinzena, pessoasQuinzena) = _reservasRepository.ContarReservasPorPeriodo(inicioQuinzena, fimQuinzena, estabelecimentoId);
+
+            var inicioMes = new DateTime(year, month, 1);
+            var fimMes = new DateTime(year, month, DateTime.DaysInMonth(year, month), 23, 59, 59);
+            var (reservasMes, pessoasMes) = _reservasRepository.ContarReservasPorPeriodo(inicioMes, fimMes, estabelecimentoId);
+
+            return new MetricasMesDTO
+            {
+                IsMesAtual = true,
+                Hoje = new PeriodoMetricaDTO
+                {
+                    TotalReservas = reservasHoje,
+                    TotalPessoas = pessoasHoje,
+                    DataInicio = inicioHoje,
+                    DataFim = fimHoje
+                },
+                SemanaVigente = new PeriodoMetricaDTO
+                {
+                    TotalReservas = reservasSemana,
+                    TotalPessoas = pessoasSemana,
+                    DataInicio = inicioSemana,
+                    DataFim = fimSemana
+                },
+                QuinzenaVigente = new PeriodoMetricaDTO
+                {
+                    TotalReservas = reservasQuinzena,
+                    TotalPessoas = pessoasQuinzena,
+                    DataInicio = inicioQuinzena,
+                    DataFim = fimQuinzena,
+                    Numero = numeroQuinzena
+                },
+                MesVigente = new PeriodoMetricaDTO
+                {
+                    TotalReservas = reservasMes,
+                    TotalPessoas = pessoasMes,
+                    DataInicio = inicioMes,
+                    DataFim = fimMes
+                }
+            };
+        }
+
+        private static DateTime GetStartOfWeek(DateTime date)
+        {
+            var diff = (7 + (date.DayOfWeek - DayOfWeek.Sunday)) % 7;
+            return date.AddDays(-1 * diff).Date;
+        }
+
+        private static (DateTime inicio, DateTime fim, int numero) GetQuinzenaAtual(DateTime date)
+        {
+            if (date.Day <= 15)
+            {
+                var inicio = new DateTime(date.Year, date.Month, 1);
+                var fim = new DateTime(date.Year, date.Month, 15, 23, 59, 59);
+                return (inicio, fim, 1);
+            }
+
+            var inicioSegunda = new DateTime(date.Year, date.Month, 16);
+            var ultimoDia = DateTime.DaysInMonth(date.Year, date.Month);
+            var fimSegunda = new DateTime(date.Year, date.Month, ultimoDia, 23, 59, 59);
+            return (inicioSegunda, fimSegunda, 2);
         }
     }
 }

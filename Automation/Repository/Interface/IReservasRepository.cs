@@ -18,6 +18,11 @@ namespace APIBack.Repository.Interface
         (IEnumerable<dynamic> reservations, IEnumerable<dynamic> barbers) GetReservasBarbearia(int month, int year, Guid estabelecimentoId);
 
         /// <summary>
+        /// Conta total de reservas e pessoas confirmadas em um período específico.
+        /// </summary>
+        (int totalReservas, int totalPessoas) ContarReservasPorPeriodo(DateTime dataInicio, DateTime dataFim, Guid estabelecimentoId);
+
+        /// <summary>
         /// Atualiza o status de uma reserva específica.
         /// </summary>
         Task<bool> AtualizarStatusAsync(int id, string novoStatus);

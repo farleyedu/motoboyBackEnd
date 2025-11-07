@@ -220,6 +220,58 @@ namespace APIBack.Automation.Controllers
             }
         }
 
+        /// <summary>
+        /// GET: api/reservas/metricas-mes?month=11&year=2025&estabelecimentoId=uuid
+        /// Retorna métricas agregadas por período (dia, semana, quinzena, mês).
+        /// </summary>
+        [HttpGet("metricas-mes")]
+        public IActionResult GetMetricasMes(
+            [FromQuery] int? month,
+            [FromQuery] int? year,
+            [FromQuery] Guid estabelecimentoId)
+        {
+            try
+            {
+                month ??= TryParseAlternateInt("mes");
+                year ??= TryParseAlternateInt("ano");
+
+                if (!month.HasValue || month < 1 || month > 12)
+                {
+                    return BadRequest(new
+                    {
+                        error = "Parametro 'month' (ou 'mes') deve ser um numero entre 1 e 12."
+                    });
+                }
+
+                if (!year.HasValue || year < 1)
+                {
+                    return BadRequest(new
+                    {
+                        error = "Parametro 'year' (ou 'ano') deve ser um numero valido maior que zero."
+                    });
+                }
+
+                if (estabelecimentoId == Guid.Empty)
+                {
+                    return BadRequest(new
+                    {
+                        error = "Parametro 'estabelecimentoId' e obrigatorio."
+                    });
+                }
+
+                var metricas = _reservasService.GetMetricasMes(month.Value, year.Value, estabelecimentoId);
+                return Ok(metricas);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Erro ao calcular metricas mensais: {ex.Message}");
+                return StatusCode(500, new
+                {
+                    error = "Erro ao consultar metricas do mes."
+                });
+            }
+        }
+
         private int? TryParseAlternateInt(string queryKey)
         {
             if (Request?.Query.TryGetValue(queryKey, out var value) == true &&
