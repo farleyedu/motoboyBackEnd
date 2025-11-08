@@ -127,14 +127,13 @@ namespace APIBack.Service
         {
             var reservas = (await _reservasRepository.ListarPorDiaAsync(data)).ToList();
 
-            ExcelPackage.LicenseContext = LicenseContext.NonCommercial;
-
+            ExcelPackage.License.SetNonCommercialOrganization("Zippy");
             using var package = new ExcelPackage();
             var worksheet = package.Workbook.Worksheets.Add("Reservas");
 
             var headers = new[]
             {
-                "ID", "Data", "Hora In\u00EDcio", "Hora Fim", "Cliente", "Pessoas", "Status", "Telefone", "Observa\u00E7\u00F5es"
+                "ID", "Data", "Hora Inicio", "Hora Fim", "Cliente", "Pessoas", "Status", "Telefone", "Observações"
             };
 
             for (var col = 0; col < headers.Length; col++)
