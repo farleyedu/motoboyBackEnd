@@ -112,7 +112,11 @@ namespace APIBack.Repository
         /// <summary>
         /// Conta total de reservas e pessoas confirmadas em um período específico.
         /// </summary>
-        public (int totalReservas, int totalPessoas) ContarReservasPorPeriodo(DateTime dataInicio, DateTime dataFim, Guid estabelecimentoId)
+        public (int totalReservas, int totalPessoas) ContarReservasPorPeriodo(
+            DateTime dataInicio,
+            DateTime dataFim,
+            Guid estabelecimentoId,
+            long? barbeiroId = null)
         {
             using var connection = new NpgsqlConnection(_connectionString);
 
@@ -124,6 +128,7 @@ namespace APIBack.Repository
                 WHERE id_estabelecimento = @EstabelecimentoId
                   AND data_reserva BETWEEN @DataInicio AND @DataFim
                   AND status::text = ANY(@StatusList)
+                  AND (@BarbeiroId IS NULL OR id_profissional = @BarbeiroId)
             ";
 
             var resultado = connection.QuerySingleOrDefault<(int total_reservas, int total_pessoas)>(sql, new
@@ -131,7 +136,8 @@ namespace APIBack.Repository
                 EstabelecimentoId = estabelecimentoId,
                 DataInicio = dataInicio,
                 DataFim = dataFim,
-                StatusList = StatusesConsiderados
+                StatusList = StatusesConsiderados,
+                BarbeiroId = barbeiroId
             });
 
             return resultado == default ? (0, 0) : (resultado.total_reservas, resultado.total_pessoas);

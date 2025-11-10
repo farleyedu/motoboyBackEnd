@@ -22,6 +22,7 @@ namespace APIBack.Service
         };
 
         private readonly IReservasRepository _reservasRepository;
+        private const int CapacidadePadraoPorDia = 110;
 
         public ReservasService(IReservasRepository reservasRepository)
         {
@@ -88,7 +89,9 @@ namespace APIBack.Service
         /// </summary>
         public MetricasDiaDTO GetMetricasDia(DateTime data)
         {
-            return _reservasRepository.GetMetricasDia(data.Date);
+            var metricas = _reservasRepository.GetMetricasDia(data.Date);
+            metricas.TaxaOcupacao = CalcularTaxaOcupacao(metricas.TotalPessoas, CapacidadePadraoPorDia);
+            return metricas;
         }
 
         /// <summary>
@@ -105,6 +108,39 @@ namespace APIBack.Service
             }
 
             return CalcularMetricasPeriodos(month, year, estabelecimentoId, hoje);
+        }
+
+        /// <summary>
+        /// Obtém métricas agregadas para um período arbitrário.
+        /// </summary>
+        public MetricasPeriodoDTO GetMetricasPeriodo(DateTime inicio, DateTime fim, Guid estabelecimentoId, long? barbeiroId)
+        {
+            if (fim < inicio)
+            {
+                throw new ArgumentException("Data final não pode ser anterior à data inicial.");
+            }
+
+            var diasPeriodo = (int)(fim.Date - inicio.Date).TotalDays + 1;
+            if (diasPeriodo <= 0)
+            {
+                diasPeriodo = 1;
+            }
+
+            var capacidadeTotal = CapacidadePadraoPorDia * diasPeriodo;
+            var (quantidadeReservas, totalPessoas) = _reservasRepository.ContarReservasPorPeriodo(inicio, fim, estabelecimentoId, barbeiroId);
+            var taxaOcupacao = CalcularTaxaOcupacao(totalPessoas, capacidadeTotal);
+
+            return new MetricasPeriodoDTO
+            {
+                QuantidadeReservas = quantidadeReservas,
+                TotalPessoas = totalPessoas,
+                TaxaOcupacao = taxaOcupacao,
+                Periodo = new PeriodoDTO
+                {
+                    Inicio = inicio,
+                    Fim = fim
+                }
+            };
         }
 
         /// <summary>
@@ -320,7 +356,7 @@ namespace APIBack.Service
             var inicioMes = new DateTime(year, month, 1);
             var fimMes = new DateTime(year, month, DateTime.DaysInMonth(year, month), 23, 59, 59);
 
-            var (totalReservas, totalPessoas) = _reservasRepository.ContarReservasPorPeriodo(inicioMes, fimMes, estabelecimentoId);
+            var (totalReservas, totalPessoas) = _reservasRepository.ContarReservasPorPeriodo(inicioMes, fimMes, estabelecimentoId, null);
 
             return new MetricasMesDTO
             {
@@ -339,18 +375,18 @@ namespace APIBack.Service
         {
             var inicioHoje = hoje.Date;
             var fimHoje = hoje.Date.AddDays(1).AddTicks(-1);
-            var (reservasHoje, pessoasHoje) = _reservasRepository.ContarReservasPorPeriodo(inicioHoje, fimHoje, estabelecimentoId);
+            var (reservasHoje, pessoasHoje) = _reservasRepository.ContarReservasPorPeriodo(inicioHoje, fimHoje, estabelecimentoId, null);
 
             var inicioSemana = GetStartOfWeek(hoje);
             var fimSemana = inicioSemana.AddDays(7).AddTicks(-1);
-            var (reservasSemana, pessoasSemana) = _reservasRepository.ContarReservasPorPeriodo(inicioSemana, fimSemana, estabelecimentoId);
+            var (reservasSemana, pessoasSemana) = _reservasRepository.ContarReservasPorPeriodo(inicioSemana, fimSemana, estabelecimentoId, null);
 
             var (inicioQuinzena, fimQuinzena, numeroQuinzena) = GetQuinzenaAtual(hoje);
-            var (reservasQuinzena, pessoasQuinzena) = _reservasRepository.ContarReservasPorPeriodo(inicioQuinzena, fimQuinzena, estabelecimentoId);
+            var (reservasQuinzena, pessoasQuinzena) = _reservasRepository.ContarReservasPorPeriodo(inicioQuinzena, fimQuinzena, estabelecimentoId, null);
 
             var inicioMes = new DateTime(year, month, 1);
             var fimMes = new DateTime(year, month, DateTime.DaysInMonth(year, month), 23, 59, 59);
-            var (reservasMes, pessoasMes) = _reservasRepository.ContarReservasPorPeriodo(inicioMes, fimMes, estabelecimentoId);
+            var (reservasMes, pessoasMes) = _reservasRepository.ContarReservasPorPeriodo(inicioMes, fimMes, estabelecimentoId, null);
 
             return new MetricasMesDTO
             {
@@ -406,6 +442,18 @@ namespace APIBack.Service
             var ultimoDia = DateTime.DaysInMonth(date.Year, date.Month);
             var fimSegunda = new DateTime(date.Year, date.Month, ultimoDia, 23, 59, 59);
             return (inicioSegunda, fimSegunda, 2);
+        }
+
+        private static int CalcularTaxaOcupacao(int totalPessoas, int capacidadeTotal)
+        {
+            if (capacidadeTotal <= 0)
+            {
+                return 0;
+            }
+
+            var taxa = (double)totalPessoas / capacidadeTotal * 100;
+            var arredondado = (int)Math.Round(taxa, MidpointRounding.AwayFromZero);
+            return Math.Clamp(arredondado, 0, 100);
         }
     }
 }

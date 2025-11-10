@@ -36,5 +36,10 @@ namespace APIBack.Service.Interface
         /// Obtém métricas agregadas por períodos (dia, semana, quinzena, mês).
         /// </summary>
         MetricasMesDTO GetMetricasMes(int month, int year, Guid estabelecimentoId);
+
+        /// <summary>
+        /// Obtém métricas agregadas para um período arbitrário.
+        /// </summary>
+        MetricasPeriodoDTO GetMetricasPeriodo(DateTime inicio, DateTime fim, Guid estabelecimentoId, long? barbeiroId);
     }
 }

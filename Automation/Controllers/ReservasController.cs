@@ -272,6 +272,79 @@ namespace APIBack.Automation.Controllers
             }
         }
 
+        /// <summary>
+        /// GET: api/reservas/metricas-periodo?inicio=2025-11-01&fim=2025-11-05&estabelecimentoId=uuid
+        /// Retorna métricas agregadas do período informado.
+        /// </summary>
+        [HttpGet("metricas-periodo")]
+        public IActionResult GetMetricasPeriodo(
+            [FromQuery] string inicio,
+            [FromQuery] string fim,
+            [FromQuery] Guid estabelecimentoId,
+            [FromQuery] string? barbeiroId = null)
+        {
+            try
+            {
+                if (string.IsNullOrWhiteSpace(inicio) || string.IsNullOrWhiteSpace(fim))
+                {
+                    return BadRequest(new
+                    {
+                        error = "Parametros 'inicio' e 'fim' são obrigatórios no formato yyyy-MM-dd."
+                    });
+                }
+
+                if (estabelecimentoId == Guid.Empty)
+                {
+                    return BadRequest(new
+                    {
+                        error = "Parametro 'estabelecimentoId' é obrigatório."
+                    });
+                }
+
+                if (!DateTime.TryParseExact(inicio, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var dataInicio))
+                {
+                    return BadRequest(new { error = "Parametro 'inicio' deve estar no formato yyyy-MM-dd." });
+                }
+
+                if (!DateTime.TryParseExact(fim, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var dataFim))
+                {
+                    return BadRequest(new { error = "Parametro 'fim' deve estar no formato yyyy-MM-dd." });
+                }
+
+                long? barbeiroIdValor = null;
+                if (!string.IsNullOrWhiteSpace(barbeiroId))
+                {
+                    if (!long.TryParse(barbeiroId, out var parsedBarbeiro) || parsedBarbeiro <= 0)
+                    {
+                        return BadRequest(new { error = "Parametro 'barbeiroId' inválido." });
+                    }
+
+                    barbeiroIdValor = parsedBarbeiro;
+                }
+
+                var inicioPeriodo = dataInicio.Date;
+                var fimPeriodo = dataFim.Date.AddDays(1).AddTicks(-1);
+
+                var metricas = _reservasService.GetMetricasPeriodo(inicioPeriodo, fimPeriodo, estabelecimentoId, barbeiroIdValor);
+                metricas.Periodo.Inicio = inicioPeriodo;
+                metricas.Periodo.Fim = fimPeriodo;
+
+                return Ok(metricas);
+            }
+            catch (ArgumentException ex)
+            {
+                return BadRequest(new { error = ex.Message });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Erro ao calcular metricas do período: {ex.Message}");
+                return StatusCode(500, new
+                {
+                    error = "Erro ao consultar metricas do período."
+                });
+            }
+        }
+
         private int? TryParseAlternateInt(string queryKey)
         {
             if (Request?.Query.TryGetValue(queryKey, out var value) == true &&

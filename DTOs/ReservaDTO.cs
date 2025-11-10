@@ -7,6 +7,7 @@ namespace APIBack.DTOs
     {
         public int QuantidadeConfirmadas { get; set; }
         public int TotalPessoas { get; set; }
+        public int TaxaOcupacao { get; set; }
     }
 
     public class ReservasDiaDTO
@@ -16,4 +17,3 @@ namespace APIBack.DTOs
         public int TotalPessoasDia { get; set; }
     }
 }
-
