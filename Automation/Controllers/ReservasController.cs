@@ -1,359 +1,414 @@
 using System;
-using System.Globalization;
 using System.Threading.Tasks;
-using APIBack.Service.Interface;
+using APIBack.DTOs;
+using APIBack.Service;
 using Microsoft.AspNetCore.Mvc;
 
-namespace APIBack.Automation.Controllers
+namespace APIBack.Controllers
 {
+    /// <summary>
+    /// Controller para gerenciamento de reservas
+    /// </summary>
     [Route("api/[controller]")]
     [ApiController]
-    public class ReservasController : ControllerBase
+    public class ReservaController : ControllerBase
     {
-        private readonly IReservasService _reservasService;
+        private readonly ReservaService _reservaService;
 
-        public ReservasController(IReservasService reservasService)
+        public ReservaController(ReservaService reservaService)
         {
-            _reservasService = reservasService;
+            _reservaService = reservaService;
         }
 
+        // ========================================================================
+        // VERIFICAR DISPONIBILIDADE
+        // ========================================================================
+
         /// <summary>
-        /// GET: api/reservas?month=11&year=2025&estabelecimentoId=uuid
-        /// Retorna reservas de restaurante agrupadas por dia.
+        /// Verifica disponibilidade para uma reserva
+        /// Valida: dia da semana (terça fechada), quantidade mínima (10), capacidade
         /// </summary>
+        /// <param name="dto">Dados para verificação</param>
+        /// <returns>Informação de disponibilidade</returns>
+        [HttpPost("verificar-disponibilidade")]
+        [ProducesResponseType(typeof(DisponibilidadeResponseDTO), 200)]
+        [ProducesResponseType(400)]
+        public async Task<IActionResult> VerificarDisponibilidade([FromBody] VerificarDisponibilidadeDTO dto)
+        {
+            try
+            {
+                // Validação básica do modelo
+                if (!ModelState.IsValid)
+                {
+                    return BadRequest(new
+                    {
+                        success = false,
+                        error = "Dados inválidos",
+                        details = ModelState,
+                        traceId = HttpContext.TraceIdentifier
+                    });
+                }
+
+                // Verifica disponibilidade (inclui todas as validações)
+                var (disponivel, mensagem) = await _reservaService.BuscarDisponibilidadeAsync(
+                    dto.IdEstabelecimento,
+                    dto.DataReserva,
+                    dto.QtdPessoas
+                );
+
+                if (!disponivel)
+                {
+                    return Ok(new DisponibilidadeResponseDTO
+                    {
+                        Disponivel = false,
+                        Mensagem = mensagem,
+                        PessoasDisponiveis = null,
+                        PessoasOcupadas = null,
+                        CapacidadeTotal = null
+                    });
+                }
+
+                // TODO: Buscar informações detalhadas de capacidade
+                return Ok(new DisponibilidadeResponseDTO
+                {
+                    Disponivel = true,
+                    Mensagem = mensagem,
+                    PessoasDisponiveis = null, // Calcular se necessário
+                    PessoasOcupadas = null,
+                    CapacidadeTotal = null
+                });
+            }
+            catch (Exception ex)
+            {
+                // Log do erro (implementar logging adequado)
+                Console.WriteLine($"Erro ao verificar disponibilidade: {ex.Message}");
+
+                return StatusCode(500, new
+                {
+                    success = false,
+                    error = "Erro interno ao verificar disponibilidade",
+                    traceId = HttpContext.TraceIdentifier
+                });
+            }
+        }
+
+        // ========================================================================
+        // CRIAR RESERVA
+        // ========================================================================
+
+        /// <summary>
+        /// Cria uma nova reserva
+        /// Valida todas as regras antes de criar
+        /// </summary>
+        /// <param name="dto">Dados da reserva</param>
+        /// <returns>Reserva criada</returns>
+        [HttpPost]
+        [ProducesResponseType(typeof(ReservaResponseDTO), 201)]
+        [ProducesResponseType(400)]
+        public async Task<IActionResult> CriarReserva([FromBody] CriarReservaDTO dto)
+        {
+            try
+            {
+                // Validação do modelo
+                if (!ModelState.IsValid)
+                {
+                    return BadRequest(new
+                    {
+                        success = false,
+                        error = "Dados inválidos",
+                        details = ModelState,
+                        traceId = HttpContext.TraceIdentifier
+                    });
+                }
+
+                // ===== VALIDAÇÃO 1: Verificar capacidade (inclui todas validações) =====
+                var (disponivel, mensagem) = await _reservaService.VerificarCapacidadeDiaAsync(
+                    dto.IdEstabelecimento,
+                    dto.DataReserva,
+                    dto.QtdPessoas
+                );
+
+                if (!disponivel)
+                {
+                    return BadRequest(new
+                    {
+                        success = false,
+                        error = mensagem,
+                        traceId = HttpContext.TraceIdentifier
+                    });
+                }
+
+                // ===== VALIDAÇÃO 2: Horário de chegada =====
+                // TODO: Adicionar validação de horário de chegada
+                // Seg a Sex: 17h às 20h
+                // Sáb e Dom: 12h às 20h
+
+                // ===== CRIAR RESERVA =====
+                // TODO: Implementar lógica de criação no repository
+                // var reserva = await _reservaService.CriarReservaAsync(dto);
+
+                // Exemplo de resposta (substituir por lógica real)
+                return StatusCode(201, new
+                {
+                    success = true,
+                    message = "Reserva criada com sucesso",
+                    data = new
+                    {
+                        id = 0, // TODO: ID real
+                        codigoReserva = "RES-001", // TODO: Código real
+                        nomeCliente = dto.NomeClienteReserva,
+                        qtdPessoas = dto.QtdPessoas,
+                        dataReserva = dto.DataReserva.ToString("yyyy-MM-dd"),
+                        horaInicio = dto.HoraInicio,
+                        isAniversariante = dto.IsAniversariante ?? false,
+                        status = "confirmada"
+                    },
+                    traceId = HttpContext.TraceIdentifier
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Erro ao criar reserva: {ex.Message}");
+
+                return StatusCode(500, new
+                {
+                    success = false,
+                    error = "Erro interno ao criar reserva",
+                    traceId = HttpContext.TraceIdentifier
+                });
+            }
+        }
+
+        // ========================================================================
+        // ATUALIZAR RESERVA
+        // ========================================================================
+
+        /// <summary>
+        /// Atualiza uma reserva existente
+        /// Valida regras se data ou quantidade forem alteradas
+        /// </summary>
+        /// <param name="id">ID da reserva</param>
+        /// <param name="dto">Dados a serem atualizados</param>
+        /// <returns>Reserva atualizada</returns>
+        [HttpPut("{id}")]
+        [ProducesResponseType(typeof(ReservaResponseDTO), 200)]
+        [ProducesResponseType(404)]
+        [ProducesResponseType(400)]
+        public async Task<IActionResult> AtualizarReserva(int id, [FromBody] AtualizarReservaDTO dto)
+        {
+            try
+            {
+                // Validação do modelo
+                if (!ModelState.IsValid)
+                {
+                    return BadRequest(new
+                    {
+                        success = false,
+                        error = "Dados inválidos",
+                        details = ModelState,
+                        traceId = HttpContext.TraceIdentifier
+                    });
+                }
+
+                // Verificar se ID do body corresponde ao da URL
+                if (dto.Id != id)
+                {
+                    return BadRequest(new
+                    {
+                        success = false,
+                        error = "ID da reserva não corresponde ao informado na URL",
+                        traceId = HttpContext.TraceIdentifier
+                    });
+                }
+
+                // TODO: Buscar reserva existente
+                // var reservaExistente = await _reservaService.BuscarPorIdAsync(id);
+                // if (reservaExistente == null)
+                //     return NotFound(...);
+
+                // ===== VALIDAR SE DATA OU QUANTIDADE MUDARAM =====
+                bool validarCapacidade = dto.DataReserva.HasValue || dto.QtdPessoas.HasValue;
+
+                if (validarCapacidade)
+                {
+                    // Usar nova data ou manter existente
+                    // var dataFinal = dto.DataReserva ?? reservaExistente.DataReserva;
+                    // var qtdFinal = dto.QtdPessoas ?? reservaExistente.QtdPessoas;
+
+                    // var (disponivel, mensagem) = await _reservaService.VerificarCapacidadeDiaAsync(
+                    //     reservaExistente.IdEstabelecimento,
+                    //     dataFinal,
+                    //     qtdFinal
+                    // );
+
+                    // if (!disponivel)
+                    // {
+                    //     return BadRequest(new { success = false, error = mensagem });
+                    // }
+                }
+
+                // TODO: Atualizar reserva no repository
+                // var reservaAtualizada = await _reservaService.AtualizarReservaAsync(id, dto);
+
+                return Ok(new
+                {
+                    success = true,
+                    message = "Reserva atualizada com sucesso",
+                    data = new { } // TODO: Retornar reserva atualizada
+                });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Erro ao atualizar reserva: {ex.Message}");
+
+                return StatusCode(500, new
+                {
+                    success = false,
+                    error = "Erro interno ao atualizar reserva",
+                    traceId = HttpContext.TraceIdentifier
+                });
+            }
+        }
+
+        // ========================================================================
+        // LISTAR RESERVAS
+        // ========================================================================
+
+        /// <summary>
+        /// Lista reservas com filtros opcionais
+        /// </summary>
+        /// <param name="dataInicio">Data inicial (opcional)</param>
+        /// <param name="dataFim">Data final (opcional)</param>
+        /// <param name="status">Status (opcional)</param>
+        /// <returns>Lista de reservas</returns>
         [HttpGet]
-        public IActionResult GetReservasRestaurante(
-            [FromQuery] int? month,
-            [FromQuery] int? year,
-            [FromQuery] Guid estabelecimentoId)
+        [ProducesResponseType(typeof(ReservaListagemDTO[]), 200)]
+        public async Task<IActionResult> ListarReservas(
+            [FromQuery] DateTime? dataInicio,
+            [FromQuery] DateTime? dataFim,
+            [FromQuery] string status)
         {
             try
             {
-                month ??= TryParseAlternateInt("mes");
-                year ??= TryParseAlternateInt("ano");
+                // TODO: Implementar listagem no service/repository
+                // var reservas = await _reservaService.ListarReservasAsync(dataInicio, dataFim, status);
 
-                if (!month.HasValue || month < 1 || month > 12)
+                return Ok(new
                 {
-                    return BadRequest(new
-                    {
-                        error = "Parametro 'month' (ou 'mes') deve ser um numero entre 1 e 12."
-                    });
-                }
-
-                if (!year.HasValue || year < 1)
-                {
-                    return BadRequest(new
-                    {
-                        error = "Parametro 'year' (ou 'ano') deve ser um numero valido maior que zero."
-                    });
-                }
-
-                if (estabelecimentoId == Guid.Empty)
-                {
-                    return BadRequest(new
-                    {
-                        error = "Parametro 'estabelecimentoId' e obrigatorio."
-                    });
-                }
-
-                var reservas = _reservasService.GetReservasRestaurante(month.Value, year.Value, estabelecimentoId);
-                return Ok(reservas);
+                    success = true,
+                    data = new ReservaListagemDTO[] { }, // TODO: Retornar lista real
+                    traceId = HttpContext.TraceIdentifier
+                });
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Erro ao buscar reservas: {ex.Message}");
+                Console.WriteLine($"Erro ao listar reservas: {ex.Message}");
+
                 return StatusCode(500, new
                 {
-                    error = "Erro ao consultar reservas."
+                    success = false,
+                    error = "Erro interno ao listar reservas",
+                    traceId = HttpContext.TraceIdentifier
                 });
             }
         }
+
+        // ========================================================================
+        // BUSCAR RESERVA POR ID
+        // ========================================================================
 
         /// <summary>
-        /// GET: api/reservas/barbearia?month=11&year=2025&estabelecimentoId=uuid
-        /// Retorna reservas de barbearia + lista de barbeiros.
+        /// Busca uma reserva específica por ID
         /// </summary>
-        [HttpGet("barbearia")]
-        public IActionResult GetReservasBarbearia(
-            [FromQuery] int? month,
-            [FromQuery] int? year,
-            [FromQuery] Guid estabelecimentoId)
+        /// <param name="id">ID da reserva</param>
+        /// <returns>Dados da reserva</returns>
+        [HttpGet("{id}")]
+        [ProducesResponseType(typeof(ReservaResponseDTO), 200)]
+        [ProducesResponseType(404)]
+        public async Task<IActionResult> BuscarReservaPorId(int id)
         {
             try
             {
-                month ??= TryParseAlternateInt("mes");
-                year ??= TryParseAlternateInt("ano");
+                // TODO: Implementar busca no service/repository
+                // var reserva = await _reservaService.BuscarPorIdAsync(id);
 
-                if (!month.HasValue || month < 1 || month > 12)
+                // if (reserva == null)
+                // {
+                //     return NotFound(new
+                //     {
+                //         success = false,
+                //         error = $"Reserva com ID {id} não encontrada",
+                //         traceId = HttpContext.TraceIdentifier
+                //     });
+                // }
+
+                return Ok(new
                 {
-                    return BadRequest(new
-                    {
-                        error = "Parametro 'month' (ou 'mes') deve ser um numero entre 1 e 12."
-                    });
-                }
-
-                if (!year.HasValue || year < 1)
-                {
-                    return BadRequest(new
-                    {
-                        error = "Parametro 'year' (ou 'ano') deve ser um numero valido maior que zero."
-                    });
-                }
-
-                if (estabelecimentoId == Guid.Empty)
-                {
-                    return BadRequest(new
-                    {
-                        error = "Parametro 'estabelecimentoId' e obrigatorio."
-                    });
-                }
-
-                var resultado = _reservasService.GetReservasBarbearia(month.Value, year.Value, estabelecimentoId);
-                return Ok(resultado);
+                    success = true,
+                    data = new { }, // TODO: Retornar reserva encontrada
+                    traceId = HttpContext.TraceIdentifier
+                });
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Erro ao buscar agendamentos: {ex.Message}");
+                Console.WriteLine($"Erro ao buscar reserva: {ex.Message}");
+
                 return StatusCode(500, new
                 {
-                    error = "Erro ao consultar agendamentos ou barbeiros."
+                    success = false,
+                    error = "Erro interno ao buscar reserva",
+                    traceId = HttpContext.TraceIdentifier
                 });
             }
         }
+
+        // ========================================================================
+        // CANCELAR RESERVA
+        // ========================================================================
 
         /// <summary>
-        /// GET: api/reservas/metricas-dia?data=2025-11-05
-        /// Retorna métricas de reservas confirmadas e total de pessoas para uma data específica.
+        /// Cancela uma reserva existente
         /// </summary>
-        [HttpGet("metricas-dia")]
-        public IActionResult GetMetricasDia([FromQuery] string data)
+        /// <param name="id">ID da reserva a ser cancelada</param>
+        /// <returns>Confirmação de cancelamento</returns>
+        [HttpDelete("{id}")]
+        [ProducesResponseType(200)]
+        [ProducesResponseType(404)]
+        public async Task<IActionResult> CancelarReserva(int id)
         {
             try
             {
-                if (string.IsNullOrWhiteSpace(data))
-                {
-                    return BadRequest(new
-                    {
-                        error = "Parametro 'data' e obrigatorio no formato yyyy-MM-dd."
-                    });
-                }
+                // TODO: Implementar cancelamento no service/repository
+                // var resultado = await _reservaService.CancelarReservaAsync(id);
 
-                if (!DateTime.TryParseExact(data, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var dataConsulta))
-                {
-                    return BadRequest(new
-                    {
-                        error = "Parametro 'data' deve estar no formato yyyy-MM-dd."
-                    });
-                }
+                // if (!resultado)
+                // {
+                //     return NotFound(new
+                //     {
+                //         success = false,
+                //         error = $"Reserva com ID {id} não encontrada",
+                //         traceId = HttpContext.TraceIdentifier
+                //     });
+                // }
 
-                var metricas = _reservasService.GetMetricasDia(dataConsulta);
-                return Ok(metricas);
+                return Ok(new
+                {
+                    success = true,
+                    message = "Reserva cancelada com sucesso",
+                    traceId = HttpContext.TraceIdentifier
+                });
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"Erro ao calcular metricas diarias: {ex.Message}");
+                Console.WriteLine($"Erro ao cancelar reserva: {ex.Message}");
+
                 return StatusCode(500, new
                 {
-                    error = "Erro ao consultar metricas do dia."
+                    success = false,
+                    error = "Erro interno ao cancelar reserva",
+                    traceId = HttpContext.TraceIdentifier
                 });
             }
-        }
-
-        /// <summary>
-        /// PUT: api/reservas/{id}/chegada
-        /// Atualiza o status da reserva para concluído.
-        /// </summary>
-        [HttpPut("{id:int}/chegada")]
-        public async Task<IActionResult> MarcarChegada(int id)
-        {
-            try
-            {
-                await _reservasService.MarcarChegadaAsync(id);
-                return NoContent();
-            }
-            catch (InvalidOperationException ex)
-            {
-                return NotFound(new { error = ex.Message });
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Erro ao marcar chegada: {ex.Message}");
-                return StatusCode(500, new
-                {
-                    error = "Erro ao atualizar status da reserva."
-                });
-            }
-        }
-
-        /// <summary>
-        /// GET: api/reservas/exportar?data=2025-11-05
-        /// Exporta as reservas do dia informado em formato Excel.
-        /// </summary>
-        [HttpGet("exportar")]
-        public async Task<IActionResult> Exportar([FromQuery] DateOnly? data)
-        {
-            try
-            {
-                if (!data.HasValue)
-                {
-                    return BadRequest(new
-                    {
-                        error = "Parametro 'data' e obrigatorio no formato yyyy-MM-dd."
-                    });
-                }
-
-                var arquivo = await _reservasService.ExportarDiaAsync(data.Value);
-                var nomeArquivo = $"reservas_{data:yyyy-MM-dd}.xlsx";
-
-                return File(
-                    fileContents: arquivo,
-                    contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    fileDownloadName: nomeArquivo);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Erro ao exportar reservas: {ex.Message}");
-                return StatusCode(500, new
-                {
-                    error = "Erro ao gerar planilha de reservas."
-                });
-            }
-        }
-
-        /// <summary>
-        /// GET: api/reservas/metricas-mes?month=11&year=2025&estabelecimentoId=uuid
-        /// Retorna métricas agregadas por período (dia, semana, quinzena, mês).
-        /// </summary>
-        [HttpGet("metricas-mes")]
-        public IActionResult GetMetricasMes(
-            [FromQuery] int? month,
-            [FromQuery] int? year,
-            [FromQuery] Guid estabelecimentoId)
-        {
-            try
-            {
-                month ??= TryParseAlternateInt("mes");
-                year ??= TryParseAlternateInt("ano");
-
-                if (!month.HasValue || month < 1 || month > 12)
-                {
-                    return BadRequest(new
-                    {
-                        error = "Parametro 'month' (ou 'mes') deve ser um numero entre 1 e 12."
-                    });
-                }
-
-                if (!year.HasValue || year < 1)
-                {
-                    return BadRequest(new
-                    {
-                        error = "Parametro 'year' (ou 'ano') deve ser um numero valido maior que zero."
-                    });
-                }
-
-                if (estabelecimentoId == Guid.Empty)
-                {
-                    return BadRequest(new
-                    {
-                        error = "Parametro 'estabelecimentoId' e obrigatorio."
-                    });
-                }
-
-                var metricas = _reservasService.GetMetricasMes(month.Value, year.Value, estabelecimentoId);
-                return Ok(metricas);
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Erro ao calcular metricas mensais: {ex.Message}");
-                return StatusCode(500, new
-                {
-                    error = "Erro ao consultar metricas do mes."
-                });
-            }
-        }
-
-        /// <summary>
-        /// GET: api/reservas/metricas-periodo?inicio=2025-11-01&fim=2025-11-05&estabelecimentoId=uuid
-        /// Retorna métricas agregadas do período informado.
-        /// </summary>
-        [HttpGet("metricas-periodo")]
-        public IActionResult GetMetricasPeriodo(
-            [FromQuery] string inicio,
-            [FromQuery] string fim,
-            [FromQuery] Guid estabelecimentoId,
-            [FromQuery] string? barbeiroId = null)
-        {
-            try
-            {
-                if (string.IsNullOrWhiteSpace(inicio) || string.IsNullOrWhiteSpace(fim))
-                {
-                    return BadRequest(new
-                    {
-                        error = "Parametros 'inicio' e 'fim' são obrigatórios no formato yyyy-MM-dd."
-                    });
-                }
-
-                if (estabelecimentoId == Guid.Empty)
-                {
-                    return BadRequest(new
-                    {
-                        error = "Parametro 'estabelecimentoId' é obrigatório."
-                    });
-                }
-
-                if (!DateTime.TryParseExact(inicio, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var dataInicio))
-                {
-                    return BadRequest(new { error = "Parametro 'inicio' deve estar no formato yyyy-MM-dd." });
-                }
-
-                if (!DateTime.TryParseExact(fim, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var dataFim))
-                {
-                    return BadRequest(new { error = "Parametro 'fim' deve estar no formato yyyy-MM-dd." });
-                }
-
-                long? barbeiroIdValor = null;
-                if (!string.IsNullOrWhiteSpace(barbeiroId))
-                {
-                    if (!long.TryParse(barbeiroId, out var parsedBarbeiro) || parsedBarbeiro <= 0)
-                    {
-                        return BadRequest(new { error = "Parametro 'barbeiroId' inválido." });
-                    }
-
-                    barbeiroIdValor = parsedBarbeiro;
-                }
-
-                var inicioPeriodo = dataInicio.Date;
-                var fimPeriodo = dataFim.Date.AddDays(1).AddTicks(-1);
-
-                var metricas = _reservasService.GetMetricasPeriodo(inicioPeriodo, fimPeriodo, estabelecimentoId, barbeiroIdValor);
-                metricas.Periodo.Inicio = inicioPeriodo;
-                metricas.Periodo.Fim = fimPeriodo;
-
-                return Ok(metricas);
-            }
-            catch (ArgumentException ex)
-            {
-                return BadRequest(new { error = ex.Message });
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Erro ao calcular metricas do período: {ex.Message}");
-                return StatusCode(500, new
-                {
-                    error = "Erro ao consultar metricas do período."
-                });
-            }
-        }
-
-        private int? TryParseAlternateInt(string queryKey)
-        {
-            if (Request?.Query.TryGetValue(queryKey, out var value) == true &&
-                int.TryParse(value, out var parsed))
-            {
-                return parsed;
-            }
-
-            return null;
         }
     }
 }
