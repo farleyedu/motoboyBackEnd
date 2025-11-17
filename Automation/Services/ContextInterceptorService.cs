@@ -345,6 +345,7 @@ namespace APIBack.Automation.Services
                             idConversa);
 
                         var reserva = reservasAtivas.First();
+                        var reservaId = reserva.Id ?? throw new InvalidOperationException("Reserva carregada sem identificador.");
 
                         // Tentar extrair dados da mensagem
                         var novoHorario = ExtrairHorario(mensagemTexto);
@@ -363,7 +364,7 @@ namespace APIBack.Automation.Services
                             var horaDepois = string.IsNullOrWhiteSpace(novoHorario) ? horaAtual : novoHorario!;
 
                             var reply = BuildMsgConfirmacaoAlteracaoComData(
-                                reserva.Id,
+                                reservaId,
                                 reserva.DataReserva,
                                 null,  // ? dataDepois (null = mantém data atual)
                                 horaAtual,
@@ -374,10 +375,10 @@ namespace APIBack.Automation.Services
                             await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
                             {
                                 Estado = "aguardando_confirmacao_alteracao",
-                                ReservaIdPendente = reserva.Id,
+                                ReservaIdPendente = reservaId,
                                 DadosColetados = new Dictionary<string, object>
                                 {
-                                    { "reserva_id", reserva.Id },
+                                    { "reserva_id", reservaId },
                                     { "novo_horario", horaDepois },
                                     { "nova_qtd", qtdDepois }
                                 },
@@ -408,10 +409,10 @@ namespace APIBack.Automation.Services
                             await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
                             {
                                 Estado = "aguardando_dados_alteracao",
-                                ReservaIdPendente = reserva.Id,
+                                ReservaIdPendente = reservaId,
                                 DadosColetados = new Dictionary<string, object>
                                 {
-                                    { "reserva_id", reserva.Id },
+                                    { "reserva_id", reservaId },
                                     { "data_atual", reserva.DataReserva.ToString("yyyy-MM-dd") },
                                     { "hora_atual", reserva.HoraInicio.ToString(@"hh\:mm") },
                                     { "qtd_atual", reserva.QtdPessoas ?? 0 }
@@ -1717,6 +1718,8 @@ namespace APIBack.Automation.Services
                 return (false, null); // Sem reserva, deixa a IA processar
             }
 
+            var alvoId = alvo.Id ?? throw new InvalidOperationException("Reserva selecionada sem identificador.");
+
             // ? NOVO: Se não tem mudança especificada, pedir os dados
             if (novoHorario == null && !qtd.HasValue)
             {
@@ -1742,10 +1745,10 @@ namespace APIBack.Automation.Services
                 await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
                 {
                     Estado = "aguardando_dados_alteracao",
-                    ReservaIdPendente = alvo.Id,
+                    ReservaIdPendente = alvoId,
                     DadosColetados = new Dictionary<string, object>
                     {
-                        { "reserva_id", alvo.Id },
+                        { "reserva_id", alvoId },
                         { "data_atual", alvo.DataReserva.ToString("yyyy-MM-dd") },
                         { "hora_atual", alvo.HoraInicio.ToString(@"hh\:mm") },
                         { "qtd_atual", alvo.QtdPessoas ?? 0 }
@@ -1764,7 +1767,7 @@ namespace APIBack.Automation.Services
             var horaDepois = string.IsNullOrWhiteSpace(novoHorario) ? horaAtual : novoHorario!;
 
             var replyConfirmacao = BuildMsgConfirmacaoAlteracaoComData(
-                alvo.Id,
+                alvoId,
                 alvo.DataReserva,
                 null,  // ? dataDepois (null = mantém data atual)
                 horaAtual,
@@ -1775,10 +1778,10 @@ namespace APIBack.Automation.Services
             await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
             {
                 Estado = "aguardando_confirmacao_alteracao",
-                ReservaIdPendente = alvo.Id,
+                ReservaIdPendente = alvoId,
                 DadosColetados = new Dictionary<string, object>
                 {
-                    { "reserva_id", alvo.Id },
+                    { "reserva_id", alvoId },
                     { "novo_horario", horaDepois },
                     { "nova_qtd", qtdDepois }
                 },

@@ -43,9 +43,9 @@ namespace APIBack.Automation.Services
     {
         public Guid IdConversa { get; set; }
         public long? CodigoReserva { get; set; }
-        public string? FiltroData { get; set; }
-        public string? NovaData { get; set; }
-        public string? NovoHorario { get; set; }
+        public string FiltroData { get; set; }
+        public string NovaData { get; set; }
+        public string NovoHorario { get; set; }
         public int? NovaQtdPessoas { get; set; }
         public bool? EhMudancaRelativa { get; set; }
     }
@@ -291,14 +291,14 @@ PARÂMETROS IMPORTANTES:
 
                 if (validationResult.Issue == ReservaValidationIssue.DuplicacaoMesmoDia)
                 {
-                    return BuildJsonReply(validationResult.MensagemErro!, reservaConfirmada: false);
+                    return BuildJsonReply(validationResult.MensagemErro, reservaConfirmada: false);
                 }
 
-                return BuildJsonReply(validationResult.MensagemErro!);
+                return BuildJsonReply(validationResult.MensagemErro);
             }
 
-            var dataReserva = validationResult.DataCalculada!.Value;
-            var horaConvertida = validationResult.HoraCalculada!.Value;
+            var dataReserva = validationResult.DataCalculada.Value;
+            var horaConvertida = validationResult.HoraCalculada.Value;
 
             var conversa = await _conversationRepository.ObterPorIdAsync(args.IdConversa);
             if (conversa == null)
@@ -334,7 +334,12 @@ PARÂMETROS IMPORTANTES:
             if (reservaMesmoDia != null)
             {
                 ehAtualizacao = true;
-                idReserva = reservaMesmoDia.Id;
+                if (!reservaMesmoDia.Id.HasValue)
+                {
+                    throw new InvalidOperationException("Reserva existente nao possui identificador.");
+                }
+
+                idReserva = reservaMesmoDia.Id.Value;
 
                 reservaMesmoDia.NomeCliente = args.NomeCompleto;
                 reservaMesmoDia.QtdPessoas = args.QtdPessoas;
@@ -475,16 +480,17 @@ PARÂMETROS IMPORTANTES:
                     return BuildJsonReply($"Não encontrei a reserva #{args.CodigoReserva.Value} no seu nome. 😕\n\nQuer que eu liste suas reservas ativas? 😊");
                 }
 
-                await _reservaRepository.CancelarReservaAsync(reservaPorCodigo.Id);
-                await _conversationRepository.LimparContextoAsync(args.IdConversa);
+                var reservaId = reservaPorCodigo.Id ?? throw new InvalidOperationException("Reserva encontrada sem identificador.");
 
+                await _reservaRepository.CancelarReservaAsync(reservaId);
+                await _conversationRepository.LimparContextoAsync(args.IdConversa);
                 var dataFormatada = reservaPorCodigo.DataReserva.ToString("dd/MM/yyyy");
                 var horaFormatada = reservaPorCodigo.HoraInicio.ToString(@"hh\:mm");
 
                 _logger.LogInformation(
                     "[Conversa={Conversa}] Reserva #{IdReserva} cancelada via código. Contexto limpo. Motivo: {Motivo}",
                     args.IdConversa,
-                    reservaPorCodigo.Id,
+                    reservaId,
                     args.MotivoCliente);
 
                 var msg = new StringBuilder();
@@ -620,7 +626,7 @@ PARÂMETROS IMPORTANTES:
             }
 
             // 🔍 BUSCAR RESERVA POR CÓDIGO (se fornecido)
-            Reserva? reservaParaAtualizar = null;
+            Reserva reservaParaAtualizar = null;
 
             if (args.CodigoReserva.HasValue)
             {
@@ -676,7 +682,7 @@ PARÂMETROS IMPORTANTES:
             // Atualizar HORÁRIO
             if (!string.IsNullOrWhiteSpace(args.NovoHorario))
             {
-                if (TimeSpan.TryParseExact(args.NovoHorario, @"hh\:mm", CultureInfo.InvariantCulture, out var novoHorario))
+                if (TimeSpan.TryParseExact(args.NovoHorario, @"HH\:mm", CultureInfo.InvariantCulture, out var novoHorario))
                 {
                     var horarioAntigo = reservaParaAtualizar.HoraInicio;
                     reservaParaAtualizar.HoraInicio = novoHorario;
@@ -755,6 +761,7 @@ PARÂMETROS IMPORTANTES:
 
             return BuildJsonReply(alteracoes.ToString());
         }
+
         private async Task<string> HandleListarReservas(Guid idConversa)
         {
             var conversa = await _conversationRepository.ObterPorIdAsync(idConversa);

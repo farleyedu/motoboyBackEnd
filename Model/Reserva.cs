@@ -3,86 +3,116 @@ using System;
 namespace APIBack.Model
 {
     /// <summary>
-    /// Representa uma reserva no sistema
+    /// Representa uma reserva no sistema.
     /// </summary>
     public class Reserva
     {
         /// <summary>
-        /// ID único da reserva
+        /// ID unico da reserva.
         /// </summary>
-        public int Id { get; set; }
+        public long? Id { get; set; }
 
         /// <summary>
-        /// ID do estabelecimento
+        /// ID do estabelecimento.
         /// </summary>
         public Guid IdEstabelecimento { get; set; }
 
         /// <summary>
-        /// Nome completo do cliente que fez a reserva
+        /// ID do cliente (quando houver vinculo).
         /// </summary>
-        public string NomeClienteReserva { get; set; }
+        public Guid? IdCliente { get; set; }
 
         /// <summary>
-        /// Telefone de contato do cliente
+        /// ID do profissional associado (barbearia).
         /// </summary>
-        public string Telefone { get; set; }
+        public long? IdProfissional { get; set; }
 
         /// <summary>
-        /// Email do cliente (opcional)
+        /// ID do servico associado (barbearia).
         /// </summary>
-        public string Email { get; set; }
+        public long? IdServico { get; set; }
 
         /// <summary>
-        /// Quantidade de pessoas na reserva
-        /// Mínimo: 10 pessoas
+        /// Nome completo do cliente que fez a reserva.
         /// </summary>
-        public int QtdPessoas { get; set; }
+        public string NomeClienteReserva { get; set; } = string.Empty;
 
         /// <summary>
-        /// Data da reserva
+        /// Alias utilizado pelo Dapper para mapear o campo nome_cliente_reserva.
+        /// </summary>
+        public string NomeCliente
+        {
+            get => NomeClienteReserva;
+            set => NomeClienteReserva = value ?? string.Empty;
+        }
+
+        /// <summary>
+        /// Telefone de contato do cliente.
+        /// </summary>
+        public string? Telefone { get; set; }
+
+        /// <summary>
+        /// Email do cliente (opcional).
+        /// </summary>
+        public string? Email { get; set; }
+
+        /// <summary>
+        /// Quantidade de pessoas na reserva.
+        /// </summary>
+        public int? QtdPessoas { get; set; }
+
+        /// <summary>
+        /// Data da reserva.
         /// </summary>
         public DateTime DataReserva { get; set; }
 
         /// <summary>
-        /// Horário de início da reserva (formato: HH:mm:ss)
+        /// Horario de inicio da reserva.
         /// </summary>
-        public string HoraInicio { get; set; }
+        public TimeSpan HoraInicio { get; set; }
 
         /// <summary>
-        /// Status da reserva
-        /// Valores possíveis: "confirmada", "cancelada", "pendente"
+        /// Horario final da reserva (quando aplicavel).
         /// </summary>
-        public string Status { get; set; }
+        public TimeSpan? HoraFim { get; set; }
 
         /// <summary>
-        /// Observações adicionais sobre a reserva
+        /// Status atual da reserva.
         /// </summary>
-        public string Observacoes { get; set; }
+        public ReservaStatus Status { get; set; } = ReservaStatus.Pendente;
 
         /// <summary>
-        /// Código único da reserva para identificação
+        /// Observacoes adicionais sobre a reserva.
         /// </summary>
-        public string CodigoReserva { get; set; }
+        public string? Observacoes { get; set; }
 
         /// <summary>
-        /// Indica se há aniversariante nesta reserva
-        /// Aniversariante ganha brinde: brownie ou drink por conta da casa
-        /// Valor padrão: false
+        /// Codigo unico da reserva para identificacao.
+        /// </summary>
+        public string? CodigoReserva { get; set; }
+
+        /// <summary>
+        /// Alias para CodigoReserva utilizado em partes do codigo legado.
+        /// </summary>
+        public string Codigo
+        {
+            get => CodigoReserva ?? string.Empty;
+            set => CodigoReserva = value;
+        }
+
+        /// <summary>
+        /// Indica se ha aniversariante na reserva.
         /// </summary>
         public bool? IsAniversariante { get; set; }
 
         /// <summary>
-        /// Data de criação da reserva
+        /// Data de criacao da reserva.
         /// </summary>
         public DateTime DataCriacao { get; set; }
 
         /// <summary>
-        /// Data da última atualização
+        /// Data da ultima atualizacao da reserva.
         /// </summary>
         public DateTime? DataAtualizacao { get; set; }
-
-        // Relacionamentos (se aplicável)
-        // public virtual Estabelecimento Estabelecimento { get; set; }
-        // public virtual Cliente Cliente { get; set; }
     }
 }

@@ -16,4 +16,5 @@ namespace APIBack.Model
         [PgName("concluido")]
         Concluido
     }
+
 }
