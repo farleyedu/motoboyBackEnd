@@ -20,7 +20,7 @@ namespace APIBack.Service.Interface
         /// <summary>
         /// Obtém métricas de um dia específico (reservas confirmadas e total de pessoas).
         /// </summary>
-        MetricasDiaDTO GetMetricasDia(DateTime data);
+        MetricasDiaDTO GetMetricasDia(DateTime data, Guid estabelecimentoId);
 
         /// <summary>
         /// Atualiza o status de uma reserva para concluído.

@@ -6,7 +6,9 @@
       "Bash(git add:*)",
       "Bash(git checkout:*)",
       "Bash(dotnet build:*)",
-      "Bash(Select-String -Pattern \"error|Erro\" -Context 0,2)"
+      "Bash(Select-String -Pattern \"error|Erro\" -Context 0,2)",
+      "Bash(dotnet ef:*)",
+      "Bash(dir /s /b *.csproj)"
     ],
     "deny": [],
     "ask": []

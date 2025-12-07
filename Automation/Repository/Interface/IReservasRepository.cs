@@ -39,6 +39,6 @@ namespace APIBack.Repository.Interface
         /// <summary>
         /// Obtém métricas consolidadas das reservas confirmadas de um dia específico.
         /// </summary>
-        MetricasDiaDTO GetMetricasDia(DateTime data);
+        MetricasDiaDTO GetMetricasDia(DateTime data, Guid estabelecimentoId);
     }
 }

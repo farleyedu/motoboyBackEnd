@@ -146,7 +146,7 @@ namespace APIBack.Repository
         /// <summary>
         /// Obtem metricas consolidadas das reservas confirmadas de um dia especifico.
         /// </summary>
-        public MetricasDiaDTO GetMetricasDia(DateTime data)
+        public MetricasDiaDTO GetMetricasDia(DateTime data, Guid estabelecimentoId)
         {
             using var connection = new NpgsqlConnection(_connectionString);
 
@@ -156,12 +156,14 @@ namespace APIBack.Repository
                     COALESCE(SUM(qtd_pessoas), 0) AS totalPessoas
                 FROM reservas
                 WHERE data_reserva = @Data
+                  AND id_estabelecimento = @EstabelecimentoId
                   AND status::text = ANY(@StatusList)
             ";
 
             var resultado = connection.QuerySingleOrDefault<MetricasDiaDTO>(sql, new
             {
                 Data = data.Date,
+                EstabelecimentoId = estabelecimentoId,
                 StatusList = StatusesConsiderados
             });
 

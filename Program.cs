@@ -3,6 +3,7 @@ using APIBack.Service.Interface;
 using APIBack.Service;
 using APIBack.Repository.Interface;
 using Dapper;
+using APIBack.Middleware;
 // ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
 using Serilog;
 using APIBack.Automation.Interfaces;
@@ -72,6 +73,8 @@ builder.Services.AddScoped<IReservasRepository, ReservasRepository>();
 builder.Services.AddScoped<IMotoboyService, MotoboyService>();
 builder.Services.AddScoped<ILocalizacaoService, LocalizacaoService>();
 builder.Services.AddScoped<IReservasService, ReservasService>();
+builder.Services.AddScoped<IAuthService, AuthService>();
+builder.Services.AddSingleton<IJwtService, JwtService>();
 
 
 // ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
@@ -157,6 +160,7 @@ if (app.Environment.IsDevelopment() || app.Environment.IsProduction())
 // Usar o middleware de CORS
 app.UseCors("AllowAll");
 
+app.UseMiddleware<JwtAuthenticationMiddleware>();
 app.UseAuthorization();
 
 app.MapControllers();

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -484,6 +484,7 @@ PARÂMETROS IMPORTANTES:
 
                 await _reservaRepository.CancelarReservaAsync(reservaId);
                 await _conversationRepository.LimparContextoAsync(args.IdConversa);
+
                 var dataFormatada = reservaPorCodigo.DataReserva.ToString("dd/MM/yyyy");
                 var horaFormatada = reservaPorCodigo.HoraInicio.ToString(@"hh\:mm");
 

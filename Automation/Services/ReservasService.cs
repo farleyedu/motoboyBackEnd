@@ -87,9 +87,9 @@ namespace APIBack.Service
         /// <summary>
         /// Obtem metricas consolidadas de reservas confirmadas em uma data especifica.
         /// </summary>
-        public MetricasDiaDTO GetMetricasDia(DateTime data)
+        public MetricasDiaDTO GetMetricasDia(DateTime data, Guid estabelecimentoId)
         {
-            var metricas = _reservasRepository.GetMetricasDia(data.Date);
+            var metricas = _reservasRepository.GetMetricasDia(data.Date, estabelecimentoId);
             metricas.TaxaOcupacao = CalcularTaxaOcupacao(metricas.TotalPessoas, CapacidadePadraoPorDia);
             return metricas;
         }
