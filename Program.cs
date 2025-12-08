@@ -4,6 +4,7 @@ using APIBack.Service;
 using APIBack.Repository.Interface;
 using Dapper;
 using APIBack.Middleware;
+using APIBack.Options;
 // ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
 using Serilog;
 using APIBack.Automation.Interfaces;
@@ -75,6 +76,7 @@ builder.Services.AddScoped<ILocalizacaoService, LocalizacaoService>();
 builder.Services.AddScoped<IReservasService, ReservasService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddSingleton<IJwtService, JwtService>();
+builder.Services.Configure<GoogleOAuthOptions>(builder.Configuration.GetSection("GoogleOAuth"));
 
 
 // ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================

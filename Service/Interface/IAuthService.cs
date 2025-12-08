@@ -9,8 +9,10 @@ namespace APIBack.Service.Interface
     public interface IAuthService
     {
         Task<TokenResponse> LoginAsync(LoginRequest request);
+        Task<OAuthAuthorizationResponse> IniciarLoginGoogleAsync(string? redirectUri);
+        Task<OAuthCallbackResult> ProcessarCallbackGoogleAsync(string code, string state);
+        Task<string?> ConsumirRedirectGoogleAsync(string state);
         Task<TokenResponse> SelecionarEstabelecimentoAsync(Guid userId, Guid estabelecimentoId);
         Task<List<EstabelecimentoDisponivelDTO>> ListarEstabelecimentosDisponiveisAsync(Guid userId);
     }
 }
-
