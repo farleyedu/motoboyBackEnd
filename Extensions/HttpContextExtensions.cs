@@ -8,16 +8,16 @@ namespace APIBack.Extensions
 {
     public static class HttpContextExtensions
     {
-        public static Guid? GetUserId(this HttpContext context)
+        public static int? GetUserId(this HttpContext context)
         {
             if (context.Items.TryGetValue("UserId", out var value))
             {
-                if (value is Guid guid)
+                if (value is int intId)
                 {
-                    return guid;
+                    return intId;
                 }
 
-                if (Guid.TryParse(value?.ToString(), out var parsed))
+                if (int.TryParse(value?.ToString(), out var parsed))
                 {
                     return parsed;
                 }
@@ -153,4 +153,3 @@ namespace APIBack.Extensions
         }
     }
 }
-

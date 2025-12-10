@@ -14,7 +14,7 @@ namespace APIBack.Attributes
 
             var userId = context.HttpContext.GetUserId();
 
-            if (userId == null || userId == Guid.Empty)
+            if (!userId.HasValue || userId.Value <= 0)
             {
                 context.Result = new JsonResult(new
                 {
@@ -28,4 +28,3 @@ namespace APIBack.Attributes
         }
     }
 }
-

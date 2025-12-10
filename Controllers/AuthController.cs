@@ -108,67 +108,6 @@ namespace APIBack.Controllers
             }
         }
 
-        [HttpGet("estabelecimentos")]
-        [Authorize]
-        public async Task<IActionResult> ListarEstabelecimentos()
-        {
-            try
-            {
-                var userId = HttpContext.GetUserId();
-
-                if (!userId.HasValue)
-                {
-                    return Unauthorized(new { success = false, error = "Usu\u00e1rio n\u00e3o autenticado." });
-                }
-
-                var estabelecimentos = await _authService.ListarEstabelecimentosDisponiveisAsync(userId.Value);
-                return Ok(new { success = true, data = estabelecimentos });
-            }
-            catch (UnauthorizedAccessException ex)
-            {
-                return Unauthorized(new { success = false, error = ex.Message });
-            }
-            catch
-            {
-                return StatusCode(500, new { success = false, error = "Erro ao listar estabelecimentos." });
-            }
-        }
-
-        [HttpPost("selecionar-estabelecimento")]
-        [Authorize]
-        public async Task<IActionResult> SelecionarEstabelecimento([FromBody] SelecionarEstabelecimentoRequest request)
-        {
-            if (!ModelState.IsValid)
-            {
-                return BadRequest(new
-                {
-                    success = false,
-                    error = "Requisi\u00e7\u00e3o inv\u00e1lida."
-                });
-            }
-
-            try
-            {
-                var userId = HttpContext.GetUserId();
-
-                if (!userId.HasValue)
-                {
-                    return Unauthorized(new { success = false, error = "Usu\u00e1rio n\u00e3o autenticado." });
-                }
-
-                var response = await _authService.SelecionarEstabelecimentoAsync(userId.Value, request.EstabelecimentoId);
-                return Ok(new { success = true, data = response });
-            }
-            catch (UnauthorizedAccessException ex)
-            {
-                return Unauthorized(new { success = false, error = ex.Message });
-            }
-            catch
-            {
-                return StatusCode(500, new { success = false, error = "Erro ao selecionar estabelecimento." });
-            }
-        }
-
         [HttpGet("me")]
         [Authorize]
         public IActionResult ObterUsuarioAtual()

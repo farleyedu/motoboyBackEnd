@@ -217,100 +217,6 @@ SELECT id,
             return Task.FromResult(entry?.RedirectUri);
         }
 
-        public async Task<TokenResponse> SelecionarEstabelecimentoAsync(Guid userId, Guid estabelecimentoId)
-        {
-            await using var connection = new NpgsqlConnection(_connectionString);
-
-            var usuario = await ObterUsuarioPorIdAsync(connection, userId);
-
-            if (usuario == null || usuario.DeletedAt != null)
-            {
-                throw new UnauthorizedAccessException("Usuário não encontrado ou inativo.");
-            }
-
-            // Verifica acesso ao estabelecimento (super admin sempre pode)
-            var contexto = await ObterContextoEstabelecimentoAsync(connection, usuario.Id, estabelecimentoId, usuario.IsSuperAdmin);
-
-            if (!usuario.IsSuperAdmin && contexto.VinculoId == null)
-            {
-                throw new UnauthorizedAccessException("Usuário não possui acesso a este estabelecimento.");
-            }
-
-            const string sqlUpdateUltimo = @"
-UPDATE usuario
-   SET ultimo_estabelecimento_acessado = @EstabelecimentoId
- WHERE id = @UserId";
-
-            await connection.ExecuteAsync(sqlUpdateUltimo, new { EstabelecimentoId = estabelecimentoId, UserId = userId });
-
-            // Atualiza cache local
-            usuario.UltimoEstabelecimentoAcessado = estabelecimentoId;
-
-            return await BuildTokenResponseAsync(connection, usuario, estabelecimentoId);
-        }
-
-        public async Task<List<EstabelecimentoDisponivelDTO>> ListarEstabelecimentosDisponiveisAsync(Guid userId)
-        {
-            await using var connection = new NpgsqlConnection(_connectionString);
-
-            var usuario = await ObterUsuarioPorIdAsync(connection, userId);
-
-            if (usuario == null || usuario.DeletedAt != null)
-            {
-                throw new UnauthorizedAccessException("Usuário não encontrado ou inativo.");
-            }
-
-            IEnumerable<EstabelecimentoDisponivelRow> estabelecimentos;
-
-            if (usuario.IsSuperAdmin)
-            {
-                const string sqlTodos = @"
-SELECT  e.id              AS Id,
-        e.nome_fantasia   AS Nome,
-        te.nome           AS Tipo,
-        ''::text          AS TipoAcesso,
-        'ativo'::text     AS Status
-  FROM estabelecimentos e
-  JOIN tipo_estabelecimento te ON te.id = e.id_tipo_estabelecimento
- WHERE (e.ativo IS NULL OR e.ativo = TRUE)
- ORDER BY e.nome_fantasia";
-
-                estabelecimentos = await connection.QueryAsync<EstabelecimentoDisponivelRow>(sqlTodos);
-            }
-            else
-            {
-                const string sqlVinculados = @"
-SELECT  e.id              AS Id,
-        e.nome_fantasia   AS Nome,
-        te.nome           AS Tipo,
-        ue.tipo_acesso    AS TipoAcesso,
-        ue.status         AS Status
-  FROM usuario_estabelecimentos ue
-  JOIN estabelecimentos e ON e.id = ue.id_estabelecimento
-  JOIN tipo_estabelecimento te ON te.id = e.id_tipo_estabelecimento
- WHERE ue.id_usuario = @UserId
-   AND ue.ativo = TRUE
-   AND ue.status = 'ativo'
- ORDER BY e.nome_fantasia";
-
-                estabelecimentos = await connection.QueryAsync<EstabelecimentoDisponivelRow>(sqlVinculados, new { UserId = userId });
-            }
-
-            var atualId = usuario.UltimoEstabelecimentoAcessado;
-
-            return estabelecimentos
-                .Select(e => new EstabelecimentoDisponivelDTO
-                {
-                    Id = e.Id,
-                    Nome = e.Nome ?? string.Empty,
-                    Tipo = e.Tipo ?? string.Empty,
-                    TipoAcesso = e.TipoAcesso ?? string.Empty,
-                    Status = e.Status ?? string.Empty,
-                    IsAtual = atualId.HasValue && atualId.Value == e.Id
-                })
-                .ToList();
-        }
-
         private GoogleOAuthOptions EnsureGoogleOAuthConfigurada()
         {
             if (_googleOAuthOptions == null || !_googleOAuthOptions.Enabled)
@@ -966,14 +872,6 @@ SELECT  m.nome                  AS Modulo,
             public string? Permissoes { get; set; }
         }
 
-        private sealed class EstabelecimentoDisponivelRow
-        {
-            public Guid Id { get; set; }
-            public string? Nome { get; set; }
-            public string? Tipo { get; set; }
-            public string? TipoAcesso { get; set; }
-            public string? Status { get; set; }
-        }
     }
 }
 

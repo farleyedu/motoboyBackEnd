@@ -5,7 +5,7 @@ namespace APIBack.Model.Auth
 {
     public class JwtPayload
     {
-        public int UserId { get; set; }
+        public int? UserId { get; set; }
         public string Nome { get; set; } = string.Empty;
         public string Email { get; set; } = string.Empty;
         public bool IsSuperAdmin { get; set; }
@@ -19,4 +19,3 @@ namespace APIBack.Model.Auth
         public DateTime IssuedAt { get; set; }
     }
 }
-

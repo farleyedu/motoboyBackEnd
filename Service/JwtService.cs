@@ -126,7 +126,6 @@ namespace APIBack.Service
         {
             var claims = new List<Claim>
             {
-                new Claim(JwtRegisteredClaimNames.Sub, payload.UserId.ToString()),
                 new Claim(JwtRegisteredClaimNames.Email, payload.Email ?? string.Empty),
                 new Claim("name", payload.Nome ?? string.Empty),
                 new Claim("is_super_admin", payload.IsSuperAdmin ? "true" : "false"),
@@ -134,6 +133,11 @@ namespace APIBack.Service
                     new DateTimeOffset(issuedAt).ToUnixTimeSeconds().ToString(),
                     ClaimValueTypes.Integer64)
             };
+
+            if (payload.UserId.HasValue)
+            {
+                claims.Add(new Claim(JwtRegisteredClaimNames.Sub, payload.UserId.Value.ToString()));
+            }
 
             if (payload.EstabelecimentoId.HasValue)
             {
