@@ -35,14 +35,14 @@ namespace APIBack.Automation.Services
 
         public bool ValidateSignature(string? signature, string payload)
         {
+            var valido = _signatureValidator.ValidarXHubSignature256(signature, payload);
+            if (valido) return true;
+
             if (string.IsNullOrWhiteSpace(signature))
             {
                 _logger.LogWarning("Assinatura X-Hub-Signature-256 ausente");
-                return false;
             }
-
-            var valido = _signatureValidator.ValidarXHubSignature256(signature, payload);
-            if (!valido)
+            else
             {
                 _logger.LogWarning("Invalid X-Hub-Signature-256");
             }

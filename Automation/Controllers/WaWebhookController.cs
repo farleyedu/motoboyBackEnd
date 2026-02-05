@@ -79,6 +79,8 @@ namespace APIBack.Automation.Controllers
             }
 
             var assinatura = Request.Headers["X-Hub-Signature-256"].ToString();
+            _logger.LogInformation("[Webhook] POST recebido. SignaturePresent={SignaturePresent} PayloadLength={PayloadLength} ContentType={ContentType}",
+                !string.IsNullOrWhiteSpace(assinatura), payload.Length, Request.ContentType ?? "(null)");
             if (!_validator.ValidateSignature(assinatura, payload))
             {
                 return Ok();
@@ -100,6 +102,8 @@ namespace APIBack.Automation.Controllers
                 return Ok();
             }
 
+            _logger.LogInformation("[Webhook] Payload valido. Entradas={Entries}", carga.Entradas.Count);
+
             foreach (var entrada in carga.Entradas)
             {
                 if (entrada.Mudancas == null) continue;
@@ -117,6 +121,7 @@ namespace APIBack.Automation.Controllers
 
                             if (mensagem?.Texto?.Corpo == null || string.IsNullOrWhiteSpace(mensagem.Id) || string.IsNullOrWhiteSpace(mensagem.De))
                             {
+                                _logger.LogDebug("[Webhook] Mensagem ignorada por falta de campos essenciais (id={MensagemId}, from={From})", mensagem?.Id, MaskValue(mensagem?.De));
                                 continue;
                             }
 
@@ -160,8 +165,14 @@ namespace APIBack.Automation.Controllers
                                 DataMensagemUtc: dataMsgUtc,
                                 Valor: valor);
 
+                            _logger.LogInformation("[Webhook] Mensagem recebida id={MensagemId} from={From} phoneNumberId={PhoneNumberId} display={Display}",
+                                mensagem.Id,
+                                MaskValue(mensagem.De),
+                                valor.Metadados?.IdNumeroTelefone ?? "(null)",
+                                valor.Metadados?.NumeroTelefoneExibicao ?? "(null)");
+
                             await _dispatcher.EnqueueAsync(input, HttpContext.RequestAborted);
-                            _logger.LogDebug("[Webhook] Mensagem {MensagemId} enfileirada (from={From})", mensagem.Id, mensagem.De);
+                            _logger.LogDebug("[Webhook] Mensagem {MensagemId} enfileirada (from={From})", mensagem.Id, MaskValue(mensagem.De));
                         }
                         catch (Exception ex)
                         {
@@ -190,6 +201,14 @@ namespace APIBack.Automation.Controllers
                 message = "Token atualizado com sucesso (apenas em mem�ria).",
                 updated_at_utc = _waTokenProvider.LastUpdatedUtc?.ToString("o")
             });
+        }
+
+        private static string MaskValue(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value)) return "(vazio)";
+            if (value.Length <= 4) return value;
+            var tail = value[^4..];
+            return new string('*', value.Length - 4) + tail;
         }
     }
 }
