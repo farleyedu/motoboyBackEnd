@@ -13,7 +13,7 @@ namespace APIBack.Automation.Infra
     public class MetaOptions
     {
         public string AppSecret { get; set; } = "<TODO>";
-        public string AccessToken { get; set; } = "EAAJSsCDzZCQwBPQi7ZBWKUPZAArWy9lzBMFlxtfdnxDHUXNjnqCV7ZBUZBym1ryXGxtlBRAQLicjsEnd3mIMiwnbj1dswxfZAshXjWEiaDWmsbLiLmxwQYkcQcvkVPpvDbkjYvNlmkolvYRolXI64LEHnqaQtKeqqHlIv1hS6MWxQmJPeJB29weHZAzfgPu5iIZBtLfC8AsPqW0aTB8VElYRo4MFaUFaqZBc6daZCJYEcwwYQ2m0CMYNL9uCisF1eI4QZDZD";
+        public string AccessToken { get; set; } = "<TODO>";
         public string PhoneNumberId { get; set; } = "<TODO>";
     }
 

@@ -34,6 +34,13 @@ if (!runningOnRender)
 {
     builder.Configuration.AddJsonFile("appsettings.Local.json", optional: true, reloadOnChange: true);
 }
+else
+{
+    // Render Secret File support (runtime mount path for image/native services).
+    // Accept both root-relative and /etc/secrets to cover different Render runtimes.
+    builder.Configuration.AddJsonFile("appsettings.secrets.json", optional: true, reloadOnChange: false);
+    builder.Configuration.AddJsonFile("/etc/secrets/appsettings.secrets.json", optional: true, reloadOnChange: false);
+}
 // ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
 // Serilog basic console logger
 Log.Logger = new LoggerConfiguration()
