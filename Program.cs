@@ -72,7 +72,11 @@ builder.Services.AddSingleton(dataSource);
 
 
 // Add services to the container.
-builder.Services.AddControllers();
+builder.Services.AddControllers(options =>
+{
+    // Global auth by default. Use [AllowAnonymous] explicitly on public endpoints.
+    options.Filters.Add(new APIBack.Attributes.AuthorizeAttribute());
+});
 builder.Services.AddHttpClient();
 builder.Services.AddMemoryCache();
 builder.Services.AddScoped<IUsuarioRepository, UsuarioRepository>();
@@ -152,7 +156,11 @@ builder.Services.AddCors(options =>
 
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerGen(options =>
+{
+    options.SupportNonNullableReferenceTypes();
+    options.CustomSchemaIds(type => (type.FullName ?? type.Name).Replace("+", "."));
+});
 
 // Explicit Kestrel binding: HTTP on port 7137
 builder.WebHost.ConfigureKestrel(options =>
