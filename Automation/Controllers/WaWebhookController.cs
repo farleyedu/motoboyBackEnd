@@ -2,6 +2,7 @@
 using System;
 using System.Text.Json;
 using System.Threading.Tasks;
+using APIBack.Attributes;
 using APIBack.Automation.Dtos;
 using APIBack.Automation.Infra;
 using APIBack.Automation.Interfaces;
@@ -46,6 +47,7 @@ namespace APIBack.Automation.Controllers
         }
 
         [HttpGet("webhook")]
+        [Microsoft.AspNetCore.Authorization.AllowAnonymous]
         public IActionResult VerifyWebhook(
             [FromQuery(Name = "hub.mode")] string mode,
             [FromQuery(Name = "hub.verify_token")] string token,
@@ -59,10 +61,15 @@ namespace APIBack.Automation.Controllers
             }
 
             _logger.LogWarning("Falha na verifica��o do webhook. Token inv�lido.");
-            return Forbid();
+            return StatusCode(StatusCodes.Status403Forbidden, new
+            {
+                success = false,
+                error = "Não autorizado."
+            });
         }
 
         [HttpPost("webhook")]
+        [Microsoft.AspNetCore.Authorization.AllowAnonymous]
         public async Task<IActionResult> Webhook()
         {
             string payload;
@@ -186,6 +193,7 @@ namespace APIBack.Automation.Controllers
         }
 
         [HttpPost("token")]
+        [RequirePermission("WhatsApp", "configurar")]
         public IActionResult AtualizarAccessToken([FromBody] UpdateWhatsAppTokenRequest req)
         {
             if (req == null || string.IsNullOrWhiteSpace(req.AccessToken))

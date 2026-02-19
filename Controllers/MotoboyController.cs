@@ -1,7 +1,10 @@
-﻿using APIBack.DTOs;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using APIBack.Attributes;
+using APIBack.DTOs;
 using APIBack.Model;
-using APIBack.Service;
 using APIBack.Service.Interface;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 
 namespace APIBack.Controllers
@@ -19,24 +22,30 @@ namespace APIBack.Controllers
 
         // GET: api/motoboys
         [HttpGet]
+        [RequirePermission("Delivery", "visualizar")]
         public ActionResult<IEnumerable<Motoboy>> GetMotoboys()
         {
             var motoboys = _motoboyService.GetMotoboy();
             return Ok(motoboys);
         }
-        // GET: api/motoboys/1
+
+        // GET: api/motoboys/com-pedidos
         [HttpGet("com-pedidos")]
+        [RequirePermission("Delivery", "visualizar")]
         public ActionResult<MotoboyComPedidosDTO> GetMotoboysOnline()
         {
             var motoboy = _motoboyService.GetMotoboysOnline();
             if (motoboy == null)
+            {
                 return NotFound();
+            }
 
             return Ok(motoboy);
         }
 
         // GET: api/motoboys/convidar
         [HttpGet("convidar")]
+        [RequirePermission("Delivery", "visualizar")]
         public ActionResult<IEnumerable<Motoboy>> ConvidarMotoboys()
         {
             var motoboys = _motoboyService.ConvidarMotoboy();
@@ -44,15 +53,20 @@ namespace APIBack.Controllers
         }
 
         [HttpPost("{id}/upload-avatar")]
+        [RequirePermission("Delivery", "editar")]
         public async Task<IActionResult> UploadAvatar(int id, IFormFile avatar)
         {
             if (avatar == null || avatar.Length == 0)
-                return BadRequest("Imagem inválida");
+            {
+                return BadRequest("Imagem invalida");
+            }
 
             var resultado = await _motoboyService.UploadAvatarAsync(id, avatar);
 
             if (!resultado.Sucesso)
+            {
                 return BadRequest(resultado.Mensagem);
+            }
 
             return Ok(new { avatar = resultado.CaminhoAvatar });
         }

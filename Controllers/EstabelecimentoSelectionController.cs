@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using APIBack.Attributes;
 using APIBack.Automation.Dtos.Estabelecimentos;
 using APIBack.Automation.Services.Interface;
+using APIBack.DTOs.Common;
 using APIBack.Extensions;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -28,68 +29,82 @@ namespace APIBack.Controllers
 
         [HttpGet("me/estabelecimentos")]
         [Authorize]
+        [RequirePermission("Configuracoes", "visualizar")]
+        [ProducesResponseType(typeof(ApiResponse<IReadOnlyCollection<UsuarioEstabelecimentoDto>>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status403Forbidden)]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status500InternalServerError)]
         public async Task<IActionResult> GetMeEstabelecimentos()
         {
             var userId = HttpContext.GetUserId();
             if (!userId.HasValue)
             {
-                return Unauthorized(new { success = false, error = "Usuário não autenticado." });
+                return Unauthorized(ApiResponse<object>.Fail("Usuário não autenticado."));
             }
 
             try
             {
                 var estabelecimentos = await _selectionService.ListarEstabelecimentosAsync(userId.Value);
-                return Ok(new { success = true, data = estabelecimentos });
+                return Ok(ApiResponse<IReadOnlyCollection<UsuarioEstabelecimentoDto>>.Ok(estabelecimentos));
             }
             catch (UnauthorizedAccessException ex)
             {
-                return StatusCode(StatusCodes.Status403Forbidden, new { success = false, error = ex.Message });
+                return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ex.Message));
             }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Erro ao listar estabelecimentos do usuário {UserId}", userId.Value);
-                return StatusCode(500, new { success = false, error = "Erro ao listar estabelecimentos." });
+                return StatusCode(500, ApiResponse<object>.Fail("Erro ao listar estabelecimentos."));
             }
         }
 
         [HttpPost("auth/definir-estabelecimento")]
         [Authorize]
+        [RequirePermission("Configuracoes", "visualizar")]
+        [ProducesResponseType(typeof(ApiResponse<DefinirEstabelecimentoAtivoResponse>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status403Forbidden)]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status404NotFound)]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status500InternalServerError)]
         public async Task<IActionResult> DefinirEstabelecimento([FromBody] DefinirEstabelecimentoAtivoRequest request)
         {
             if (!ModelState.IsValid)
             {
-                return BadRequest(new { success = false, error = "Requisição inválida." });
+                return BadRequest(ApiResponse<object>.Fail("Requisição inválida."));
             }
 
             var userId = HttpContext.GetUserId();
             if (!userId.HasValue)
             {
-                return Unauthorized(new { success = false, error = "Usuário não autenticado." });
+                return Unauthorized(ApiResponse<object>.Fail("Usuário não autenticado."));
             }
 
             try
             {
                 var response = await _selectionService.DefinirEstabelecimentoAtivoAsync(userId.Value, request.EstabelecimentoId);
-                return Ok(new { success = true, data = response });
+                return Ok(ApiResponse<DefinirEstabelecimentoAtivoResponse>.Ok(response));
             }
             catch (KeyNotFoundException ex)
             {
-                return NotFound(new { success = false, error = ex.Message });
+                return NotFound(ApiResponse<object>.Fail(ex.Message));
             }
             catch (UnauthorizedAccessException ex)
             {
-                return StatusCode(StatusCodes.Status403Forbidden, new { success = false, error = ex.Message });
+                return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ex.Message));
             }
             catch (InvalidOperationException ex)
             {
-                return BadRequest(new { success = false, error = ex.Message });
+                return BadRequest(ApiResponse<object>.Fail(ex.Message));
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex,
+                _logger.LogError(
+                    ex,
                     "Erro ao definir estabelecimento {EstabelecimentoId} para usuário {UserId}",
-                    request.EstabelecimentoId, userId.Value);
-                return StatusCode(500, new { success = false, error = "Erro ao definir estabelecimento." });
+                    request.EstabelecimentoId,
+                    userId.Value);
+                return StatusCode(500, ApiResponse<object>.Fail("Erro ao definir estabelecimento."));
             }
         }
     }

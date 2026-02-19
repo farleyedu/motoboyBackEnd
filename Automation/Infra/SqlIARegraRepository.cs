@@ -32,21 +32,24 @@ namespace APIBack.Automation.Infra
             return prompts.Gerais.Count > 0 ? prompts.Gerais[0] : null;
         }
 
-        public async Task<int> CriarAsync(Guid idEstabelecimento, string contexto)
+        public async Task<Guid> CriarAsync(Guid idEstabelecimento, string contexto)
         {
             const string sql = @"INSERT INTO ia_regras (id_estabelecimento, tipo_prompt, nome_modulo, contexto, ativo, data_criacao, data_atualizacao)
                                  VALUES (@IdEstabelecimento, 'ESTABELECIMENTO', NULL, @Contexto, TRUE, NOW(), NOW())
                                  RETURNING id;";
             await using var cx = new NpgsqlConnection(_connectionString);
-            var id = await cx.ExecuteScalarAsync<int>(sql, new { IdEstabelecimento = idEstabelecimento, Contexto = contexto });
+            var id = await cx.ExecuteScalarAsync<Guid>(sql, new { IdEstabelecimento = idEstabelecimento, Contexto = contexto });
             return id;
         }
 
-        public async Task<bool> ExcluirAsync(Guid id)
+        public async Task<bool> ExcluirAsync(Guid id, Guid? idEstabelecimento = null)
         {
-            const string sql = "DELETE FROM ia_regras WHERE id = @Id;";
+            const string sql = @"
+DELETE FROM ia_regras
+ WHERE id = @Id
+   AND (@IdEstabelecimento IS NULL OR id_estabelecimento = @IdEstabelecimento);";
             await using var cx = new NpgsqlConnection(_connectionString);
-            var rows = await cx.ExecuteAsync(sql, new { Id = id });
+            var rows = await cx.ExecuteAsync(sql, new { Id = id, IdEstabelecimento = idEstabelecimento });
             return rows > 0;
         }
 

@@ -1,6 +1,9 @@
 using System;
+using System.Linq;
 using APIBack.Extensions;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.Mvc.Authorization;
 using Microsoft.AspNetCore.Mvc.Filters;
 
 namespace APIBack.Attributes
@@ -11,6 +14,17 @@ namespace APIBack.Attributes
         public void OnAuthorization(AuthorizationFilterContext context)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
+
+            // Respect [AllowAnonymous] on actions/controllers.
+            if (context.Filters.Any(f => f is IAllowAnonymousFilter))
+            {
+                return;
+            }
+
+            if (context.HttpContext.GetEndpoint()?.Metadata?.GetMetadata<IAllowAnonymous>() != null)
+            {
+                return;
+            }
 
             var userId = context.HttpContext.GetUserId();
 

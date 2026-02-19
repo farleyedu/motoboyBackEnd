@@ -1,8 +1,8 @@
-﻿using APIBack.Model;
-using APIBack.Service;
+using System.Collections.Generic;
+using APIBack.Attributes;
+using APIBack.Model;
 using APIBack.Service.Interface;
 using Microsoft.AspNetCore.Mvc;
-using System.Collections.Generic;
 
 namespace APIBack.Controllers
 {
@@ -19,6 +19,7 @@ namespace APIBack.Controllers
 
         // GET: api/usuarios
         [HttpGet]
+        [RequirePermission("Configuracoes", "visualizar")]
         public ActionResult<IEnumerable<Usuario>> GetUsuarios()
         {
             var usuarios = _usuarioService.GetUsuarios();
@@ -27,6 +28,7 @@ namespace APIBack.Controllers
 
         // GET: api/usuarios/1
         [HttpGet("{id}")]
+        [RequirePermission("Configuracoes", "visualizar")]
         public ActionResult<Usuario> GetUsuario(int id)
         {
             var usuario = _usuarioService.GetUsuario(id);
@@ -34,14 +36,13 @@ namespace APIBack.Controllers
             {
                 return NotFound();
             }
+
             return Ok(usuario);
         }
 
-
-
-
         // POST: api/usuarios
         [HttpPost]
+        [RequirePermission("Configuracoes", "criar")]
         public ActionResult<Usuario> PostUsuario(Usuario usuario)
         {
             _usuarioService.AddUsuario(usuario);
@@ -50,6 +51,7 @@ namespace APIBack.Controllers
 
         // PUT: api/usuarios/1
         [HttpPut("{id}")]
+        [RequirePermission("Configuracoes", "editar")]
         public IActionResult PutUsuario(int id, Usuario usuario)
         {
             var usuarioExistente = _usuarioService.GetUsuario(id);
@@ -64,6 +66,7 @@ namespace APIBack.Controllers
 
         // DELETE: api/usuarios/1
         [HttpDelete("{id}")]
+        [RequirePermission("Configuracoes", "deletar")]
         public IActionResult DeleteUsuario(int id)
         {
             var usuario = _usuarioService.GetUsuario(id);

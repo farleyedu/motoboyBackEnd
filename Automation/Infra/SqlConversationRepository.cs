@@ -43,6 +43,7 @@ namespace APIBack.Automation.Infra
 FROM conversas c
 LEFT JOIN clientes cl ON c.id_cliente = cl.id
 WHERE c.id = @Id
+  AND (@IdEstabelecimento IS NULL OR c.id_estabelecimento = @IdEstabelecimento)
 LIMIT 1;";
 
         public SqlConversationRepository(IConfiguration config, ILogger<SqlConversationRepository> logger)
@@ -130,7 +131,7 @@ LIMIT 1;";
             };
         }
 
-        public async Task<Conversation?> ObterPorIdAsync(Guid id)
+        public async Task<Conversation?> ObterPorIdAsync(Guid id, Guid? idEstabelecimento = null)
         {
             const string sql = @"
 SELECT
@@ -155,10 +156,11 @@ SELECT
   cl.telefone_e164             AS TelefoneCliente
 FROM conversas c
 LEFT JOIN clientes cl ON c.id_cliente = cl.id
-WHERE c.id = @Id;";
+WHERE c.id = @Id
+  AND (@IdEstabelecimento IS NULL OR c.id_estabelecimento = @IdEstabelecimento);";
 
             await using var cx = new NpgsqlConnection(_connectionString);
-            var row = await cx.QueryFirstOrDefaultAsync<(Guid Id, Guid IdEstabelecimento, Guid IdCliente, string? Canal, string? Estado, int? IdAgenteAtribuido, DateTime? DataPrimeiraMensagem, DateTime? DataUltimaMensagem, DateTime? DataUltimaEntrada, DateTime? DataUltimaSaida, DateTime? Janela24hInicio, DateTime? Janela24hFim, int QtdNaoLidas, string? MotivoFechamento, int? FechadoPorId, DateTime? DataFechamento, DateTime DataCriacao, DateTime DataAtualizacao, string? TelefoneCliente)>(sql, new { Id = id });
+            var row = await cx.QueryFirstOrDefaultAsync<(Guid Id, Guid IdEstabelecimento, Guid IdCliente, string? Canal, string? Estado, int? IdAgenteAtribuido, DateTime? DataPrimeiraMensagem, DateTime? DataUltimaMensagem, DateTime? DataUltimaEntrada, DateTime? DataUltimaSaida, DateTime? Janela24hInicio, DateTime? Janela24hFim, int QtdNaoLidas, string? MotivoFechamento, int? FechadoPorId, DateTime? DataFechamento, DateTime DataCriacao, DateTime DataAtualizacao, string? TelefoneCliente)>(sql, new { Id = id, IdEstabelecimento = idEstabelecimento });
             if (row.Equals(default((Guid, Guid, Guid, string?, string?, int?, DateTime?, DateTime?, DateTime?, DateTime?, DateTime?, DateTime?, int, string?, int?, DateTime?, DateTime, DateTime, string?)))) return null;
 
             var conv = new Conversation
@@ -540,7 +542,7 @@ UPDATE conversas
             return found ?? Guid.Empty;
         }
 
-        public async Task<IReadOnlyList<ConversationListItemDto>> ListarConversasAsync(string? estado, int? idAgente, bool incluirArquivadas)
+        public async Task<IReadOnlyList<ConversationListItemDto>> ListarConversasAsync(string? estado, int? idAgente, bool incluirArquivadas, Guid? idEstabelecimento = null)
         {
             var sb = new StringBuilder();
             sb.AppendLine("SELECT");
@@ -585,6 +587,12 @@ UPDATE conversas
                 sb.AppendLine("  AND c.id_agente_atribuido = @Responsavel");
             }
 
+            if (idEstabelecimento.HasValue)
+            {
+                parameters.Add("IdEstabelecimento", idEstabelecimento.Value);
+                sb.AppendLine("  AND c.id_estabelecimento = @IdEstabelecimento");
+            }
+
             if (!incluirArquivadas)
             {
                 if (!string.Equals(estadoNormalizado, "arquivada", StringComparison.OrdinalIgnoreCase))
@@ -605,13 +613,17 @@ UPDATE conversas
             return registros;
         }
 
-        public async Task<ConversationHistoryDto?> ObterHistoricoConversaAsync(Guid idConversa, int page, int pageSize)
+        public async Task<ConversationHistoryDto?> ObterHistoricoConversaAsync(Guid idConversa, int page, int pageSize, Guid? idEstabelecimento = null)
         {
             if (page < 1) page = 1;
             if (pageSize <= 0) pageSize = 50;
 
             await using var cx = new NpgsqlConnection(_connectionString);
-            var detalhes = await cx.QueryFirstOrDefaultAsync<ConversationDetailsDto>(ConversationDetailsSql, new { Id = idConversa });
+            var detalhes = await cx.QueryFirstOrDefaultAsync<ConversationDetailsDto>(ConversationDetailsSql, new
+            {
+                Id = idConversa,
+                IdEstabelecimento = idEstabelecimento
+            });
             if (detalhes == null)
             {
                 return null;
@@ -626,7 +638,8 @@ UPDATE conversas
             {
                 Id = idConversa,
                 PageSize = pageSize,
-                Offset = (page - 1) * pageSize
+                Offset = (page - 1) * pageSize,
+                IdEstabelecimento = idEstabelecimento
             };
 
             var mensagens = (await cx.QueryAsync<ConversationMessageItemDto>(@"
@@ -637,11 +650,19 @@ SELECT
   m.data_envio  AS DataEnvio,
   m.data_criacao AS DataCriacao
 FROM mensagens m
+JOIN conversas c ON c.id = m.id_conversa
 WHERE m.id_conversa = @Id
+  AND (@IdEstabelecimento IS NULL OR c.id_estabelecimento = @IdEstabelecimento)
 ORDER BY m.data_criacao ASC, m.data_envio ASC
 LIMIT @PageSize OFFSET @Offset;", parametrosMensagens)).ToList();
 
-            var total = await cx.ExecuteScalarAsync<int>("SELECT COUNT(1) FROM mensagens WHERE id_conversa = @Id;", new { Id = idConversa });
+            var total = await cx.ExecuteScalarAsync<int>(@"
+SELECT COUNT(1)
+  FROM mensagens m
+  JOIN conversas c ON c.id = m.id_conversa
+ WHERE m.id_conversa = @Id
+   AND (@IdEstabelecimento IS NULL OR c.id_estabelecimento = @IdEstabelecimento);",
+                new { Id = idConversa, IdEstabelecimento = idEstabelecimento });
 
             return new ConversationHistoryDto
             {
@@ -653,21 +674,27 @@ LIMIT @PageSize OFFSET @Offset;", parametrosMensagens)).ToList();
             };
         }
 
-        public async Task<bool> AtribuirConversaAsync(Guid idConversa, int idAgente)
+        public async Task<bool> AtribuirConversaAsync(Guid idConversa, int idAgente, Guid? idEstabelecimento = null)
         {
             const string sql = @"
 UPDATE conversas
    SET id_agente_atribuido = @IdAgente,
        estado = 'em_atendimento'::estado_conversa_enum,
        data_atualizacao = NOW()
- WHERE id = @Id;";
+ WHERE id = @Id
+   AND (@IdEstabelecimento IS NULL OR id_estabelecimento = @IdEstabelecimento);";
 
             await using var cx = new NpgsqlConnection(_connectionString);
-            var linhas = await cx.ExecuteAsync(sql, new { Id = idConversa, IdAgente = idAgente });
+            var linhas = await cx.ExecuteAsync(sql, new
+            {
+                Id = idConversa,
+                IdAgente = idAgente,
+                IdEstabelecimento = idEstabelecimento
+            });
             return linhas > 0;
         }
 
-        public async Task<bool> FecharConversaAsync(Guid idConversa, int? idAgente, string? motivo)
+        public async Task<bool> FecharConversaAsync(Guid idConversa, int? idAgente, string? motivo, Guid? idEstabelecimento = null)
         {
             var estado = idAgente.HasValue ? "fechado_agente" : "fechado_automaticamente";
             const string sql = @"
@@ -677,7 +704,8 @@ UPDATE conversas
        fechado_por_id = @FechadoPorId,
        data_fechamento = NOW(),
        data_atualizacao = NOW()
- WHERE id = @Id;";
+ WHERE id = @Id
+   AND (@IdEstabelecimento IS NULL OR id_estabelecimento = @IdEstabelecimento);";
 
             await using var cx = new NpgsqlConnection(_connectionString);
             var linhas = await cx.ExecuteAsync(sql, new
@@ -685,28 +713,34 @@ UPDATE conversas
                 Id = idConversa,
                 Estado = estado,
                 Motivo = string.IsNullOrWhiteSpace(motivo) ? null : motivo.Trim(),
-                FechadoPorId = idAgente
+                FechadoPorId = idAgente,
+                IdEstabelecimento = idEstabelecimento
             });
 
             return linhas > 0;
         }
 
-        public async Task<ConversationDetailsDto?> ArquivarConversaAsync(Guid idConversa)
+        public async Task<ConversationDetailsDto?> ArquivarConversaAsync(Guid idConversa, Guid? idEstabelecimento = null)
         {
             const string sql = @"
 UPDATE conversas
    SET estado = 'arquivada'::estado_conversa_enum,
        data_atualizacao = NOW()
- WHERE id = @Id;";
+ WHERE id = @Id
+   AND (@IdEstabelecimento IS NULL OR id_estabelecimento = @IdEstabelecimento);";
 
             await using var cx = new NpgsqlConnection(_connectionString);
-            var linhas = await cx.ExecuteAsync(sql, new { Id = idConversa });
+            var linhas = await cx.ExecuteAsync(sql, new { Id = idConversa, IdEstabelecimento = idEstabelecimento });
             if (linhas == 0)
             {
                 return null;
             }
 
-            var detalhes = await cx.QueryFirstOrDefaultAsync<ConversationDetailsDto>(ConversationDetailsSql, new { Id = idConversa });
+            var detalhes = await cx.QueryFirstOrDefaultAsync<ConversationDetailsDto>(ConversationDetailsSql, new
+            {
+                Id = idConversa,
+                IdEstabelecimento = idEstabelecimento
+            });
             if (detalhes == null)
             {
                 return null;
@@ -716,10 +750,14 @@ UPDATE conversas
             return detalhes;
         }
 
-        public async Task<ConversationDetailsDto?> ObterDetalhesConversaAsync(Guid idConversa)
+        public async Task<ConversationDetailsDto?> ObterDetalhesConversaAsync(Guid idConversa, Guid? idEstabelecimento = null)
         {
             await using var cx = new NpgsqlConnection(_connectionString);
-            var detalhes = await cx.QueryFirstOrDefaultAsync<ConversationDetailsDto>(ConversationDetailsSql, new { Id = idConversa });
+            var detalhes = await cx.QueryFirstOrDefaultAsync<ConversationDetailsDto>(ConversationDetailsSql, new
+            {
+                Id = idConversa,
+                IdEstabelecimento = idEstabelecimento
+            });
             if (detalhes == null)
             {
                 return null;

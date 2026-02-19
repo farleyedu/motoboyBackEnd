@@ -1,6 +1,7 @@
-﻿using Microsoft.AspNetCore.Mvc;
-using APIBack.Service;
+using System.Threading.Tasks;
+using APIBack.Attributes;
 using APIBack.Service.Interface;
+using Microsoft.AspNetCore.Mvc;
 
 namespace APIBack.Controllers
 {
@@ -8,7 +9,6 @@ namespace APIBack.Controllers
     [ApiController]
     public class LocalizacaoController : Controller
     {
-
         private readonly ILocalizacaoService _service;
 
         public LocalizacaoController(ILocalizacaoService service)
@@ -17,15 +17,20 @@ namespace APIBack.Controllers
         }
 
         [HttpGet]
+        [RequirePermission("Delivery", "visualizar")]
         public async Task<IActionResult> Get([FromQuery] string endereco)
         {
             if (string.IsNullOrWhiteSpace(endereco))
-                return BadRequest("Endereço é obrigatório.");
+            {
+                return BadRequest("Endereco e obrigatorio.");
+            }
 
             var coordenadas = await _service.ObterCoordenadasAsync(endereco);
 
             if (coordenadas == null)
-                return NotFound("Coordenadas não encontradas.");
+            {
+                return NotFound("Coordenadas nao encontradas.");
+            }
 
             return Ok(new
             {

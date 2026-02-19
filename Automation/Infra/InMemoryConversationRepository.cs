@@ -17,9 +17,14 @@ namespace APIBack.Automation.Infra
         private readonly ConcurrentDictionary<(Guid Estab, string Tel), Guid> _clientes = new();
         private readonly ConcurrentDictionary<Guid, ConcurrentQueue<Message>> _mensagens = new();
 
-        public Task<Conversation?> ObterPorIdAsync(Guid id)
+        public Task<Conversation?> ObterPorIdAsync(Guid id, Guid? idEstabelecimento = null)
         {
             _conversas.TryGetValue(id, out var conversa);
+            if (conversa != null && idEstabelecimento.HasValue && conversa.IdEstabelecimento != idEstabelecimento.Value)
+            {
+                conversa = null;
+            }
+
             return Task.FromResult(conversa);
         }
 
@@ -153,9 +158,14 @@ namespace APIBack.Automation.Infra
             return Task.CompletedTask;
         }
 
-        public Task<IReadOnlyList<ConversationListItemDto>> ListarConversasAsync(string? estado, int? idAgente, bool incluirArquivadas)
+        public Task<IReadOnlyList<ConversationListItemDto>> ListarConversasAsync(string? estado, int? idAgente, bool incluirArquivadas, Guid? idEstabelecimento = null)
         {
             IEnumerable<Conversation> query = _conversas.Values;
+
+            if (idEstabelecimento.HasValue)
+            {
+                query = query.Where(c => c.IdEstabelecimento == idEstabelecimento.Value);
+            }
 
             if (!string.IsNullOrWhiteSpace(estado) && TryMapEstado(estado, out var estadoFiltro))
             {
@@ -200,9 +210,14 @@ namespace APIBack.Automation.Infra
             return Task.FromResult<IReadOnlyList<ConversationListItemDto>>(lista);
         }
 
-        public Task<ConversationHistoryDto?> ObterHistoricoConversaAsync(Guid idConversa, int page, int pageSize)
+        public Task<ConversationHistoryDto?> ObterHistoricoConversaAsync(Guid idConversa, int page, int pageSize, Guid? idEstabelecimento = null)
         {
             if (!_conversas.TryGetValue(idConversa, out var conversa))
+            {
+                return Task.FromResult<ConversationHistoryDto?>(null);
+            }
+
+            if (idEstabelecimento.HasValue && conversa.IdEstabelecimento != idEstabelecimento.Value)
             {
                 return Task.FromResult<ConversationHistoryDto?>(null);
             }
@@ -232,14 +247,22 @@ namespace APIBack.Automation.Infra
             return Task.FromResult<ConversationHistoryDto?>(resposta);
         }
 
-        public Task<bool> AtribuirConversaAsync(Guid idConversa, int idAgente)
+        public Task<bool> AtribuirConversaAsync(Guid idConversa, int idAgente, Guid? idEstabelecimento = null)
         {
+            if (idEstabelecimento.HasValue &&
+                _conversas.TryGetValue(idConversa, out var existente) &&
+                existente.IdEstabelecimento != idEstabelecimento.Value)
+            {
+                return Task.FromResult(false);
+            }
+
             var atualizado = false;
             _conversas.AddOrUpdate(
                 idConversa,
                 _ => new Conversation
                 {
                     IdConversa = idConversa,
+                    IdEstabelecimento = idEstabelecimento ?? Guid.Empty,
                     Estado = EstadoConversa.EmAtendimento,
                     AgenteDesignadoId = idAgente,
                     Modo = ModoConversa.Humano,
@@ -259,9 +282,14 @@ namespace APIBack.Automation.Infra
             return Task.FromResult(atualizado);
         }
 
-        public Task<bool> FecharConversaAsync(Guid idConversa, int? idAgente, string? motivo)
+        public Task<bool> FecharConversaAsync(Guid idConversa, int? idAgente, string? motivo, Guid? idEstabelecimento = null)
         {
             if (!_conversas.TryGetValue(idConversa, out var conversa))
+            {
+                return Task.FromResult(false);
+            }
+
+            if (idEstabelecimento.HasValue && conversa.IdEstabelecimento != idEstabelecimento.Value)
             {
                 return Task.FromResult(false);
             }
@@ -275,9 +303,14 @@ namespace APIBack.Automation.Infra
             return Task.FromResult(true);
         }
 
-        public Task<ConversationDetailsDto?> ArquivarConversaAsync(Guid idConversa)
+        public Task<ConversationDetailsDto?> ArquivarConversaAsync(Guid idConversa, Guid? idEstabelecimento = null)
         {
             if (!_conversas.TryGetValue(idConversa, out var conversa))
+            {
+                return Task.FromResult<ConversationDetailsDto?>(null);
+            }
+
+            if (idEstabelecimento.HasValue && conversa.IdEstabelecimento != idEstabelecimento.Value)
             {
                 return Task.FromResult<ConversationDetailsDto?>(null);
             }
@@ -287,9 +320,14 @@ namespace APIBack.Automation.Infra
             return Task.FromResult<ConversationDetailsDto?>(ToDetails(conversa));
         }
 
-        public Task<ConversationDetailsDto?> ObterDetalhesConversaAsync(Guid idConversa)
+        public Task<ConversationDetailsDto?> ObterDetalhesConversaAsync(Guid idConversa, Guid? idEstabelecimento = null)
         {
             if (!_conversas.TryGetValue(idConversa, out var conversa))
+            {
+                return Task.FromResult<ConversationDetailsDto?>(null);
+            }
+
+            if (idEstabelecimento.HasValue && conversa.IdEstabelecimento != idEstabelecimento.Value)
             {
                 return Task.FromResult<ConversationDetailsDto?>(null);
             }

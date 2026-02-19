@@ -1,5 +1,6 @@
 using System;
 using System.Threading.Tasks;
+using APIBack.Attributes;
 using APIBack.DTOs;
 using APIBack.Service;
 using Microsoft.AspNetCore.Mvc;
@@ -31,6 +32,7 @@ namespace APIBack.Controllers
         /// <param name="dto">Dados para verificação</param>
         /// <returns>Informação de disponibilidade</returns>
         [HttpPost("verificar-disponibilidade")]
+        [RequirePermission("Reservas", "visualizar")]
         [ProducesResponseType(typeof(DisponibilidadeResponseDTO), 200)]
         [ProducesResponseType(400)]
         public async Task<IActionResult> VerificarDisponibilidade([FromBody] VerificarDisponibilidadeDTO dto)
@@ -103,6 +105,7 @@ namespace APIBack.Controllers
         /// <param name="dto">Dados da reserva</param>
         /// <returns>Reserva criada</returns>
         [HttpPost]
+        [RequirePermission("Reservas", "criar")]
         [ProducesResponseType(typeof(ReservaResponseDTO), 201)]
         [ProducesResponseType(400)]
         public async Task<IActionResult> CriarReserva([FromBody] CriarReservaDTO dto)
@@ -191,6 +194,7 @@ namespace APIBack.Controllers
         /// <param name="dto">Dados a serem atualizados</param>
         /// <returns>Reserva atualizada</returns>
         [HttpPut("{id}")]
+        [RequirePermission("Reservas", "editar")]
         [ProducesResponseType(typeof(ReservaResponseDTO), 200)]
         [ProducesResponseType(404)]
         [ProducesResponseType(400)]
@@ -282,6 +286,7 @@ namespace APIBack.Controllers
         /// <param name="status">Status (opcional)</param>
         /// <returns>Lista de reservas</returns>
         [HttpGet]
+        [RequirePermission("Reservas", "visualizar")]
         [ProducesResponseType(typeof(ReservaListagemDTO[]), 200)]
         public async Task<IActionResult> ListarReservas(
             [FromQuery] DateTime? dataInicio,
@@ -323,6 +328,7 @@ namespace APIBack.Controllers
         /// <param name="id">ID da reserva</param>
         /// <returns>Dados da reserva</returns>
         [HttpGet("{id}")]
+        [RequirePermission("Reservas", "visualizar")]
         [ProducesResponseType(typeof(ReservaResponseDTO), 200)]
         [ProducesResponseType(404)]
         public async Task<IActionResult> BuscarReservaPorId(int id)
@@ -372,6 +378,7 @@ namespace APIBack.Controllers
         /// <param name="id">ID da reserva a ser cancelada</param>
         /// <returns>Confirmação de cancelamento</returns>
         [HttpDelete("{id}")]
+        [RequirePermission("Reservas", "deletar")]
         [ProducesResponseType(200)]
         [ProducesResponseType(404)]
         public async Task<IActionResult> CancelarReserva(int id)

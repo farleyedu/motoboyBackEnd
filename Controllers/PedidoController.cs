@@ -1,5 +1,6 @@
 using APIBack.DTOs;
 using APIBack.Model;
+using APIBack.Attributes;
 using APIBack.Service;
 using APIBack.Service.Interface;
 using Microsoft.AspNetCore.Mvc;
@@ -20,6 +21,7 @@ namespace APIBack.Controllers
         }
         // GET: api/pedidos
         [HttpGet]
+        [RequirePermission("Delivery", "visualizar")]
         public ActionResult<IEnumerable<Pedido>> GetPedidos()
         {
             var pedidos = _pedidoService.GetPedidos();
@@ -28,6 +30,7 @@ namespace APIBack.Controllers
 
         // GET: api/pedidos/1
         [HttpGet("{id}")]
+        [RequirePermission("Delivery", "visualizar")]
         public ActionResult<Pedido> GetPedido(int id)
         {
             var pedido = _pedidoService.GetPedidosId(id);
@@ -39,6 +42,7 @@ namespace APIBack.Controllers
         }
 
         [HttpGet("pedidosMaps")]
+        [RequirePermission("Delivery", "visualizar")]
         public ActionResult<IEnumerable<PedidoDTOs>> GetPedidosComMotoboy()
         {
             var pedidos = _pedidoService.GetPedidosMaps();
@@ -47,6 +51,7 @@ namespace APIBack.Controllers
 
         // POST: api/pedidos
         [HttpPost]
+        [RequirePermission("Delivery", "criar")]
         public ActionResult<Pedido> PostPedido(Pedido pedido)
         {
             _pedidoService.CriarPedido();
@@ -59,6 +64,7 @@ namespace APIBack.Controllers
         /// <param name="id">ID do pedido</param>
         /// <returns>Dados completos do pedido</returns> 
         [HttpGet("{id}/riderlink")]
+        [RequirePermission("Delivery", "visualizar")]
         public async Task<IActionResult> GetPedidoCompleto(int id)
         {
             try
@@ -118,6 +124,7 @@ namespace APIBack.Controllers
         /// </summary>
         /// <returns>Lista de dados completos dos pedidos</returns>
         [HttpGet("motoboy")]
+        [RequirePermission("Delivery", "visualizar")]
         public async Task<IActionResult> GetPedidosCompletos()
         {
             try
@@ -156,6 +163,7 @@ namespace APIBack.Controllers
 
         // PUT: api/pedidos/1
         [HttpPut("{id}")]
+        [RequirePermission("Delivery", "editar")]
         public IActionResult PutPedido(int id, Pedido pedido)
         {
             var pedidoExistente = _pedidoService.GetPedidosId(id);
@@ -169,6 +177,7 @@ namespace APIBack.Controllers
         }
 
         [HttpPut("AtribuirMotoboy")]
+        [RequirePermission("Delivery", "editar")]
         public IActionResult AtribuirMotoboy([FromBody] EnviarPedidosParaRotaDTO dto)
         {
             if (dto.PedidosIds == null || !dto.PedidosIds.Any())
@@ -181,6 +190,7 @@ namespace APIBack.Controllers
 
 
         [HttpPost("PedidoIfood")]
+        [RequirePermission("Delivery", "criar")]
         public async Task<IActionResult> CriarPedidosIfood(PedidoCapturado pedidos)
         {
             if (pedidos == null)

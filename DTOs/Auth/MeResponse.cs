@@ -1,27 +1,10 @@
 using System;
+using System.Collections.Generic;
 using System.Text.Json.Serialization;
 
-namespace APIBack.Model.Auth
+namespace APIBack.DTOs.Auth
 {
-    public class TokenResponse
-    {
-        [JsonPropertyName("accessToken")]
-        public string AccessToken { get; set; } = string.Empty;
-
-        [JsonPropertyName("refreshToken")]
-        public string RefreshToken { get; set; } = string.Empty;
-
-        [JsonPropertyName("tokenType")]
-        public string TokenType { get; set; } = "Bearer";
-
-        [JsonPropertyName("expiresIn")]
-        public int ExpiresIn { get; set; }
-
-        [JsonPropertyName("user")]
-        public UserInfo User { get; set; } = null!;
-    }
-
-    public class UserInfo
+    public class MeResponse
     {
         [JsonPropertyName("id")]
         public int Id { get; set; }
@@ -36,10 +19,13 @@ namespace APIBack.Model.Auth
         public bool IsSuperAdmin { get; set; }
 
         [JsonPropertyName("estabelecimentoAtual")]
-        public EstabelecimentoInfo? EstabelecimentoAtual { get; set; }
+        public MeEstabelecimentoAtualResponse? EstabelecimentoAtual { get; set; }
+
+        [JsonPropertyName("permissoes")]
+        public Dictionary<string, List<string>> Permissoes { get; set; } = new();
     }
 
-    public class EstabelecimentoInfo
+    public class MeEstabelecimentoAtualResponse
     {
         [JsonPropertyName("id")]
         public Guid Id { get; set; }
@@ -51,6 +37,6 @@ namespace APIBack.Model.Auth
         public string Tipo { get; set; } = string.Empty;
 
         [JsonPropertyName("tipoAcesso")]
-        public string TipoAcesso { get; set; } = string.Empty;
+        public string? TipoAcesso { get; set; }
     }
 }

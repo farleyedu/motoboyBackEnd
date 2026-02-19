@@ -1,11 +1,13 @@
 // ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
 using System;
 using System.Threading.Tasks;
+using APIBack.Attributes;
 using APIBack.Automation.Dtos;
 using APIBack.Automation.Interfaces;
 using APIBack.Automation.Models;
 using APIBack.Automation.Services;
 using APIBack.Automation.Validators;
+using APIBack.Extensions;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Logging;
 
@@ -40,32 +42,65 @@ namespace APIBack.Automation.Controllers
         }
 
         [HttpPost("conversation/{idConversa:guid}/handover")]
+        [RequirePermission("WhatsApp", "editar")]
         public async Task<IActionResult> EncaminharParaHumano(Guid idConversa, [FromBody] HandoverRequest req)
         {
+            var estabelecimentoId = HttpContext.GetEstabelecimentoId();
+            if (!estabelecimentoId.HasValue)
+            {
+                return BadRequest(new { error = "Selecione um estabelecimento para encaminhar conversas." });
+            }
+
+            var conversa = await _repositorio.ObterPorIdAsync(idConversa, estabelecimentoId.Value);
+            if (conversa == null)
+            {
+                return NotFound();
+            }
+
             await _servicoHandover.DefinirHumanoAsync(idConversa, req.Agente, req.ReservaConfirmada, req.Detalhes);
             return Ok();
         }
 
         [HttpPost("conversation/{idConversa:guid}/back-to-bot")]
-        public async Task<IActionResult> VoltarParaBot(Guid id)
+        [RequirePermission("WhatsApp", "editar")]
+        public async Task<IActionResult> VoltarParaBot(Guid idConversa)
         {
-            await _servicoConversa.DefinirModoBotAsync(id, "Transição para bot");
+            var estabelecimentoId = HttpContext.GetEstabelecimentoId();
+            if (!estabelecimentoId.HasValue)
+            {
+                return BadRequest(new { error = "Selecione um estabelecimento para atualizar conversas." });
+            }
+
+            var conversa = await _repositorio.ObterPorIdAsync(idConversa, estabelecimentoId.Value);
+            if (conversa == null)
+            {
+                return NotFound();
+            }
+
+            await _servicoConversa.DefinirModoBotAsync(idConversa, "Transicao para bot");
             return Ok();
         }
 
         // [Authorize(Roles="Atendente")] // TODO: enable when security is configured
         [HttpPost("agent/reply")]
+        [RequirePermission("WhatsApp", "criar")]
         public async Task<IActionResult> RespostaAgente([FromBody] AgentReplyRequest req)
         {
+            var estabelecimentoId = HttpContext.GetEstabelecimentoId();
+            if (!estabelecimentoId.HasValue)
+            {
+                return BadRequest(new { erro = "Selecione um estabelecimento para responder conversas." });
+            }
+
             var (valido, erro) = _validador.Validar(req);
             if (!valido) return BadRequest(new { erro });
 
-            var conversa = await _repositorio.ObterPorIdAsync(req.IdConversa);
+            var conversa = await _repositorio.ObterPorIdAsync(req.IdConversa, estabelecimentoId.Value);
             if (conversa == null) return NotFound();
 
             if (conversa.Modo != ModoConversa.Humano)
             {
-                return Conflict(new { erro = "Conversa não está em modo humano" });
+                return Conflict(new { erro = "Conversa nao esta em modo humano" });
             }
 
             var mensagem = await _servicoConversa.AcrescentarSaidaAsync(conversa.IdConversa, conversa.IdWa, req.Mensagem);
@@ -79,15 +114,29 @@ namespace APIBack.Automation.Controllers
         }
 
         [HttpGet("conversation/{idConversa:guid}")]
-        public async Task<IActionResult> ObterConversa(Guid id, [FromQuery] int ultimas = 20)
+        [RequirePermission("WhatsApp", "visualizar")]
+        public async Task<IActionResult> ObterConversa(Guid idConversa, [FromQuery] int ultimas = 20)
         {
+            var estabelecimentoId = HttpContext.GetEstabelecimentoId();
+            if (!estabelecimentoId.HasValue)
+            {
+                return BadRequest(new { error = "Selecione um estabelecimento para consultar conversas." });
+            }
+
+            var conversa = await _repositorio.ObterPorIdAsync(idConversa, estabelecimentoId.Value);
+            if (conversa == null)
+            {
+                return NotFound();
+            }
+
             if (ultimas <= 0) ultimas = 20;
-            var resposta = await _servicoConversa.ObterConversaRespostaAsync(id, ultimas);
+            var resposta = await _servicoConversa.ObterConversaRespostaAsync(idConversa, ultimas);
             if (resposta == null) return NotFound();
             return Ok(resposta);
         }
 
         [HttpGet("health")]
+        [RequirePermission("WhatsApp", "visualizar")]
         public IActionResult Saude([FromServices] AutomationHealthService servicoSaude)
         {
             var saude = servicoSaude.ObterSaude();

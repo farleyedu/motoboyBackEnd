@@ -107,7 +107,8 @@ SELECT  ue.id                   AS Id,
         ue.id_estabelecimento   AS EstabelecimentoId,
         ue.status               AS Status,
         ue.ativo                AS VinculoAtivo,
-        ue.tipo_acesso          AS TipoAcesso
+        ue.tipo_acesso          AS TipoAcesso,
+        ue.permissoes_customizadas::text AS PermissoesCustomizadas
   FROM usuario_estabelecimentos ue
  WHERE ue.id_usuario = @UserId
    AND ue.id_estabelecimento = @EstabelecimentoId
@@ -116,6 +117,42 @@ SELECT  ue.id                   AS Id,
 
             await using var connection = new NpgsqlConnection(_connectionString);
             return await connection.QueryFirstOrDefaultAsync<UsuarioEstabelecimentoAcesso>(sql, new { UserId = userId, EstabelecimentoId = estabelecimentoId });
+        }
+
+        public async Task<UsuarioEstabelecimentoAcesso?> ObterVinculoPorIdAsync(Guid vinculoId)
+        {
+            const string sql = @"
+SELECT  ue.id                   AS Id,
+        ue.id_usuario           AS UsuarioId,
+        ue.id_estabelecimento   AS EstabelecimentoId,
+        ue.status               AS Status,
+        ue.ativo                AS VinculoAtivo,
+        ue.tipo_acesso          AS TipoAcesso,
+        ue.permissoes_customizadas::text AS PermissoesCustomizadas
+  FROM usuario_estabelecimentos ue
+ WHERE ue.id = @VinculoId
+ LIMIT 1";
+
+            await using var connection = new NpgsqlConnection(_connectionString);
+            return await connection.QueryFirstOrDefaultAsync<UsuarioEstabelecimentoAcesso>(sql, new { VinculoId = vinculoId });
+        }
+
+        public async Task AtualizarPermissoesCustomizadasAsync(Guid vinculoId, string? permissoesCustomizadasJson)
+        {
+            const string sql = @"
+UPDATE usuario_estabelecimentos
+   SET permissoes_customizadas = CASE
+                                     WHEN @PermissoesCustomizadas IS NULL THEN NULL
+                                     ELSE @PermissoesCustomizadas::jsonb
+                                 END
+ WHERE id = @VinculoId";
+
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.ExecuteAsync(sql, new
+            {
+                VinculoId = vinculoId,
+                PermissoesCustomizadas = permissoesCustomizadasJson
+            });
         }
 
         public async Task AtualizarUltimoEstabelecimentoAsync(int userId, Guid estabelecimentoId)

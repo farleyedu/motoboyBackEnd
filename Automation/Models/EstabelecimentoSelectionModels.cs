@@ -55,5 +55,6 @@ namespace APIBack.Automation.Models
         public string Status { get; set; } = string.Empty;
         public bool? VinculoAtivo { get; set; }
         public string? TipoAcesso { get; set; }
+        public string? PermissoesCustomizadas { get; set; }
     }
 }

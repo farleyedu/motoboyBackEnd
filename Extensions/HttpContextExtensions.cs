@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
+using System.Text;
 using APIBack.Model.Auth;
 using Microsoft.AspNetCore.Http;
 
@@ -141,15 +143,58 @@ namespace APIBack.Extensions
             }
 
             var permissoes = context.GetPermissoes();
+            var moduloNormalizado = NormalizePermissionToken(modulo);
+            var acaoNormalizada = NormalizePermissionToken(acao);
 
-            if (!permissoes.TryGetValue(modulo, out var acoes) || acoes == null || acoes.Count == 0)
+            if (string.IsNullOrWhiteSpace(moduloNormalizado) || string.IsNullOrWhiteSpace(acaoNormalizada))
             {
                 return false;
             }
 
-            return acoes.Any(a =>
-                !string.IsNullOrWhiteSpace(a) &&
-                string.Equals(a, acao, StringComparison.OrdinalIgnoreCase));
+            foreach (var kvp in permissoes)
+            {
+                if (NormalizePermissionToken(kvp.Key) != moduloNormalizado)
+                {
+                    continue;
+                }
+
+                var acoes = kvp.Value;
+                if (acoes == null || acoes.Count == 0)
+                {
+                    continue;
+                }
+
+                if (acoes.Any(a => NormalizePermissionToken(a) == acaoNormalizada))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static string NormalizePermissionToken(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return string.Empty;
+            }
+
+            var normalized = value.Trim().ToLowerInvariant().Normalize(NormalizationForm.FormD);
+            var builder = new StringBuilder(normalized.Length);
+
+            foreach (var ch in normalized)
+            {
+                var category = CharUnicodeInfo.GetUnicodeCategory(ch);
+                if (category != UnicodeCategory.NonSpacingMark)
+                {
+                    builder.Append(ch);
+                }
+            }
+
+            return builder
+                .ToString()
+                .Normalize(NormalizationForm.FormC);
         }
     }
 }

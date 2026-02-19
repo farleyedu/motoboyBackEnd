@@ -1,9 +1,11 @@
 using System;
+using System.Collections.Generic;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using APIBack.Attributes;
 using APIBack.DTOs.Auth;
+using APIBack.DTOs.Common;
 using APIBack.Extensions;
 using APIBack.Model.Auth;
 using APIBack.Service.Interface;
@@ -25,47 +27,78 @@ namespace APIBack.Controllers
         }
 
         [HttpPost("login")]
+        [Microsoft.AspNetCore.Authorization.AllowAnonymous]
+        [ProducesResponseType(typeof(ApiResponse<TokenResponse>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status500InternalServerError)]
         public async Task<IActionResult> Login([FromBody] LoginRequest request)
         {
             if (!ModelState.IsValid)
             {
-                return BadRequest(new
-                {
-                    success = false,
-                    error = "Requisi\u00e7\u00e3o inv\u00e1lida."
-                });
+                return BadRequest(ApiResponse<object>.Fail("Requisição inválida."));
             }
 
             try
             {
                 var response = await _authService.LoginAsync(request);
-                return Ok(new { success = true, data = response });
+                return Ok(ApiResponse<TokenResponse>.Ok(response));
             }
             catch (UnauthorizedAccessException ex)
             {
-                return Unauthorized(new { success = false, error = ex.Message });
+                return Unauthorized(ApiResponse<object>.Fail(ex.Message));
             }
             catch
             {
-                return StatusCode(500, new { success = false, error = "Erro ao processar login." });
+                return StatusCode(500, ApiResponse<object>.Fail("Erro ao processar login."));
+            }
+        }
+
+        [HttpPost("refresh")]
+        [Microsoft.AspNetCore.Authorization.AllowAnonymous]
+        [ProducesResponseType(typeof(ApiResponse<TokenResponse>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status401Unauthorized)]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status500InternalServerError)]
+        public async Task<IActionResult> Refresh([FromBody] RefreshTokenRequest request)
+        {
+            if (!ModelState.IsValid)
+            {
+                return BadRequest(ApiResponse<object>.Fail("Requisição inválida."));
+            }
+
+            try
+            {
+                var response = await _authService.RefreshTokenAsync(request, GetClientIp(), GetUserAgent());
+                return Ok(ApiResponse<TokenResponse>.Ok(response));
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                return Unauthorized(ApiResponse<object>.Fail(ex.Message));
+            }
+            catch
+            {
+                return StatusCode(500, ApiResponse<object>.Fail("Erro ao processar refresh token."));
             }
         }
 
         [HttpGet("oauth/google/url")]
+        [Microsoft.AspNetCore.Authorization.AllowAnonymous]
         public async Task<IActionResult> ObterUrlLoginGoogle([FromQuery] string? redirectUri)
         {
             try
             {
                 var response = await _authService.IniciarLoginGoogleAsync(redirectUri);
-                return Ok(new { success = true, data = response });
+                return Ok(ApiResponse<OAuthAuthorizationResponse>.Ok(response));
             }
             catch (InvalidOperationException ex)
             {
-                return BadRequest(new { success = false, error = ex.Message });
+                return BadRequest(ApiResponse<object>.Fail(ex.Message));
             }
         }
 
         [HttpGet("oauth/google/callback")]
+        [Microsoft.AspNetCore.Authorization.AllowAnonymous]
         public async Task<IActionResult> GoogleOAuthCallback(
             [FromQuery] string? code,
             [FromQuery] string? state,
@@ -79,7 +112,7 @@ namespace APIBack.Controllers
 
             if (string.IsNullOrWhiteSpace(code) || string.IsNullOrWhiteSpace(state))
             {
-                return BadRequest(new { success = false, error = "Par\u00e2metros obrigat\u00f3rios n\u00e3o informados." });
+                return BadRequest(ApiResponse<object>.Fail("Parâmetros obrigatórios não informados."));
             }
 
             try
@@ -92,11 +125,11 @@ namespace APIBack.Controllers
                     return Redirect(redirectSuccess!);
                 }
 
-                return Ok(new { success = true, data = resultado.Token });
+                return Ok(ApiResponse<TokenResponse>.Ok(resultado.Token));
             }
             catch (UnauthorizedAccessException ex)
             {
-                return StatusCode(StatusCodes.Status401Unauthorized, new { success = false, error = ex.Message });
+                return StatusCode(StatusCodes.Status401Unauthorized, ApiResponse<object>.Fail(ex.Message));
             }
             catch (InvalidOperationException ex)
             {
@@ -104,40 +137,72 @@ namespace APIBack.Controllers
             }
             catch
             {
-                return await HandleGoogleErrorAsync(state, "server_error", "N\u00e3o foi poss\u00edvel concluir o login social.");
+                return await HandleGoogleErrorAsync(state, "server_error", "Não foi possível concluir o login social.");
             }
         }
 
         [HttpGet("me")]
         [Authorize]
+        [RequirePermission("Configuracoes", "visualizar")]
+        [ProducesResponseType(typeof(ApiResponse<MeResponse>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status401Unauthorized)]
         public IActionResult ObterUsuarioAtual()
         {
             var payload = HttpContext.GetJwtPayload();
 
             if (payload == null || payload.UserId == null)
             {
-                return Unauthorized(new { success = false, error = "Usu\u00e1rio n\u00e3o autenticado." });
+                return Unauthorized(ApiResponse<object>.Fail("Usuário não autenticado."));
             }
 
-            var data = new
+            var data = new MeResponse
             {
-                Id = payload.UserId,
-                Nome = payload.Nome,
-                Email = payload.Email,
+                Id = payload.UserId.Value,
+                Nome = payload.Nome ?? string.Empty,
+                Email = payload.Email ?? string.Empty,
                 IsSuperAdmin = payload.IsSuperAdmin,
                 EstabelecimentoAtual = payload.EstabelecimentoId.HasValue
-                    ? new
+                    ? new MeEstabelecimentoAtualResponse
                     {
                         Id = payload.EstabelecimentoId.Value,
-                        Nome = payload.EstabelecimentoNome,
-                        Tipo = payload.TipoEstabelecimento,
+                        Nome = payload.EstabelecimentoNome ?? string.Empty,
+                        Tipo = payload.TipoEstabelecimento ?? string.Empty,
                         TipoAcesso = payload.TipoAcesso
                     }
                     : null,
-                Permissoes = payload.Permissoes
+                Permissoes = payload.Permissoes ?? new Dictionary<string, List<string>>()
             };
 
-            return Ok(new { success = true, data });
+            return Ok(ApiResponse<MeResponse>.Ok(data));
+        }
+
+        [HttpPost("logout")]
+        [Authorize]
+        public async Task<IActionResult> Logout([FromBody] LogoutRequest? request)
+        {
+            var userId = HttpContext.GetUserId();
+            if (!userId.HasValue)
+            {
+                return Unauthorized(ApiResponse<object>.Fail("Usuário não autenticado."));
+            }
+
+            try
+            {
+                await _authService.LogoutAsync(
+                    userId.Value,
+                    request ?? new LogoutRequest(),
+                    GetClientIp(),
+                    GetUserAgent());
+                return NoContent();
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                return Unauthorized(ApiResponse<object>.Fail(ex.Message));
+            }
+            catch
+            {
+                return StatusCode(500, ApiResponse<object>.Fail("Erro ao processar logout."));
+            }
         }
 
         private async Task<IActionResult> HandleGoogleErrorAsync(string? state, string error, string? description)
@@ -153,8 +218,8 @@ namespace APIBack.Controllers
                 }
             }
 
-            var finalMessage = description ?? "Opera\u00e7\u00e3o cancelada.";
-            return BadRequest(new { success = false, error = finalMessage });
+            var finalMessage = description ?? "Operação cancelada.";
+            return BadRequest(ApiResponse<object>.Fail(finalMessage));
         }
 
         private bool TryBuildSuccessRedirect(string redirectUri, TokenResponse token, out string? url)
@@ -203,6 +268,16 @@ namespace APIBack.Controllers
                 .TrimEnd('=')
                 .Replace('+', '-')
                 .Replace('/', '_');
+        }
+
+        private string? GetClientIp()
+        {
+            return HttpContext.Connection.RemoteIpAddress?.ToString();
+        }
+
+        private string? GetUserAgent()
+        {
+            return Request.Headers.UserAgent.ToString();
         }
     }
 }

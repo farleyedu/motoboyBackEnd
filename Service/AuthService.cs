@@ -12,6 +12,7 @@ using System.Threading.Tasks;
 using APIBack.DTOs.Auth;
 using APIBack.Model.Auth;
 using APIBack.Options;
+using APIBack.Security;
 using APIBack.Service.Interface;
 using Dapper;
 using Microsoft.AspNetCore.WebUtilities;
@@ -104,13 +105,113 @@ SELECT id,
             // Super admin sem estabelecimento: token básico sem contexto de estabelecimento
             if (usuario.IsSuperAdmin && usuario.UltimoEstabelecimentoAcessado == null)
             {
-                return await BuildTokenResponseAsync(connection, usuario, null);
+                var superAdminResponse = await BuildTokenResponseAsync(connection, usuario, null);
+                await PersistRefreshTokenAsync(connection, usuario.Id, superAdminResponse.RefreshToken, null, null);
+                return superAdminResponse;
             }
 
             var estabelecimentoId = usuario.UltimoEstabelecimentoAcessado
                                  ?? await ObterPrimeiroEstabelecimentoDoUsuarioAsync(connection, usuario.Id);
 
-            return await BuildTokenResponseAsync(connection, usuario, estabelecimentoId);
+            var response = await BuildTokenResponseAsync(connection, usuario, estabelecimentoId);
+            await PersistRefreshTokenAsync(connection, usuario.Id, response.RefreshToken, null, null);
+            return response;
+        }
+
+        public async Task<TokenResponse> RefreshTokenAsync(
+            RefreshTokenRequest request,
+            string? ipAddress,
+            string? userAgent)
+        {
+            if (request == null || string.IsNullOrWhiteSpace(request.RefreshToken))
+            {
+                throw new UnauthorizedAccessException("Refresh token inválido.");
+            }
+
+            var rawRefreshToken = request.RefreshToken.Trim();
+            var refreshTokenHash = HashRefreshToken(rawRefreshToken);
+
+            await using var connection = new NpgsqlConnection(_connectionString);
+            var tokenAtual = await ObterRefreshTokenAsync(connection, refreshTokenHash);
+
+            if (tokenAtual == null)
+            {
+                throw new UnauthorizedAccessException("Refresh token inválido.");
+            }
+
+            if (tokenAtual.RevokedAt.HasValue)
+            {
+                throw new UnauthorizedAccessException("Refresh token já foi revogado.");
+            }
+
+            if (tokenAtual.ExpiresAt <= DateTime.UtcNow)
+            {
+                await RevokeRefreshTokenAsync(connection, tokenAtual.Id, ipAddress, null, "expired");
+                throw new UnauthorizedAccessException("Refresh token expirado.");
+            }
+
+            var usuario = await ObterUsuarioPorIdAsync(connection, tokenAtual.UserId);
+            if (usuario == null || usuario.DeletedAt.HasValue)
+            {
+                await RevokeRefreshTokenAsync(connection, tokenAtual.Id, ipAddress, null, "user_not_found");
+                throw new UnauthorizedAccessException("Usuário não encontrado para refresh token.");
+            }
+
+            Guid? estabelecimentoId = null;
+            if (!(usuario.IsSuperAdmin && usuario.UltimoEstabelecimentoAcessado == null))
+            {
+                estabelecimentoId = usuario.UltimoEstabelecimentoAcessado
+                    ?? await ObterPrimeiroEstabelecimentoDoUsuarioAsync(connection, usuario.Id);
+            }
+
+            var response = await BuildTokenResponseAsync(connection, usuario, estabelecimentoId);
+            var newRefreshTokenHash = HashRefreshToken(response.RefreshToken);
+            var novoRefreshTokenId = await PersistRefreshTokenAsync(connection, usuario.Id, response.RefreshToken, ipAddress, userAgent);
+
+            var rotacaoConcluida = await RevokeRefreshTokenAsync(
+                connection,
+                tokenAtual.Id,
+                ipAddress,
+                newRefreshTokenHash,
+                "rotated");
+
+            if (!rotacaoConcluida)
+            {
+                await RevokeRefreshTokenAsync(connection, novoRefreshTokenId, ipAddress, null, "rotation_conflict_cleanup");
+                throw new UnauthorizedAccessException("Não foi possível concluir a rotação do refresh token.");
+            }
+
+            return response;
+        }
+
+        public async Task LogoutAsync(int userId, LogoutRequest request, string? ipAddress, string? userAgent)
+        {
+            if (userId <= 0)
+            {
+                throw new UnauthorizedAccessException("Usuário inválido.");
+            }
+
+            request ??= new LogoutRequest();
+            _logger.LogInformation("Logout solicitado para usuário {UserId}. LogoutAll={LogoutAll} UserAgent={UserAgent}",
+                userId, request.LogoutFromAllDevices, userAgent);
+
+            await using var connection = new NpgsqlConnection(_connectionString);
+
+            if (request.LogoutFromAllDevices || string.IsNullOrWhiteSpace(request.RefreshToken))
+            {
+                await RevokeAllRefreshTokensAsync(connection, userId, ipAddress, "logout");
+                return;
+            }
+
+            var refreshTokenHash = HashRefreshToken(request.RefreshToken.Trim());
+            var token = await ObterRefreshTokenAsync(connection, refreshTokenHash);
+
+            if (token == null || token.UserId != userId)
+            {
+                return;
+            }
+
+            await RevokeRefreshTokenAsync(connection, token.Id, ipAddress, null, "logout");
         }
 
         public Task<OAuthAuthorizationResponse> IniciarLoginGoogleAsync(string? redirectUri)
@@ -198,6 +299,7 @@ SELECT id,
             }
 
             var token = await BuildTokenResponseAsync(connection, usuario, estabelecimentoId);
+            await PersistRefreshTokenAsync(connection, usuario.Id, token.RefreshToken, null, null);
 
             return new OAuthCallbackResult
             {
@@ -563,7 +665,128 @@ RETURNING id";
             return Base64UrlEncode(random);
         }
 
-        private async Task<UsuarioDb?> ObterUsuarioPorIdAsync(NpgsqlConnection connection, Guid userId)
+        private DateTime GetRefreshTokenExpirationUtc()
+        {
+            var jwtSection = _configuration.GetSection("Jwt");
+            var refreshTokenExpirationDays = int.TryParse(jwtSection["RefreshTokenExpirationDays"], out var days)
+                ? days
+                : 7;
+
+            return DateTime.UtcNow.AddDays(refreshTokenExpirationDays);
+        }
+
+        private static string HashRefreshToken(string refreshToken)
+        {
+            using var sha = SHA256.Create();
+            var bytes = Encoding.UTF8.GetBytes(refreshToken);
+            var hash = sha.ComputeHash(bytes);
+            return Convert.ToHexString(hash);
+        }
+
+        private async Task<long> PersistRefreshTokenAsync(
+            NpgsqlConnection connection,
+            int userId,
+            string rawRefreshToken,
+            string? ipAddress,
+            string? userAgent)
+        {
+            var tokenHash = HashRefreshToken(rawRefreshToken);
+            var expiresAt = GetRefreshTokenExpirationUtc();
+
+            const string sql = @"
+INSERT INTO usuario_refresh_tokens (id_usuario,
+                                    token_hash,
+                                    expires_at,
+                                    created_at,
+                                    created_by_ip,
+                                    user_agent)
+VALUES (@UserId,
+        @TokenHash,
+        @ExpiresAt,
+        NOW(),
+        @CreatedByIp,
+        @UserAgent)
+RETURNING id";
+
+            return await connection.ExecuteScalarAsync<long>(sql, new
+            {
+                UserId = userId,
+                TokenHash = tokenHash,
+                ExpiresAt = expiresAt,
+                CreatedByIp = ipAddress,
+                UserAgent = userAgent
+            });
+        }
+
+        private async Task<RefreshTokenDb?> ObterRefreshTokenAsync(NpgsqlConnection connection, string tokenHash)
+        {
+            const string sql = @"
+SELECT id,
+       id_usuario              AS UserId,
+       token_hash              AS TokenHash,
+       expires_at              AS ExpiresAt,
+       created_at              AS CreatedAt,
+       revoked_at              AS RevokedAt,
+       revoked_by_ip           AS RevokedByIp,
+       replaced_by_token_hash  AS ReplacedByTokenHash,
+       reason_revoked          AS ReasonRevoked
+  FROM usuario_refresh_tokens
+ WHERE token_hash = @TokenHash
+ LIMIT 1";
+
+            return await connection.QueryFirstOrDefaultAsync<RefreshTokenDb>(sql, new { TokenHash = tokenHash });
+        }
+
+        private async Task<int> RevokeAllRefreshTokensAsync(
+            NpgsqlConnection connection,
+            int userId,
+            string? ipAddress,
+            string reason)
+        {
+            const string sql = @"
+UPDATE usuario_refresh_tokens
+   SET revoked_at = NOW(),
+       revoked_by_ip = @RevokedByIp,
+       reason_revoked = @Reason
+ WHERE id_usuario = @UserId
+   AND revoked_at IS NULL";
+
+            return await connection.ExecuteAsync(sql, new
+            {
+                UserId = userId,
+                RevokedByIp = ipAddress,
+                Reason = reason
+            });
+        }
+
+        private async Task<bool> RevokeRefreshTokenAsync(
+            NpgsqlConnection connection,
+            long tokenId,
+            string? ipAddress,
+            string? replacedByTokenHash,
+            string reason)
+        {
+            const string sql = @"
+UPDATE usuario_refresh_tokens
+   SET revoked_at = NOW(),
+       revoked_by_ip = @RevokedByIp,
+       replaced_by_token_hash = COALESCE(@ReplacedByTokenHash, replaced_by_token_hash),
+       reason_revoked = @Reason
+ WHERE id = @Id
+   AND revoked_at IS NULL";
+
+            var affectedRows = await connection.ExecuteAsync(sql, new
+            {
+                Id = tokenId,
+                RevokedByIp = ipAddress,
+                ReplacedByTokenHash = replacedByTokenHash,
+                Reason = reason
+            });
+
+            return affectedRows > 0;
+        }
+
+        private async Task<UsuarioDb?> ObterUsuarioPorIdAsync(NpgsqlConnection connection, int userId)
         {
             const string sql = @"
 SELECT id,
@@ -576,7 +799,8 @@ SELECT id,
        provider_id,
        deleted_at
   FROM usuario
- WHERE id = @UserId";
+ WHERE id = @UserId
+   AND deleted_at IS NULL";
 
             return await connection.QueryFirstOrDefaultAsync<UsuarioDb>(sql, new { UserId = userId });
         }
@@ -619,9 +843,17 @@ SELECT id_estabelecimento
                     throw new UnauthorizedAccessException("Usuário não possui acesso ao estabelecimento selecionado.");
                 }
 
-                var permissoes = !string.IsNullOrWhiteSpace(contexto.TipoAcesso)
-                    ? await ObterPermissoesAsync(connection, contexto.TipoAcesso)
-                    : new Dictionary<string, List<string>>();
+                var tipoAcessoNormalizado = RoleCatalog.Normalize(contexto.TipoAcesso);
+                if (string.IsNullOrWhiteSpace(tipoAcessoNormalizado) && usuario.IsSuperAdmin)
+                {
+                    tipoAcessoNormalizado = "super_admin";
+                }
+
+                var permissoes = await ObterPermissoesAsync(
+                    connection,
+                    tipoAcessoNormalizado,
+                    contexto.PermissoesCustomizadas,
+                    contexto.EstabelecimentoId);
 
                 payload = new JwtPayload
                 {
@@ -632,7 +864,7 @@ SELECT id_estabelecimento
                     EstabelecimentoId = contexto.EstabelecimentoId,
                     EstabelecimentoNome = contexto.EstabelecimentoNome,
                     TipoEstabelecimento = contexto.TipoEstabelecimento,
-                    TipoAcesso = contexto.TipoAcesso,
+                    TipoAcesso = string.IsNullOrWhiteSpace(tipoAcessoNormalizado) ? null : tipoAcessoNormalizado,
                     VinculoId = contexto.VinculoId,
                     Permissoes = permissoes
                 };
@@ -642,7 +874,7 @@ SELECT id_estabelecimento
                     Id = contexto.EstabelecimentoId,
                     Nome = contexto.EstabelecimentoNome ?? string.Empty,
                     Tipo = contexto.TipoEstabelecimento ?? string.Empty,
-                    TipoAcesso = contexto.TipoAcesso ?? string.Empty
+                    TipoAcesso = tipoAcessoNormalizado
                 };
             }
             else
@@ -692,7 +924,8 @@ SELECT  e.id                    AS EstabelecimentoId,
         e.nome_fantasia         AS EstabelecimentoNome,
         te.nome                 AS TipoEstabelecimento,
         ue.id                   AS VinculoId,
-        ue.tipo_acesso          AS TipoAcesso
+        ue.tipo_acesso          AS TipoAcesso,
+        ue.permissoes_customizadas::text AS PermissoesCustomizadas
   FROM estabelecimentos e
   JOIN tipo_estabelecimento te ON te.id = e.id_tipo_estabelecimento
   LEFT JOIN usuario_estabelecimentos ue 
@@ -723,34 +956,259 @@ SELECT  e.id                    AS EstabelecimentoId,
 
         private async Task<Dictionary<string, List<string>>> ObterPermissoesAsync(
             NpgsqlConnection connection,
-            string? tipoAcesso)
+            string? tipoAcesso,
+            string? permissoesCustomizadas,
+            Guid estabelecimentoId)
         {
-            // Apenas permissões padrão - sem customizadas
-            if (string.IsNullOrWhiteSpace(tipoAcesso))
-            {
-                return new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
-            }
+            var permissoes = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
 
-            const string sqlPadrao = @"
+            if (!string.IsNullOrWhiteSpace(tipoAcesso))
+            {
+                const string sqlPadrao = @"
 SELECT  m.nome                  AS Modulo,
         pp.permissoes::text     AS Permissoes
   FROM permissoes_padrao pp
   JOIN modulos_disponiveis m ON m.id = pp.id_modulo
  WHERE pp.tipo_acesso = @TipoAcesso";
 
-            var linhas = await connection.QueryAsync<PermissaoRow>(sqlPadrao, new { TipoAcesso = tipoAcesso });
+                var linhas = await connection.QueryAsync<PermissaoRow>(sqlPadrao, new { TipoAcesso = tipoAcesso });
 
-            var permissoes = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
-
-            foreach (var linha in linhas)
-            {
-                if (!string.IsNullOrWhiteSpace(linha.Modulo))
+                foreach (var linha in linhas)
                 {
-                    permissoes[linha.Modulo] = ParsePermissoes(linha.Permissoes);
+                    if (!string.IsNullOrWhiteSpace(linha.Modulo))
+                    {
+                        permissoes[linha.Modulo] = ParsePermissoes(linha.Permissoes);
+                    }
+                }
+            }
+
+            ApplyCustomPermissions(permissoes, permissoesCustomizadas);
+
+            if (estabelecimentoId != Guid.Empty)
+            {
+                var modulosAtivos = await ObterModulosAtivosAsync(connection, estabelecimentoId);
+                if (modulosAtivos.Count > 0)
+                {
+                    var interseccao = permissoes.Keys
+                        .Where(k => modulosAtivos.Contains(k))
+                        .ToList();
+
+                    // Evita fail-closed por divergência de nomenclatura entre módulos salvos e catálogos antigos.
+                    if (interseccao.Count > 0)
+                    {
+                        permissoes = permissoes
+                            .Where(kvp => modulosAtivos.Contains(kvp.Key))
+                            .ToDictionary(
+                                kvp => kvp.Key,
+                                kvp => kvp.Value,
+                                StringComparer.OrdinalIgnoreCase);
+                    }
                 }
             }
 
             return permissoes;
+        }
+
+        private async Task<HashSet<string>> ObterModulosAtivosAsync(NpgsqlConnection connection, Guid estabelecimentoId)
+        {
+            const string sql = @"
+SELECT unnest(modulos_ativos)::text
+  FROM estabelecimentos
+ WHERE id = @EstabelecimentoId
+   AND (ativo IS NULL OR ativo = TRUE)";
+
+            var modulos = await connection.QueryAsync<string>(sql, new { EstabelecimentoId = estabelecimentoId });
+            return modulos
+                .Where(m => !string.IsNullOrWhiteSpace(m))
+                .Select(m => m.Trim())
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        }
+
+        private static void ApplyCustomPermissions(
+            Dictionary<string, List<string>> permissoesBase,
+            string? permissoesCustomizadasRaw)
+        {
+            if (string.IsNullOrWhiteSpace(permissoesCustomizadasRaw))
+            {
+                return;
+            }
+
+            try
+            {
+                using var doc = JsonDocument.Parse(permissoesCustomizadasRaw);
+                var root = doc.RootElement;
+
+                // Compatibilidade legada: array simples de ações aplicada em todos os módulos já existentes.
+                if (root.ValueKind == JsonValueKind.Array)
+                {
+                    var acoesGlobais = ReadActions(root);
+                    if (acoesGlobais.Count == 0)
+                    {
+                        return;
+                    }
+
+                    foreach (var modulo in permissoesBase.Keys.ToList())
+                    {
+                        var lista = permissoesBase[modulo];
+                        foreach (var acao in acoesGlobais)
+                        {
+                            if (!lista.Any(x => string.Equals(x, acao, StringComparison.OrdinalIgnoreCase)))
+                            {
+                                lista.Add(acao);
+                            }
+                        }
+                    }
+
+                    return;
+                }
+
+                if (root.ValueKind != JsonValueKind.Object)
+                {
+                    return;
+                }
+
+                var grants = ReadModuleMap(root, "grants")
+                             ?? ReadModuleMap(root, "allow")
+                             ?? ReadModuleMap(root, "permissoes")
+                             ?? ReadModuleMap(root, "permissions");
+
+                // Compatibilidade: objeto simples { "whatsapp": ["visualizar"] }.
+                if (grants == null)
+                {
+                    grants = ReadDirectModuleMap(root);
+                }
+
+                var revokes = ReadModuleMap(root, "revokes")
+                              ?? ReadModuleMap(root, "deny");
+
+                if (grants != null)
+                {
+                    foreach (var kvp in grants)
+                    {
+                        if (!permissoesBase.TryGetValue(kvp.Key, out var existentes))
+                        {
+                            existentes = new List<string>();
+                            permissoesBase[kvp.Key] = existentes;
+                        }
+
+                        foreach (var acao in kvp.Value)
+                        {
+                            if (!existentes.Any(x => string.Equals(x, acao, StringComparison.OrdinalIgnoreCase)))
+                            {
+                                existentes.Add(acao);
+                            }
+                        }
+                    }
+                }
+
+                if (revokes != null)
+                {
+                    foreach (var kvp in revokes)
+                    {
+                        if (!permissoesBase.TryGetValue(kvp.Key, out var existentes) || existentes.Count == 0)
+                        {
+                            continue;
+                        }
+
+                        existentes.RemoveAll(acao =>
+                            kvp.Value.Any(rev => string.Equals(rev, acao, StringComparison.OrdinalIgnoreCase)));
+                    }
+                }
+            }
+            catch
+            {
+                // Silencioso por compatibilidade com payloads legados malformados.
+            }
+        }
+
+        private static Dictionary<string, List<string>>? ReadModuleMap(JsonElement root, string propertyName)
+        {
+            if (!root.TryGetProperty(propertyName, out var node) || node.ValueKind != JsonValueKind.Object)
+            {
+                return null;
+            }
+
+            var result = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var prop in node.EnumerateObject())
+            {
+                var modulo = prop.Name?.Trim();
+                if (string.IsNullOrWhiteSpace(modulo))
+                {
+                    continue;
+                }
+
+                result[modulo] = ReadActions(prop.Value);
+            }
+
+            return result;
+        }
+
+        private static Dictionary<string, List<string>>? ReadDirectModuleMap(JsonElement root)
+        {
+            var result = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var prop in root.EnumerateObject())
+            {
+                var key = prop.Name?.Trim();
+                if (string.IsNullOrWhiteSpace(key))
+                {
+                    continue;
+                }
+
+                if (string.Equals(key, "grants", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(key, "revokes", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(key, "allow", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(key, "deny", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(key, "permissions", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(key, "permissoes", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (prop.Value.ValueKind != JsonValueKind.Array &&
+                    prop.Value.ValueKind != JsonValueKind.String)
+                {
+                    continue;
+                }
+
+                result[key] = ReadActions(prop.Value);
+            }
+
+            return result.Count > 0 ? result : null;
+        }
+
+        private static List<string> ReadActions(JsonElement node)
+        {
+            if (node.ValueKind == JsonValueKind.String)
+            {
+                var single = node.GetString();
+                return string.IsNullOrWhiteSpace(single)
+                    ? new List<string>()
+                    : new List<string> { single.Trim() };
+            }
+
+            if (node.ValueKind != JsonValueKind.Array)
+            {
+                return new List<string>();
+            }
+
+            var list = new List<string>();
+            foreach (var item in node.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.String)
+                {
+                    continue;
+                }
+
+                var action = item.GetString();
+                if (!string.IsNullOrWhiteSpace(action))
+                {
+                    list.Add(action.Trim());
+                }
+            }
+
+            return list
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
         }
 
         private static List<string> ParsePermissoes(string? raw)
@@ -864,6 +1322,20 @@ SELECT  m.nome                  AS Modulo,
             public string? TipoEstabelecimento { get; set; }
             public Guid? VinculoId { get; set; }
             public string? TipoAcesso { get; set; }
+            public string? PermissoesCustomizadas { get; set; }
+        }
+
+        private sealed class RefreshTokenDb
+        {
+            public long Id { get; set; }
+            public int UserId { get; set; }
+            public string TokenHash { get; set; } = string.Empty;
+            public DateTime ExpiresAt { get; set; }
+            public DateTime CreatedAt { get; set; }
+            public DateTime? RevokedAt { get; set; }
+            public string? RevokedByIp { get; set; }
+            public string? ReplacedByTokenHash { get; set; }
+            public string? ReasonRevoked { get; set; }
         }
 
         private sealed class PermissaoRow
