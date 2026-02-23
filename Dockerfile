@@ -7,8 +7,8 @@ EXPOSE 80
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 COPY . .
-RUN dotnet restore
-RUN dotnet publish -c Release -o /app/publish
+RUN dotnet restore APIBack.csproj
+RUN dotnet publish APIBack.csproj -c Release -o /app/publish --no-restore
 
 # Etapa final
 FROM base AS final
