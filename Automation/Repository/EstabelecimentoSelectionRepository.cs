@@ -50,7 +50,7 @@ SELECT  ue.id                  AS VinculoId,
         ue.tipo_acesso         AS TipoAcesso,
         e.status               AS StatusEstabelecimento,
         e.ativo                AS EstabelecimentoAtivo,
-        e.plano                AS Plano
+        NULL::text             AS Plano
   FROM usuario_estabelecimentos ue
   JOIN estabelecimentos e ON e.id = ue.id_estabelecimento
   JOIN tipo_estabelecimento te ON te.id = e.id_tipo_estabelecimento
@@ -70,7 +70,7 @@ SELECT  e.id              AS EstabelecimentoId,
         te.nome           AS TipoEstabelecimento,
         e.status          AS StatusEstabelecimento,
         e.ativo           AS EstabelecimentoAtivo,
-        e.plano           AS Plano
+        NULL::text        AS Plano
   FROM estabelecimentos e
   JOIN tipo_estabelecimento te ON te.id = e.id_tipo_estabelecimento
  WHERE (e.status = 'ativo' OR e.status IS NULL)
@@ -88,7 +88,7 @@ SELECT  e.id              AS EstabelecimentoId,
 SELECT  e.id            AS Id,
         e.nome_fantasia AS Nome,
         te.nome         AS TipoEstabelecimento,
-        e.plano         AS Plano,
+        NULL::text      AS Plano,
         e.status        AS Status,
         e.ativo         AS Ativo
   FROM estabelecimentos e
