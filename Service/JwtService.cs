@@ -71,7 +71,10 @@ namespace APIBack.Service
                 throw new ArgumentException("Token n\u00e3o pode ser vazio.", nameof(token));
             }
 
-            var handler = new JwtSecurityTokenHandler();
+            var handler = new JwtSecurityTokenHandler
+            {
+                MapInboundClaims = false
+            };
             var parameters = GetValidationParameters(validateLifetime: true);
 
             var principal = handler.ValidateToken(token, parameters, out var securityToken);
@@ -93,7 +96,10 @@ namespace APIBack.Service
 
         public ClaimsPrincipal GetPrincipalFromExpiredToken(string token)
         {
-            var handler = new JwtSecurityTokenHandler();
+            var handler = new JwtSecurityTokenHandler
+            {
+                MapInboundClaims = false
+            };
             var parameters = GetValidationParameters(validateLifetime: false);
 
             var principal = handler.ValidateToken(token, parameters, out var securityToken);
@@ -185,12 +191,14 @@ namespace APIBack.Service
             {
                 switch (claim.Type)
                 {
+                    case ClaimTypes.NameIdentifier:
                     case JwtRegisteredClaimNames.Sub:
                         if (int.TryParse(claim.Value, out var userId))
                         {
                             payload.UserId = userId;
                         }
                         break;
+                    case ClaimTypes.Email:
                     case JwtRegisteredClaimNames.Email:
                         payload.Email = claim.Value;
                         break;
