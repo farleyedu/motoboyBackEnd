@@ -109,10 +109,10 @@ SELECT  ue.id                   AS Id,
         ue.ativo                AS VinculoAtivo,
         ue.tipo_acesso          AS TipoAcesso,
         ue.permissoes_customizadas::text AS PermissoesCustomizadas
-  FROM usuario_estabelecimentos ue
+ FROM usuario_estabelecimentos ue
  WHERE ue.id_usuario = @UserId
    AND ue.id_estabelecimento = @EstabelecimentoId
- ORDER BY ue.data_criacao DESC
+ ORDER BY ue.created_at DESC
  LIMIT 1";
 
             await using var connection = new NpgsqlConnection(_connectionString);
