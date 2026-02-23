@@ -25,7 +25,8 @@ namespace APIBack.Middleware
             if (!string.IsNullOrWhiteSpace(authorizationHeader) &&
                 authorizationHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
             {
-                var token = authorizationHeader["Bearer ".Length..].Trim();
+                var rawToken = authorizationHeader["Bearer ".Length..].Trim();
+                var token = ExtractJwt(rawToken);
 
                 if (!string.IsNullOrWhiteSpace(token))
                 {
@@ -55,6 +56,27 @@ namespace APIBack.Middleware
 
             await _next(context);
         }
+
+        private static string ExtractJwt(string rawToken)
+        {
+            if (string.IsNullOrWhiteSpace(rawToken))
+            {
+                return string.Empty;
+            }
+
+            // Be tolerant with malformed inputs copied from tools (e.g. trailing JSON fragments).
+            // Valid JWT chars are base64url + dots.
+            var validChars = rawToken
+                .TakeWhile(ch =>
+                    (ch >= 'a' && ch <= 'z') ||
+                    (ch >= 'A' && ch <= 'Z') ||
+                    (ch >= '0' && ch <= '9') ||
+                    ch == '-' ||
+                    ch == '_' ||
+                    ch == '.')
+                .ToArray();
+
+            return new string(validChars);
+        }
     }
 }
-

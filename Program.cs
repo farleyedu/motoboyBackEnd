@@ -16,6 +16,11 @@ using APIBack.Automation.Repository.Interface;
 using APIBack.Automation.Services.Interface;
 using APIBack.Automation.Validators;
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
+using APIBack.Payments.Options;
+using APIBack.Payments.Repository;
+using APIBack.Payments.Repository.Interface;
+using APIBack.Payments.Services;
+using APIBack.Payments.Services.Interface;
 using System.Net;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
@@ -92,6 +97,7 @@ builder.Services.AddScoped<IReservasService, ReservasService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddSingleton<IJwtService, JwtService>();
 builder.Services.Configure<GoogleOAuthOptions>(builder.Configuration.GetSection("GoogleOAuth"));
+builder.Services.Configure<AsaasCheckoutOptions>(builder.Configuration.GetSection("Payments:Asaas"));
 
 
 // ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
@@ -142,6 +148,30 @@ builder.Services.AddSingleton<IWebhookDispatchService, WebhookDispatchService>()
 builder.Services.AddHostedService<WebhookProcessingWorker>();
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
 
+// ================= PAYMENTS SECTION (BEGIN) ===================
+builder.Services.AddScoped<ICheckoutRepository, CheckoutRepository>();
+builder.Services.AddScoped<ICheckoutPaymentService, CheckoutPaymentService>();
+builder.Services.AddScoped<ICheckoutWebhookService, CheckoutWebhookService>();
+builder.Services.AddScoped<IPublicCheckoutService, PublicCheckoutService>();
+builder.Services.AddHttpClient<IAsaasCheckoutClient, AsaasCheckoutClient>((serviceProvider, client) =>
+{
+    var settings = serviceProvider.GetRequiredService<Microsoft.Extensions.Options.IOptions<AsaasCheckoutOptions>>().Value;
+    var baseUrl = string.IsNullOrWhiteSpace(settings.BaseUrl) ? "https://sandbox.asaas.com/api/" : settings.BaseUrl;
+
+    client.BaseAddress = new Uri(baseUrl);
+    client.DefaultRequestHeaders.Remove("access_token");
+    if (!string.IsNullOrWhiteSpace(settings.ApiKey))
+    {
+        client.DefaultRequestHeaders.Add("access_token", settings.ApiKey);
+    }
+
+    client.DefaultRequestHeaders.Accept.Clear();
+    client.DefaultRequestHeaders.Accept.Add(new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/json"));
+    client.DefaultRequestHeaders.UserAgent.ParseAdd("ZippyCheckout/1.0");
+    client.Timeout = TimeSpan.FromSeconds(30);
+});
+// ================= PAYMENTS SECTION (END) ===================
+
 
 // Configurar CORS
 builder.Services.AddCors(options =>
@@ -160,6 +190,27 @@ builder.Services.AddSwaggerGen(options =>
 {
     options.SupportNonNullableReferenceTypes();
     options.CustomSchemaIds(type => (type.FullName ?? type.Name).Replace("+", "."));
+
+    var securityScheme = new Microsoft.OpenApi.Models.OpenApiSecurityScheme
+    {
+        Name = "Authorization",
+        Description = "Cole apenas o JWT (sem aspas e sem o prefixo Bearer).",
+        In = Microsoft.OpenApi.Models.ParameterLocation.Header,
+        Type = Microsoft.OpenApi.Models.SecuritySchemeType.Http,
+        Scheme = "bearer",
+        BearerFormat = "JWT",
+        Reference = new Microsoft.OpenApi.Models.OpenApiReference
+        {
+            Type = Microsoft.OpenApi.Models.ReferenceType.SecurityScheme,
+            Id = "Bearer"
+        }
+    };
+
+    options.AddSecurityDefinition("Bearer", securityScheme);
+    options.AddSecurityRequirement(new Microsoft.OpenApi.Models.OpenApiSecurityRequirement
+    {
+        { securityScheme, Array.Empty<string>() }
+    });
 });
 
 // Explicit Kestrel binding: HTTP on port 7137
