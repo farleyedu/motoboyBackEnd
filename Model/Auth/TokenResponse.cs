@@ -8,6 +8,14 @@ namespace APIBack.Model.Auth
         [JsonPropertyName("accessToken")]
         public string AccessToken { get; set; } = string.Empty;
 
+        // Compatibilidade para clientes legados que esperam "token".
+        [JsonPropertyName("token")]
+        public string Token
+        {
+            get => AccessToken;
+            set => AccessToken = value;
+        }
+
         [JsonPropertyName("refreshToken")]
         public string RefreshToken { get; set; } = string.Empty;
 

@@ -12,6 +12,7 @@ using APIBack.Service.Interface;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.WebUtilities;
+using Microsoft.Extensions.Logging;
 
 namespace APIBack.Controllers
 {
@@ -20,10 +21,12 @@ namespace APIBack.Controllers
     public class AuthController : ControllerBase
     {
         private readonly IAuthService _authService;
+        private readonly ILogger<AuthController> _logger;
 
-        public AuthController(IAuthService authService)
+        public AuthController(IAuthService authService, ILogger<AuthController> logger)
         {
             _authService = authService;
+            _logger = logger;
         }
 
         [HttpPost("login")]
@@ -48,8 +51,9 @@ namespace APIBack.Controllers
             {
                 return Unauthorized(ApiResponse<object>.Fail(ex.Message));
             }
-            catch
+            catch (Exception ex)
             {
+                _logger.LogError(ex, "Erro ao processar login para o e-mail {Email}", request.Email);
                 return StatusCode(500, ApiResponse<object>.Fail("Erro ao processar login."));
             }
         }
@@ -76,8 +80,9 @@ namespace APIBack.Controllers
             {
                 return Unauthorized(ApiResponse<object>.Fail(ex.Message));
             }
-            catch
+            catch (Exception ex)
             {
+                _logger.LogError(ex, "Erro ao processar refresh token.");
                 return StatusCode(500, ApiResponse<object>.Fail("Erro ao processar refresh token."));
             }
         }

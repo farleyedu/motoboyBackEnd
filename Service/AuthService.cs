@@ -807,23 +807,67 @@ SELECT id,
 
         private async Task<Guid> ObterPrimeiroEstabelecimentoDoUsuarioAsync(NpgsqlConnection connection, int userId)
         {
-            const string sql = @"
+            var estabelecimentoId = await TentarObterPrimeiroEstabelecimentoAsync(
+                connection,
+                userId,
+                "ORDER BY data_criacao ASC");
+
+            if (!estabelecimentoId.HasValue)
+            {
+                estabelecimentoId = await TentarObterPrimeiroEstabelecimentoAsync(
+                    connection,
+                    userId,
+                    "ORDER BY created_at ASC");
+            }
+
+            if (!estabelecimentoId.HasValue)
+            {
+                estabelecimentoId = await TentarObterPrimeiroEstabelecimentoAsync(
+                    connection,
+                    userId,
+                    "ORDER BY id ASC",
+                    suppressUndefinedColumnLog: true);
+            }
+
+            if (!estabelecimentoId.HasValue)
+            {
+                throw new UnauthorizedAccessException("Usuario nao possui vinculo ativo com estabelecimentos.");
+            }
+
+            return estabelecimentoId.Value;
+        }
+
+        private async Task<Guid?> TentarObterPrimeiroEstabelecimentoAsync(
+            NpgsqlConnection connection,
+            int userId,
+            string orderByClause,
+            bool suppressUndefinedColumnLog = false)
+        {
+            var sql = $@"
 SELECT id_estabelecimento
   FROM usuario_estabelecimentos
  WHERE id_usuario = @UserId
    AND ativo = TRUE
    AND status = 'ativo'
- ORDER BY data_criacao ASC
+ {orderByClause}
  LIMIT 1";
 
-            var estabelecimentoId = await connection.ExecuteScalarAsync<Guid?>(sql, new { UserId = userId });
-
-            if (!estabelecimentoId.HasValue)
+            try
             {
-                throw new UnauthorizedAccessException("Usuário não possui vínculo ativo com estabelecimentos.");
+                return await connection.ExecuteScalarAsync<Guid?>(sql, new { UserId = userId });
             }
+            catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedColumn)
+            {
+                if (!suppressUndefinedColumnLog)
+                {
+                    _logger.LogWarning(
+                        "Coluna de ordenacao ausente em usuario_estabelecimentos ao buscar primeiro estabelecimento. UserId={UserId} Clause={OrderByClause}",
+                        userId,
+                        orderByClause);
+                }
 
-            return estabelecimentoId.Value;
+                return null;
+            }
         }
 
         private async Task<TokenResponse> BuildTokenResponseAsync(
