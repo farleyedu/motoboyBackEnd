@@ -19,15 +19,18 @@ namespace APIBack.Automation.Services
     {
         private readonly IReservaRepository _reservaRepository;
         private readonly IConversationRepository _conversationRepository;
+        private readonly CentralRoutingService _centralRouting;
         private readonly ILogger<AtualizarReservaHandler> _logger;
 
         public AtualizarReservaHandler(
             IReservaRepository reservaRepository,
             IConversationRepository conversationRepository,
+            CentralRoutingService centralRouting,
             ILogger<AtualizarReservaHandler> logger)
         {
             _reservaRepository = reservaRepository;
             _conversationRepository = conversationRepository;
+            _centralRouting = centralRouting;
             _logger = logger;
         }
 
@@ -94,9 +97,15 @@ namespace APIBack.Automation.Services
                         return "Não consegui validar a capacidade agora.\n\nPode tentar novamente? 😊";
                     }
 
+                    var escopo = await _centralRouting.ResolveEffectiveScopeAsync(idConversa, conversa);
+                    if (escopo == null)
+                    {
+                        return "Não consegui validar a capacidade agora.\n\nPode tentar novamente? 😊";
+                    }
+
                     var capacidadeTotal = reserva.DataReserva.Date == DateTime.Today ? 50 : 110;
                     var ocupadasSemEstaReserva = await _reservaRepository.SomarPessoasDoDiaAsync(
-                        conversa.IdEstabelecimento,
+                        escopo.IdEstabelecimento,
                         reserva.DataReserva.Date) - (reserva.QtdPessoas ?? 0);
 
                     if (ocupadasSemEstaReserva + novaQtdPessoas.Value > capacidadeTotal)

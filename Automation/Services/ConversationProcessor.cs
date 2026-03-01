@@ -27,6 +27,7 @@ namespace APIBack.Automation.Services
         private readonly IEstabelecimentoRepository _estabelecimentoRepo;
         private readonly IMessageRepository _mensagemRepository;
         private readonly PromptAssembler _promptAssembler;
+        private readonly CentralRoutingService _centralRouting;
         private readonly ILogger<ConversationProcessor> _logger;
 
         public ConversationProcessor(
@@ -37,6 +38,7 @@ namespace APIBack.Automation.Services
             IEstabelecimentoRepository estabelecimentoRepo,
             IMessageRepository mensagemRepository,
             PromptAssembler promptAssembler,
+            CentralRoutingService centralRouting,
             ILogger<ConversationProcessor> logger)
         {
             _conversationService = conversationService;
@@ -46,6 +48,7 @@ namespace APIBack.Automation.Services
             _estabelecimentoRepo = estabelecimentoRepo;
             _mensagemRepository = mensagemRepository;
             _promptAssembler = promptAssembler;
+            _centralRouting = centralRouting;
             _logger = logger;
         }
 
@@ -152,7 +155,25 @@ namespace APIBack.Automation.Services
         {
             try
             {
-                var idEstabelecimento = await ResolverEstabelecimentoAsync(phoneNumberDisplay);
+                Guid? idEstabelecimento;
+                if (_centralRouting.IsCentralDisplayPhone(phoneNumberDisplay))
+                {
+                    var selecao = await _centralRouting.ObterSelecaoAtualAsync(idConversa);
+                    if (!selecao.HasSelection)
+                    {
+                        _logger.LogInformation(
+                            "[Conversa={Conversa}] Numero central sem estabelecimento escolhido; contexto de IA suprimido",
+                            idConversa);
+                        return null;
+                    }
+
+                    idEstabelecimento = selecao.EstabelecimentoId;
+                }
+                else
+                {
+                    idEstabelecimento = await ResolverEstabelecimentoAsync(phoneNumberDisplay);
+                }
+
                 if (!idEstabelecimento.HasValue)
                 {
                     return null;

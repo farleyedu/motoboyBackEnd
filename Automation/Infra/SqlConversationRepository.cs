@@ -791,6 +791,15 @@ UPDATE conversas
                     data_atualizacao = NOW()
                 WHERE id = @IdConversa;";
 
+            await using (var cxContexto = new NpgsqlConnection(_connectionString))
+            {
+                var jsonExistente = await cxContexto.ExecuteScalarAsync<string>(
+                    "SELECT contexto_estado FROM conversas WHERE id = @IdConversa;",
+                    new { IdConversa = idConversa });
+                var contextoExistente = DeserializeContext(jsonExistente);
+                contexto = CentralRoutingService.MergeCentralSelection(contextoExistente, contexto);
+            }
+
             var json = System.Text.Json.JsonSerializer.Serialize(contexto);
 
             await using var cx = new NpgsqlConnection(_connectionString);
@@ -822,6 +831,35 @@ UPDATE conversas
 
         public async Task LimparContextoAsync(Guid idConversa)
         {
+            await using (var cxPreservacao = new NpgsqlConnection(_connectionString))
+            {
+                var jsonExistente = await cxPreservacao.ExecuteScalarAsync<string>(
+                    "SELECT contexto_estado FROM conversas WHERE id = @IdConversa;",
+                    new { IdConversa = idConversa });
+                var contextoExistente = DeserializeContext(jsonExistente);
+                var contextoPreservado = CentralRoutingService.BuildPreservedSelectionContext(contextoExistente);
+
+                if (contextoPreservado != null)
+                {
+                    _logger.LogInformation(
+                        "[CONTEXTO-DEBUG] Conversa={Conversa} | Preservando selecao central ao limpar contexto",
+                        idConversa);
+
+                    const string sqlPreservacao = @"
+                        UPDATE conversas
+                        SET contexto_estado = @ContextoJson::jsonb,
+                            data_atualizacao = NOW()
+                        WHERE id = @IdConversa;";
+
+                    var json = System.Text.Json.JsonSerializer.Serialize(contextoPreservado);
+                    await cxPreservacao.ExecuteAsync(sqlPreservacao, new { IdConversa = idConversa, ContextoJson = json });
+
+                    _logger.LogWarning(
+                        "[CONTEXTO-DEBUG] Conversa={Conversa} | Contexto LIMPO com sucesso",
+                        idConversa);
+                    return;
+                }
+            }
             // ✨ ADICIONADO: Log ANTES de limpar
             _logger.LogWarning(
                 "[CONTEXTO-DEBUG] Conversa={Conversa} | LIMPANDO contexto (contexto_estado será NULL)",
@@ -840,6 +878,23 @@ UPDATE conversas
             _logger.LogWarning(
                 "[CONTEXTO-DEBUG] Conversa={Conversa} | Contexto LIMPO com sucesso",
                 idConversa);
+        }
+
+        private static ConversationContext? DeserializeContext(string? json)
+        {
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                return null;
+            }
+
+            try
+            {
+                return System.Text.Json.JsonSerializer.Deserialize<ConversationContext>(json);
+            }
+            catch
+            {
+                return null;
+            }
         }
     }
 }

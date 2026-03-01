@@ -120,6 +120,7 @@ builder.Services.AddScoped<EstabelecimentoSelectionValidator>();
 builder.Services.AddScoped<ToolExecutorService>();
 builder.Services.AddScoped<AtualizarReservaHandler>();
 builder.Services.AddScoped<ReservaValidator>();
+builder.Services.AddScoped<CentralRoutingService>();
 
 
 

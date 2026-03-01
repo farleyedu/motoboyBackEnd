@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using APIBack.Automation.Interfaces;
+using APIBack.Automation.Models;
 using Dapper;
 using Microsoft.Extensions.Logging;
 using Npgsql;
@@ -53,6 +54,41 @@ namespace APIBack.Automation.Infra
             {
                 _logger.LogError(ex, "Erro ao buscar módulos ativos para estabelecimento {IdEstabelecimento}", idEstabelecimento);
                 return Array.Empty<string>();
+            }
+        }
+
+        public async Task<IReadOnlyCollection<EstabelecimentoWhatsappAtivoDto>> ListarEstabelecimentosComWhatsappAtivoAsync(Guid? excluirEstabelecimentoId = null)
+        {
+            const string sql = @"
+SELECT DISTINCT
+       e.id            AS Id,
+       e.nome_fantasia AS Nome,
+       te.nome         AS TipoEstabelecimento
+  FROM estabelecimentos e
+  JOIN tipo_estabelecimento te ON te.id = e.id_tipo_estabelecimento
+ WHERE (e.status = 'ativo' OR e.status IS NULL)
+   AND (e.ativo IS NULL OR e.ativo = TRUE)
+   AND (@ExcluirEstabelecimentoId IS NULL OR e.id <> @ExcluirEstabelecimentoId)
+   AND EXISTS (
+       SELECT 1
+         FROM unnest(e.modulos_ativos) AS modulo
+        WHERE lower(trim(modulo::text)) = 'whatsapp'
+   )
+ ORDER BY e.nome_fantasia;";
+
+            try
+            {
+                await using var connection = new NpgsqlConnection(_connectionString);
+                var estabelecimentos = await connection.QueryAsync<EstabelecimentoWhatsappAtivoDto>(
+                    sql,
+                    new { ExcluirEstabelecimentoId = excluirEstabelecimentoId });
+
+                return estabelecimentos.ToArray();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao listar estabelecimentos com whatsapp ativo");
+                return Array.Empty<EstabelecimentoWhatsappAtivoDto>();
             }
         }
     }

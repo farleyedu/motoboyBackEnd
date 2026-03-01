@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using APIBack.Automation.Dtos;
 using APIBack.Automation.Interfaces;
 using APIBack.Automation.Models;
+using APIBack.Automation.Services;
 
 namespace APIBack.Automation.Infra
 {
@@ -339,7 +340,11 @@ namespace APIBack.Automation.Infra
         {
             if (_conversas.TryGetValue(idConversa, out var conversa))
             {
-                conversa.ContextoEstadoJson = System.Text.Json.JsonSerializer.Serialize(contexto);
+                var contextoExistente = string.IsNullOrWhiteSpace(conversa.ContextoEstadoJson)
+                    ? null
+                    : System.Text.Json.JsonSerializer.Deserialize<ConversationContext>(conversa.ContextoEstadoJson);
+                var contextoFinal = CentralRoutingService.MergeCentralSelection(contextoExistente, contexto);
+                conversa.ContextoEstadoJson = System.Text.Json.JsonSerializer.Serialize(contextoFinal);
                 conversa.AtualizadoEm = DateTime.UtcNow;
             }
             return Task.CompletedTask;
@@ -366,7 +371,13 @@ namespace APIBack.Automation.Infra
         {
             if (_conversas.TryGetValue(idConversa, out var conversa))
             {
-                conversa.ContextoEstadoJson = null;
+                var contextoExistente = string.IsNullOrWhiteSpace(conversa.ContextoEstadoJson)
+                    ? null
+                    : System.Text.Json.JsonSerializer.Deserialize<ConversationContext>(conversa.ContextoEstadoJson);
+                var contextoPreservado = CentralRoutingService.BuildPreservedSelectionContext(contextoExistente);
+                conversa.ContextoEstadoJson = contextoPreservado == null
+                    ? null
+                    : System.Text.Json.JsonSerializer.Serialize(contextoPreservado);
                 conversa.AtualizadoEm = DateTime.UtcNow;
             }
             return Task.CompletedTask;

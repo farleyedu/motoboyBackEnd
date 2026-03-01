@@ -67,15 +67,18 @@ namespace APIBack.Automation.Services
     {
         private readonly IReservaRepository _reservaRepository;
         private readonly IConversationRepository _conversationRepository;
+        private readonly CentralRoutingService _centralRouting;
         private readonly ILogger<ReservaValidator> _logger;
 
         public ReservaValidator(
             IReservaRepository reservaRepository,
             IConversationRepository conversationRepository,
+            CentralRoutingService centralRouting,
             ILogger<ReservaValidator> logger)
         {
             _reservaRepository = reservaRepository;
             _conversationRepository = conversationRepository;
+            _centralRouting = centralRouting;
             _logger = logger;
         }
 
@@ -135,7 +138,22 @@ namespace APIBack.Automation.Services
             var ehMesmoDia = dataReserva.Date == referenciaAtual.Date;
             var horaAtual = referenciaAtual.TimeOfDay;
             var conversa = await _conversationRepository.ObterPorIdAsync(idConversa);
-            var idEstabelecimento = conversa.IdEstabelecimento;
+            if (conversa == null)
+            {
+                return ReservaValidationResult.Failure(
+                    "Não consegui localizar nossa conversa agora.\n\nPode tentar novamente em instantes? 😊",
+                    ReservaValidationIssue.DadosIncompletos);
+            }
+
+            var escopo = await _centralRouting.ResolveEffectiveScopeAsync(idConversa, conversa);
+            if (escopo == null)
+            {
+                return ReservaValidationResult.Failure(
+                    "Tivemos um probleminha ao confirmar.\n\nPode tentar novamente em instantes? 😊",
+                    ReservaValidationIssue.DadosIncompletos);
+            }
+
+            var idEstabelecimento = escopo.IdEstabelecimento;
             if (ehMesmoDia)
             {
                 // Regra: não pode criar/alterar reserva do mesmo dia após 16h
@@ -201,14 +219,7 @@ namespace APIBack.Automation.Services
             }
 
             // 6. Obter dados da conversa
-            if (conversa == null)
-            {
-                return ReservaValidationResult.Failure(
-                    "Não consegui localizar nossa conversa agora.\n\nPode tentar novamente em instantes? 😊",
-                    ReservaValidationIssue.DadosIncompletos);
-            }
-
-            var idCliente = conversa.IdCliente;
+            var idCliente = escopo.IdCliente;
 
             if (idCliente == Guid.Empty || idEstabelecimento == Guid.Empty)
             {

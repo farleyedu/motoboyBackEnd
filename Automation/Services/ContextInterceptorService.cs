@@ -30,19 +30,22 @@ namespace APIBack.Automation.Services
         private readonly IClienteRepository _clienteRepository;
         private readonly ILogger<ContextInterceptorService> _logger;
         private readonly ToolExecutorService _toolExecutor;
+        private readonly CentralRoutingService _centralRouting;
 
         public ContextInterceptorService(
             IConversationRepository conversationRepository,
             APIBack.Repository.Interface.IReservaRepository reservaRepository,
             IClienteRepository clienteRepository,
             ILogger<ContextInterceptorService> logger,
-            ToolExecutorService toolExecutor)
+            ToolExecutorService toolExecutor,
+            CentralRoutingService centralRouting)
         {
             _conversationRepository = conversationRepository;
             _reservaRepository = reservaRepository;
             _clienteRepository = clienteRepository;
             _logger = logger;
             _toolExecutor = toolExecutor;
+            _centralRouting = centralRouting;
         }
 
         private async Task<List<APIBack.Model.Reserva>> ObterReservasAtivasAsync(
@@ -65,6 +68,100 @@ namespace APIBack.Automation.Services
                 .ToList();
         }
 
+        private async Task<(bool Intercepted, AssistantDecision? Decision)> TryHandleCentralRoutingAsync(
+            Guid idConversa,
+            string mensagemTexto,
+            string? phoneNumberDisplay)
+        {
+            if (!_centralRouting.IsCentralDisplayPhone(phoneNumberDisplay))
+            {
+                return (false, null);
+            }
+
+            _logger.LogInformation("[Conversa={Conversa}] Numero central detectado", idConversa);
+
+            var contexto = await _conversationRepository.ObterContextoAsync(idConversa);
+            if (_centralRouting.IsResetCommand(mensagemTexto))
+            {
+                return await ReenviarMenuCentralAsync(idConversa, reiniciado: true);
+            }
+
+            var selecao = await _centralRouting.ObterSelecaoAtualAsync(idConversa, contexto);
+            if (selecao.SelectionExpired)
+            {
+                _logger.LogInformation(
+                    "[Conversa={Conversa}] Escolha expirada; retornando ao menu inicial",
+                    idConversa);
+                return await ReenviarMenuCentralAsync(idConversa, reiniciado: false);
+            }
+
+            if (string.Equals(contexto?.Estado, CentralRoutingService.EstadoAguardandoEscolha, StringComparison.OrdinalIgnoreCase))
+            {
+                return await ProcessarEscolhaEstabelecimentoAsync(idConversa, mensagemTexto);
+            }
+
+            if (!selecao.HasSelection)
+            {
+                return await ReenviarMenuCentralAsync(idConversa, reiniciado: false);
+            }
+
+            await _centralRouting.RenovarSelecaoAsync(idConversa, contexto);
+            _logger.LogDebug(
+                "[Conversa={Conversa}] Selecao central renovada para estabelecimento {Estabelecimento}",
+                idConversa,
+                selecao.EstabelecimentoId);
+
+            return (false, null);
+        }
+
+        private async Task<(bool Intercepted, AssistantDecision? Decision)> ReenviarMenuCentralAsync(
+            Guid idConversa,
+            bool reiniciado)
+        {
+            var estabelecimentos = await _centralRouting.ListarEstabelecimentosElegiveisAsync();
+            var mensagem = _centralRouting.BuildSelectionMenuMessage(estabelecimentos, reiniciado);
+            await _centralRouting.SalvarMenuEscolhaAsync(idConversa, estabelecimentos);
+            await SalvarMensagemRespostaAsync(idConversa, mensagem);
+            _logger.LogInformation(
+                "[Conversa={Conversa}] Menu central enviado com {Count} opcoes",
+                idConversa,
+                estabelecimentos.Count);
+            return (true, new AssistantDecision(mensagem, "none", null, false, null, null));
+        }
+
+        private async Task<(bool Intercepted, AssistantDecision? Decision)> ProcessarEscolhaEstabelecimentoAsync(
+            Guid idConversa,
+            string mensagemTexto)
+        {
+            var estabelecimentos = await _centralRouting.ListarEstabelecimentosElegiveisAsync();
+            if (estabelecimentos.Count == 0)
+            {
+                var indisponivel = _centralRouting.BuildSelectionMenuMessage(estabelecimentos, false);
+                await _centralRouting.SalvarMenuEscolhaAsync(idConversa, estabelecimentos);
+                await SalvarMensagemRespostaAsync(idConversa, indisponivel);
+                return (true, new AssistantDecision(indisponivel, "none", null, false, null, null));
+            }
+
+            var escolhido = _centralRouting.TryResolveEscolha(mensagemTexto, estabelecimentos, out var ambiguaPorNome);
+            if (escolhido == null)
+            {
+                var respostaInvalida = _centralRouting.BuildSelectionInvalidMessage(estabelecimentos, ambiguaPorNome);
+                await _centralRouting.SalvarMenuEscolhaAsync(idConversa, estabelecimentos);
+                await SalvarMensagemRespostaAsync(idConversa, respostaInvalida);
+                return (true, new AssistantDecision(respostaInvalida, "none", null, false, null, null));
+            }
+
+            await _centralRouting.SalvarEstabelecimentoSelecionadoAsync(idConversa, escolhido);
+
+            var resposta = $"Perfeito. Vou continuar seu atendimento com {escolhido.Nome}.";
+            await SalvarMensagemRespostaAsync(idConversa, resposta);
+            _logger.LogInformation(
+                "[Conversa={Conversa}] Estabelecimento escolhido no contexto: {Estabelecimento}",
+                idConversa,
+                escolhido.Id);
+            return (true, new AssistantDecision(resposta, "none", null, false, null, null));
+        }
+
         /// <summary>
         /// Verifica se há contexto ativo e intercepta a mensagem se necessário
         /// </summary>
@@ -72,7 +169,8 @@ namespace APIBack.Automation.Services
         public async Task<(bool Intercepted, AssistantDecision? Decision)> TryInterceptAsync(
             Guid idConversa,
             string mensagemTexto,
-            DateTime? timestampMensagemUtc = null)
+            DateTime? timestampMensagemUtc = null,
+            string? phoneNumberDisplay = null)
         {
             DateTime baseReferencia;
             if (timestampMensagemUtc.HasValue)
@@ -90,6 +188,12 @@ namespace APIBack.Automation.Services
                     "[Conversa={Conversa}] Usando horario atual do servidor: {Timestamp:yyyy-MM-dd HH:mm:ss} SP",
                     idConversa,
                     baseReferencia);
+            }
+
+            var (centralIntercepted, centralDecision) = await TryHandleCentralRoutingAsync(idConversa, mensagemTexto, phoneNumberDisplay);
+            if (centralIntercepted)
+            {
+                return (true, centralDecision);
             }
 
             // ------- DETECÇÃO INTELIGENTE DE FILTROS -------
@@ -335,7 +439,13 @@ namespace APIBack.Automation.Services
                 var conversa = await _conversationRepository.ObterPorIdAsync(idConversa);
                 if (conversa != null)
                 {
-                    var reservasAtivas = await ObterReservasAtivasAsync(conversa.IdCliente, conversa.IdEstabelecimento, baseReferencia);
+                    var escopo = await _centralRouting.ResolveEffectiveScopeAsync(idConversa, conversa);
+                    if (escopo == null || escopo.IdCliente == Guid.Empty || escopo.IdEstabelecimento == Guid.Empty)
+                    {
+                        return (false, null);
+                    }
+
+                    var reservasAtivas = await ObterReservasAtivasAsync(escopo.IdCliente, escopo.IdEstabelecimento, baseReferencia);
 
                     // ? Se tem APENAS 1 reserva, não precisa de filtro!
                     if (reservasAtivas.Count == 1)
@@ -1690,11 +1800,16 @@ namespace APIBack.Automation.Services
                 return (false, null);
             }
 
-            var idCliente = conversa.IdCliente;
-            var idEstabelecimento = conversa.IdEstabelecimento;
+            var escopo = await _centralRouting.ResolveEffectiveScopeAsync(idConversa, conversa);
+            if (escopo == null || escopo.IdCliente == Guid.Empty || escopo.IdEstabelecimento == Guid.Empty)
+            {
+                return (false, null);
+            }
 
             // Buscar todas as reservas confirmadas futuras do cliente
-            var todasReservas = await _reservaRepository.ObterPorClienteEstabelecimentoAsync(idCliente, idEstabelecimento);
+            var todasReservas = await _reservaRepository.ObterPorClienteEstabelecimentoAsync(
+                escopo.IdCliente,
+                escopo.IdEstabelecimento);
             var agora = baseReferencia;
             var futuras = todasReservas
                 .Where(r => r.Status == APIBack.Model.ReservaStatus.Confirmado &&

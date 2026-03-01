@@ -51,7 +51,8 @@ namespace APIBack.Automation.Services
                     var (intercepted, interceptedDecision) = await contextInterceptor.TryInterceptAsync(
                         idConversa,
                         processamento.TextoUsuario,
-                        envelope.Input.DataMensagemUtc);
+                        envelope.Input.DataMensagemUtc,
+                        processamento.NumeroTelefoneExibicao);
 
                     if (intercepted && interceptedDecision != null)
                     {
