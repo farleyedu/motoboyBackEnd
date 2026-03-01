@@ -62,6 +62,7 @@ namespace APIBack.Automation.Services
         private readonly IReservaRepository _reservaRepository;
         private readonly ReservaValidator _reservaValidator;
         private readonly IClienteRepository _clienteRepository;
+        private readonly CentralRoutingService _centralRouting;
 
         public ToolExecutorService(
             ILogger<ToolExecutorService> logger,
@@ -69,7 +70,8 @@ namespace APIBack.Automation.Services
             HandoverService handoverService,
             IReservaRepository reservaRepository,
             ReservaValidator reservaValidator,
-            IClienteRepository clienteRepository)
+            IClienteRepository clienteRepository,
+            CentralRoutingService centralRouting)
         {
             _logger = logger;
             _conversationRepository = conversationRepository;
@@ -77,6 +79,7 @@ namespace APIBack.Automation.Services
             _reservaRepository = reservaRepository;
             _reservaValidator = reservaValidator;
             _clienteRepository = clienteRepository;
+            _centralRouting = centralRouting;
         }
 
         public object[] GetDeclaredTools(Guid idConversa)
@@ -313,9 +316,15 @@ PARÂMETROS IMPORTANTES:
                 return BuildJsonReply("Desculpe, não consegui identificar seu telefone.\n\nPode me chamar de novo para finalizar? 😊");
             }
 
-            var telefone = conversa.TelefoneCliente;
-            var idCliente = conversa.IdCliente;
-            var idEstabelecimento = conversa.IdEstabelecimento;
+            var escopo = await _centralRouting.ResolveEffectiveScopeAsync(args.IdConversa, conversa);
+            if (escopo == null || escopo.IdCliente == Guid.Empty || escopo.IdEstabelecimento == Guid.Empty)
+            {
+                return BuildJsonReply("Não consegui identificar seus dados.\n\nPode tentar novamente? 😊");
+            }
+
+            var telefone = escopo.TelefoneCliente ?? conversa.TelefoneCliente;
+            var idCliente = escopo.IdCliente;
+            var idEstabelecimento = escopo.IdEstabelecimento;
 
             var reservasExistentes = await _reservaRepository.ObterPorClienteEstabelecimentoAsync(idCliente, idEstabelecimento);
             var referenciaAtual = TimeZoneHelper.GetSaoPauloNow();
@@ -444,8 +453,14 @@ PARÂMETROS IMPORTANTES:
                 return BuildJsonReply("Não consegui localizar nossa conversa.\n\nPode tentar novamente? 😊");
             }
 
-            var idCliente = conversa.IdCliente;
-            var idEstabelecimento = conversa.IdEstabelecimento;
+            var escopo = await _centralRouting.ResolveEffectiveScopeAsync(args.IdConversa, conversa);
+            if (escopo == null || escopo.IdCliente == Guid.Empty || escopo.IdEstabelecimento == Guid.Empty)
+            {
+                return BuildJsonReply("Não consegui identificar seus dados.\n\nPode tentar novamente? 😊");
+            }
+
+            var idCliente = escopo.IdCliente;
+            var idEstabelecimento = escopo.IdEstabelecimento;
 
             if (idCliente == Guid.Empty || idEstabelecimento == Guid.Empty)
             {
@@ -604,8 +619,14 @@ PARÂMETROS IMPORTANTES:
                 return BuildJsonReply("Não consegui localizar nossa conversa.\n\nPode tentar novamente? 😊");
             }
 
-            var idCliente = conversa.IdCliente;
-            var idEstabelecimento = conversa.IdEstabelecimento;
+            var escopo = await _centralRouting.ResolveEffectiveScopeAsync(args.IdConversa, conversa);
+            if (escopo == null || escopo.IdCliente == Guid.Empty || escopo.IdEstabelecimento == Guid.Empty)
+            {
+                return BuildJsonReply("Não consegui identificar seus dados.\n\nPode tentar novamente? 😊");
+            }
+
+            var idCliente = escopo.IdCliente;
+            var idEstabelecimento = escopo.IdEstabelecimento;
 
             if (idCliente == Guid.Empty || idEstabelecimento == Guid.Empty)
             {
@@ -771,8 +792,14 @@ PARÂMETROS IMPORTANTES:
                 return BuildJsonReply("Não consegui localizar nossa conversa.\n\nPode tentar novamente? 😊");
             }
 
-            var idCliente = conversa.IdCliente;
-            var idEstabelecimento = conversa.IdEstabelecimento;
+            var escopo = await _centralRouting.ResolveEffectiveScopeAsync(idConversa, conversa);
+            if (escopo == null || escopo.IdCliente == Guid.Empty || escopo.IdEstabelecimento == Guid.Empty)
+            {
+                return BuildJsonReply("Não consegui identificar seus dados.\n\nPode tentar novamente? 😊");
+            }
+
+            var idCliente = escopo.IdCliente;
+            var idEstabelecimento = escopo.IdEstabelecimento;
 
             if (idCliente == Guid.Empty || idEstabelecimento == Guid.Empty)
             {

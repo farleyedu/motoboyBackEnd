@@ -81,7 +81,7 @@ namespace APIBack.Automation.Services
             criada.CriadaPor ??= "cliente";
             await _fila.PublicarEntradaAsync(criada);
 
-            var contexto = await ObterContextoAsync(criada.IdConversa, input.PhoneNumberDisplay);
+            var contexto = await ObterContextoAsync(criada.IdConversa, input.PhoneNumberDisplay, input.PhoneNumberId);
             var historico = await ObterHistoricoAsync(criada.IdConversa);
             var handoverDetalhes = MontarHandoverDetalhes(input, criada, historico, contexto);
 
@@ -151,12 +151,12 @@ namespace APIBack.Automation.Services
             return builder.ToString();
         }
 
-        private async Task<string?> ObterContextoAsync(Guid idConversa, string? phoneNumberDisplay)
+        private async Task<string?> ObterContextoAsync(Guid idConversa, string? phoneNumberDisplay, string? phoneNumberId)
         {
             try
             {
                 Guid? idEstabelecimento;
-                if (_centralRouting.IsCentralDisplayPhone(phoneNumberDisplay))
+                if (_centralRouting.IsCentralRoutingTarget(phoneNumberDisplay, phoneNumberId))
                 {
                     var selecao = await _centralRouting.ObterSelecaoAtualAsync(idConversa);
                     if (!selecao.HasSelection)
