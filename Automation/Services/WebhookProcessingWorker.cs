@@ -52,8 +52,7 @@ namespace APIBack.Automation.Services
                         idConversa,
                         processamento.TextoUsuario,
                         envelope.Input.DataMensagemUtc,
-                        processamento.NumeroTelefoneExibicao,
-                        processamento.NumeroWhatsappId);
+                        processamento.NumeroTelefoneExibicao);
 
                     if (intercepted && interceptedDecision != null)
                     {

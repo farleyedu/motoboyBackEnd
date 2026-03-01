@@ -53,8 +53,6 @@ namespace APIBack.Automation.Services
         private readonly ILogger<CentralRoutingService> _logger;
         private readonly string _centralDisplayPhone;
         private readonly string _centralDisplayPhoneDigits;
-        private readonly string _centralPhoneNumberId;
-        private readonly string _centralPhoneNumberIdDigits;
         private readonly Guid? _centralEstabelecimentoId;
         private readonly string _resetCommand;
         private readonly TimeSpan _selectionTtl;
@@ -72,10 +70,6 @@ namespace APIBack.Automation.Services
             _logger = logger;
             _centralDisplayPhone = configuration["WhatsApp:CentralDisplayPhone"] ?? string.Empty;
             _centralDisplayPhoneDigits = OnlyDigits(_centralDisplayPhone);
-            _centralPhoneNumberId = configuration["WhatsApp:CentralPhoneNumberId"]
-                ?? configuration["Automation:Meta:PhoneNumberId"]
-                ?? string.Empty;
-            _centralPhoneNumberIdDigits = OnlyDigits(_centralPhoneNumberId);
             _centralEstabelecimentoId = Guid.TryParse(configuration["WhatsApp:CentralEstabelecimentoId"], out var parsed)
                 ? parsed
                 : null;
@@ -95,21 +89,6 @@ namespace APIBack.Automation.Services
             }
 
             return string.Equals(OnlyDigits(displayPhone), _centralDisplayPhoneDigits, StringComparison.Ordinal);
-        }
-
-        public bool IsCentralPhoneNumberId(string? phoneNumberId)
-        {
-            if (string.IsNullOrWhiteSpace(_centralPhoneNumberIdDigits) || string.IsNullOrWhiteSpace(phoneNumberId))
-            {
-                return false;
-            }
-
-            return string.Equals(OnlyDigits(phoneNumberId), _centralPhoneNumberIdDigits, StringComparison.Ordinal);
-        }
-
-        public bool IsCentralRoutingTarget(string? displayPhone, string? phoneNumberId)
-        {
-            return IsCentralDisplayPhone(displayPhone) || IsCentralPhoneNumberId(phoneNumberId);
         }
 
         public bool IsResetCommand(string? text)

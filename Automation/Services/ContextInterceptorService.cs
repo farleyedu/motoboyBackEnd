@@ -71,10 +71,9 @@ namespace APIBack.Automation.Services
         private async Task<(bool Intercepted, AssistantDecision? Decision)> TryHandleCentralRoutingAsync(
             Guid idConversa,
             string mensagemTexto,
-            string? phoneNumberDisplay,
-            string? phoneNumberId)
+            string? phoneNumberDisplay)
         {
-            if (!_centralRouting.IsCentralRoutingTarget(phoneNumberDisplay, phoneNumberId))
+            if (!_centralRouting.IsCentralDisplayPhone(phoneNumberDisplay))
             {
                 return (false, null);
             }
@@ -171,8 +170,7 @@ namespace APIBack.Automation.Services
             Guid idConversa,
             string mensagemTexto,
             DateTime? timestampMensagemUtc = null,
-            string? phoneNumberDisplay = null,
-            string? phoneNumberId = null)
+            string? phoneNumberDisplay = null)
         {
             DateTime baseReferencia;
             if (timestampMensagemUtc.HasValue)
@@ -195,8 +193,7 @@ namespace APIBack.Automation.Services
             var (centralIntercepted, centralDecision) = await TryHandleCentralRoutingAsync(
                 idConversa,
                 mensagemTexto,
-                phoneNumberDisplay,
-                phoneNumberId);
+                phoneNumberDisplay);
             if (centralIntercepted)
             {
                 return (true, centralDecision);
