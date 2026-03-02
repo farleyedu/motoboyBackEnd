@@ -8,26 +8,37 @@ namespace APIBack.Automation.Services
     public static class MessageTypeMapper
     {
         private const string Texto = "texto";
+        private const string Imagem = "imagem";
+        private const string Audio = "audio";
+        private const string Arquivo = "arquivo";
+        private const string Template = "template";
+        private const string Sistema = "sistema";
+        private const string Interativo = "interativo";
 
         private static readonly IReadOnlyDictionary<string, string> Map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             ["text"] = Texto,
-            ["image"] = "imagem",
-            ["video"] = "video",
-            ["audio"] = "audio",
-            ["document"] = "documento",
-            ["sticker"] = "sticker",
-            ["contacts"] = "contato",
-            ["contact"] = "contato",
-            ["location"] = "localizacao",
-            ["interactive"] = "interativo",
-            ["button"] = "interativo",
-            ["template"] = "template",
+            ["texto"] = Texto,
+            ["image"] = Imagem,
+            ["imagem"] = Imagem,
+            ["audio"] = Audio,
+            ["document"] = Arquivo,
+            ["video"] = Arquivo,
+            ["sticker"] = Imagem,
+            ["contacts"] = Arquivo,
+            ["contact"] = Arquivo,
+            ["location"] = Arquivo,
+            ["arquivo"] = Arquivo,
+            ["interactive"] = Interativo,
+            ["button"] = Interativo,
+            ["interativo"] = Interativo,
+            ["template"] = Template,
+            ["sistema"] = Sistema,
             ["reaction"] = Texto,
-            ["system"] = Texto,
-            ["message_status"] = Texto,
-            ["unsupported"] = Texto,
-            ["unknown"] = Texto
+            ["system"] = Sistema,
+            ["message_status"] = Sistema,
+            ["unsupported"] = Sistema,
+            ["unknown"] = Sistema
         };
 
         public static string MapType(string? waType, DirecaoMensagem direcao, string? criadaPor)
