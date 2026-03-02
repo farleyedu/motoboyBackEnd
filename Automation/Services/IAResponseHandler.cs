@@ -1,5 +1,6 @@
 // ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
 using System;
+using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading.Tasks;
 using APIBack.Automation.Dtos;
@@ -71,7 +72,13 @@ namespace APIBack.Automation.Services
                 return;
             }
 
-            await EnviarMensagemAoClienteAsync(idConversa, phoneNumberDisplay, numeroDestino, phoneNumberId, decision.Reply);
+            await EnviarMensagemAoClienteAsync(
+                idConversa,
+                phoneNumberDisplay,
+                numeroDestino,
+                phoneNumberId,
+                decision.Reply,
+                decision.ReplyButtons);
 
             _logger.LogInformation(
                 "[Conversa={Conversa}] Resposta da IA processada com sucesso",
@@ -109,22 +116,42 @@ namespace APIBack.Automation.Services
             }
         }
 
-        private async Task EnviarMensagemAoClienteAsync(Guid idConversa, string phoneNumberDisplay, string numeroDestino, string phoneNumberId, string texto)
+        private async Task EnviarMensagemAoClienteAsync(
+            Guid idConversa,
+            string phoneNumberDisplay,
+            string numeroDestino,
+            string phoneNumberId,
+            string texto,
+            IReadOnlyList<WhatsAppReplyButtonOption>? replyButtons)
         {
             try
             {
                 var textoFinalParaUsuario = ExtrairTextoDeResposta(texto);
+                var usaInterativo = replyButtons != null && replyButtons.Count > 0;
 
                 var mensagem = MessageFactory.CreateMessage(
                     idConversa,
                     textoFinalParaUsuario,
                     DirecaoMensagem.Saida,
                     "ia",
-                    tipoOrigem: "text");
+                    tipoOrigem: usaInterativo ? "interactive" : "text");
 
                 await _mensagemService.AdicionarMensagemAsync(mensagem, phoneNumberDisplay, numeroDestino);
                 await _fila.PublicarSaidaAsync(mensagem);
-                await _whatsAppSender.SendTextAsync(idConversa, phoneNumberId, numeroDestino, textoFinalParaUsuario);
+
+                if (usaInterativo)
+                {
+                    await _whatsAppSender.SendReplyButtonsAsync(
+                        idConversa,
+                        phoneNumberId,
+                        numeroDestino,
+                        textoFinalParaUsuario,
+                        replyButtons!);
+                }
+                else
+                {
+                    await _whatsAppSender.SendTextAsync(idConversa, phoneNumberId, numeroDestino, textoFinalParaUsuario);
+                }
             }
             catch (Exception ex)
             {

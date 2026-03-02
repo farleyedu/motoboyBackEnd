@@ -31,6 +31,7 @@ namespace APIBack.Automation.Services
         private readonly ILogger<ContextInterceptorService> _logger;
         private readonly ToolExecutorService _toolExecutor;
         private readonly CentralRoutingService _centralRouting;
+        private readonly GarageFlowService _garageFlow;
 
         public ContextInterceptorService(
             IConversationRepository conversationRepository,
@@ -38,7 +39,8 @@ namespace APIBack.Automation.Services
             IClienteRepository clienteRepository,
             ILogger<ContextInterceptorService> logger,
             ToolExecutorService toolExecutor,
-            CentralRoutingService centralRouting)
+            CentralRoutingService centralRouting,
+            GarageFlowService garageFlow)
         {
             _conversationRepository = conversationRepository;
             _reservaRepository = reservaRepository;
@@ -46,6 +48,7 @@ namespace APIBack.Automation.Services
             _logger = logger;
             _toolExecutor = toolExecutor;
             _centralRouting = centralRouting;
+            _garageFlow = garageFlow;
         }
 
         private async Task<List<APIBack.Model.Reserva>> ObterReservasAtivasAsync(
@@ -105,11 +108,14 @@ namespace APIBack.Automation.Services
                 return await ReenviarMenuCentralAsync(idConversa, reiniciado: false);
             }
 
-            await _centralRouting.RenovarSelecaoAsync(idConversa, contexto);
-            _logger.LogDebug(
-                "[Conversa={Conversa}] Selecao central renovada para estabelecimento {Estabelecimento}",
-                idConversa,
-                selecao.EstabelecimentoId);
+            if (string.Equals(contexto?.Estado, CentralRoutingService.EstadoEstabelecimentoSelecionado, StringComparison.OrdinalIgnoreCase))
+            {
+                await _centralRouting.RenovarSelecaoAsync(idConversa, contexto);
+                _logger.LogDebug(
+                    "[Conversa={Conversa}] Selecao central renovada para estabelecimento {Estabelecimento}",
+                    idConversa,
+                    selecao.EstabelecimentoId);
+            }
 
             return (false, null);
         }
@@ -152,6 +158,17 @@ namespace APIBack.Automation.Services
             }
 
             await _centralRouting.SalvarEstabelecimentoSelecionadoAsync(idConversa, escolhido);
+
+            var decisaoGaragem = await _garageFlow.TryStartAfterCentralSelectionAsync(idConversa);
+            if (decisaoGaragem != null)
+            {
+                await SalvarMensagemRespostaAsync(idConversa, decisaoGaragem.Reply);
+                _logger.LogInformation(
+                    "[Conversa={Conversa}] Estabelecimento garagem escolhido no contexto: {Estabelecimento}",
+                    idConversa,
+                    escolhido.Id);
+                return (true, decisaoGaragem);
+            }
 
             var resposta = $"Perfeito. Vou continuar seu atendimento com {escolhido.Nome}.";
             await SalvarMensagemRespostaAsync(idConversa, resposta);
@@ -197,6 +214,15 @@ namespace APIBack.Automation.Services
             if (centralIntercepted)
             {
                 return (true, centralDecision);
+            }
+
+            var (garageIntercepted, garageDecision) = await _garageFlow.TryHandleAsync(
+                idConversa,
+                mensagemTexto,
+                phoneNumberDisplay);
+            if (garageIntercepted)
+            {
+                return (true, garageDecision);
             }
 
             // ------- DETECÇÃO INTELIGENTE DE FILTROS -------

@@ -5,6 +5,9 @@ using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
+using System.Linq;
+using System.Collections.Generic;
+using APIBack.Automation.Dtos;
 using APIBack.Automation.Helpers;
 using APIBack.Automation.Interfaces;
 using Microsoft.Extensions.Configuration;
@@ -73,6 +76,61 @@ namespace APIBack.Automation.Services
             };
 
             return SendPayloadAsync(idConversa, phoneNumberId, payload, "document");
+        }
+
+        public Task SendReplyButtonsAsync(
+            Guid idConversa,
+            string phoneNumberId,
+            string numeroDestino,
+            string bodyText,
+            IReadOnlyCollection<WhatsAppReplyButtonOption> options)
+        {
+            if (string.IsNullOrWhiteSpace(bodyText))
+            {
+                return Task.CompletedTask;
+            }
+
+            var buttons = (options ?? Array.Empty<WhatsAppReplyButtonOption>())
+                .Where(option => option != null
+                    && !string.IsNullOrWhiteSpace(option.Id)
+                    && !string.IsNullOrWhiteSpace(option.Title))
+                .Take(3)
+                .Select(option => new
+                {
+                    type = "reply",
+                    reply = new
+                    {
+                        id = option.Id.Trim(),
+                        title = option.Title.Trim()
+                    }
+                })
+                .ToArray();
+
+            if (buttons.Length == 0)
+            {
+                return SendTextAsync(idConversa, phoneNumberId, numeroDestino, bodyText);
+            }
+
+            var payload = new
+            {
+                messaging_product = "whatsapp",
+                to = TelefoneHelper.NormalizeBrazilianForWhatsappTo(numeroDestino),
+                type = "interactive",
+                interactive = new
+                {
+                    type = "button",
+                    body = new
+                    {
+                        text = bodyText
+                    },
+                    action = new
+                    {
+                        buttons
+                    }
+                }
+            };
+
+            return SendPayloadAsync(idConversa, phoneNumberId, payload, "interactive");
         }
 
         private async Task SendPayloadAsync(Guid idConversa, string phoneNumberId, object payload, string payloadType)

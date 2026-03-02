@@ -91,6 +91,26 @@ SELECT DISTINCT
                 return Array.Empty<EstabelecimentoWhatsappAtivoDto>();
             }
         }
+
+        public async Task<string?> ObterNomeFantasiaAsync(Guid idEstabelecimento)
+        {
+            const string sql = @"
+SELECT nome_fantasia
+  FROM estabelecimentos
+ WHERE id = @IdEstabelecimento
+ LIMIT 1;";
+
+            try
+            {
+                await using var connection = new NpgsqlConnection(_connectionString);
+                return await connection.ExecuteScalarAsync<string?>(sql, new { IdEstabelecimento = idEstabelecimento });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao buscar nome do estabelecimento {IdEstabelecimento}", idEstabelecimento);
+                return null;
+            }
+        }
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================

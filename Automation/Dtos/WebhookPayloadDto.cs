@@ -56,11 +56,32 @@ namespace APIBack.Automation.Dtos
         [JsonPropertyName("timestamp")] public string? CarimboTempo { get; set; }
         [JsonPropertyName("type")] public string? Tipo { get; set; }
         [JsonPropertyName("text")] public WebhookTextDto? Texto { get; set; }
+        [JsonPropertyName("interactive")] public WebhookInteractiveDto? Interactive { get; set; }
     }
 
     public class WebhookTextDto
     {
         [JsonPropertyName("body")] public string? Corpo { get; set; }
+    }
+
+    public class WebhookInteractiveDto
+    {
+        [JsonPropertyName("type")] public string? Tipo { get; set; }
+        [JsonPropertyName("button_reply")] public WebhookButtonReplyDto? ButtonReply { get; set; }
+        [JsonPropertyName("list_reply")] public WebhookListReplyDto? ListReply { get; set; }
+    }
+
+    public class WebhookButtonReplyDto
+    {
+        [JsonPropertyName("id")] public string? Id { get; set; }
+        [JsonPropertyName("title")] public string? Title { get; set; }
+    }
+
+    public class WebhookListReplyDto
+    {
+        [JsonPropertyName("id")] public string? Id { get; set; }
+        [JsonPropertyName("title")] public string? Title { get; set; }
+        [JsonPropertyName("description")] public string? Description { get; set; }
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================

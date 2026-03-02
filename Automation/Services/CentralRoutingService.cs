@@ -326,6 +326,11 @@ namespace APIBack.Automation.Services
             }
 
             novoContexto.DadosColetados ??= new Dictionary<string, object>();
+            if (novoContexto.DadosColetados.ContainsKey(ChaveEstabelecimentoEscolhidoId))
+            {
+                return novoContexto;
+            }
+
             PreserveSelection(novoContexto.DadosColetados, snapshot);
             return novoContexto;
         }

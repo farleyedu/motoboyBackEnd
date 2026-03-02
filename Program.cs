@@ -111,6 +111,7 @@ builder.Services.AddScoped<IIARegraRepository, SqlIARegraRepository>();
 builder.Services.AddScoped<IIARespostaRepository, SqlIARespostaRepository>();
 builder.Services.AddScoped<IEstabelecimentoRepository, SqlEstabelecimentoRepository>();
 builder.Services.AddScoped<IClienteRepository, SqlClienteRepository>();
+builder.Services.AddScoped<IGaragemLeadRepository, SqlGaragemLeadRepository>();
 builder.Services.AddSingleton<IQueueBus, InMemoryQueueBus>();
 builder.Services.AddScoped<IWebhookSignatureValidator, WebhookSignatureValidator>();
 builder.Services.AddScoped<IWhatsappSender, WhatsappSenderStub>();
@@ -121,6 +122,7 @@ builder.Services.AddScoped<ToolExecutorService>();
 builder.Services.AddScoped<AtualizarReservaHandler>();
 builder.Services.AddScoped<ReservaValidator>();
 builder.Services.AddScoped<CentralRoutingService>();
+builder.Services.AddScoped<GarageFlowService>();
 
 
 

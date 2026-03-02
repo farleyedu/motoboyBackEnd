@@ -125,8 +125,10 @@ namespace APIBack.Automation.Controllers
                         try
                         {
                             var originalMessageId = mensagem?.Id;
+                            var textoExibicao = ExtrairTextoExibicao(mensagem);
+                            var textoInterpretado = ExtrairTextoInterpretado(mensagem);
 
-                            if (mensagem?.Texto?.Corpo == null || string.IsNullOrWhiteSpace(mensagem.Id) || string.IsNullOrWhiteSpace(mensagem.De))
+                            if (string.IsNullOrWhiteSpace(textoExibicao) || string.IsNullOrWhiteSpace(mensagem?.Id) || string.IsNullOrWhiteSpace(mensagem.De))
                             {
                                 _logger.LogDebug("[Webhook] Mensagem ignorada por falta de campos essenciais (id={MensagemId}, from={From})", mensagem?.Id, MaskValue(mensagem?.De));
                                 continue;
@@ -166,11 +168,12 @@ namespace APIBack.Automation.Controllers
 
                             var input = new ConversationProcessingInput(
                                 Mensagem: mensagem,
-                                Texto: mensagem.Texto.Corpo,
+                                Texto: textoExibicao,
                                 PhoneNumberDisplay: valor.Metadados?.NumeroTelefoneExibicao,
                                 PhoneNumberId: valor.Metadados?.IdNumeroTelefone,
                                 DataMensagemUtc: dataMsgUtc,
-                                Valor: valor);
+                                Valor: valor,
+                                TextoInterpretado: textoInterpretado);
 
                             _logger.LogInformation("[Webhook] Mensagem recebida id={MensagemId} from={From} phoneNumberId={PhoneNumberId} display={Display}",
                                 mensagem.Id,
@@ -217,6 +220,51 @@ namespace APIBack.Automation.Controllers
             if (value.Length <= 4) return value;
             var tail = value[^4..];
             return new string('*', value.Length - 4) + tail;
+        }
+
+        private static string? ExtrairTextoExibicao(WebhookMessageDto? mensagem)
+        {
+            if (mensagem == null)
+            {
+                return null;
+            }
+
+            if (!string.IsNullOrWhiteSpace(mensagem.Texto?.Corpo))
+            {
+                return mensagem.Texto.Corpo;
+            }
+
+            if (!string.IsNullOrWhiteSpace(mensagem.Interactive?.ButtonReply?.Title))
+            {
+                return mensagem.Interactive.ButtonReply.Title;
+            }
+
+            if (!string.IsNullOrWhiteSpace(mensagem.Interactive?.ListReply?.Title))
+            {
+                return mensagem.Interactive.ListReply.Title;
+            }
+
+            return null;
+        }
+
+        private static string? ExtrairTextoInterpretado(WebhookMessageDto? mensagem)
+        {
+            if (mensagem == null)
+            {
+                return null;
+            }
+
+            if (!string.IsNullOrWhiteSpace(mensagem.Interactive?.ButtonReply?.Id))
+            {
+                return mensagem.Interactive.ButtonReply.Id;
+            }
+
+            if (!string.IsNullOrWhiteSpace(mensagem.Interactive?.ListReply?.Id))
+            {
+                return mensagem.Interactive.ListReply.Id;
+            }
+
+            return mensagem.Texto?.Corpo;
         }
     }
 }

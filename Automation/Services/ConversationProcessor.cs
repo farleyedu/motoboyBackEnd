@@ -54,10 +54,14 @@ namespace APIBack.Automation.Services
 
         public async Task<ConversationProcessingResult> ProcessAsync(ConversationProcessingInput input)
         {
+            var textoUsuario = string.IsNullOrWhiteSpace(input.TextoInterpretado)
+                ? input.Texto
+                : input.TextoInterpretado!;
+
             if (MensagemDoSistema(input))
             {
                 _logger.LogInformation("[Webhook] Ignorando mensagem automatica do sistema (from={From})", input.Mensagem.De);
-                return new ConversationProcessingResult(true, null, null, Array.Empty<AssistantChatTurn>(), null, new HandoverContextDto(), input.Texto, input.PhoneNumberDisplay, input.PhoneNumberId);
+                return new ConversationProcessingResult(true, null, null, Array.Empty<AssistantChatTurn>(), null, new HandoverContextDto(), textoUsuario, input.PhoneNumberDisplay, input.PhoneNumberId);
             }
 
             var telefoneNormalizado = NormalizarTelefoneContato(input.Mensagem?.De);
@@ -75,7 +79,7 @@ namespace APIBack.Automation.Services
             if (criada == null)
             {
                 _logger.LogInformation("[Webhook] Entrada ignorada apos verificacao de duplicidade. From={From}", input.Mensagem.De);
-                return new ConversationProcessingResult(true, null, null, Array.Empty<AssistantChatTurn>(), null, new HandoverContextDto(), input.Texto, input.PhoneNumberDisplay, input.PhoneNumberId);
+                return new ConversationProcessingResult(true, null, null, Array.Empty<AssistantChatTurn>(), null, new HandoverContextDto(), textoUsuario, input.PhoneNumberDisplay, input.PhoneNumberId);
             }
 
             criada.CriadaPor ??= "cliente";
@@ -92,7 +96,7 @@ namespace APIBack.Automation.Services
                 Historico: historico,
                 Contexto: contexto,
                 HandoverDetalhes: handoverDetalhes,
-                TextoUsuario: input.Texto,
+                TextoUsuario: textoUsuario,
                 NumeroTelefoneExibicao: input.PhoneNumberDisplay,
                 NumeroWhatsappId: input.PhoneNumberId);
         }
@@ -180,6 +184,14 @@ namespace APIBack.Automation.Services
                 }
 
                 var modulosAtivos = await DeterminarModulosAtivosAsync(idEstabelecimento.Value);
+                if (modulosAtivos.Any(modulo => string.Equals(modulo, "GARAGEM", StringComparison.OrdinalIgnoreCase)))
+                {
+                    _logger.LogInformation(
+                        "[Conversa={Conversa}] Estabelecimento garagem detectado; contexto de IA suprimido",
+                        idConversa);
+                    return null;
+                }
+
                 var prompts = await _regrasRepo.ObterPromptsCompostosAsync(idEstabelecimento.Value, modulosAtivos);
                 return _promptAssembler.Assemble(prompts);
             }

@@ -10,7 +10,8 @@ namespace APIBack.Automation.Services
         string? PhoneNumberDisplay,
         string? PhoneNumberId,
         DateTime? DataMensagemUtc,
-        WebhookChangeValueDto Valor
+        WebhookChangeValueDto Valor,
+        string? TextoInterpretado = null
     );
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
