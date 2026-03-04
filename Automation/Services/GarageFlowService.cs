@@ -27,6 +27,16 @@ namespace APIBack.Automation.Services
         private const string ChaveFormaPagamento = "garagem_forma_pagamento";
         private const string ChaveValorEntrada = "garagem_valor_entrada_texto";
         private const string ChaveUrgencia = "garagem_urgencia";
+        private const string ChaveTrocaModeloAtual = "garagem_troca_modelo_atual";
+        private const string ChaveTrocaAnoModelo = "garagem_troca_ano_modelo";
+        private const string ChaveTrocaKm = "garagem_troca_km";
+        private const string ChaveTrocaQuitado = "garagem_troca_quitado";
+        private const string ChaveTrocaModeloDesejado = "garagem_troca_modelo_desejado";
+        private const string ChaveTrocaCondicao = "garagem_troca_condicao";
+        private const string ChaveVendaModelo = "garagem_venda_modelo";
+        private const string ChaveVendaAno = "garagem_venda_ano";
+        private const string ChaveVendaKm = "garagem_venda_km";
+        private const string ChaveVendaQuitado = "garagem_venda_quitado";
 
         private const string EtapaNome = "nome";
         private const string EtapaObjetivo = "objetivo";
@@ -34,7 +44,21 @@ namespace APIBack.Automation.Services
         private const string EtapaFaixaInvestimento = "faixa_investimento";
         private const string EtapaFormaPagamento = "forma_pagamento";
         private const string EtapaValorEntrada = "valor_entrada";
+        private const string EtapaTrocaModeloAtual = "troca_modelo_atual";
+        private const string EtapaTrocaAnoModelo = "troca_ano_modelo";
+        private const string EtapaTrocaKm = "troca_km";
+        private const string EtapaTrocaQuitado = "troca_quitado";
+        private const string EtapaTrocaModeloDesejado = "troca_modelo_desejado";
+        private const string EtapaTrocaCondicao = "troca_condicao";
+        private const string EtapaVendaModelo = "venda_modelo";
+        private const string EtapaVendaAno = "venda_ano";
+        private const string EtapaVendaKm = "venda_km";
+        private const string EtapaVendaQuitado = "venda_quitado";
         private const string EtapaUrgencia = "urgencia";
+
+        private const string ObjetivoComprar = "comprar";
+        private const string ObjetivoVender = "vender";
+        private const string ObjetivoTrocar = "trocar";
 
         private readonly IConversationRepository _conversationRepository;
         private readonly IClienteRepository _clienteRepository;
@@ -197,9 +221,12 @@ namespace APIBack.Automation.Services
                     }
 
                     lead.Objetivo = objetivo;
+                    LimparCamposNaoRelacionadosAoObjetivo(lead, objetivo);
+                    lead.Urgencia = null;
                     await _garagemLeadRepository.AtualizarAsync(lead);
-                    await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaModelo, viaNumeroCentral);
-                    return CriarPergunta(EtapaModelo, lead, nomeEstabelecimento, incluirErro: false);
+                    var proximaEtapa = DeterminarPrimeiraEtapaPorObjetivo(objetivo);
+                    await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, proximaEtapa, viaNumeroCentral);
+                    return CriarPergunta(proximaEtapa, lead, nomeEstabelecimento, incluirErro: false);
                 }
 
                 case EtapaModelo:
@@ -253,6 +280,135 @@ namespace APIBack.Automation.Services
                     await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaUrgencia, viaNumeroCentral);
                     return CriarPergunta(EtapaUrgencia, lead, nomeEstabelecimento, incluirErro: false);
 
+                case EtapaTrocaModeloAtual:
+                    if (string.IsNullOrWhiteSpace(mensagemTexto))
+                    {
+                        await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaTrocaModeloAtual, viaNumeroCentral);
+                        return CriarPergunta(EtapaTrocaModeloAtual, lead, nomeEstabelecimento, incluirErro: false);
+                    }
+
+                    lead.TrocaModeloAtual = mensagemTexto.Trim();
+                    await _garagemLeadRepository.AtualizarAsync(lead);
+                    await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaTrocaAnoModelo, viaNumeroCentral);
+                    return CriarPergunta(EtapaTrocaAnoModelo, lead, nomeEstabelecimento, incluirErro: false);
+
+                case EtapaTrocaAnoModelo:
+                    if (string.IsNullOrWhiteSpace(mensagemTexto))
+                    {
+                        await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaTrocaAnoModelo, viaNumeroCentral);
+                        return CriarPergunta(EtapaTrocaAnoModelo, lead, nomeEstabelecimento, incluirErro: false);
+                    }
+
+                    lead.TrocaAnoModelo = mensagemTexto.Trim();
+                    await _garagemLeadRepository.AtualizarAsync(lead);
+                    await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaTrocaKm, viaNumeroCentral);
+                    return CriarPergunta(EtapaTrocaKm, lead, nomeEstabelecimento, incluirErro: false);
+
+                case EtapaTrocaKm:
+                    if (string.IsNullOrWhiteSpace(mensagemTexto))
+                    {
+                        await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaTrocaKm, viaNumeroCentral);
+                        return CriarPergunta(EtapaTrocaKm, lead, nomeEstabelecimento, incluirErro: false);
+                    }
+
+                    lead.TrocaKm = mensagemTexto.Trim();
+                    await _garagemLeadRepository.AtualizarAsync(lead);
+                    await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaTrocaQuitado, viaNumeroCentral);
+                    return CriarPergunta(EtapaTrocaQuitado, lead, nomeEstabelecimento, incluirErro: false);
+
+                case EtapaTrocaQuitado:
+                {
+                    var quitado = ParseQuitado(mensagemTexto);
+                    if (quitado == null)
+                    {
+                        await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaTrocaQuitado, viaNumeroCentral);
+                        return CriarPergunta(EtapaTrocaQuitado, lead, nomeEstabelecimento, incluirErro: true);
+                    }
+
+                    lead.TrocaQuitado = quitado;
+                    await _garagemLeadRepository.AtualizarAsync(lead);
+                    await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaTrocaModeloDesejado, viaNumeroCentral);
+                    return CriarPergunta(EtapaTrocaModeloDesejado, lead, nomeEstabelecimento, incluirErro: false);
+                }
+
+                case EtapaTrocaModeloDesejado:
+                    if (string.IsNullOrWhiteSpace(mensagemTexto))
+                    {
+                        await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaTrocaModeloDesejado, viaNumeroCentral);
+                        return CriarPergunta(EtapaTrocaModeloDesejado, lead, nomeEstabelecimento, incluirErro: false);
+                    }
+
+                    lead.TrocaModeloDesejado = mensagemTexto.Trim();
+                    await _garagemLeadRepository.AtualizarAsync(lead);
+                    await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaTrocaCondicao, viaNumeroCentral);
+                    return CriarPergunta(EtapaTrocaCondicao, lead, nomeEstabelecimento, incluirErro: false);
+
+                case EtapaTrocaCondicao:
+                {
+                    var condicao = ParseCondicaoTroca(mensagemTexto);
+                    if (condicao == null)
+                    {
+                        await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaTrocaCondicao, viaNumeroCentral);
+                        return CriarPergunta(EtapaTrocaCondicao, lead, nomeEstabelecimento, incluirErro: true);
+                    }
+
+                    lead.TrocaCondicao = condicao;
+                    await _garagemLeadRepository.AtualizarAsync(lead);
+                    await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaUrgencia, viaNumeroCentral);
+                    return CriarPergunta(EtapaUrgencia, lead, nomeEstabelecimento, incluirErro: false);
+                }
+
+                case EtapaVendaModelo:
+                    if (string.IsNullOrWhiteSpace(mensagemTexto))
+                    {
+                        await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaVendaModelo, viaNumeroCentral);
+                        return CriarPergunta(EtapaVendaModelo, lead, nomeEstabelecimento, incluirErro: false);
+                    }
+
+                    lead.VendaModelo = mensagemTexto.Trim();
+                    await _garagemLeadRepository.AtualizarAsync(lead);
+                    await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaVendaAno, viaNumeroCentral);
+                    return CriarPergunta(EtapaVendaAno, lead, nomeEstabelecimento, incluirErro: false);
+
+                case EtapaVendaAno:
+                    if (string.IsNullOrWhiteSpace(mensagemTexto))
+                    {
+                        await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaVendaAno, viaNumeroCentral);
+                        return CriarPergunta(EtapaVendaAno, lead, nomeEstabelecimento, incluirErro: false);
+                    }
+
+                    lead.VendaAno = mensagemTexto.Trim();
+                    await _garagemLeadRepository.AtualizarAsync(lead);
+                    await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaVendaKm, viaNumeroCentral);
+                    return CriarPergunta(EtapaVendaKm, lead, nomeEstabelecimento, incluirErro: false);
+
+                case EtapaVendaKm:
+                    if (string.IsNullOrWhiteSpace(mensagemTexto))
+                    {
+                        await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaVendaKm, viaNumeroCentral);
+                        return CriarPergunta(EtapaVendaKm, lead, nomeEstabelecimento, incluirErro: false);
+                    }
+
+                    lead.VendaKm = mensagemTexto.Trim();
+                    await _garagemLeadRepository.AtualizarAsync(lead);
+                    await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaVendaQuitado, viaNumeroCentral);
+                    return CriarPergunta(EtapaVendaQuitado, lead, nomeEstabelecimento, incluirErro: false);
+
+                case EtapaVendaQuitado:
+                {
+                    var quitado = ParseQuitado(mensagemTexto);
+                    if (quitado == null)
+                    {
+                        await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaVendaQuitado, viaNumeroCentral);
+                        return CriarPergunta(EtapaVendaQuitado, lead, nomeEstabelecimento, incluirErro: true);
+                    }
+
+                    lead.VendaQuitado = quitado;
+                    await _garagemLeadRepository.AtualizarAsync(lead);
+                    await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaUrgencia, viaNumeroCentral);
+                    return CriarPergunta(EtapaUrgencia, lead, nomeEstabelecimento, incluirErro: false);
+                }
+
                 case EtapaUrgencia:
                 {
                     var urgencia = ParseUrgencia(mensagemTexto);
@@ -263,15 +419,7 @@ namespace APIBack.Automation.Services
                     }
 
                     lead.Urgencia = urgencia;
-                    await _garagemLeadRepository.ConcluirAsync(
-                        lead.Id,
-                        lead.NomeCliente ?? string.Empty,
-                        lead.Objetivo ?? string.Empty,
-                        lead.ModeloInteresse ?? string.Empty,
-                        lead.FaixaInvestimento ?? string.Empty,
-                        lead.FormaPagamento ?? string.Empty,
-                        lead.ValorEntradaTexto ?? string.Empty,
-                        urgencia);
+                    await _garagemLeadRepository.ConcluirAsync(lead);
 
                     lead.Status = "concluido";
                     lead.DataConclusao = DateTime.UtcNow;
@@ -419,6 +567,56 @@ namespace APIBack.Automation.Services
                 dados[ChaveUrgencia] = lead.Urgencia!;
             }
 
+            if (!string.IsNullOrWhiteSpace(lead.TrocaModeloAtual))
+            {
+                dados[ChaveTrocaModeloAtual] = lead.TrocaModeloAtual!;
+            }
+
+            if (!string.IsNullOrWhiteSpace(lead.TrocaAnoModelo))
+            {
+                dados[ChaveTrocaAnoModelo] = lead.TrocaAnoModelo!;
+            }
+
+            if (!string.IsNullOrWhiteSpace(lead.TrocaKm))
+            {
+                dados[ChaveTrocaKm] = lead.TrocaKm!;
+            }
+
+            if (!string.IsNullOrWhiteSpace(lead.TrocaQuitado))
+            {
+                dados[ChaveTrocaQuitado] = lead.TrocaQuitado!;
+            }
+
+            if (!string.IsNullOrWhiteSpace(lead.TrocaModeloDesejado))
+            {
+                dados[ChaveTrocaModeloDesejado] = lead.TrocaModeloDesejado!;
+            }
+
+            if (!string.IsNullOrWhiteSpace(lead.TrocaCondicao))
+            {
+                dados[ChaveTrocaCondicao] = lead.TrocaCondicao!;
+            }
+
+            if (!string.IsNullOrWhiteSpace(lead.VendaModelo))
+            {
+                dados[ChaveVendaModelo] = lead.VendaModelo!;
+            }
+
+            if (!string.IsNullOrWhiteSpace(lead.VendaAno))
+            {
+                dados[ChaveVendaAno] = lead.VendaAno!;
+            }
+
+            if (!string.IsNullOrWhiteSpace(lead.VendaKm))
+            {
+                dados[ChaveVendaKm] = lead.VendaKm!;
+            }
+
+            if (!string.IsNullOrWhiteSpace(lead.VendaQuitado))
+            {
+                dados[ChaveVendaQuitado] = lead.VendaQuitado!;
+            }
+
             if (viaNumeroCentral)
             {
                 var snapshot = CentralRoutingService.BuildSnapshot(contextoAtual);
@@ -494,6 +692,78 @@ namespace APIBack.Automation.Services
                     null,
                     false,
                     null),
+                EtapaTrocaModeloAtual => new AssistantDecision(
+                    "Qual e o modelo atual do seu veiculo?",
+                    "none",
+                    null,
+                    false,
+                    null),
+                EtapaTrocaAnoModelo => new AssistantDecision(
+                    "Qual e o ano do veiculo?",
+                    "none",
+                    null,
+                    false,
+                    null),
+                EtapaTrocaKm => new AssistantDecision(
+                    "Qual a quilometragem aproximada?",
+                    "none",
+                    null,
+                    false,
+                    null),
+                EtapaTrocaQuitado => new AssistantDecision(
+                    BuildStructuredPrompt(
+                        incluirErro ? "Nao consegui identificar essa opcao. 😊" : "O veiculo esta quitado?",
+                        string.Empty),
+                    "none",
+                    null,
+                    false,
+                    null,
+                    null,
+                    BuildQuitadoButtons()),
+                EtapaTrocaModeloDesejado => new AssistantDecision(
+                    "Qual modelo voce deseja na troca?",
+                    "none",
+                    null,
+                    false,
+                    null),
+                EtapaTrocaCondicao => new AssistantDecision(
+                    BuildStructuredPrompt(
+                        incluirErro ? "Nao consegui identificar essa opcao. 😊" : "Qual condicao de troca voce busca?",
+                        string.Empty),
+                    "none",
+                    null,
+                    false,
+                    null,
+                    null,
+                    BuildCondicaoTrocaButtons()),
+                EtapaVendaModelo => new AssistantDecision(
+                    "Qual e o modelo do veiculo que voce quer vender?",
+                    "none",
+                    null,
+                    false,
+                    null),
+                EtapaVendaAno => new AssistantDecision(
+                    "Qual e o ano do veiculo?",
+                    "none",
+                    null,
+                    false,
+                    null),
+                EtapaVendaKm => new AssistantDecision(
+                    "Qual a quilometragem aproximada?",
+                    "none",
+                    null,
+                    false,
+                    null),
+                EtapaVendaQuitado => new AssistantDecision(
+                    BuildStructuredPrompt(
+                        incluirErro ? "Nao consegui identificar essa opcao. 😊" : "O veiculo esta quitado?",
+                        string.Empty),
+                    "none",
+                    null,
+                    false,
+                    null,
+                    null,
+                    BuildQuitadoButtons()),
                 EtapaUrgencia => new AssistantDecision(
                     BuildStructuredPrompt(
                         incluirErro ? "Nao consegui identificar essa opcao. 😊" : "Pra quando voce pretende resolver isso?",
@@ -566,6 +836,25 @@ namespace APIBack.Automation.Services
             };
         }
 
+        private static IReadOnlyList<WhatsAppReplyButtonOption> BuildQuitadoButtons()
+        {
+            return new[]
+            {
+                new WhatsAppReplyButtonOption("garagem_quitado_sim", "Sim"),
+                new WhatsAppReplyButtonOption("garagem_quitado_nao", "Nao")
+            };
+        }
+
+        private static IReadOnlyList<WhatsAppReplyButtonOption> BuildCondicaoTrocaButtons()
+        {
+            return new[]
+            {
+                new WhatsAppReplyButtonOption("garagem_troca_condicao_direta", "Troca direta"),
+                new WhatsAppReplyButtonOption("garagem_troca_condicao_volta", "Troca + volta"),
+                new WhatsAppReplyButtonOption("garagem_troca_condicao_financiamento", "Troca + financiamento")
+            };
+        }
+
         private static IReadOnlyList<WhatsAppReplyButtonOption> BuildUrgenciaButtons()
         {
             return new[]
@@ -581,9 +870,9 @@ namespace APIBack.Automation.Services
             var normalizado = NormalizeText(texto);
             return normalizado switch
             {
-                "1" or "comprar" or "garagem_objetivo_comprar" => "comprar",
-                "2" or "vender" or "garagem_objetivo_vender" => "vender",
-                "3" or "trocar" or "garagem_objetivo_trocar" => "trocar",
+                "1" or "comprar" or "garagem_objetivo_comprar" => ObjetivoComprar,
+                "2" or "vender" or "garagem_objetivo_vender" => ObjetivoVender,
+                "3" or "trocar" or "garagem_objetivo_trocar" => ObjetivoTrocar,
                 _ => null
             };
         }
@@ -600,6 +889,29 @@ namespace APIBack.Automation.Services
             };
         }
 
+        private static string? ParseQuitado(string? texto)
+        {
+            var normalizado = NormalizeText(texto);
+            return normalizado switch
+            {
+                "1" or "sim" or "s" or "garagem_quitado_sim" => "sim",
+                "2" or "nao" or "n" or "garagem_quitado_nao" => "nao",
+                _ => null
+            };
+        }
+
+        private static string? ParseCondicaoTroca(string? texto)
+        {
+            var normalizado = NormalizeText(texto);
+            return normalizado switch
+            {
+                "1" or "troca direta" or "direta" or "garagem_troca_condicao_direta" => "troca_direta",
+                "2" or "troca + volta" or "troca volta" or "volta" or "garagem_troca_condicao_volta" => "troca_volta",
+                "3" or "troca + financiamento" or "troca financiamento" or "financiamento" or "garagem_troca_condicao_financiamento" => "troca_financiamento",
+                _ => null
+            };
+        }
+
         private static string? ParseUrgencia(string? texto)
         {
             var normalizado = NormalizeText(texto);
@@ -609,6 +921,58 @@ namespace APIBack.Automation.Services
                 "2" or "proximas semanas" or "nas proximas semanas" or "garagem_urgencia_proximas_semanas" => "proximas_semanas",
                 "3" or "so pesquisando" or "garagem_urgencia_so_pesquisando" => "so_pesquisando",
                 _ => null
+            };
+        }
+
+        private static void LimparCamposNaoRelacionadosAoObjetivo(GarageLead lead, string objetivo)
+        {
+            if (string.Equals(objetivo, ObjetivoTrocar, StringComparison.Ordinal))
+            {
+                lead.ModeloInteresse = null;
+                lead.FaixaInvestimento = null;
+                lead.FormaPagamento = null;
+                lead.ValorEntradaTexto = null;
+                lead.VendaModelo = null;
+                lead.VendaAno = null;
+                lead.VendaKm = null;
+                lead.VendaQuitado = null;
+                return;
+            }
+
+            if (string.Equals(objetivo, ObjetivoVender, StringComparison.Ordinal))
+            {
+                lead.ModeloInteresse = null;
+                lead.FaixaInvestimento = null;
+                lead.FormaPagamento = null;
+                lead.ValorEntradaTexto = null;
+                lead.TrocaModeloAtual = null;
+                lead.TrocaAnoModelo = null;
+                lead.TrocaKm = null;
+                lead.TrocaQuitado = null;
+                lead.TrocaModeloDesejado = null;
+                lead.TrocaCondicao = null;
+                return;
+            }
+
+            lead.TrocaModeloAtual = null;
+            lead.TrocaAnoModelo = null;
+            lead.TrocaKm = null;
+            lead.TrocaQuitado = null;
+            lead.TrocaModeloDesejado = null;
+            lead.TrocaCondicao = null;
+            lead.VendaModelo = null;
+            lead.VendaAno = null;
+            lead.VendaKm = null;
+            lead.VendaQuitado = null;
+        }
+
+        private static string DeterminarPrimeiraEtapaPorObjetivo(string? objetivo)
+        {
+            return objetivo switch
+            {
+                ObjetivoTrocar => EtapaTrocaModeloAtual,
+                ObjetivoVender => EtapaVendaModelo,
+                _ => EtapaModelo
             };
         }
 
@@ -622,6 +986,68 @@ namespace APIBack.Automation.Services
             if (string.IsNullOrWhiteSpace(lead.Objetivo))
             {
                 return EtapaObjetivo;
+            }
+
+            var objetivo = NormalizeText(lead.Objetivo);
+
+            if (string.Equals(objetivo, ObjetivoTrocar, StringComparison.Ordinal))
+            {
+                if (string.IsNullOrWhiteSpace(lead.TrocaModeloAtual))
+                {
+                    return EtapaTrocaModeloAtual;
+                }
+
+                if (string.IsNullOrWhiteSpace(lead.TrocaAnoModelo))
+                {
+                    return EtapaTrocaAnoModelo;
+                }
+
+                if (string.IsNullOrWhiteSpace(lead.TrocaKm))
+                {
+                    return EtapaTrocaKm;
+                }
+
+                if (string.IsNullOrWhiteSpace(lead.TrocaQuitado))
+                {
+                    return EtapaTrocaQuitado;
+                }
+
+                if (string.IsNullOrWhiteSpace(lead.TrocaModeloDesejado))
+                {
+                    return EtapaTrocaModeloDesejado;
+                }
+
+                if (string.IsNullOrWhiteSpace(lead.TrocaCondicao))
+                {
+                    return EtapaTrocaCondicao;
+                }
+
+                return EtapaUrgencia;
+            }
+
+            if (string.Equals(objetivo, ObjetivoVender, StringComparison.Ordinal))
+            {
+                if (string.IsNullOrWhiteSpace(lead.VendaModelo))
+                {
+                    return EtapaVendaModelo;
+                }
+
+                if (string.IsNullOrWhiteSpace(lead.VendaAno))
+                {
+                    return EtapaVendaAno;
+                }
+
+                if (string.IsNullOrWhiteSpace(lead.VendaKm))
+                {
+                    return EtapaVendaKm;
+                }
+
+                if (string.IsNullOrWhiteSpace(lead.VendaQuitado))
+                {
+                    return EtapaVendaQuitado;
+                }
+
+                return EtapaUrgencia;
             }
 
             if (string.IsNullOrWhiteSpace(lead.ModeloInteresse))
@@ -642,11 +1068,6 @@ namespace APIBack.Automation.Services
             if (string.IsNullOrWhiteSpace(lead.ValorEntradaTexto))
             {
                 return EtapaValorEntrada;
-            }
-
-            if (string.IsNullOrWhiteSpace(lead.Urgencia))
-            {
-                return EtapaUrgencia;
             }
 
             return EtapaUrgencia;

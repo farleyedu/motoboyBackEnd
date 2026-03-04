@@ -33,6 +33,16 @@ SELECT id,
        faixa_investimento AS FaixaInvestimento,
        forma_pagamento    AS FormaPagamento,
        valor_entrada_texto AS ValorEntradaTexto,
+       troca_modelo_atual AS TrocaModeloAtual,
+       troca_ano_modelo   AS TrocaAnoModelo,
+       troca_km           AS TrocaKm,
+       troca_quitado      AS TrocaQuitado,
+       troca_modelo_desejado AS TrocaModeloDesejado,
+       troca_condicao     AS TrocaCondicao,
+       venda_modelo       AS VendaModelo,
+       venda_ano          AS VendaAno,
+       venda_km           AS VendaKm,
+       venda_quitado      AS VendaQuitado,
        urgencia,
        status,
        via_numero_central AS ViaNumeroCentral,
@@ -68,6 +78,16 @@ SELECT id,
        faixa_investimento AS FaixaInvestimento,
        forma_pagamento    AS FormaPagamento,
        valor_entrada_texto AS ValorEntradaTexto,
+       troca_modelo_atual AS TrocaModeloAtual,
+       troca_ano_modelo   AS TrocaAnoModelo,
+       troca_km           AS TrocaKm,
+       troca_quitado      AS TrocaQuitado,
+       troca_modelo_desejado AS TrocaModeloDesejado,
+       troca_condicao     AS TrocaCondicao,
+       venda_modelo       AS VendaModelo,
+       venda_ano          AS VendaAno,
+       venda_km           AS VendaKm,
+       venda_quitado      AS VendaQuitado,
        urgencia,
        status,
        via_numero_central AS ViaNumeroCentral,
@@ -98,6 +118,16 @@ INSERT INTO cliente_garagem (
     faixa_investimento,
     forma_pagamento,
     valor_entrada_texto,
+    troca_modelo_atual,
+    troca_ano_modelo,
+    troca_km,
+    troca_quitado,
+    troca_modelo_desejado,
+    troca_condicao,
+    venda_modelo,
+    venda_ano,
+    venda_km,
+    venda_quitado,
     urgencia,
     status,
     via_numero_central,
@@ -116,6 +146,16 @@ INSERT INTO cliente_garagem (
     @FaixaInvestimento,
     @FormaPagamento,
     @ValorEntradaTexto,
+    @TrocaModeloAtual,
+    @TrocaAnoModelo,
+    @TrocaKm,
+    @TrocaQuitado,
+    @TrocaModeloDesejado,
+    @TrocaCondicao,
+    @VendaModelo,
+    @VendaAno,
+    @VendaKm,
+    @VendaQuitado,
     @Urgencia,
     @Status,
     @ViaNumeroCentral,
@@ -155,6 +195,16 @@ UPDATE cliente_garagem
        faixa_investimento = @FaixaInvestimento,
        forma_pagamento = @FormaPagamento,
        valor_entrada_texto = @ValorEntradaTexto,
+       troca_modelo_atual = @TrocaModeloAtual,
+       troca_ano_modelo = @TrocaAnoModelo,
+       troca_km = @TrocaKm,
+       troca_quitado = @TrocaQuitado,
+       troca_modelo_desejado = @TrocaModeloDesejado,
+       troca_condicao = @TrocaCondicao,
+       venda_modelo = @VendaModelo,
+       venda_ano = @VendaAno,
+       venda_km = @VendaKm,
+       venda_quitado = @VendaQuitado,
        urgencia = @Urgencia,
        status = @Status,
        via_numero_central = @ViaNumeroCentral,
@@ -168,15 +218,7 @@ UPDATE cliente_garagem
             await connection.ExecuteAsync(sql, lead);
         }
 
-        public async Task ConcluirAsync(
-            Guid idLead,
-            string nomeCliente,
-            string objetivo,
-            string modeloInteresse,
-            string faixaInvestimento,
-            string formaPagamento,
-            string valorEntradaTexto,
-            string urgencia)
+        public async Task ConcluirAsync(GarageLead lead)
         {
             const string sql = @"
 UPDATE cliente_garagem
@@ -186,24 +228,24 @@ UPDATE cliente_garagem
        faixa_investimento = @FaixaInvestimento,
        forma_pagamento = @FormaPagamento,
        valor_entrada_texto = @ValorEntradaTexto,
+       troca_modelo_atual = @TrocaModeloAtual,
+       troca_ano_modelo = @TrocaAnoModelo,
+       troca_km = @TrocaKm,
+       troca_quitado = @TrocaQuitado,
+       troca_modelo_desejado = @TrocaModeloDesejado,
+       troca_condicao = @TrocaCondicao,
+       venda_modelo = @VendaModelo,
+       venda_ano = @VendaAno,
+       venda_km = @VendaKm,
+       venda_quitado = @VendaQuitado,
        urgencia = @Urgencia,
        status = 'concluido',
        data_conclusao = NOW(),
        data_atualizacao = NOW()
- WHERE id = @IdLead;";
+ WHERE id = @Id;";
 
             await using var connection = new NpgsqlConnection(_connectionString);
-            await connection.ExecuteAsync(sql, new
-            {
-                IdLead = idLead,
-                NomeCliente = nomeCliente,
-                Objetivo = objetivo,
-                ModeloInteresse = modeloInteresse,
-                FaixaInvestimento = faixaInvestimento,
-                FormaPagamento = formaPagamento,
-                ValorEntradaTexto = valorEntradaTexto,
-                Urgencia = urgencia
-            });
+            await connection.ExecuteAsync(sql, lead);
         }
     }
 }

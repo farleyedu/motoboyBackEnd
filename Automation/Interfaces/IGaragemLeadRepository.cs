@@ -10,14 +10,6 @@ namespace APIBack.Automation.Interfaces
         Task<GarageLead?> ObterPorConversaAsync(Guid idConversa);
         Task<Guid> CriarAsync(GarageLead lead);
         Task AtualizarAsync(GarageLead lead);
-        Task ConcluirAsync(
-            Guid idLead,
-            string nomeCliente,
-            string objetivo,
-            string modeloInteresse,
-            string faixaInvestimento,
-            string formaPagamento,
-            string valorEntradaTexto,
-            string urgencia);
+        Task ConcluirAsync(GarageLead lead);
     }
 }

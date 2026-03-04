@@ -16,6 +16,16 @@ namespace APIBack.Automation.Models
         public string? FormaPagamento { get; set; }
         public string? ValorEntradaTexto { get; set; }
         public string? Urgencia { get; set; }
+        public string? TrocaModeloAtual { get; set; }
+        public string? TrocaAnoModelo { get; set; }
+        public string? TrocaKm { get; set; }
+        public string? TrocaQuitado { get; set; }
+        public string? TrocaModeloDesejado { get; set; }
+        public string? TrocaCondicao { get; set; }
+        public string? VendaModelo { get; set; }
+        public string? VendaAno { get; set; }
+        public string? VendaKm { get; set; }
+        public string? VendaQuitado { get; set; }
         public string Status { get; set; } = "em_andamento";
         public bool ViaNumeroCentral { get; set; }
         public DateTime? DataConclusao { get; set; }
