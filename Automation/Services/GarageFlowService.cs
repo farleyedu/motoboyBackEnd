@@ -851,7 +851,7 @@ namespace APIBack.Automation.Services
             {
                 new WhatsAppReplyButtonOption("garagem_troca_condicao_direta", "Troca direta"),
                 new WhatsAppReplyButtonOption("garagem_troca_condicao_volta", "Troca + volta"),
-                new WhatsAppReplyButtonOption("garagem_troca_condicao_financiamento", "Troca + financiamento")
+                new WhatsAppReplyButtonOption("garagem_troca_condicao_financiamento", "Troca + financ.")
             };
         }
 
@@ -907,7 +907,7 @@ namespace APIBack.Automation.Services
             {
                 "1" or "troca direta" or "direta" or "garagem_troca_condicao_direta" => "troca_direta",
                 "2" or "troca + volta" or "troca volta" or "volta" or "garagem_troca_condicao_volta" => "troca_volta",
-                "3" or "troca + financiamento" or "troca financiamento" or "financiamento" or "garagem_troca_condicao_financiamento" => "troca_financiamento",
+                "3" or "troca + financiamento" or "troca financiamento" or "troca + financ." or "troca financ." or "financiamento" or "garagem_troca_condicao_financiamento" => "troca_financiamento",
                 _ => null
             };
         }
