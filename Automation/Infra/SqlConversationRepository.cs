@@ -1,901 +1,512 @@
 // ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
-// ✨ MUDANÇA PRINCIPAL:
-// - Adicionados logs [CONTEXTO-DEBUG] no método LimparContextoAsync
-
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 using APIBack.Automation.Dtos;
+using APIBack.Automation.Helpers;
 using APIBack.Automation.Interfaces;
 using APIBack.Automation.Models;
+using APIBack.Automation.Services;
 using Dapper;
-using APIBack.Automation.Helpers;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Npgsql;
-using APIBack.Automation.Services;
 
 namespace APIBack.Automation.Infra
 {
     public class SqlConversationRepository : IConversationRepository
     {
+        private const string SelectConversation = @"
+SELECT c.id AS Id, COALESCE(c.id_conversa_grupo, c.id) AS IdConversaGrupo, c.id_estabelecimento AS IdEstabelecimento,
+       c.id_cliente AS IdCliente, c.estado::text AS Estado, c.id_agente_atribuido AS IdAgenteAtribuido,
+       c.data_primeira_mensagem AS DataPrimeiraMensagem, c.data_ultima_mensagem AS DataUltimaMensagem,
+       c.data_ultima_entrada AS DataUltimaEntrada, c.janela_24h_fim AS Janela24hFim,
+       c.motivo_fechamento AS MotivoFechamento, c.fechado_por_id AS FechadoPorId, c.data_fechamento AS DataFechamento,
+       c.data_criacao AS DataCriacao, c.data_atualizacao AS DataAtualizacao, c.contexto_estado::text AS ContextoEstadoJson,
+       cl.telefone_e164 AS TelefoneCliente, COALESCE(cl.nome, cl.telefone_e164) AS ClienteNome
+  FROM conversas c
+  LEFT JOIN clientes cl ON cl.id = c.id_cliente";
+
         private readonly string _connectionString;
-        private readonly Microsoft.Extensions.Configuration.IConfiguration _configuration;
         private readonly ILogger<SqlConversationRepository> _logger;
-        private readonly IWabaPhoneRepository? _wabaPhoneRepository;
+        private readonly Guid? _centralEstabelecimentoId;
         private static bool _indexesEnsured;
-        private const string ConversationDetailsSql = @"SELECT
-  c.id                    AS Id,
-  c.id_cliente            AS IdCliente,
-  COALESCE(cl.nome, cl.telefone_e164) AS ClienteNome,
-  cl.telefone_e164        AS ClienteNumero,
-  c.estado::text          AS Estado,
-  c.id_agente_atribuido   AS IdAgenteAtribuido,
-  c.data_primeira_mensagem AS DataPrimeiraMensagem,
-  c.data_ultima_mensagem  AS DataUltimaMensagem,
-  c.data_criacao          AS DataCriacao,
-  c.data_atualizacao      AS DataAtualizacao,
-  c.data_fechamento       AS DataFechamento,
-  c.fechado_por_id        AS FechadoPorId,
-  c.motivo_fechamento     AS MotivoFechamento
-FROM conversas c
-LEFT JOIN clientes cl ON c.id_cliente = cl.id
-WHERE c.id = @Id
-  AND (@IdEstabelecimento IS NULL OR c.id_estabelecimento = @IdEstabelecimento)
-LIMIT 1;";
 
         public SqlConversationRepository(IConfiguration config, ILogger<SqlConversationRepository> logger)
         {
-            _connectionString = config.GetConnectionString("DefaultConnection")
-                                 ?? config["ConnectionStrings:DefaultConnection"]
-                                 ?? throw new InvalidOperationException("Connection string 'DefaultConnection' nuo encontrada.");
-            _configuration = config;
+            _connectionString = config.GetConnectionString("DefaultConnection") ?? config["ConnectionStrings:DefaultConnection"] ?? throw new InvalidOperationException("Connection string DefaultConnection nao encontrada.");
             _logger = logger;
-
-            if (!_indexesEnsured)
+            _centralEstabelecimentoId = Guid.TryParse(config["WhatsApp:CentralEstabelecimentoId"], out var parsed) ? parsed : null;
+            if (_indexesEnsured) return;
+            try
             {
-                try
-                {
-                    using var cx = new NpgsqlConnection(_connectionString);
-                    cx.Execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_mensagens_id_provedor ON mensagens (id_provedor);");
-                    _indexesEnsured = true;
-                }
-                catch
-                {
-                }
+                using var cx = new NpgsqlConnection(_connectionString);
+                cx.Execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_mensagens_id_provedor ON mensagens (id_provedor);");
+                cx.Execute("CREATE INDEX IF NOT EXISTS ix_conversas_id_conversa_grupo ON conversas (id_conversa_grupo, data_criacao DESC);");
+                _indexesEnsured = true;
             }
-        }
-
-        private static DateTime? ToUtc(DateTime? dt)
-            => dt.HasValue ? DateTime.SpecifyKind(dt.Value, DateTimeKind.Utc) : (DateTime?)null;
-
-        private static DateTime ToUtcNonNull(DateTime dt)
-            => DateTime.SpecifyKind(dt, DateTimeKind.Utc);
-
-        private static string MapEstadoToDatabase(EstadoConversa estado) => estado switch
-        {
-            EstadoConversa.Aberto => "aberto",
-            EstadoConversa.FechadoAutomaticamente => "fechado_automaticamente",
-            EstadoConversa.FechadoAgente => "fechado_agente",
-            EstadoConversa.Arquivada => "arquivada",
-            EstadoConversa.EmAtendimento => "em_atendimento",
-            _ => "aberto"
-        };
-
-        private static EstadoConversa MapEstadoFromDatabase(string? valor)
-        {
-            if (string.IsNullOrWhiteSpace(valor))
-            {
-                return EstadoConversa.Aberto;
-            }
-
-            var normalized = valor.Trim().ToLowerInvariant();
-
-            return normalized switch
-            {
-                "aberto" => EstadoConversa.Aberto,
-                "aguardando_atendimento" or "aguardandoatendimento" => EstadoConversa.EmAtendimento,
-                "em_atendimento" or "ematendimento" => EstadoConversa.EmAtendimento,
-                "fechado_automaticamente" or "fechadoautomaticamente" => EstadoConversa.FechadoAutomaticamente,
-                "fechado_bot" or "fechadobot" => EstadoConversa.FechadoAutomaticamente,
-                "fechado_agente" or "fechadoagente" => EstadoConversa.FechadoAgente,
-                "arquivado" or "arquivada" => EstadoConversa.Arquivada,
-                _ => Enum.TryParse<EstadoConversa>(valor, true, out var parsed) ? parsed : EstadoConversa.Aberto
-            };
-        }
-
-        private static string MapEstadoDbToApi(string? valor)
-        {
-            if (string.IsNullOrWhiteSpace(valor))
-            {
-                return "aberto";
-            }
-
-            return valor.Trim().ToLowerInvariant() switch
-            {
-                "fechado_automaticamente" => "fechado_bot",
-                _ => valor.Trim().ToLowerInvariant()
-            };
-        }
-
-        private static string NormalizeEstadoFiltro(string estado)
-        {
-            var normalized = estado.Trim().ToLowerInvariant();
-            return normalized switch
-            {
-                "fechado_bot" => "fechado_automaticamente",
-                "arquivado" => "arquivada",
-                _ => normalized
-            };
+            catch { }
         }
 
         public async Task<Conversation?> ObterPorIdAsync(Guid id, Guid? idEstabelecimento = null)
         {
-            const string sql = @"
-SELECT
-  c.id                         AS Id,
-  c.id_estabelecimento         AS IdEstabelecimento,
-  c.id_cliente                 AS IdCliente,
-  c.canal                      AS Canal,
-  c.estado::text               AS Estado,
-  c.id_agente_atribuido        AS IdAgenteAtribuido,
-  c.data_primeira_mensagem     AS DataPrimeiraMensagem,
-  c.data_ultima_mensagem       AS DataUltimaMensagem,
-  c.data_ultima_entrada        AS DataUltimaEntrada,
-  c.data_ultima_saida          AS DataUltimaSaida,
-  c.janela_24h_inicio          AS Janela24hInicio,
-  c.janela_24h_fim             AS Janela24hFim,
-  c.qtd_nao_lidas              AS QtdNaoLidas,
-  c.motivo_fechamento          AS MotivoFechamento,
-  c.fechado_por_id             AS FechadoPorId,
-  c.data_fechamento            AS DataFechamento,
-  c.data_criacao               AS DataCriacao,
-  c.data_atualizacao           AS DataAtualizacao,
-  cl.telefone_e164             AS TelefoneCliente
-FROM conversas c
-LEFT JOIN clientes cl ON c.id_cliente = cl.id
-WHERE c.id = @Id
-  AND (@IdEstabelecimento IS NULL OR c.id_estabelecimento = @IdEstabelecimento);";
-
             await using var cx = new NpgsqlConnection(_connectionString);
-            var row = await cx.QueryFirstOrDefaultAsync<(Guid Id, Guid IdEstabelecimento, Guid IdCliente, string? Canal, string? Estado, int? IdAgenteAtribuido, DateTime? DataPrimeiraMensagem, DateTime? DataUltimaMensagem, DateTime? DataUltimaEntrada, DateTime? DataUltimaSaida, DateTime? Janela24hInicio, DateTime? Janela24hFim, int QtdNaoLidas, string? MotivoFechamento, int? FechadoPorId, DateTime? DataFechamento, DateTime DataCriacao, DateTime DataAtualizacao, string? TelefoneCliente)>(sql, new { Id = id, IdEstabelecimento = idEstabelecimento });
-            if (row.Equals(default((Guid, Guid, Guid, string?, string?, int?, DateTime?, DateTime?, DateTime?, DateTime?, DateTime?, DateTime?, int, string?, int?, DateTime?, DateTime, DateTime, string?)))) return null;
-
-            var conv = new Conversation
-            {
-                IdConversa = row.Id,
-                IdEstabelecimento = row.IdEstabelecimento,
-                IdCliente = row.IdCliente,
-                TelefoneCliente = row.TelefoneCliente,
-                IdWa = string.Empty,
-                Modo = row.IdAgenteAtribuido == null ? ModoConversa.Bot : ModoConversa.Humano,
-                AgenteDesignadoId = row.IdAgenteAtribuido,
-                UltimoUsuarioEm = ToUtc(row.DataUltimaEntrada) ?? default,
-                Janela24hExpiraEm = ToUtc(row.Janela24hFim),
-                CriadoEm = ToUtcNonNull(row.DataCriacao),
-                AtualizadoEm = ToUtcNonNull(row.DataAtualizacao),
-                Estado = MapEstadoFromDatabase(row.Estado),
-                MotivoFechamento = row.MotivoFechamento,
-                FechadoPorId = row.FechadoPorId,
-                DataFechamento = ToUtc(row.DataFechamento)
-            };
-            return conv;
+            var row = idEstabelecimento.HasValue
+                ? await ResolveForEstablishmentAsync(cx, id, idEstabelecimento.Value)
+                : await ExactAsync(cx, id);
+            return row == null ? null : ToConversation(row);
         }
 
         public async Task<bool> InserirOuAtualizarAsync(Conversation conversa)
         {
-            if (conversa.IdEstabelecimento == Guid.Empty)
-            {
-                throw new ArgumentException("id_estabelecimento é obrigatório para criar/atualizar conversa", nameof(conversa));
-            }
-
-            var criado = conversa.CriadoEm != default ? DateTime.SpecifyKind(conversa.CriadoEm, DateTimeKind.Utc) : DateTime.UtcNow;
-            var atualizado = conversa.AtualizadoEm.HasValue && conversa.AtualizadoEm.Value != default
-                                ? DateTime.SpecifyKind(conversa.AtualizadoEm.Value, DateTimeKind.Utc)
-                                : criado;
-
-            var dataPrimeiraMensagem = criado;
-            var dataUltimaMensagem = criado;
-            var dataUltimaEntrada = criado;
-            var dataUltimaSaida = dataUltimaMensagem;
-            var janela24hInicio = dataPrimeiraMensagem;
-            var janela24hFim = janela24hInicio.AddHours(24);
-
-            const string sqlConversas = @"
-INSERT INTO conversas
-  (id, id_estabelecimento, id_cliente, canal, estado, id_agente_atribuido, data_primeira_mensagem, data_ultima_mensagem, data_ultima_entrada, data_ultima_saida, janela_24h_inicio, janela_24h_fim, qtd_nao_lidas, motivo_fechamento, fechado_por_id, data_fechamento, data_criacao, data_atualizacao)
-VALUES
-  (@Id, @IdEstabelecimento, @IdCliente, @Canal::canal_chat_enum, @Estado::estado_conversa_enum, @IdAgenteAtribuido, @DataPrimeiraMensagem, @DataUltimaMensagem, @DataUltimaEntrada, @DataUltimaSaida, @Janela24hInicio, @Janela24hFim, @QtdNaoLidas, @MotivoFechamento, @FechadoPorId, @DataFechamento, @DataCriacao, @DataAtualizacao)
+            if (conversa.IdEstabelecimento == Guid.Empty) throw new ArgumentException("id_estabelecimento obrigatorio", nameof(conversa));
+            var criado = conversa.CriadoEm == default ? DateTime.UtcNow : DateTime.SpecifyKind(conversa.CriadoEm, DateTimeKind.Utc);
+            var atualizado = conversa.AtualizadoEm.HasValue && conversa.AtualizadoEm.Value != default ? DateTime.SpecifyKind(conversa.AtualizadoEm.Value, DateTimeKind.Utc) : criado;
+            const string sql = @"
+INSERT INTO conversas (id, id_conversa_grupo, id_estabelecimento, id_cliente, canal, estado, id_agente_atribuido, data_primeira_mensagem, data_ultima_mensagem, data_ultima_entrada, data_ultima_saida, janela_24h_inicio, janela_24h_fim, qtd_nao_lidas, motivo_fechamento, fechado_por_id, data_fechamento, data_criacao, data_atualizacao)
+VALUES (@Id, @IdConversaGrupo, @IdEstabelecimento, @IdCliente, @Canal::canal_chat_enum, @Estado::estado_conversa_enum, @IdAgenteAtribuido, @DataPrimeiraMensagem, @DataUltimaMensagem, @DataUltimaEntrada, @DataUltimaSaida, @Janela24hInicio, @Janela24hFim, @QtdNaoLidas, @MotivoFechamento, @FechadoPorId, @DataFechamento, @DataCriacao, @DataAtualizacao)
 ON CONFLICT (id) DO UPDATE SET
-  data_ultima_mensagem = GREATEST(conversas.data_ultima_mensagem, EXCLUDED.data_ultima_mensagem),
-  data_atualizacao     = EXCLUDED.data_atualizacao,
-  id_agente_atribuido  = COALESCE(EXCLUDED.id_agente_atribuido, conversas.id_agente_atribuido);";
-
-            try
-            {
-                await using var cx = new NpgsqlConnection(_connectionString);
-                var rowsAffected = await cx.ExecuteAsync(sqlConversas, new
-                {
-                    Id = conversa.IdConversa,
-                    IdEstabelecimento = conversa.IdEstabelecimento,
-                    IdCliente = conversa.IdCliente,
-                    Canal = conversa.Canal,
-                    Estado = MapEstadoToDatabase(conversa.Estado),
-                    IdAgenteAtribuido = conversa.Modo == ModoConversa.Humano
-                        ? conversa.AgenteDesignadoId
-                        : null,
-                    DataPrimeiraMensagem = dataPrimeiraMensagem,
-                    DataUltimaMensagem = dataUltimaMensagem,
-                    DataUltimaEntrada = dataUltimaEntrada,
-                    DataUltimaSaida = dataUltimaSaida,
-                    Janela24hInicio = janela24hInicio,
-                    Janela24hFim = janela24hFim,
-                    QtdNaoLidas = 0,
-                    MotivoFechamento = conversa.MotivoFechamento,
-                    FechadoPorId = conversa.FechadoPorId,
-                    DataFechamento = conversa.DataFechamento.HasValue ? DateTime.SpecifyKind(conversa.DataFechamento.Value, DateTimeKind.Utc) : (DateTime?)null,
-                    DataCriacao = criado,
-                    DataAtualizacao = atualizado
-                });
-                return rowsAffected > 0;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Erro ao inserir/atualizar conversa {conversa.IdConversa}: {ex.Message}");
-                return false;
-            }
-        }
-
-        public async Task<Guid> GarantirClienteAsync(string telefoneE164, Guid idEstabelecimento)
-        {
-            if (string.IsNullOrWhiteSpace(telefoneE164))
-                throw new ArgumentException("telefoneE164 obrigatório", nameof(telefoneE164));
-            if (idEstabelecimento == Guid.Empty)
-                throw new ArgumentException("idEstabelecimento obrigatório", nameof(idEstabelecimento));
-
-            const string sqlSel = @"SELECT id FROM clientes
-                                     WHERE id_estabelecimento = @IdEstabelecimento
-                                       AND telefone_e164      = @Telefone
-                                     LIMIT 1;";
-
+  id_conversa_grupo = COALESCE(EXCLUDED.id_conversa_grupo, conversas.id_conversa_grupo),
+  id_estabelecimento = EXCLUDED.id_estabelecimento,
+  id_cliente = EXCLUDED.id_cliente,
+  data_ultima_mensagem = GREATEST(COALESCE(conversas.data_ultima_mensagem, EXCLUDED.data_ultima_mensagem), EXCLUDED.data_ultima_mensagem),
+  data_atualizacao = EXCLUDED.data_atualizacao,
+  id_agente_atribuido = EXCLUDED.id_agente_atribuido,
+  motivo_fechamento = EXCLUDED.motivo_fechamento,
+  fechado_por_id = EXCLUDED.fechado_por_id,
+  data_fechamento = EXCLUDED.data_fechamento;";
             await using var cx = new NpgsqlConnection(_connectionString);
-            var existente = await cx.ExecuteScalarAsync<Guid?>(sqlSel, new { IdEstabelecimento = idEstabelecimento, Telefone = telefoneE164 });
-            if (existente.HasValue && existente.Value != Guid.Empty)
-                return existente.Value;
-
-            var novoId = Guid.NewGuid();
-            var agora = DateTime.UtcNow;
-
-            const string sqlIns = @"INSERT INTO clientes (id, id_estabelecimento, telefone_e164, data_criacao, data_atualizacao)
-                                     SELECT @Id, @IdEstabelecimento, @Telefone, @CriadoEm, @AtualizadoEm
-                                     WHERE NOT EXISTS (
-                                         SELECT 1 FROM clientes WHERE id_estabelecimento = @IdEstabelecimento AND telefone_e164 = @Telefone
-                                     );";
-
-            await cx.ExecuteAsync(sqlIns, new
+            return await cx.ExecuteAsync(sql, new
             {
-                Id = novoId,
-                IdEstabelecimento = idEstabelecimento,
-                Telefone = telefoneE164,
-                CriadoEm = agora,
-                AtualizadoEm = agora
-            });
-
-            var idFinal = await cx.ExecuteScalarAsync<Guid?>(sqlSel, new { IdEstabelecimento = idEstabelecimento, Telefone = telefoneE164 });
-            return idFinal ?? novoId;
+                Id = conversa.IdConversa,
+                IdConversaGrupo = conversa.IdConversaGrupo == Guid.Empty ? conversa.IdConversa : conversa.IdConversaGrupo,
+                IdEstabelecimento = conversa.IdEstabelecimento,
+                IdCliente = conversa.IdCliente,
+                Canal = conversa.Canal,
+                Estado = EstadoDb(conversa.Estado),
+                IdAgenteAtribuido = conversa.Modo == ModoConversa.Humano ? conversa.AgenteDesignadoId : null,
+                DataPrimeiraMensagem = criado,
+                DataUltimaMensagem = criado,
+                DataUltimaEntrada = criado,
+                DataUltimaSaida = criado,
+                Janela24hInicio = criado,
+                Janela24hFim = criado.AddHours(24),
+                QtdNaoLidas = 0,
+                MotivoFechamento = conversa.MotivoFechamento,
+                FechadoPorId = conversa.FechadoPorId,
+                DataFechamento = conversa.DataFechamento,
+                DataCriacao = criado,
+                DataAtualizacao = atualizado
+            }) > 0;
         }
 
         public async Task DefinirModoAsync(Guid id, ModoConversa modo, int? agenteId)
         {
-            const string sqlHumano = @"
-                      UPDATE conversas
-                         SET id_agente_atribuido = @AgenteId,
-                             estado               = @Estado::estado_conversa_enum,
-                             data_atualizacao     = NOW()
-                       WHERE id = @Id;";
-
-            const string sqlBot = @"
-                      UPDATE conversas
-                         SET id_agente_atribuido = NULL,
-                             estado               = @Estado::estado_conversa_enum,
-                             data_atualizacao     = NOW()
-                       WHERE id = @Id;";
-
-            object parametros = modo == ModoConversa.Humano
-                ? new { Id = id, AgenteId = (object?)agenteId, Estado = MapEstadoToDatabase(EstadoConversa.EmAtendimento) }
-                : new { Id = id, Estado = MapEstadoToDatabase(EstadoConversa.Aberto) };
-
-            var sql = modo == ModoConversa.Humano ? sqlHumano : sqlBot;
-
-            await using var cx = new NpgsqlConnection(_connectionString);
-            await cx.ExecuteAsync(sql, parametros);
-        }
-
-        public async Task AcrescentarMensagemAsync(Message mensagem, string? phoneNumberId, string? idWa = null)
-        {
-            DateTime quandoUtc;
-            if (mensagem.DataHora == default)
-                quandoUtc = DateTime.UtcNow;
-            else if (mensagem.DataHora.Kind == DateTimeKind.Utc)
-                quandoUtc = mensagem.DataHora;
-            else if (mensagem.DataHora.Kind == DateTimeKind.Local)
-                quandoUtc = mensagem.DataHora.ToUniversalTime();
-            else
-                quandoUtc = DateTime.SpecifyKind(mensagem.DataHora, DateTimeKind.Utc);
-
-            var idMsg = mensagem.Id != Guid.Empty ? mensagem.Id : Guid.NewGuid();
-            var direcao = mensagem.Direcao == DirecaoMensagem.Entrada ? "entrada" : "saida";
-            var tipoOrigemWa = string.IsNullOrWhiteSpace(mensagem.TipoOriginal) ? mensagem.Tipo : mensagem.TipoOriginal;
-            var criadaPor = string.IsNullOrWhiteSpace(mensagem.CriadaPor)
-                            ? (mensagem.Direcao == DirecaoMensagem.Entrada ? "bot" : "agente:1")
-                            : mensagem.CriadaPor!;
-            var tipoMapeado = MessageTypeMapper.MapType(tipoOrigemWa, mensagem.Direcao, criadaPor);
-            var tipo = string.IsNullOrWhiteSpace(tipoMapeado) ? "texto" : tipoMapeado;
-            mensagem.Tipo = tipo;
-            mensagem.TipoOriginal ??= tipoOrigemWa;
-            mensagem.CriadaPor = criadaPor;
-            var tipoOriginalLog = string.IsNullOrWhiteSpace(tipoOrigemWa) ? "(indefinido)" : tipoOrigemWa.Trim();
-            _logger.LogInformation("[Conversa={Conversa}] [Mensagem={Mensagem}] Tipo WA={TipoWa} -> Tipo Banco={TipoBanco}", mensagem.IdConversa, idMsg, tipoOriginalLog, tipo);
-            var status = string.IsNullOrWhiteSpace(mensagem.Status)
-                          ? (mensagem.Direcao == DirecaoMensagem.Entrada ? "entregue" : "fila")
-                          : mensagem.Status!;
-            var idProv = !string.IsNullOrWhiteSpace(mensagem.IdProvedor) ? mensagem.IdProvedor : mensagem.IdMensagemWa;
-
-            DateTime? dataEnvio = null, dataEntrega = null, dataLeitura = null;
-            var st = status.Trim().ToLowerInvariant();
-
-            if (direcao == "entrada")
-            {
-                dataEnvio = quandoUtc;
-                dataEntrega = quandoUtc;
-                dataLeitura = null;
-            }
-            else
-            {
-                switch (st)
-                {
-                    case "fila":
-                    case "enviado":
-                    case "enviada":
-                        dataEnvio = quandoUtc;
-                        break;
-                    case "entregue":
-                    case "entregada":
-                        dataEnvio = quandoUtc;
-                        dataEntrega = quandoUtc;
-                        break;
-                    case "lido":
-                    case "lida":
-                        dataEnvio = quandoUtc;
-                        dataEntrega = quandoUtc;
-                        dataLeitura = quandoUtc;
-                        break;
-                    default:
-                        break;
-                }
-            }
-
-            const string insertMsg = @"
-INSERT INTO mensagens
-  (id, id_conversa, direcao, tipo, status, id_provedor, codigo_erro, mensagem_erro, tentativas, criada_por,
-   data_envio, data_entrega, data_leitura, data_criacao, conteudo)
-VALUES
-  (@Id, @IdConversa,
-   @Direcao::direcao_mensagem_enum,
-   @Tipo::tipo_mensagem_enum,          
-   @Status::status_mensagem_enum,         
-   @IdProvedor, @CodigoErro, @MensagemErro, @Tentativas, @CriadaPor,
-   @DataEnvio, @DataEntrega, @DataLeitura, @DataCriacao, @Conteudo)
-ON CONFLICT DO NOTHING;";
-
-            const string updConv = @"
+            const string sql = @"
 UPDATE conversas
-   SET data_primeira_mensagem = COALESCE(data_primeira_mensagem, @Quando),
-       data_ultima_mensagem   = GREATEST(COALESCE(data_ultima_mensagem, @Quando), @Quando),
-       data_ultima_entrada    = CASE WHEN @Direcao = 'entrada' THEN @Quando ELSE data_ultima_entrada END,
-       data_ultima_saida      = CASE WHEN @Direcao = 'saida'   THEN @Quando ELSE data_ultima_saida   END,
-       janela_24h_inicio      = CASE
-                                  WHEN @Direcao = 'entrada' AND (janela_24h_inicio IS NULL) THEN @Quando
-                                  ELSE janela_24h_inicio
-                                END,
-       janela_24h_fim         = CASE
-                                  WHEN @Direcao = 'entrada' THEN GREATEST(COALESCE(janela_24h_fim, @Quando + interval '24 hour'),
-                                                                           @Quando + interval '24 hour')
-                                  ELSE janela_24h_fim
-                                END,
-       qtd_nao_lidas          = CASE WHEN @Direcao = 'entrada' THEN COALESCE(qtd_nao_lidas,0) + 1 ELSE qtd_nao_lidas END,
-       data_atualizacao       = NOW()
- WHERE id = @IdConversa;";
-
+   SET id_agente_atribuido = @IdAgente,
+       estado = @Estado::estado_conversa_enum,
+       data_atualizacao = NOW()
+ WHERE id = @Id;";
             await using var cx = new NpgsqlConnection(_connectionString);
-            await cx.OpenAsync();
-            await using var tx = await cx.BeginTransactionAsync();
-
-            try
-            {
-                if (mensagem.IdConversa == Guid.Empty)
-                    throw new ArgumentException("IdConversa obrigatório", nameof(mensagem));
-
-                const string checkConv = "SELECT 1 FROM conversas WHERE id = @Id LIMIT 1;";
-                var convExists = await cx.ExecuteScalarAsync<int?>(checkConv, new { Id = mensagem.IdConversa }, transaction: tx);
-                if (!convExists.HasValue)
-                {
-                    string? wabaPhoneNumberId = phoneNumberId;
-                    string? telefoneClienteRaw = idWa;
-
-                    const string sqlWaba = "SELECT id_estabelecimento FROM waba_phone WHERE display_phone_number  = @PhoneNumberId LIMIT 1;";
-                    var idEstabelecimento = await cx.ExecuteScalarAsync<Guid?>(sqlWaba, new { PhoneNumberId = wabaPhoneNumberId }, transaction: tx);
-                    if (!idEstabelecimento.HasValue || idEstabelecimento.Value == Guid.Empty)
-                        throw new InvalidOperationException("Estabelecimento não encontrado para este WABA");
-
-                    var telefoneE164 = APIBack.Automation.Helpers.TelefoneHelper.ToE164(telefoneClienteRaw ?? string.Empty);
-                    const string sqlCliSel = "SELECT id FROM clientes WHERE telefone_e164 = @Tel AND id_estabelecimento = @IdEstabelecimento LIMIT 1;";
-                    var idCliente = await cx.ExecuteScalarAsync<Guid?>(sqlCliSel, new { Tel = telefoneE164, IdEstabelecimento = idEstabelecimento }, transaction: tx);
-
-                    if (!idCliente.HasValue || idCliente.Value == Guid.Empty)
-                    {
-                        var novoClienteId = Guid.NewGuid();
-                        var agora = DateTime.UtcNow;
-                        const string sqlCliIns = @"
-        INSERT INTO clientes (id, id_estabelecimento, telefone_e164, data_criacao, data_atualizacao)
-        SELECT @Id, @IdEstabelecimento, @Telefone, @CriadoEm, @AtualizadoEm
-        WHERE NOT EXISTS (
-          SELECT 1 FROM clientes
-          WHERE id_estabelecimento = @IdEstabelecimento
-            AND telefone_e164   = @Telefone
-        )
-        RETURNING id;";
-
-                        var insertedId = await cx.ExecuteScalarAsync<Guid?>(
-                            sqlCliIns,
-                            new
-                            {
-                                Id = novoClienteId,
-                                IdEstabelecimento = idEstabelecimento,
-                                Telefone = telefoneE164,
-                                CriadoEm = agora,
-                                AtualizadoEm = agora
-                            },
-                            transaction: tx
-                        );
-
-                        if (insertedId.HasValue) idCliente = insertedId;
-                        else
-                        {
-                            idCliente = await cx.ExecuteScalarAsync<Guid?>(sqlCliSel, new { Tel = telefoneE164, IdEstabelecimento = idEstabelecimento }, transaction: tx);
-                        }
-
-                        if (!idCliente.HasValue || idCliente.Value == Guid.Empty)
-                            throw new InvalidOperationException("Falha ao criar cliente");
-                    }
-
-                    var agoraUtc = DateTime.SpecifyKind(DateTime.UtcNow, DateTimeKind.Utc);
-                    await InserirOuAtualizarAsync(new Conversation
-                    {
-                        IdConversa = mensagem.IdConversa,
-                        IdEstabelecimento = idEstabelecimento.Value,
-                        IdCliente = idCliente.Value,
-                        CriadoEm = agoraUtc,
-                        AtualizadoEm = agoraUtc
-                    });
-                }
-
-                await cx.ExecuteAsync(insertMsg, new
-                {
-                    Id = idMsg,
-                    IdConversa = mensagem.IdConversa,
-                    Direcao = direcao,
-                    Tipo = tipo,
-                    Status = status,
-                    IdProvedor = (object?)idProv,
-                    Conteudo = mensagem.Conteudo,
-                    CodigoErro = (string?)mensagem.CodigoErro,
-                    MensagemErro = (string?)mensagem.MensagemErro,
-                    Tentativas = mensagem.Tentativas,
-                    CriadaPor = criadaPor,
-                    DataEnvio = dataEnvio,
-                    DataEntrega = dataEntrega,
-                    DataLeitura = dataLeitura,
-                    DataCriacao = quandoUtc
-                }, transaction: tx);
-
-                await cx.ExecuteAsync(updConv, new
-                {
-                    IdConversa = mensagem.IdConversa,
-                    Quando = quandoUtc,
-                    Direcao = direcao
-                }, transaction: tx);
-
-                await tx.CommitAsync();
-            }
-            catch
-            {
-                await tx.RollbackAsync();
-                throw;
-            }
+            await cx.ExecuteAsync(sql, new { Id = id, IdAgente = modo == ModoConversa.Humano ? agenteId : null, Estado = modo == ModoConversa.Humano ? EstadoDb(EstadoConversa.EmAtendimento) : EstadoDb(EstadoConversa.Aberto) });
         }
 
         public async Task<bool> ExisteIdMensagemPorProvedorWaAsync(string idMensagemWa)
         {
-            const string sql = "SELECT 1 FROM mensagens WHERE id_provedor = @IdMensagemWa LIMIT 1;";
             await using var cx = new NpgsqlConnection(_connectionString);
-            var existe = await cx.ExecuteScalarAsync<int?>(sql, new { IdMensagemWa = idMensagemWa });
-            return existe.HasValue;
+            return (await cx.ExecuteScalarAsync<int?>("SELECT 1 FROM mensagens WHERE id_provedor = @Id LIMIT 1;", new { Id = idMensagemWa })).HasValue;
+        }
+
+        public async Task<Guid> GarantirClienteAsync(string telefoneE164, Guid idEstabelecimento)
+        {
+            await using var cx = new NpgsqlConnection(_connectionString);
+            return await GarantirClienteTxAsync(cx, null, telefoneE164, idEstabelecimento);
         }
 
         public async Task<Guid> ObterIdConversaPorClienteAsync(Guid idCliente, Guid idEstabelecimento)
         {
-            const string sql = @"SELECT id
-                                   FROM conversas
-                                  WHERE id_cliente = @IdCliente
-                                    AND id_estabelecimento = @IdEstabelecimento
-                                    AND motivo_fechamento IS NULL
-                                    AND estado <> 'fechado_automaticamente'::estado_conversa_enum
-                                    AND estado <> 'fechado_agente'::estado_conversa_enum
-                                    AND estado <> 'arquivada'::estado_conversa_enum
-                                  ORDER BY data_criacao DESC
-                                  LIMIT 1;";
+            const string sql = @"SELECT id FROM conversas WHERE id_cliente = @IdCliente AND id_estabelecimento = @IdEstabelecimento AND estado NOT IN ('fechado_automaticamente'::estado_conversa_enum, 'fechado_agente'::estado_conversa_enum, 'arquivada'::estado_conversa_enum) ORDER BY data_criacao DESC LIMIT 1;";
             await using var cx = new NpgsqlConnection(_connectionString);
-            var found = await cx.ExecuteScalarAsync<Guid?>(sql, new { IdCliente = idCliente, IdEstabelecimento = idEstabelecimento });
-            return found ?? Guid.Empty;
+            return (await cx.ExecuteScalarAsync<Guid?>(sql, new { IdCliente = idCliente, IdEstabelecimento = idEstabelecimento })) ?? Guid.Empty;
+        }
+
+        public async Task<Guid> ObterIdConversaAbertaPorGrupoAsync(Guid idConversaGrupo, Guid idEstabelecimento)
+        {
+            const string sql = @"SELECT id FROM conversas WHERE COALESCE(id_conversa_grupo, id) = @IdConversaGrupo AND id_estabelecimento = @IdEstabelecimento AND id <> COALESCE(id_conversa_grupo, id) AND estado NOT IN ('fechado_automaticamente'::estado_conversa_enum, 'fechado_agente'::estado_conversa_enum, 'arquivada'::estado_conversa_enum) ORDER BY COALESCE(data_ultima_mensagem, data_atualizacao, data_criacao) DESC LIMIT 1;";
+            await using var cx = new NpgsqlConnection(_connectionString);
+            return (await cx.ExecuteScalarAsync<Guid?>(sql, new { IdConversaGrupo = idConversaGrupo, IdEstabelecimento = idEstabelecimento })) ?? Guid.Empty;
+        }
+
+        public async Task AtualizarEstadoAsync(Guid idConversa, EstadoConversa novoEstado)
+        {
+            await using var cx = new NpgsqlConnection(_connectionString);
+            await cx.ExecuteAsync("UPDATE conversas SET estado = @Estado::estado_conversa_enum, data_atualizacao = NOW() WHERE id = @Id;", new { Id = idConversa, Estado = EstadoDb(novoEstado) });
+        }
+
+        public async Task AcrescentarMensagemAsync(Message mensagem, string? phoneNumberId, string? idWa = null)
+        {
+            if (mensagem.IdConversa == Guid.Empty) throw new ArgumentException("IdConversa obrigatorio", nameof(mensagem));
+            var quando = mensagem.DataHora == default ? DateTime.UtcNow : mensagem.DataHora.Kind == DateTimeKind.Utc ? mensagem.DataHora : DateTime.SpecifyKind(mensagem.DataHora, DateTimeKind.Utc);
+            var direcao = mensagem.Direcao == DirecaoMensagem.Entrada ? "entrada" : "saida";
+            var criadaPor = string.IsNullOrWhiteSpace(mensagem.CriadaPor) ? (mensagem.Direcao == DirecaoMensagem.Entrada ? "cliente" : "sistema") : mensagem.CriadaPor!;
+            var tipoOriginal = string.IsNullOrWhiteSpace(mensagem.TipoOriginal) ? mensagem.Tipo : mensagem.TipoOriginal;
+            var tipo = MessageTypeMapper.MapType(tipoOriginal, mensagem.Direcao, criadaPor);
+            await using var cx = new NpgsqlConnection(_connectionString);
+            await cx.OpenAsync();
+            await using var tx = await cx.BeginTransactionAsync();
+            var exists = await cx.ExecuteScalarAsync<int?>("SELECT 1 FROM conversas WHERE id = @Id LIMIT 1;", new { Id = mensagem.IdConversa }, tx);
+            if (!exists.HasValue)
+            {
+                var idEstab = await cx.ExecuteScalarAsync<Guid?>("SELECT id_estabelecimento FROM waba_phone WHERE display_phone_number = @Display LIMIT 1;", new { Display = phoneNumberId }, tx);
+                if (!idEstab.HasValue || idEstab.Value == Guid.Empty) throw new InvalidOperationException("Estabelecimento nao encontrado para este WABA");
+                var telefone = TelefoneHelper.ToE164(idWa ?? string.Empty);
+                var idCliente = await GarantirClienteTxAsync(cx, tx, telefone, idEstab.Value);
+                await cx.ExecuteAsync(@"INSERT INTO conversas (id, id_conversa_grupo, id_estabelecimento, id_cliente, canal, estado, data_primeira_mensagem, data_ultima_mensagem, data_ultima_entrada, janela_24h_inicio, janela_24h_fim, qtd_nao_lidas, data_criacao, data_atualizacao)
+VALUES (@Id, @Id, @IdEstabelecimento, @IdCliente, 'whatsapp', 'aberto'::estado_conversa_enum, @Quando, @Quando, @Quando, @Quando, @Quando + interval '24 hour', 1, @Quando, @Quando)
+ON CONFLICT (id) DO NOTHING;", new { Id = mensagem.IdConversa, IdEstabelecimento = idEstab.Value, IdCliente = idCliente, Quando = quando }, tx);
+            }
+            await cx.ExecuteAsync(@"INSERT INTO mensagens (id, id_conversa, direcao, tipo, status, id_provedor, codigo_erro, mensagem_erro, tentativas, criada_por, data_envio, data_entrega, data_leitura, data_criacao, conteudo)
+VALUES (@Id, @IdConversa, @Direcao::direcao_mensagem_enum, @Tipo::tipo_mensagem_enum, @Status::status_mensagem_enum, @IdProvedor, @CodigoErro, @MensagemErro, @Tentativas, @CriadaPor, @DataEnvio, @DataEntrega, @DataLeitura, @DataCriacao, @Conteudo)
+ON CONFLICT DO NOTHING;", new
+            {
+                Id = mensagem.Id == Guid.Empty ? Guid.NewGuid() : mensagem.Id,
+                IdConversa = mensagem.IdConversa,
+                Direcao = direcao,
+                Tipo = string.IsNullOrWhiteSpace(tipo) ? "texto" : tipo,
+                Status = string.IsNullOrWhiteSpace(mensagem.Status) ? (mensagem.Direcao == DirecaoMensagem.Entrada ? "entregue" : "fila") : mensagem.Status,
+                IdProvedor = !string.IsNullOrWhiteSpace(mensagem.IdProvedor) ? mensagem.IdProvedor : mensagem.IdMensagemWa,
+                CodigoErro = mensagem.CodigoErro,
+                MensagemErro = mensagem.MensagemErro,
+                Tentativas = mensagem.Tentativas,
+                CriadaPor = criadaPor,
+                DataEnvio = mensagem.DataEnvio ?? quando,
+                DataEntrega = mensagem.DataEntrega,
+                DataLeitura = mensagem.DataLeitura,
+                DataCriacao = mensagem.DataCriacao == default ? quando : mensagem.DataCriacao,
+                Conteudo = mensagem.Conteudo
+            }, tx);
+            await cx.ExecuteAsync(@"UPDATE conversas
+   SET data_primeira_mensagem = COALESCE(data_primeira_mensagem, @Quando),
+       data_ultima_mensagem = GREATEST(COALESCE(data_ultima_mensagem, @Quando), @Quando),
+       data_ultima_entrada = CASE WHEN @Direcao = 'entrada' THEN @Quando ELSE data_ultima_entrada END,
+       data_ultima_saida = CASE WHEN @Direcao = 'saida' THEN @Quando ELSE data_ultima_saida END,
+       janela_24h_inicio = CASE WHEN @Direcao = 'entrada' AND janela_24h_inicio IS NULL THEN @Quando ELSE janela_24h_inicio END,
+       janela_24h_fim = CASE WHEN @Direcao = 'entrada' THEN GREATEST(COALESCE(janela_24h_fim, @Quando + interval '24 hour'), @Quando + interval '24 hour') ELSE janela_24h_fim END,
+       qtd_nao_lidas = CASE WHEN @Direcao = 'entrada' THEN COALESCE(qtd_nao_lidas, 0) + 1 ELSE qtd_nao_lidas END,
+       data_atualizacao = NOW()
+ WHERE id = @IdConversa;", new { IdConversa = mensagem.IdConversa, Quando = quando, Direcao = direcao }, tx);
+            await tx.CommitAsync();
         }
 
         public async Task<IReadOnlyList<ConversationListItemDto>> ListarConversasAsync(string? estado, int? idAgente, bool incluirArquivadas, Guid? idEstabelecimento = null)
         {
-            var sb = new StringBuilder();
-            sb.AppendLine("SELECT");
-            sb.AppendLine("  c.id                   AS Id,");
-            sb.AppendLine("  c.id_cliente           AS IdCliente,");
-            sb.AppendLine("  COALESCE(cl.nome, cl.telefone_e164) AS ClienteNome,");
-            sb.AppendLine("  cl.telefone_e164       AS ClienteNumero,");
-            sb.AppendLine("  c.estado::text         AS Estado,");
-            sb.AppendLine("  c.id_agente_atribuido  AS IdAgenteAtribuido,");
-            sb.AppendLine("  c.data_primeira_mensagem AS DataPrimeiraMensagem,");
-            sb.AppendLine("  c.data_ultima_mensagem AS DataUltimaMensagem,");
-            sb.AppendLine("  c.data_criacao         AS DataCriacao,");
-            sb.AppendLine("  c.data_atualizacao     AS DataAtualizacao,");
-            sb.AppendLine("  c.data_fechamento      AS DataFechamento,");
-            sb.AppendLine("  lm.conteudo            AS UltimaMensagemConteudo,");
-            sb.AppendLine("  lm.data_criacao        AS UltimaMensagemData,");
-            sb.AppendLine("  lm.criada_por          AS UltimaMensagemCriadaPor");
-            sb.AppendLine("FROM conversas c");
-            sb.AppendLine("LEFT JOIN clientes cl ON c.id_cliente = cl.id");
-            sb.AppendLine("LEFT JOIN LATERAL (");
-            sb.AppendLine("    SELECT m.conteudo, m.data_criacao, m.criada_por");
-            sb.AppendLine("    FROM mensagens m");
-            sb.AppendLine("    WHERE m.id_conversa = c.id");
-            sb.AppendLine("    ORDER BY m.data_criacao DESC");
-            sb.AppendLine("    LIMIT 1");
-            sb.AppendLine(") lm ON TRUE");
-            sb.AppendLine("WHERE 1=1");
-
-            var parameters = new DynamicParameters();
-            string? estadoNormalizado = null;
-
-            if (!string.IsNullOrWhiteSpace(estado))
+            await using var cx = new NpgsqlConnection(_connectionString);
+            var sql = SelectConversation + (idEstabelecimento.HasValue ? " WHERE c.id_estabelecimento = @IdEstabelecimento" : string.Empty);
+            var rows = (await cx.QueryAsync<ConversationRow>(sql, new { IdEstabelecimento = idEstabelecimento })).ToList();
+            var itens = new List<ConversationListItemDto>();
+            if (idEstabelecimento.HasValue && IsCentral(idEstabelecimento.Value))
             {
-                estadoNormalizado = NormalizeEstadoFiltro(estado);
-                parameters.Add("Estado", estadoNormalizado);
-                sb.AppendLine("  AND c.estado = @Estado::estado_conversa_enum");
-            }
-
-            if (idAgente.HasValue)
-            {
-                parameters.Add("Responsavel", idAgente);
-                sb.AppendLine("  AND c.id_agente_atribuido = @Responsavel");
-            }
-
-            if (idEstabelecimento.HasValue)
-            {
-                parameters.Add("IdEstabelecimento", idEstabelecimento.Value);
-                sb.AppendLine("  AND c.id_estabelecimento = @IdEstabelecimento");
-            }
-
-            if (!incluirArquivadas)
-            {
-                if (!string.Equals(estadoNormalizado, "arquivada", StringComparison.OrdinalIgnoreCase))
+                foreach (var root in rows.Where(r => r.Id == r.IdConversaGrupo && r.IdEstabelecimento == idEstabelecimento.Value))
                 {
-                    sb.AppendLine("  AND c.estado <> 'arquivada'::estado_conversa_enum");
+                    itens.Add(await BuildCentralListItemAsync(cx, root));
                 }
             }
-
-            sb.AppendLine("ORDER BY c.data_ultima_mensagem DESC NULLS LAST, c.data_criacao DESC;");
-
-            await using var cx = new NpgsqlConnection(_connectionString);
-            var registros = (await cx.QueryAsync<ConversationListItemDto>(sb.ToString(), parameters)).ToList();
-            foreach (var item in registros)
+            else
             {
-                item.Estado = MapEstadoDbToApi(item.Estado);
+                foreach (var row in rows)
+                {
+                    itens.Add(await BuildStandardListItemAsync(cx, row));
+                }
             }
-
-            return registros;
+            var filtro = NormalizeEstado(estado);
+            if (!string.IsNullOrWhiteSpace(filtro)) itens = itens.Where(i => NormalizeEstado(i.Estado) == filtro).ToList();
+            if (idAgente.HasValue) itens = itens.Where(i => i.IdAgenteAtribuido == idAgente.Value).ToList();
+            if (!incluirArquivadas) itens = itens.Where(i => !string.Equals(i.Estado, "arquivada", StringComparison.OrdinalIgnoreCase)).ToList();
+            return itens.OrderByDescending(i => i.UltimaMensagemData ?? i.DataUltimaMensagem ?? i.DataAtualizacao).ToList();
         }
 
         public async Task<ConversationHistoryDto?> ObterHistoricoConversaAsync(Guid idConversa, int page, int pageSize, Guid? idEstabelecimento = null)
         {
-            if (page < 1) page = 1;
-            if (pageSize <= 0) pageSize = 50;
-
+            page = Math.Max(1, page);
+            pageSize = pageSize <= 0 ? 50 : pageSize;
             await using var cx = new NpgsqlConnection(_connectionString);
-            var detalhes = await cx.QueryFirstOrDefaultAsync<ConversationDetailsDto>(ConversationDetailsSql, new
+            var row = await ExactAsync(cx, idConversa);
+            if (row == null) return null;
+            if (idEstabelecimento.HasValue && IsCentral(idEstabelecimento.Value))
             {
-                Id = idConversa,
-                IdEstabelecimento = idEstabelecimento
-            });
-            if (detalhes == null)
-            {
-                return null;
+                var root = await RootAsync(cx, row);
+                if (root == null || root.IdEstabelecimento != idEstabelecimento.Value) return null;
+                var mensagens = (await GroupMessagesAsync(cx, root.IdConversaGrupo, page, pageSize)).ToList();
+                var total = await cx.ExecuteScalarAsync<int>("SELECT COUNT(1) FROM mensagens m JOIN conversas c ON c.id = m.id_conversa WHERE COALESCE(c.id_conversa_grupo, c.id) = @GroupId;", new { GroupId = root.IdConversaGrupo });
+                return new ConversationHistoryDto { Conversa = await BuildCentralDetailsAsync(cx, root), Mensagens = mensagens, Page = page, PageSize = pageSize, Total = total };
             }
-
-            detalhes.Estado = MapEstadoDbToApi(detalhes.Estado);
-
-            _logger.LogInformation("ClienteNumero: {ClienteNumero}, ClienteNome: {ClienteNome}", detalhes.ClienteNumero, detalhes.ClienteNome);
-            _logger.LogInformation("Query SQL: {Sql}", ConversationDetailsSql);
-
-            var parametrosMensagens = new
-            {
-                Id = idConversa,
-                PageSize = pageSize,
-                Offset = (page - 1) * pageSize,
-                IdEstabelecimento = idEstabelecimento
-            };
-
-            var mensagens = (await cx.QueryAsync<ConversationMessageItemDto>(@"
-SELECT
-  m.id          AS Id,
-  COALESCE(m.criada_por, '') AS CriadaPor,
-  COALESCE(m.conteudo, '')   AS Conteudo,
-  m.data_envio  AS DataEnvio,
-  m.data_criacao AS DataCriacao
-FROM mensagens m
-JOIN conversas c ON c.id = m.id_conversa
-WHERE m.id_conversa = @Id
-  AND (@IdEstabelecimento IS NULL OR c.id_estabelecimento = @IdEstabelecimento)
-ORDER BY m.data_criacao ASC, m.data_envio ASC
-LIMIT @PageSize OFFSET @Offset;", parametrosMensagens)).ToList();
-
-            var total = await cx.ExecuteScalarAsync<int>(@"
-SELECT COUNT(1)
-  FROM mensagens m
-  JOIN conversas c ON c.id = m.id_conversa
- WHERE m.id_conversa = @Id
-   AND (@IdEstabelecimento IS NULL OR c.id_estabelecimento = @IdEstabelecimento);",
-                new { Id = idConversa, IdEstabelecimento = idEstabelecimento });
-
-            return new ConversationHistoryDto
-            {
-                Conversa = detalhes,
-                Mensagens = mensagens,
-                Page = page,
-                PageSize = pageSize,
-                Total = total
-            };
+            if (idEstabelecimento.HasValue && row.IdEstabelecimento != idEstabelecimento.Value) return null;
+            var count = await cx.ExecuteScalarAsync<int>("SELECT COUNT(1) FROM mensagens WHERE id_conversa = @Id;", new { Id = row.Id });
+            return new ConversationHistoryDto { Conversa = Details(row), Mensagens = (await ExactMessagesAsync(cx, row.Id, page, pageSize)).ToList(), Page = page, PageSize = pageSize, Total = count };
         }
 
         public async Task<bool> AtribuirConversaAsync(Guid idConversa, int idAgente, Guid? idEstabelecimento = null)
         {
-            const string sql = @"
-UPDATE conversas
-   SET id_agente_atribuido = @IdAgente,
-       estado = 'em_atendimento'::estado_conversa_enum,
-       data_atualizacao = NOW()
- WHERE id = @Id
-   AND (@IdEstabelecimento IS NULL OR id_estabelecimento = @IdEstabelecimento);";
-
+            var alvo = await ResolveOperationTargetAsync(idConversa, idEstabelecimento);
+            if (alvo == null) return false;
             await using var cx = new NpgsqlConnection(_connectionString);
-            var linhas = await cx.ExecuteAsync(sql, new
-            {
-                Id = idConversa,
-                IdAgente = idAgente,
-                IdEstabelecimento = idEstabelecimento
-            });
-            return linhas > 0;
+            return await cx.ExecuteAsync("UPDATE conversas SET id_agente_atribuido = @IdAgente, estado = 'em_atendimento'::estado_conversa_enum, data_atualizacao = NOW() WHERE id = @Id;", new { Id = alvo.Id, IdAgente = idAgente }) > 0;
         }
 
         public async Task<bool> FecharConversaAsync(Guid idConversa, int? idAgente, string? motivo, Guid? idEstabelecimento = null)
         {
-            var estado = idAgente.HasValue ? "fechado_agente" : "fechado_automaticamente";
-            const string sql = @"
-UPDATE conversas
-   SET estado = @Estado::estado_conversa_enum,
-       motivo_fechamento = @Motivo,
-       fechado_por_id = @FechadoPorId,
-       data_fechamento = NOW(),
-       data_atualizacao = NOW()
- WHERE id = @Id
-   AND (@IdEstabelecimento IS NULL OR id_estabelecimento = @IdEstabelecimento);";
-
+            var alvo = await ResolveOperationTargetAsync(idConversa, idEstabelecimento);
+            if (alvo == null) return false;
             await using var cx = new NpgsqlConnection(_connectionString);
-            var linhas = await cx.ExecuteAsync(sql, new
-            {
-                Id = idConversa,
-                Estado = estado,
-                Motivo = string.IsNullOrWhiteSpace(motivo) ? null : motivo.Trim(),
-                FechadoPorId = idAgente,
-                IdEstabelecimento = idEstabelecimento
-            });
-
-            return linhas > 0;
+            return await cx.ExecuteAsync("UPDATE conversas SET estado = @Estado::estado_conversa_enum, motivo_fechamento = @Motivo, fechado_por_id = @FechadoPorId, data_fechamento = NOW(), data_atualizacao = NOW() WHERE id = @Id;", new { Id = alvo.Id, Estado = idAgente.HasValue ? "fechado_agente" : "fechado_automaticamente", Motivo = string.IsNullOrWhiteSpace(motivo) ? null : motivo.Trim(), FechadoPorId = idAgente }) > 0;
         }
 
         public async Task<ConversationDetailsDto?> ArquivarConversaAsync(Guid idConversa, Guid? idEstabelecimento = null)
         {
-            const string sql = @"
-UPDATE conversas
-   SET estado = 'arquivada'::estado_conversa_enum,
-       data_atualizacao = NOW()
- WHERE id = @Id
-   AND (@IdEstabelecimento IS NULL OR id_estabelecimento = @IdEstabelecimento);";
-
+            var alvo = await ResolveOperationTargetAsync(idConversa, idEstabelecimento);
+            if (alvo == null) return null;
             await using var cx = new NpgsqlConnection(_connectionString);
-            var linhas = await cx.ExecuteAsync(sql, new { Id = idConversa, IdEstabelecimento = idEstabelecimento });
-            if (linhas == 0)
-            {
-                return null;
-            }
-
-            var detalhes = await cx.QueryFirstOrDefaultAsync<ConversationDetailsDto>(ConversationDetailsSql, new
-            {
-                Id = idConversa,
-                IdEstabelecimento = idEstabelecimento
-            });
-            if (detalhes == null)
-            {
-                return null;
-            }
-
-            detalhes.Estado = MapEstadoDbToApi(detalhes.Estado);
-            return detalhes;
+            if (await cx.ExecuteAsync("UPDATE conversas SET estado = 'arquivada'::estado_conversa_enum, data_atualizacao = NOW() WHERE id = @Id;", new { Id = alvo.Id }) == 0) return null;
+            return await ObterDetalhesConversaAsync(idConversa, idEstabelecimento);
         }
 
         public async Task<ConversationDetailsDto?> ObterDetalhesConversaAsync(Guid idConversa, Guid? idEstabelecimento = null)
         {
             await using var cx = new NpgsqlConnection(_connectionString);
-            var detalhes = await cx.QueryFirstOrDefaultAsync<ConversationDetailsDto>(ConversationDetailsSql, new
+            var row = await ExactAsync(cx, idConversa);
+            if (row == null) return null;
+            if (idEstabelecimento.HasValue && IsCentral(idEstabelecimento.Value))
             {
-                Id = idConversa,
-                IdEstabelecimento = idEstabelecimento
-            });
-            if (detalhes == null)
-            {
-                return null;
+                var root = await RootAsync(cx, row);
+                return root != null && root.IdEstabelecimento == idEstabelecimento.Value ? await BuildCentralDetailsAsync(cx, root) : null;
             }
-
-            detalhes.Estado = MapEstadoDbToApi(detalhes.Estado);
-            return detalhes;
-        }
-
-        public async Task AtualizarEstadoAsync(Guid idConversa, EstadoConversa novoEstado)
-        {
-            const string sql = @"
-                UPDATE conversas
-                   SET estado = @NovoEstado::estado_conversa_enum,
-                       data_atualizacao = NOW()
-                 WHERE id = @IdConversa
-                   AND NOT (
-                       estado = ANY ('{fechado_automaticamente,fechado_agente,arquivada}'::estado_conversa_enum[])
-                       AND @NovoEstado::estado_conversa_enum = ANY ('{aberto,em_atendimento}'::estado_conversa_enum[])
-                   );";
-
-            await using var cx = new NpgsqlConnection(_connectionString);
-            await cx.ExecuteAsync(sql, new { IdConversa = idConversa, NovoEstado = MapEstadoToDatabase(novoEstado) });
+            return !idEstabelecimento.HasValue || row.IdEstabelecimento == idEstabelecimento.Value ? Details(row) : null;
         }
 
         public async Task SalvarContextoAsync(Guid idConversa, ConversationContext contexto)
         {
-            const string sql = @"
-                UPDATE conversas
-                SET contexto_estado = @ContextoJson::jsonb,
-                    data_atualizacao = NOW()
-                WHERE id = @IdConversa;";
-
-            await using (var cxContexto = new NpgsqlConnection(_connectionString))
-            {
-                var jsonExistente = await cxContexto.ExecuteScalarAsync<string>(
-                    "SELECT contexto_estado FROM conversas WHERE id = @IdConversa;",
-                    new { IdConversa = idConversa });
-                var contextoExistente = DeserializeContext(jsonExistente);
-                contexto = CentralRoutingService.MergeCentralSelection(contextoExistente, contexto);
-            }
-
-            var json = System.Text.Json.JsonSerializer.Serialize(contexto);
-
             await using var cx = new NpgsqlConnection(_connectionString);
-            await cx.ExecuteAsync(sql, new { IdConversa = idConversa, ContextoJson = json });
+            var atual = Deserialize(await cx.ExecuteScalarAsync<string?>("SELECT contexto_estado::text FROM conversas WHERE id = @Id;", new { Id = idConversa }));
+            var json = JsonSerializer.Serialize(CentralRoutingService.MergeCentralSelection(atual, contexto));
+            await cx.ExecuteAsync("UPDATE conversas SET contexto_estado = @Json::jsonb, data_atualizacao = NOW() WHERE id = @Id;", new { Id = idConversa, Json = json });
         }
 
         public async Task<ConversationContext?> ObterContextoAsync(Guid idConversa)
         {
-            const string sql = @"
-                SELECT contexto_estado
-                FROM conversas
-                WHERE id = @IdConversa;";
-
             await using var cx = new NpgsqlConnection(_connectionString);
-            var json = await cx.ExecuteScalarAsync<string>(sql, new { IdConversa = idConversa });
-
-            if (string.IsNullOrWhiteSpace(json))
-                return null;
-
-            try
-            {
-                return System.Text.Json.JsonSerializer.Deserialize<ConversationContext>(json);
-            }
-            catch
-            {
-                return null;
-            }
+            return Deserialize(await cx.ExecuteScalarAsync<string?>("SELECT contexto_estado::text FROM conversas WHERE id = @Id;", new { Id = idConversa }));
         }
 
         public async Task LimparContextoAsync(Guid idConversa)
         {
-            await using (var cxPreservacao = new NpgsqlConnection(_connectionString))
-            {
-                var jsonExistente = await cxPreservacao.ExecuteScalarAsync<string>(
-                    "SELECT contexto_estado FROM conversas WHERE id = @IdConversa;",
-                    new { IdConversa = idConversa });
-                var contextoExistente = DeserializeContext(jsonExistente);
-                var contextoPreservado = CentralRoutingService.BuildPreservedSelectionContext(contextoExistente);
-
-                if (contextoPreservado != null)
-                {
-                    _logger.LogInformation(
-                        "[CONTEXTO-DEBUG] Conversa={Conversa} | Preservando selecao central ao limpar contexto",
-                        idConversa);
-
-                    const string sqlPreservacao = @"
-                        UPDATE conversas
-                        SET contexto_estado = @ContextoJson::jsonb,
-                            data_atualizacao = NOW()
-                        WHERE id = @IdConversa;";
-
-                    var json = System.Text.Json.JsonSerializer.Serialize(contextoPreservado);
-                    await cxPreservacao.ExecuteAsync(sqlPreservacao, new { IdConversa = idConversa, ContextoJson = json });
-
-                    _logger.LogWarning(
-                        "[CONTEXTO-DEBUG] Conversa={Conversa} | Contexto LIMPO com sucesso",
-                        idConversa);
-                    return;
-                }
-            }
-            // ✨ ADICIONADO: Log ANTES de limpar
-            _logger.LogWarning(
-                "[CONTEXTO-DEBUG] Conversa={Conversa} | LIMPANDO contexto (contexto_estado será NULL)",
-                idConversa);
-
-            const string sql = @"
-                UPDATE conversas
-                SET contexto_estado = NULL,
-                    data_atualizacao = NOW()
-                WHERE id = @IdConversa;";
-
             await using var cx = new NpgsqlConnection(_connectionString);
-            await cx.ExecuteAsync(sql, new { IdConversa = idConversa });
-
-            // ✨ ADICIONADO: Log APÓS limpar (confirmação)
-            _logger.LogWarning(
-                "[CONTEXTO-DEBUG] Conversa={Conversa} | Contexto LIMPO com sucesso",
-                idConversa);
+            var preservado = CentralRoutingService.BuildPreservedSelectionContext(Deserialize(await cx.ExecuteScalarAsync<string?>("SELECT contexto_estado::text FROM conversas WHERE id = @Id;", new { Id = idConversa })));
+            if (preservado != null)
+            {
+                await cx.ExecuteAsync("UPDATE conversas SET contexto_estado = @Json::jsonb, data_atualizacao = NOW() WHERE id = @Id;", new { Id = idConversa, Json = JsonSerializer.Serialize(preservado) });
+                return;
+            }
+            await cx.ExecuteAsync("UPDATE conversas SET contexto_estado = NULL, data_atualizacao = NOW() WHERE id = @Id;", new { Id = idConversa });
         }
 
-        private static ConversationContext? DeserializeContext(string? json)
+        private async Task<ConversationRow?> ResolveForEstablishmentAsync(NpgsqlConnection cx, Guid id, Guid idEstabelecimento)
         {
-            if (string.IsNullOrWhiteSpace(json))
+            var exact = await ExactAsync(cx, id);
+            if (exact == null) return null;
+            if (IsCentral(idEstabelecimento))
             {
-                return null;
+                var root = await RootAsync(cx, exact);
+                if (root == null || root.IdEstabelecimento != idEstabelecimento) return null;
+                return exact.Id == root.Id ? await OperationalAsync(cx, root.IdConversaGrupo) ?? root : exact;
             }
+            return exact.IdEstabelecimento == idEstabelecimento ? exact : null;
+        }
 
-            try
+        private async Task<ConversationRow?> ResolveOperationTargetAsync(Guid idConversa, Guid? idEstabelecimento)
+        {
+            await using var cx = new NpgsqlConnection(_connectionString);
+            var exact = await ExactAsync(cx, idConversa);
+            if (exact == null) return null;
+            if (!idEstabelecimento.HasValue) return exact;
+            if (IsCentral(idEstabelecimento.Value))
             {
-                return System.Text.Json.JsonSerializer.Deserialize<ConversationContext>(json);
+                var root = await RootAsync(cx, exact);
+                if (root == null || root.IdEstabelecimento != idEstabelecimento.Value) return null;
+                return exact.Id == root.Id ? await OperationalAsync(cx, root.IdConversaGrupo) ?? root : exact;
             }
-            catch
+            return exact.IdEstabelecimento == idEstabelecimento.Value ? exact : null;
+        }
+
+        private Task<ConversationRow?> ExactAsync(NpgsqlConnection cx, Guid id) => cx.QueryFirstOrDefaultAsync<ConversationRow>(SelectConversation + " WHERE c.id = @Id LIMIT 1;", new { Id = id });
+        private Task<ConversationRow?> RootAsync(NpgsqlConnection cx, ConversationRow row) => cx.QueryFirstOrDefaultAsync<ConversationRow>(SelectConversation + " WHERE c.id = @Id LIMIT 1;", new { Id = row.IdConversaGrupo });
+        private Task<ConversationRow?> OperationalAsync(NpgsqlConnection cx, Guid groupId) => cx.QueryFirstOrDefaultAsync<ConversationRow>(SelectConversation + " WHERE COALESCE(c.id_conversa_grupo, c.id) = @GroupId ORDER BY CASE WHEN c.id <> COALESCE(c.id_conversa_grupo, c.id) AND c.estado NOT IN ('fechado_automaticamente'::estado_conversa_enum, 'fechado_agente'::estado_conversa_enum, 'arquivada'::estado_conversa_enum) THEN 0 WHEN c.id <> COALESCE(c.id_conversa_grupo, c.id) THEN 1 ELSE 2 END, COALESCE(c.data_ultima_mensagem, c.data_atualizacao, c.data_criacao) DESC LIMIT 1;", new { GroupId = groupId });
+
+        private async Task<ConversationListItemDto> BuildStandardListItemAsync(NpgsqlConnection cx, ConversationRow row)
+        {
+            var last = await LastMessageAsync(cx, row.Id, false);
+            return new ConversationListItemDto
             {
-                return null;
-            }
+                Id = row.Id,
+                IdCliente = row.IdCliente,
+                ClienteNome = row.ClienteNome,
+                ClienteNumero = row.TelefoneCliente,
+                Estado = EstadoApi(row.Estado),
+                IdAgenteAtribuido = row.IdAgenteAtribuido,
+                DataPrimeiraMensagem = row.DataPrimeiraMensagem ?? row.DataCriacao,
+                DataUltimaMensagem = row.DataUltimaMensagem ?? row.DataAtualizacao,
+                DataCriacao = row.DataCriacao,
+                DataAtualizacao = row.DataAtualizacao,
+                DataFechamento = row.DataFechamento,
+                UltimaMensagemConteudo = last?.Conteudo,
+                UltimaMensagemData = last?.DataCriacao,
+                UltimaMensagemCriadaPor = last?.CriadaPor
+            };
+        }
+
+        private async Task<ConversationListItemDto> BuildCentralListItemAsync(NpgsqlConnection cx, ConversationRow root)
+        {
+            var op = await OperationalAsync(cx, root.IdConversaGrupo) ?? root;
+            var agg = await GroupAggregateAsync(cx, root.IdConversaGrupo);
+            var last = await LastMessageAsync(cx, root.IdConversaGrupo, true);
+            return new ConversationListItemDto
+            {
+                Id = root.Id,
+                IdCliente = root.IdCliente,
+                ClienteNome = root.ClienteNome,
+                ClienteNumero = root.TelefoneCliente ?? op.TelefoneCliente,
+                Estado = EstadoApi(op.Estado),
+                IdAgenteAtribuido = op.IdAgenteAtribuido,
+                DataPrimeiraMensagem = agg.FirstMessage ?? root.DataPrimeiraMensagem ?? root.DataCriacao,
+                DataUltimaMensagem = agg.LastMessage ?? op.DataUltimaMensagem ?? root.DataAtualizacao,
+                DataCriacao = root.DataCriacao,
+                DataAtualizacao = agg.LastUpdate ?? op.DataAtualizacao,
+                DataFechamento = op.DataFechamento,
+                UltimaMensagemConteudo = last?.Conteudo,
+                UltimaMensagemData = last?.DataCriacao,
+                UltimaMensagemCriadaPor = last?.CriadaPor
+            };
+        }
+
+        private async Task<ConversationDetailsDto> BuildCentralDetailsAsync(NpgsqlConnection cx, ConversationRow root)
+        {
+            var op = await OperationalAsync(cx, root.IdConversaGrupo) ?? root;
+            var agg = await GroupAggregateAsync(cx, root.IdConversaGrupo);
+            return new ConversationDetailsDto
+            {
+                Id = root.Id,
+                IdCliente = root.IdCliente,
+                ClienteNome = root.ClienteNome,
+                ClienteNumero = root.TelefoneCliente ?? op.TelefoneCliente,
+                Estado = EstadoApi(op.Estado),
+                IdAgenteAtribuido = op.IdAgenteAtribuido,
+                DataPrimeiraMensagem = agg.FirstMessage ?? root.DataPrimeiraMensagem ?? root.DataCriacao,
+                DataUltimaMensagem = agg.LastMessage ?? op.DataUltimaMensagem ?? root.DataAtualizacao,
+                DataCriacao = root.DataCriacao,
+                DataAtualizacao = agg.LastUpdate ?? op.DataAtualizacao,
+                DataFechamento = op.DataFechamento,
+                FechadoPorId = op.FechadoPorId,
+                MotivoFechamento = op.MotivoFechamento
+            };
+        }
+
+        private ConversationDetailsDto Details(ConversationRow row) => new ConversationDetailsDto
+        {
+            Id = row.Id,
+            IdCliente = row.IdCliente,
+            ClienteNome = row.ClienteNome,
+            ClienteNumero = row.TelefoneCliente,
+            Estado = EstadoApi(row.Estado),
+            IdAgenteAtribuido = row.IdAgenteAtribuido,
+            DataPrimeiraMensagem = row.DataPrimeiraMensagem ?? row.DataCriacao,
+            DataUltimaMensagem = row.DataUltimaMensagem ?? row.DataAtualizacao,
+            DataCriacao = row.DataCriacao,
+            DataAtualizacao = row.DataAtualizacao,
+            DataFechamento = row.DataFechamento,
+            FechadoPorId = row.FechadoPorId,
+            MotivoFechamento = row.MotivoFechamento
+        };
+
+        private Task<GroupAggregate> GroupAggregateAsync(NpgsqlConnection cx, Guid groupId) => cx.QueryFirstAsync<GroupAggregate>("SELECT MIN(COALESCE(data_primeira_mensagem, data_criacao)) AS FirstMessage, MAX(COALESCE(data_ultima_mensagem, data_atualizacao, data_criacao)) AS LastMessage, MAX(data_atualizacao) AS LastUpdate FROM conversas WHERE COALESCE(id_conversa_grupo, id) = @GroupId;", new { GroupId = groupId });
+        private Task<MessagePreview?> LastMessageAsync(NpgsqlConnection cx, Guid id, bool byGroup) => cx.QueryFirstOrDefaultAsync<MessagePreview>(@"SELECT m.conteudo AS Conteudo, m.data_criacao AS DataCriacao, COALESCE(m.criada_por, '') AS CriadaPor FROM mensagens m JOIN conversas c ON c.id = m.id_conversa WHERE " + (byGroup ? "COALESCE(c.id_conversa_grupo, c.id) = @Id" : "m.id_conversa = @Id") + " ORDER BY m.data_criacao DESC LIMIT 1;", new { Id = id });
+        private Task<IEnumerable<ConversationMessageItemDto>> ExactMessagesAsync(NpgsqlConnection cx, Guid id, int page, int pageSize) => cx.QueryAsync<ConversationMessageItemDto>(@"SELECT m.id AS Id, COALESCE(m.criada_por, '') AS CriadaPor, COALESCE(m.conteudo, '') AS Conteudo, m.data_envio AS DataEnvio, m.data_criacao AS DataCriacao FROM mensagens m WHERE m.id_conversa = @Id ORDER BY m.data_criacao ASC, m.data_envio ASC LIMIT @PageSize OFFSET @Offset;", new { Id = id, PageSize = pageSize, Offset = (page - 1) * pageSize });
+        private Task<IEnumerable<ConversationMessageItemDto>> GroupMessagesAsync(NpgsqlConnection cx, Guid groupId, int page, int pageSize) => cx.QueryAsync<ConversationMessageItemDto>(@"SELECT m.id AS Id, COALESCE(m.criada_por, '') AS CriadaPor, COALESCE(m.conteudo, '') AS Conteudo, m.data_envio AS DataEnvio, m.data_criacao AS DataCriacao FROM mensagens m JOIN conversas c ON c.id = m.id_conversa WHERE COALESCE(c.id_conversa_grupo, c.id) = @GroupId ORDER BY m.data_criacao ASC, m.data_envio ASC LIMIT @PageSize OFFSET @Offset;", new { GroupId = groupId, PageSize = pageSize, Offset = (page - 1) * pageSize });
+
+        private async Task<Guid> GarantirClienteTxAsync(NpgsqlConnection cx, NpgsqlTransaction? tx, string telefoneE164, Guid idEstabelecimento)
+        {
+            var existente = await cx.ExecuteScalarAsync<Guid?>(@"SELECT id FROM clientes WHERE id_estabelecimento = @IdEstabelecimento AND telefone_e164 = @Telefone LIMIT 1;", new { IdEstabelecimento = idEstabelecimento, Telefone = telefoneE164 }, tx);
+            if (existente.HasValue && existente.Value != Guid.Empty) return existente.Value;
+            var novoId = Guid.NewGuid();
+            var agora = DateTime.UtcNow;
+            await cx.ExecuteAsync(@"INSERT INTO clientes (id, id_estabelecimento, telefone_e164, data_criacao, data_atualizacao) SELECT @Id, @IdEstabelecimento, @Telefone, @CriadoEm, @AtualizadoEm WHERE NOT EXISTS (SELECT 1 FROM clientes WHERE id_estabelecimento = @IdEstabelecimento AND telefone_e164 = @Telefone);", new { Id = novoId, IdEstabelecimento = idEstabelecimento, Telefone = telefoneE164, CriadoEm = agora, AtualizadoEm = agora }, tx);
+            return (await cx.ExecuteScalarAsync<Guid?>(@"SELECT id FROM clientes WHERE id_estabelecimento = @IdEstabelecimento AND telefone_e164 = @Telefone LIMIT 1;", new { IdEstabelecimento = idEstabelecimento, Telefone = telefoneE164 }, tx)) ?? novoId;
+        }
+
+        private Conversation ToConversation(ConversationRow row) => new Conversation
+        {
+            IdConversa = row.Id,
+            IdConversaGrupo = row.IdConversaGrupo,
+            IdEstabelecimento = row.IdEstabelecimento,
+            IdCliente = row.IdCliente,
+            TelefoneCliente = row.TelefoneCliente,
+            IdWa = row.TelefoneCliente ?? string.Empty,
+            Modo = row.IdAgenteAtribuido.HasValue ? ModoConversa.Humano : ModoConversa.Bot,
+            AgenteDesignadoId = row.IdAgenteAtribuido,
+            UltimoUsuarioEm = row.DataUltimaEntrada,
+            Janela24hExpiraEm = row.Janela24hFim,
+            CriadoEm = row.DataCriacao,
+            AtualizadoEm = row.DataAtualizacao,
+            Estado = EstadoModel(row.Estado),
+            MotivoFechamento = row.MotivoFechamento,
+            FechadoPorId = row.FechadoPorId,
+            DataFechamento = row.DataFechamento,
+            ContextoEstadoJson = row.ContextoEstadoJson
+        };
+
+        private bool IsCentral(Guid idEstabelecimento) => _centralEstabelecimentoId.HasValue && _centralEstabelecimentoId.Value == idEstabelecimento;
+        private static string EstadoDb(EstadoConversa estado) => estado switch { EstadoConversa.Aberto => "aberto", EstadoConversa.EmAtendimento => "em_atendimento", EstadoConversa.FechadoAutomaticamente => "fechado_automaticamente", EstadoConversa.FechadoAgente => "fechado_agente", EstadoConversa.Arquivada => "arquivada", _ => "aberto" };
+        private static EstadoConversa EstadoModel(string? estado) => NormalizeEstado(estado) switch { "aberto" => EstadoConversa.Aberto, "em_atendimento" => EstadoConversa.EmAtendimento, "fechado_agente" => EstadoConversa.FechadoAgente, "fechado_automaticamente" => EstadoConversa.FechadoAutomaticamente, "arquivada" => EstadoConversa.Arquivada, _ => EstadoConversa.Aberto };
+        private static string EstadoApi(string? estado) => NormalizeEstado(estado) switch { "fechado_automaticamente" => "fechado_bot", var value => value };
+        private static string NormalizeEstado(string? estado) => (estado ?? string.Empty).Trim().ToLowerInvariant() switch { "aguardando_atendimento" => "em_atendimento", "fechado_bot" => "fechado_automaticamente", "arquivado" => "arquivada", _ => (estado ?? string.Empty).Trim().ToLowerInvariant() };
+        private static ConversationContext? Deserialize(string? json) { try { return string.IsNullOrWhiteSpace(json) ? null : JsonSerializer.Deserialize<ConversationContext>(json); } catch { return null; } }
+
+        private sealed class ConversationRow
+        {
+            public Guid Id { get; set; }
+            public Guid IdConversaGrupo { get; set; }
+            public Guid IdEstabelecimento { get; set; }
+            public Guid IdCliente { get; set; }
+            public string? Estado { get; set; }
+            public int? IdAgenteAtribuido { get; set; }
+            public DateTime? DataPrimeiraMensagem { get; set; }
+            public DateTime? DataUltimaMensagem { get; set; }
+            public DateTime? DataUltimaEntrada { get; set; }
+            public DateTime? Janela24hFim { get; set; }
+            public string? MotivoFechamento { get; set; }
+            public int? FechadoPorId { get; set; }
+            public DateTime? DataFechamento { get; set; }
+            public DateTime DataCriacao { get; set; }
+            public DateTime DataAtualizacao { get; set; }
+            public string? ContextoEstadoJson { get; set; }
+            public string? TelefoneCliente { get; set; }
+            public string? ClienteNome { get; set; }
+        }
+
+        private sealed class MessagePreview
+        {
+            public string? Conteudo { get; set; }
+            public DateTime? DataCriacao { get; set; }
+            public string? CriadaPor { get; set; }
+        }
+
+        private sealed class GroupAggregate
+        {
+            public DateTime? FirstMessage { get; set; }
+            public DateTime? LastMessage { get; set; }
+            public DateTime? LastUpdate { get; set; }
         }
     }
 }
-// ================= ZIPPYGO AUTOMATION SECTION (END) =================
+// ================= ZIPPYGO AUTOMATION SECTION (END) ===================

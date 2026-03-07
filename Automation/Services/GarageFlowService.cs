@@ -625,6 +625,16 @@ namespace APIBack.Automation.Services
                     dados[CentralRoutingService.ChaveCentralDisplayPhone] = snapshot.CentralDisplayPhone!;
                 }
 
+                if (snapshot.ConversaGrupoId.HasValue)
+                {
+                    dados[CentralRoutingService.ChaveConversaGrupoId] = snapshot.ConversaGrupoId.Value.ToString();
+                }
+
+                if (snapshot.ConversaSegmentoAtivaId.HasValue)
+                {
+                    dados[CentralRoutingService.ChaveConversaSegmentoAtivaId] = snapshot.ConversaSegmentoAtivaId.Value.ToString();
+                }
+
                 if (snapshot.EstabelecimentoId.HasValue)
                 {
                     dados[CentralRoutingService.ChaveEstabelecimentoEscolhidoId] = snapshot.EstabelecimentoId.Value.ToString();

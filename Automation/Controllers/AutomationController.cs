@@ -57,7 +57,7 @@ namespace APIBack.Automation.Controllers
                 return NotFound();
             }
 
-            await _servicoHandover.DefinirHumanoAsync(idConversa, req.Agente, req.ReservaConfirmada, req.Detalhes);
+            await _servicoHandover.DefinirHumanoAsync(conversa.IdConversa, req.Agente, req.ReservaConfirmada, req.Detalhes);
             return Ok();
         }
 
@@ -77,7 +77,7 @@ namespace APIBack.Automation.Controllers
                 return NotFound();
             }
 
-            await _servicoConversa.DefinirModoBotAsync(idConversa, "Transicao para bot");
+            await _servicoConversa.DefinirModoBotAsync(conversa.IdConversa, "Transicao para bot");
             return Ok();
         }
 
@@ -130,7 +130,7 @@ namespace APIBack.Automation.Controllers
             }
 
             if (ultimas <= 0) ultimas = 20;
-            var resposta = await _servicoConversa.ObterConversaRespostaAsync(idConversa, ultimas);
+            var resposta = await _servicoConversa.ObterConversaRespostaAsync(idConversa, estabelecimentoId.Value, ultimas);
             if (resposta == null) return NotFound();
             return Ok(resposta);
         }

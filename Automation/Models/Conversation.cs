@@ -21,6 +21,7 @@ namespace APIBack.Automation.Models
     public class Conversation
     {
         public Guid IdConversa { get; set; }
+        public Guid IdConversaGrupo { get; set; }
         public Guid IdEstabelecimento { get; set; }
         public Guid IdCliente { get; set; }
         public string? TelefoneCliente { get; set; }
@@ -42,6 +43,7 @@ namespace APIBack.Automation.Models
         public DateTime DataPrimeiraMensagem => CriadoEm;
         public DateTime DataUltimaMensagem => AtualizadoEm ?? CriadoEm;
         public string Canal => "whatsapp";
+        public bool EhRaizDoGrupo => IdConversaGrupo == Guid.Empty || IdConversa == IdConversaGrupo;
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================

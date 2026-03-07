@@ -1,4 +1,4 @@
-// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
+Ôªø// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -21,6 +21,7 @@ namespace APIBack.Automation.Services
         private readonly IWabaPhoneRepository _wabaPhoneRepository;
         private readonly IMessageService _mensagemService;
         private readonly IConfiguration _configuration;
+        private readonly CentralRoutingService _centralRouting;
 
         // mapeia waId -> conversationId (in-memory)
         private readonly ConcurrentDictionary<string, Guid> _waParaConversa = new(StringComparer.OrdinalIgnoreCase);
@@ -34,6 +35,7 @@ namespace APIBack.Automation.Services
             IQueueBus queueBus,
             IClienteRepository repositorioClientes,
             IWabaPhoneRepository wabaPhoneRepository,
+            CentralRoutingService centralRouting,
             IConfiguration configuration,
             IMessageService mensagemService)
         {
@@ -42,6 +44,7 @@ namespace APIBack.Automation.Services
             _queueBus = queueBus;
             _repositorioClientes = repositorioClientes;
             _wabaPhoneRepository = wabaPhoneRepository;
+            _centralRouting = centralRouting;
             _configuration = configuration;
             _mensagemService = mensagemService;
         }
@@ -50,9 +53,9 @@ namespace APIBack.Automation.Services
         /// Adiciona uma mensagem de entrada (do cliente) e persiste no banco.
         /// </summary>
         /// <param name="idWa">WhatsApp ID do cliente (ex: 5534999887766)</param>
-        /// <param name="idMensagemWa">ID ˙nico da mensagem do WhatsApp</param>
+        /// <param name="idMensagemWa">ID √∫nico da mensagem do WhatsApp</param>
         /// <param name="conteudo">Texto da mensagem</param>
-        /// <param name="displayPhoneNumber">N˙mero de telefone visÌvel do estabelecimento (ex: +5534999887766) - USADO PARA BUSCAR ESTABELECIMENTO</param>
+        /// <param name="displayPhoneNumber">N√∫mero de telefone vis√≠vel do estabelecimento (ex: +5534999887766) - USADO PARA BUSCAR ESTABELECIMENTO</param>
         /// <param name="dataMensagemUtc">Data/hora UTC da mensagem</param>
         /// <param name="tipoOrigem">Tipo da mensagem (text, image, etc)</param>
         public async Task<Message?> AcrescentarEntradaAsync(
@@ -70,7 +73,7 @@ namespace APIBack.Automation.Services
                 return null;
             }
 
-            // Verificar duplicidade (com exceÁ„o em DEV)
+            // Verificar duplicidade (com exce√ß√£o em DEV)
             var ambiente = _configuration.GetValue<string>("ASPNETCORE_ENVIRONMENT");
             var isDev = string.Equals(ambiente, "Development", StringComparison.OrdinalIgnoreCase);
 
@@ -80,7 +83,7 @@ namespace APIBack.Automation.Services
                 if (isDev)
                 {
                     _logger.LogWarning(
-                        "DEV: Duplicata detectada IdMensagemWa={WaMessageId}, processamento continuar· para testes.",
+                        "DEV: Duplicata detectada IdMensagemWa={WaMessageId}, processamento continuar√° para testes.",
                         idMensagemWa);
                 }
                 else
@@ -90,8 +93,8 @@ namespace APIBack.Automation.Services
                 }
             }
 
-            // ============== CORRE«√O: SEMPRE USAR DISPLAY PHONE NUMBER ==============
-            // Buscar estabelecimento pelo n˙mero visÌvel (display_phone_number)
+            // ============== CORRE√á√ÉO: SEMPRE USAR DISPLAY PHONE NUMBER ==============
+            // Buscar estabelecimento pelo n√∫mero vis√≠vel (display_phone_number)
             Guid? idEstabelecimento = null;
             if (!string.IsNullOrWhiteSpace(displayPhoneNumber))
             {
@@ -101,7 +104,7 @@ namespace APIBack.Automation.Services
                 if (idEstabelecimento == null || idEstabelecimento == Guid.Empty)
                 {
                     _logger.LogWarning(
-                        "Estabelecimento n„o encontrado para display_phone_number={Display}",
+                        "Estabelecimento n√£o encontrado para display_phone_number={Display}",
                         displayPhoneNumber);
                 }
                 else
@@ -114,7 +117,7 @@ namespace APIBack.Automation.Services
             }
             // =========================================================================
 
-            // Fallback para estabelecimento padr„o se n„o encontrar
+            // Fallback para estabelecimento padr√£o se n√£o encontrar
             if (idEstabelecimento == null || idEstabelecimento == Guid.Empty)
             {
                 var fallbackEstabelecimentoId = _configuration.GetValue<string>("WhatsApp:FallbackEstabelecimentoId");
@@ -130,10 +133,10 @@ namespace APIBack.Automation.Services
                 else
                 {
                     _logger.LogError(
-                        "N„o foi possÌvel resolver id_estabelecimento para display_phone_number={Display} e n„o h· fallback configurado",
+                        "N√£o foi poss√≠vel resolver id_estabelecimento para display_phone_number={Display} e n√£o h√° fallback configurado",
                         displayPhoneNumber);
                     throw new InvalidOperationException(
-                        $"N„o foi possÌvel resolver id_estabelecimento para display_phone_number={displayPhoneNumber}");
+                        $"N√£o foi poss√≠vel resolver id_estabelecimento para display_phone_number={displayPhoneNumber}");
                 }
             }
 
@@ -147,7 +150,7 @@ namespace APIBack.Automation.Services
 
                 if (telefoneE164.Length < 13 || telefoneE164 == "+55")
                 {
-                    _logger.LogWarning("Telefone incompleto apÛs normalizaÁ„o: {Telefone}. Tentando fallback para idWa.", telefoneE164);
+                    _logger.LogWarning("Telefone incompleto ap√≥s normaliza√ß√£o: {Telefone}. Tentando fallback para idWa.", telefoneE164);
 
                     if (!string.Equals(telefonePreferencialBruto, idWa, StringComparison.Ordinal))
                     {
@@ -157,7 +160,7 @@ namespace APIBack.Automation.Services
 
                             if (telefoneE164.Length < 13)
                             {
-                                _logger.LogError("ImpossÌvel obter telefone v·lido. idWa: {IdWa}, telefoneContato: {TelefoneContato}", idWa, telefoneContato);
+                                _logger.LogError("Imposs√≠vel obter telefone v√°lido. idWa: {IdWa}, telefoneContato: {TelefoneContato}", idWa, telefoneContato);
                             }
                         }
                         catch (Exception exFallback)
@@ -173,19 +176,93 @@ namespace APIBack.Automation.Services
                 telefoneE164 = APIBack.Automation.Helpers.TelefoneHelper.ToE164(idWa);
             }
 
-            var idCliente = await _repositorioClientes.GarantirClienteAsync(telefoneE164, idEstabelecimento.Value);
+            Guid idCliente;
+            Guid idConversa;
+            Guid idConversaGrupo;
+            Guid idEstabelecimentoEfetivo;
+            Conversation? existente;
 
-            // Obter ou criar conversa
-            var idConversa = await _repositorio.ObterIdConversaPorClienteAsync(idCliente, idEstabelecimento.Value);
-            if (idConversa == Guid.Empty) idConversa = Guid.NewGuid();
+            if (EhNumeroCentral(idEstabelecimento.Value))
+            {
+                var idClienteCentral = await _repositorioClientes.GarantirClienteAsync(telefoneE164, idEstabelecimento.Value);
+                var idConversaRaiz = await _repositorio.ObterIdConversaPorClienteAsync(idClienteCentral, idEstabelecimento.Value);
+                var conversaRaiz = idConversaRaiz == Guid.Empty
+                    ? null
+                    : await _repositorio.ObterPorIdAsync(idConversaRaiz);
+
+                if (conversaRaiz == null)
+                {
+                    idConversaRaiz = Guid.NewGuid();
+                    conversaRaiz = new Conversation
+                    {
+                        IdConversa = idConversaRaiz,
+                        IdConversaGrupo = idConversaRaiz,
+                        IdEstabelecimento = idEstabelecimento.Value,
+                        IdCliente = idClienteCentral,
+                        IdWa = idWa,
+                        TelefoneCliente = telefoneE164,
+                        Modo = ModoConversa.Bot,
+                        CriadoEm = DateTime.UtcNow,
+                        AtualizadoEm = DateTime.UtcNow,
+                        MessageIdWhatsapp = idMensagemWa
+                    };
+
+                    await _repositorio.InserirOuAtualizarAsync(conversaRaiz);
+                }
+
+                var snapshot = await _centralRouting.ObterSelecaoAtualAsync(idConversaRaiz);
+                var idConversaEfetiva = idConversaRaiz;
+                var conversaEfetiva = conversaRaiz;
+                var idEstabelecimentoSelecionado = idEstabelecimento.Value;
+                var idClienteSelecionado = idClienteCentral;
+
+                if (snapshot.HasSelection)
+                {
+                    var idSegmentoAtivo = await _centralRouting.GarantirSegmentoAtivoAsync(idConversaRaiz, telefoneE164);
+                    if (idSegmentoAtivo.HasValue && idSegmentoAtivo.Value != Guid.Empty)
+                    {
+                        idConversaEfetiva = idSegmentoAtivo.Value;
+                        conversaEfetiva = await _repositorio.ObterPorIdAsync(idConversaEfetiva);
+                        if (conversaEfetiva != null)
+                        {
+                            idEstabelecimentoSelecionado = conversaEfetiva.IdEstabelecimento;
+                            idClienteSelecionado = conversaEfetiva.IdCliente;
+                        }
+                        else if (snapshot.EstabelecimentoId.HasValue)
+                        {
+                            idEstabelecimentoSelecionado = snapshot.EstabelecimentoId.Value;
+                            idClienteSelecionado = await _repositorioClientes.GarantirClienteAsync(telefoneE164, idEstabelecimentoSelecionado);
+                        }
+                    }
+                }
+
+                idCliente = idClienteSelecionado;
+                idConversa = idConversaEfetiva;
+                idConversaGrupo = conversaRaiz.IdConversaGrupo == Guid.Empty ? conversaRaiz.IdConversa : conversaRaiz.IdConversaGrupo;
+                idEstabelecimentoEfetivo = idEstabelecimentoSelecionado;
+                existente = conversaEfetiva;
+            }
+            else
+            {
+                idCliente = await _repositorioClientes.GarantirClienteAsync(telefoneE164, idEstabelecimento.Value);
+                idConversa = await _repositorio.ObterIdConversaPorClienteAsync(idCliente, idEstabelecimento.Value);
+                if (idConversa == Guid.Empty)
+                {
+                    idConversa = Guid.NewGuid();
+                }
+
+                existente = await _repositorio.ObterPorIdAsync(idConversa);
+                idConversaGrupo = idConversa;
+                idEstabelecimentoEfetivo = idEstabelecimento.Value;
+            }
 
             _waParaConversa[idWa] = idConversa; // cache auxiliar
 
-            var existente = await _repositorio.ObterPorIdAsync(idConversa);
             var conversa = existente ?? new Conversation
             {
                 IdConversa = idConversa,
-                IdEstabelecimento = idEstabelecimento.Value,
+                IdConversaGrupo = idConversaGrupo,
+                IdEstabelecimento = idEstabelecimentoEfetivo,
                 IdCliente = idCliente,
                 IdWa = idWa,
                 Modo = ModoConversa.Bot,
@@ -196,7 +273,9 @@ namespace APIBack.Automation.Services
 
             // Garante WaId e Estabelecimento salvos
             conversa.IdWa = idWa;
-            conversa.IdEstabelecimento = idEstabelecimento.Value;
+            conversa.IdConversaGrupo = conversa.IdConversaGrupo == Guid.Empty ? idConversaGrupo : conversa.IdConversaGrupo;
+            conversa.IdEstabelecimento = idEstabelecimentoEfetivo;
+            conversa.IdCliente = idCliente;
 
             if (string.IsNullOrWhiteSpace(conversa.TelefoneCliente) && !string.IsNullOrWhiteSpace(telefoneE164))
             {
@@ -298,10 +377,39 @@ namespace APIBack.Automation.Services
             }
         }
 
-        public async Task<ConversationResponse?> ObterConversaRespostaAsync(Guid idConversa, int ultimasN = 20)
+        public async Task<ConversationResponse?> ObterConversaRespostaAsync(Guid idConversa, Guid? idEstabelecimento = null, int ultimasN = 20)
         {
-            var conversa = await _repositorio.ObterPorIdAsync(idConversa);
+            var conversa = await _repositorio.ObterPorIdAsync(idConversa, idEstabelecimento);
             if (conversa == null) return null;
+
+            if (idEstabelecimento.HasValue)
+            {
+                var historico = await _repositorio.ObterHistoricoConversaAsync(idConversa, 1, ultimasN, idEstabelecimento.Value);
+                if (historico != null)
+                {
+                    return new ConversationResponse
+                    {
+                        IdConversa = historico.Conversa.Id,
+                        IdWa = conversa.IdWa,
+                        Modo = conversa.Modo,
+                        AgenteDesignadoId = conversa.AgenteDesignadoId,
+                        UltimoUsuarioEm = conversa.UltimoUsuarioEm ?? default(DateTime),
+                        Janela24hExpiraEm = conversa.Janela24hExpiraEm,
+                        CriadoEm = historico.Conversa.DataCriacao,
+                        AtualizadoEm = historico.Conversa.DataAtualizacao,
+                        Mensagens = historico.Mensagens
+                            .Select(item => new ConversationMessageView
+                            {
+                                Id = item.Id.ToString(),
+                                SenderId = string.Equals(item.CriadaPor, "cliente", StringComparison.OrdinalIgnoreCase) ? "in" : "out",
+                                Msg = item.Conteudo ?? string.Empty,
+                                Type = "text",
+                                CreatedAt = item.DataCriacao
+                            })
+                            .ToList()
+                    };
+                }
+            }
 
             var lista = _mensagens.GetOrAdd(idConversa, _ => new ConcurrentQueue<Message>()).ToArray();
             var ultimas = lista.Skip(Math.Max(0, lista.Length - ultimasN)).ToList();
@@ -325,6 +433,13 @@ namespace APIBack.Automation.Services
             var fila = _mensagens.GetOrAdd(mensagem.IdConversa, _ => new ConcurrentQueue<Message>());
             fila.Enqueue(mensagem);
         }
+
+        private bool EhNumeroCentral(Guid idEstabelecimento)
+        {
+            return _centralRouting.CentralEstabelecimentoId.HasValue &&
+                   _centralRouting.CentralEstabelecimentoId.Value == idEstabelecimento;
+        }
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
+

@@ -19,6 +19,8 @@ namespace APIBack.Automation.Services
         public ConversationContext? Contexto { get; init; }
         public string? CentralDisplayPhone { get; init; }
         public Guid? EstabelecimentoId { get; init; }
+        public Guid? ConversaGrupoId { get; init; }
+        public Guid? ConversaSegmentoAtivaId { get; init; }
         public string? EstabelecimentoNome { get; init; }
         public string? EstabelecimentoTipo { get; init; }
         public DateTime? ExpiraEmUtc { get; init; }
@@ -46,6 +48,9 @@ namespace APIBack.Automation.Services
         public const string ChaveEstabelecimentoEscolhidoNome = "estabelecimento_escolhido_nome";
         public const string ChaveEstabelecimentoEscolhidoTipo = "estabelecimento_escolhido_tipo";
         public const string ChaveEstabelecimentoEscolhidoExpiraEm = "estabelecimento_escolhido_expira_em";
+        public const string ChaveConversaGrupoId = "conversa_grupo_id";
+        public const string ChaveConversaSegmentoAtivaId = "conversa_segmento_ativa_id";
+        public const string MotivoTrocaEstabelecimento = "troca_estabelecimento";
 
         private readonly IConversationRepository _conversationRepository;
         private readonly IEstabelecimentoRepository _estabelecimentoRepository;
@@ -109,10 +114,18 @@ namespace APIBack.Automation.Services
 
         public async Task SalvarMenuEscolhaAsync(Guid idConversa, IReadOnlyCollection<EstabelecimentoWhatsappAtivoDto> estabelecimentos)
         {
+            var conversaAtual = await ObterConversaObrigatoriaAsync(idConversa);
+            var conversaGrupoId = ObterConversaGrupoId(conversaAtual);
             var expiraEmUtc = DateTime.UtcNow.Add(_selectionTtl);
             var dados = new Dictionary<string, object>
             {
                 [ChaveCentralDisplayPhone] = _centralDisplayPhone,
+                [ChaveConversaGrupoId] = conversaGrupoId.ToString(),
+                [ChaveConversaSegmentoAtivaId] = string.Empty,
+                [ChaveEstabelecimentoEscolhidoId] = string.Empty,
+                [ChaveEstabelecimentoEscolhidoNome] = string.Empty,
+                [ChaveEstabelecimentoEscolhidoTipo] = string.Empty,
+                [ChaveEstabelecimentoEscolhidoExpiraEm] = string.Empty,
                 [ChaveEstabelecimentosDisponiveis] = estabelecimentos
                     .Select((item, index) => new Dictionary<string, object>
                     {
@@ -124,7 +137,7 @@ namespace APIBack.Automation.Services
                     .ToList()
             };
 
-            await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
+            await SalvarContextoCentralAsync(idConversa, new ConversationContext
             {
                 Estado = EstadoAguardandoEscolha,
                 DadosColetados = dados,
@@ -132,26 +145,61 @@ namespace APIBack.Automation.Services
             });
         }
 
-        public async Task SalvarEstabelecimentoSelecionadoAsync(Guid idConversa, EstabelecimentoWhatsappAtivoDto estabelecimento)
+        public async Task<Guid> SalvarEstabelecimentoSelecionadoAsync(Guid idConversa, EstabelecimentoWhatsappAtivoDto estabelecimento)
         {
+            var conversaAtual = await ObterConversaObrigatoriaAsync(idConversa);
+            var snapshotAtual = await ObterSelecaoAtualAsync(idConversa);
+            var conversaGrupoId = ObterConversaGrupoId(conversaAtual);
+            var conversaRaiz = conversaAtual.IdConversa == conversaGrupoId
+                ? conversaAtual
+                : await ObterConversaObrigatoriaAsync(conversaGrupoId);
+
+            var telefoneCliente = await GarantirTelefoneClienteAsync(conversaAtual, conversaRaiz);
+            var idConversaSegmentoAnterior = snapshotAtual.ConversaSegmentoAtivaId;
+            if (idConversaSegmentoAnterior.HasValue && idConversaSegmentoAnterior.Value != Guid.Empty)
+            {
+                var segmentoAnterior = await _conversationRepository.ObterPorIdAsync(idConversaSegmentoAnterior.Value);
+                if (segmentoAnterior != null &&
+                    !segmentoAnterior.EhRaizDoGrupo &&
+                    segmentoAnterior.IdEstabelecimento != estabelecimento.Id)
+                {
+                    await _conversationRepository.FecharConversaAsync(
+                        segmentoAnterior.IdConversa,
+                        idAgente: null,
+                        motivo: MotivoTrocaEstabelecimento,
+                        idEstabelecimento: null);
+                }
+            }
+
+            var conversaSegmentoAtiva = await GarantirSegmentoAtivoAsync(
+                conversaAtual,
+                estabelecimento.Id,
+                telefoneCliente);
             var expiraEmUtc = DateTime.UtcNow.Add(_selectionTtl);
-            await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
+            await SalvarContextoCentralAsync(idConversa, new ConversationContext
             {
                 Estado = EstadoEstabelecimentoSelecionado,
                 DadosColetados = new Dictionary<string, object>
                 {
                     [ChaveCentralDisplayPhone] = _centralDisplayPhone,
+                    [ChaveConversaGrupoId] = conversaGrupoId.ToString(),
+                    [ChaveConversaSegmentoAtivaId] = conversaSegmentoAtiva.IdConversa.ToString(),
                     [ChaveEstabelecimentoEscolhidoId] = estabelecimento.Id.ToString(),
                     [ChaveEstabelecimentoEscolhidoNome] = estabelecimento.Nome,
                     [ChaveEstabelecimentoEscolhidoTipo] = estabelecimento.TipoEstabelecimento,
                     [ChaveEstabelecimentoEscolhidoExpiraEm] = expiraEmUtc.ToString("O", CultureInfo.InvariantCulture)
                 },
                 ExpiracaoEstado = expiraEmUtc
-            });
+            },
+            conversaSegmentoAtiva.IdConversa);
+
+            return conversaSegmentoAtiva.IdConversa;
         }
 
         public async Task RenovarSelecaoAsync(Guid idConversa, ConversationContext? contexto = null)
         {
+            var conversaAtual = await ObterConversaObrigatoriaAsync(idConversa);
+            var conversaGrupoId = ObterConversaGrupoId(conversaAtual);
             contexto ??= await _conversationRepository.ObterContextoAsync(idConversa);
             var snapshot = BuildSnapshot(contexto);
             if (!snapshot.HasSelection || contexto == null)
@@ -162,6 +210,8 @@ namespace APIBack.Automation.Services
             contexto.DadosColetados ??= new Dictionary<string, object>();
             var novoPrazo = DateTime.UtcNow.Add(_selectionTtl);
             contexto.DadosColetados[ChaveCentralDisplayPhone] = snapshot.CentralDisplayPhone ?? _centralDisplayPhone;
+            contexto.DadosColetados[ChaveConversaGrupoId] = (snapshot.ConversaGrupoId ?? conversaGrupoId).ToString();
+            contexto.DadosColetados[ChaveConversaSegmentoAtivaId] = snapshot.ConversaSegmentoAtivaId?.ToString() ?? string.Empty;
             contexto.DadosColetados[ChaveEstabelecimentoEscolhidoId] = snapshot.EstabelecimentoId!.Value.ToString();
             contexto.DadosColetados[ChaveEstabelecimentoEscolhidoNome] = snapshot.EstabelecimentoNome ?? string.Empty;
             contexto.DadosColetados[ChaveEstabelecimentoEscolhidoTipo] = snapshot.EstabelecimentoTipo ?? string.Empty;
@@ -173,7 +223,7 @@ namespace APIBack.Automation.Services
                 contexto.ExpiracaoEstado = novoPrazo;
             }
 
-            await _conversationRepository.SalvarContextoAsync(idConversa, contexto);
+            await SalvarContextoCentralAsync(idConversa, contexto, snapshot.ConversaSegmentoAtivaId);
         }
 
         public async Task<EffectiveConversationScope?> ResolveEffectiveScopeAsync(Guid idConversa, Conversation? conversa = null)
@@ -216,6 +266,37 @@ namespace APIBack.Automation.Services
                 UsaEstabelecimentoSelecionado = true,
                 NomeEstabelecimentoSelecionado = snapshot.EstabelecimentoNome
             };
+        }
+
+        public async Task<Guid?> GarantirSegmentoAtivoAsync(Guid idConversa, string? telefoneCliente = null)
+        {
+            var conversaAtual = await _conversationRepository.ObterPorIdAsync(idConversa);
+            if (conversaAtual == null)
+            {
+                return null;
+            }
+
+            var snapshot = await ObterSelecaoAtualAsync(idConversa);
+            if (!snapshot.HasSelection)
+            {
+                return null;
+            }
+
+            var segmento = await GarantirSegmentoAtivoAsync(
+                conversaAtual,
+                snapshot.EstabelecimentoId!.Value,
+                telefoneCliente);
+
+            var contexto = snapshot.Contexto ?? await _conversationRepository.ObterContextoAsync(idConversa);
+            if (contexto != null)
+            {
+                contexto.DadosColetados ??= new Dictionary<string, object>();
+                contexto.DadosColetados[ChaveConversaGrupoId] = ObterConversaGrupoId(conversaAtual).ToString();
+                contexto.DadosColetados[ChaveConversaSegmentoAtivaId] = segmento.IdConversa.ToString();
+                await SalvarContextoCentralAsync(idConversa, contexto, segmento.IdConversa);
+            }
+
+            return segmento.IdConversa;
         }
 
         public EstabelecimentoWhatsappAtivoDto? TryResolveEscolha(string mensagemTexto, IReadOnlyCollection<EstabelecimentoWhatsappAtivoDto> estabelecimentos, out bool ambiguaPorNome)
@@ -366,6 +447,8 @@ namespace APIBack.Automation.Services
                 Contexto = contexto,
                 CentralDisplayPhone = centralDisplay,
                 EstabelecimentoId = idSelecionado,
+                ConversaGrupoId = GetGuidValue(dados, ChaveConversaGrupoId),
+                ConversaSegmentoAtivaId = GetGuidValue(dados, ChaveConversaSegmentoAtivaId),
                 EstabelecimentoNome = GetStringValue(dados, ChaveEstabelecimentoEscolhidoNome),
                 EstabelecimentoTipo = GetStringValue(dados, ChaveEstabelecimentoEscolhidoTipo),
                 ExpiraEmUtc = expiraEm,
@@ -409,6 +492,16 @@ namespace APIBack.Automation.Services
             if (!string.IsNullOrWhiteSpace(snapshot.CentralDisplayPhone))
             {
                 destino[ChaveCentralDisplayPhone] = snapshot.CentralDisplayPhone!;
+            }
+
+            if (snapshot.ConversaGrupoId.HasValue)
+            {
+                destino[ChaveConversaGrupoId] = snapshot.ConversaGrupoId.Value.ToString();
+            }
+
+            if (snapshot.ConversaSegmentoAtivaId.HasValue)
+            {
+                destino[ChaveConversaSegmentoAtivaId] = snapshot.ConversaSegmentoAtivaId.Value.ToString();
             }
 
             if (snapshot.EstabelecimentoId.HasValue)
@@ -455,6 +548,143 @@ namespace APIBack.Automation.Services
         private static string OnlyDigits(string? value)
         {
             return new string((value ?? string.Empty).Where(char.IsDigit).ToArray());
+        }
+
+        private async Task<Conversation> GarantirSegmentoAtivoAsync(
+            Conversation conversaAtual,
+            Guid idEstabelecimentoDestino,
+            string? telefoneCliente)
+        {
+            var conversaGrupoId = ObterConversaGrupoId(conversaAtual);
+            if (idEstabelecimentoDestino == conversaAtual.IdEstabelecimento && !conversaAtual.EhRaizDoGrupo)
+            {
+                return conversaAtual;
+            }
+
+            if (idEstabelecimentoDestino == conversaAtual.IdEstabelecimento && conversaAtual.EhRaizDoGrupo)
+            {
+                return conversaAtual;
+            }
+
+            if (string.IsNullOrWhiteSpace(telefoneCliente))
+            {
+                telefoneCliente = await GarantirTelefoneClienteAsync(conversaAtual);
+            }
+
+            if (string.IsNullOrWhiteSpace(telefoneCliente))
+            {
+                throw new InvalidOperationException("Nao foi possivel resolver o telefone do cliente para criar o segmento ativo.");
+            }
+
+            var snapshot = await ObterSelecaoAtualAsync(conversaAtual.IdConversa);
+            if (snapshot.ConversaSegmentoAtivaId.HasValue)
+            {
+                var atual = await _conversationRepository.ObterPorIdAsync(snapshot.ConversaSegmentoAtivaId.Value);
+                if (atual != null &&
+                    !atual.EhRaizDoGrupo &&
+                    EstaAberta(atual.Estado) &&
+                    atual.IdEstabelecimento == idEstabelecimentoDestino &&
+                    atual.IdConversaGrupo == conversaGrupoId)
+                {
+                    return atual;
+                }
+            }
+
+            var conversaAbertaId = await _conversationRepository.ObterIdConversaAbertaPorGrupoAsync(conversaGrupoId, idEstabelecimentoDestino);
+            if (conversaAbertaId != Guid.Empty)
+            {
+                var conversaAberta = await _conversationRepository.ObterPorIdAsync(conversaAbertaId);
+                if (conversaAberta != null)
+                {
+                    return conversaAberta;
+                }
+            }
+
+            var idClienteDestino = await _clienteRepository.GarantirClienteAsync(telefoneCliente, idEstabelecimentoDestino);
+            var novaConversa = new Conversation
+            {
+                IdConversa = Guid.NewGuid(),
+                IdConversaGrupo = conversaGrupoId,
+                IdEstabelecimento = idEstabelecimentoDestino,
+                IdCliente = idClienteDestino,
+                TelefoneCliente = telefoneCliente,
+                Estado = EstadoConversa.Aberto,
+                Modo = ModoConversa.Bot,
+                CriadoEm = DateTime.UtcNow,
+                AtualizadoEm = DateTime.UtcNow
+            };
+
+            await _conversationRepository.InserirOuAtualizarAsync(novaConversa);
+            return novaConversa;
+        }
+
+        private async Task<string?> GarantirTelefoneClienteAsync(Conversation conversaAtual, Conversation? conversaRaiz = null)
+        {
+            if (!string.IsNullOrWhiteSpace(conversaAtual.TelefoneCliente))
+            {
+                return conversaAtual.TelefoneCliente;
+            }
+
+            if (conversaAtual.IdCliente != Guid.Empty && conversaAtual.IdEstabelecimento != Guid.Empty)
+            {
+                var telefone = await _clienteRepository.ObterTelefoneClienteAsync(conversaAtual.IdCliente, conversaAtual.IdEstabelecimento);
+                if (!string.IsNullOrWhiteSpace(telefone))
+                {
+                    return telefone;
+                }
+            }
+
+            if (conversaRaiz != null &&
+                conversaRaiz.IdCliente != Guid.Empty &&
+                conversaRaiz.IdEstabelecimento != Guid.Empty)
+            {
+                return await _clienteRepository.ObterTelefoneClienteAsync(conversaRaiz.IdCliente, conversaRaiz.IdEstabelecimento);
+            }
+
+            return null;
+        }
+
+        private async Task SalvarContextoCentralAsync(
+            Guid idConversaAtual,
+            ConversationContext contexto,
+            Guid? idConversaSegmentoAtiva = null)
+        {
+            var conversaAtual = await ObterConversaObrigatoriaAsync(idConversaAtual);
+            var conversaGrupoId = ObterConversaGrupoId(conversaAtual);
+            var idsDestino = new HashSet<Guid> { conversaGrupoId, idConversaAtual };
+
+            if (idConversaSegmentoAtiva.HasValue && idConversaSegmentoAtiva.Value != Guid.Empty)
+            {
+                idsDestino.Add(idConversaSegmentoAtiva.Value);
+            }
+
+            foreach (var idDestino in idsDestino)
+            {
+                await _conversationRepository.SalvarContextoAsync(idDestino, contexto);
+            }
+        }
+
+        private async Task<Conversation> ObterConversaObrigatoriaAsync(Guid idConversa)
+        {
+            var conversa = await _conversationRepository.ObterPorIdAsync(idConversa);
+            if (conversa == null)
+            {
+                throw new InvalidOperationException($"Conversa {idConversa} nao encontrada.");
+            }
+
+            return conversa;
+        }
+
+        private static Guid ObterConversaGrupoId(Conversation conversa)
+        {
+            return conversa.IdConversaGrupo == Guid.Empty ? conversa.IdConversa : conversa.IdConversaGrupo;
+        }
+
+        private static bool EstaAberta(EstadoConversa estado)
+        {
+            return estado != EstadoConversa.FechadoAgente &&
+                   estado != EstadoConversa.FechadoAutomaticamente &&
+                   estado != EstadoConversa.Arquivada;
         }
     }
 }

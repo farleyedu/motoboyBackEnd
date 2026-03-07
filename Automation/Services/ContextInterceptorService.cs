@@ -157,24 +157,24 @@ namespace APIBack.Automation.Services
                 return (true, new AssistantDecision(respostaInvalida, "none", null, false, null, null));
             }
 
-            await _centralRouting.SalvarEstabelecimentoSelecionadoAsync(idConversa, escolhido);
+            var idConversaAtiva = await _centralRouting.SalvarEstabelecimentoSelecionadoAsync(idConversa, escolhido);
 
-            var decisaoGaragem = await _garageFlow.TryStartAfterCentralSelectionAsync(idConversa);
+            var decisaoGaragem = await _garageFlow.TryStartAfterCentralSelectionAsync(idConversaAtiva);
             if (decisaoGaragem != null)
             {
-                await SalvarMensagemRespostaAsync(idConversa, decisaoGaragem.Reply);
+                await SalvarMensagemRespostaAsync(idConversaAtiva, decisaoGaragem.Reply);
                 _logger.LogInformation(
                     "[Conversa={Conversa}] Estabelecimento garagem escolhido no contexto: {Estabelecimento}",
-                    idConversa,
+                    idConversaAtiva,
                     escolhido.Id);
                 return (true, decisaoGaragem);
             }
 
             var resposta = $"Perfeito. Vou continuar seu atendimento com {escolhido.Nome}.";
-            await SalvarMensagemRespostaAsync(idConversa, resposta);
+            await SalvarMensagemRespostaAsync(idConversaAtiva, resposta);
             _logger.LogInformation(
                 "[Conversa={Conversa}] Estabelecimento escolhido no contexto: {Estabelecimento}",
-                idConversa,
+                idConversaAtiva,
                 escolhido.Id);
             return (true, new AssistantDecision(resposta, "none", null, false, null, null));
         }
