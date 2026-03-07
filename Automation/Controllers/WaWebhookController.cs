@@ -180,6 +180,11 @@ namespace APIBack.Automation.Controllers
                                 MaskValue(mensagem.De),
                                 valor.Metadados?.IdNumeroTelefone ?? "(null)",
                                 valor.Metadados?.NumeroTelefoneExibicao ?? "(null)");
+                            _logger.LogInformation(
+                                "[Webhook] Conteudo interpretado tipo={Tipo} exibicao='{TextoExibicao}' interpretado='{TextoInterpretado}'",
+                                mensagem.Tipo ?? "(null)",
+                                textoExibicao ?? "(null)",
+                                textoInterpretado ?? "(null)");
 
                             await _dispatcher.EnqueueAsync(input, HttpContext.RequestAborted);
                             _logger.LogDebug("[Webhook] Mensagem {MensagemId} enfileirada (from={From})", mensagem.Id, MaskValue(mensagem.De));

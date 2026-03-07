@@ -159,7 +159,36 @@ namespace APIBack.Automation.Services
                 return (true, CriarBoasVindas(nomeEstabelecimento));
             }
 
-            var etapaAtual = ObterEtapaDoContexto(contextoAtual) ?? DeterminarEtapaAtual(lead);
+            var etapaContexto = ObterEtapaDoContexto(contextoAtual);
+            var etapaAtual = etapaContexto ?? DeterminarEtapaAtual(lead);
+            var conversaGrupoId = CentralRoutingService.GetGuidValue(
+                contextoAtual?.DadosColetados,
+                CentralRoutingService.ChaveConversaGrupoId);
+            var ehSegmentoCentral = viaNumeroCentral &&
+                                    conversaGrupoId.HasValue &&
+                                    conversaGrupoId.Value != idConversa;
+            var estadoCentral = string.Equals(contextoAtual?.Estado, CentralRoutingService.EstadoAguardandoEscolha, StringComparison.OrdinalIgnoreCase) ||
+                                string.Equals(contextoAtual?.Estado, CentralRoutingService.EstadoEstabelecimentoSelecionado, StringComparison.OrdinalIgnoreCase);
+
+            if (ehSegmentoCentral &&
+                estadoCentral &&
+                string.IsNullOrWhiteSpace(etapaContexto) &&
+                !string.Equals(etapaAtual, EtapaNome, StringComparison.Ordinal))
+            {
+                _logger.LogInformation(
+                    "[Conversa={Conversa}] Restaurando contexto da garagem a partir do lead na etapa {Etapa}",
+                    idConversa,
+                    etapaAtual);
+
+                await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, etapaAtual, viaNumeroCentral);
+                contextoAtual = new ConversationContext
+                {
+                    Estado = EstadoQuestionario,
+                    DadosColetados = BuildDadosContexto(contextoAtual, lead, etapaAtual, viaNumeroCentral),
+                    ExpiracaoEstado = null
+                };
+            }
+
             if (!string.Equals(contextoAtual?.Estado, EstadoQuestionario, StringComparison.OrdinalIgnoreCase) &&
                 string.Equals(etapaAtual, EtapaNome, StringComparison.Ordinal))
             {
@@ -411,7 +440,14 @@ namespace APIBack.Automation.Services
 
                 case EtapaUrgencia:
                 {
+                    var urgenciaNormalizada = NormalizeText(mensagemTexto);
                     var urgencia = ParseUrgencia(mensagemTexto);
+                    _logger.LogInformation(
+                        "[Conversa={Conversa}] Garagem urgencia recebida raw='{Mensagem}' normalizado='{Normalizado}' parse='{Urgencia}'",
+                        idConversa,
+                        mensagemTexto ?? string.Empty,
+                        urgenciaNormalizada,
+                        urgencia ?? "(null)");
                     if (urgencia == null)
                     {
                         await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaUrgencia, viaNumeroCentral);

@@ -191,7 +191,8 @@ namespace APIBack.Automation.Services
                 },
                 ExpiracaoEstado = expiraEmUtc
             },
-            conversaSegmentoAtiva.IdConversa);
+            conversaSegmentoAtiva.IdConversa,
+            preservarContextoExistente: true);
 
             return conversaSegmentoAtiva.IdConversa;
         }
@@ -223,7 +224,11 @@ namespace APIBack.Automation.Services
                 contexto.ExpiracaoEstado = novoPrazo;
             }
 
-            await SalvarContextoCentralAsync(idConversa, contexto, snapshot.ConversaSegmentoAtivaId);
+            await SalvarContextoCentralAsync(
+                idConversa,
+                contexto,
+                snapshot.ConversaSegmentoAtivaId,
+                preservarContextoExistente: true);
         }
 
         public async Task<EffectiveConversationScope?> ResolveEffectiveScopeAsync(Guid idConversa, Conversation? conversa = null)
@@ -293,7 +298,11 @@ namespace APIBack.Automation.Services
                 contexto.DadosColetados ??= new Dictionary<string, object>();
                 contexto.DadosColetados[ChaveConversaGrupoId] = ObterConversaGrupoId(conversaAtual).ToString();
                 contexto.DadosColetados[ChaveConversaSegmentoAtivaId] = segmento.IdConversa.ToString();
-                await SalvarContextoCentralAsync(idConversa, contexto, segmento.IdConversa);
+                await SalvarContextoCentralAsync(
+                    idConversa,
+                    contexto,
+                    segmento.IdConversa,
+                    preservarContextoExistente: true);
             }
 
             return segmento.IdConversa;
@@ -647,7 +656,8 @@ namespace APIBack.Automation.Services
         private async Task SalvarContextoCentralAsync(
             Guid idConversaAtual,
             ConversationContext contexto,
-            Guid? idConversaSegmentoAtiva = null)
+            Guid? idConversaSegmentoAtiva = null,
+            bool preservarContextoExistente = false)
         {
             var conversaAtual = await ObterConversaObrigatoriaAsync(idConversaAtual);
             var conversaGrupoId = ObterConversaGrupoId(conversaAtual);
@@ -658,10 +668,86 @@ namespace APIBack.Automation.Services
                 idsDestino.Add(idConversaSegmentoAtiva.Value);
             }
 
+            if (!preservarContextoExistente)
+            {
+                foreach (var idDestino in idsDestino)
+                {
+                    await _conversationRepository.SalvarContextoAsync(idDestino, contexto);
+                }
+
+                return;
+            }
+
+            var snapshot = CriarSnapshotPropagacao(contexto, conversaGrupoId, idConversaSegmentoAtiva);
             foreach (var idDestino in idsDestino)
             {
-                await _conversationRepository.SalvarContextoAsync(idDestino, contexto);
+                var contextoMesclado = await MesclarContextoCentralAsync(idDestino, contexto, snapshot);
+                await _conversationRepository.SalvarContextoAsync(idDestino, contextoMesclado);
             }
+        }
+
+        private async Task<ConversationContext> MesclarContextoCentralAsync(
+            Guid idDestino,
+            ConversationContext contextoBase,
+            CentralSelectionSnapshot snapshot)
+        {
+            var contextoExistente = await _conversationRepository.ObterContextoAsync(idDestino);
+            var contextoDestino = contextoExistente == null || IsCentralSelectionState(contextoExistente.Estado)
+                ? ClonarContexto(contextoBase)
+                : ClonarContexto(contextoExistente);
+
+            contextoDestino.DadosColetados ??= new Dictionary<string, object>();
+            PreserveSelection(contextoDestino.DadosColetados, snapshot);
+
+            if (string.IsNullOrWhiteSpace(contextoDestino.Estado))
+            {
+                contextoDestino.Estado = contextoBase.Estado;
+            }
+
+            if (contextoExistente == null || IsCentralSelectionState(contextoDestino.Estado))
+            {
+                contextoDestino.ExpiracaoEstado = contextoBase.ExpiracaoEstado ?? snapshot.ExpiraEmUtc;
+            }
+
+            return contextoDestino;
+        }
+
+        private CentralSelectionSnapshot CriarSnapshotPropagacao(
+            ConversationContext contexto,
+            Guid conversaGrupoId,
+            Guid? idConversaSegmentoAtiva)
+        {
+            var snapshot = BuildSnapshot(contexto);
+            return new CentralSelectionSnapshot
+            {
+                Contexto = contexto,
+                CentralDisplayPhone = snapshot.CentralDisplayPhone ?? _centralDisplayPhone,
+                EstabelecimentoId = snapshot.EstabelecimentoId,
+                ConversaGrupoId = snapshot.ConversaGrupoId ?? conversaGrupoId,
+                ConversaSegmentoAtivaId = idConversaSegmentoAtiva ?? snapshot.ConversaSegmentoAtivaId,
+                EstabelecimentoNome = snapshot.EstabelecimentoNome,
+                EstabelecimentoTipo = snapshot.EstabelecimentoTipo,
+                ExpiraEmUtc = snapshot.ExpiraEmUtc ?? contexto.ExpiracaoEstado,
+                SelectionExpired = snapshot.SelectionExpired
+            };
+        }
+
+        private static ConversationContext ClonarContexto(ConversationContext contexto)
+        {
+            return new ConversationContext
+            {
+                Estado = contexto.Estado,
+                ExpiracaoEstado = contexto.ExpiracaoEstado,
+                DadosColetados = contexto.DadosColetados == null
+                    ? null
+                    : new Dictionary<string, object>(contexto.DadosColetados)
+            };
+        }
+
+        private static bool IsCentralSelectionState(string? estado)
+        {
+            return string.Equals(estado, EstadoAguardandoEscolha, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(estado, EstadoEstabelecimentoSelecionado, StringComparison.OrdinalIgnoreCase);
         }
 
         private async Task<Conversation> ObterConversaObrigatoriaAsync(Guid idConversa)
