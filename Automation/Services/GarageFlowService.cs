@@ -893,8 +893,8 @@ namespace APIBack.Automation.Services
             return normalizado switch
             {
                 "1" or "avista" or "a vista" or "garagem_pagamento_avista" => "avista",
-                "2" or "entrada financiamento" or "entrada + financiamento" or "garagem_pagamento_entrada_financiamento" => "entrada_financiamento",
-                "3" or "financiado" or "100 financiado" or "100% financiado" or "garagem_pagamento_financiado_100" => "financiado_100",
+                "2" or "entrada financiamento" or "entrada fin" or "entrada + financiamento" or "garagem_pagamento_entrada_financiamento" => "entrada_financiamento",
+                "3" or "financiado" or "100 financiado" or "100 financ" or "100% financiado" or "garagem_pagamento_financiado_100" => "financiado_100",
                 _ => null
             };
         }
@@ -917,7 +917,7 @@ namespace APIBack.Automation.Services
             {
                 "1" or "troca direta" or "direta" or "garagem_troca_condicao_direta" => "troca_direta",
                 "2" or "troca + volta" or "troca volta" or "volta" or "garagem_troca_condicao_volta" => "troca_volta",
-                "3" or "troca + financiamento" or "troca financiamento" or "troca + financ." or "troca financ." or "financiamento" or "garagem_troca_condicao_financiamento" => "troca_financiamento",
+                "3" or "troca + financiamento" or "troca financiamento" or "troca + financ." or "troca financ." or "troca financ" or "financiamento" or "garagem_troca_condicao_financiamento" => "troca_financiamento",
                 _ => null
             };
         }
@@ -928,7 +928,7 @@ namespace APIBack.Automation.Services
             return normalizado switch
             {
                 "1" or "ainda essa semana" or "essa semana" or "garagem_urgencia_esta_semana" => "esta_semana",
-                "2" or "proximas semanas" or "nas proximas semanas" or "garagem_urgencia_proximas_semanas" => "proximas_semanas",
+                "2" or "prox semanas" or "proximas semanas" or "nas proximas semanas" or "garagem_urgencia_proximas_semanas" => "proximas_semanas",
                 "3" or "so pesquisando" or "garagem_urgencia_so_pesquisando" => "so_pesquisando",
                 _ => null
             };
@@ -1099,10 +1099,19 @@ namespace APIBack.Automation.Services
             var builder = new StringBuilder(normalized.Length);
             foreach (var ch in normalized)
             {
-                if (CharUnicodeInfo.GetUnicodeCategory(ch) != UnicodeCategory.NonSpacingMark)
+                var category = CharUnicodeInfo.GetUnicodeCategory(ch);
+                if (category == UnicodeCategory.NonSpacingMark)
+                {
+                    continue;
+                }
+
+                if (char.IsLetterOrDigit(ch) || ch == '_' || char.IsWhiteSpace(ch))
                 {
                     builder.Append(char.ToLowerInvariant(ch));
+                    continue;
                 }
+
+                builder.Append(' ');
             }
 
             var flattened = builder.ToString().Normalize(NormalizationForm.FormC);
