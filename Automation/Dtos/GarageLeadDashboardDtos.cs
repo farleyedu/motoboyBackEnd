@@ -8,8 +8,10 @@ namespace APIBack.Automation.Dtos
         public Guid Id { get; set; }
         public string Telefone { get; set; } = string.Empty;
         public string Nome { get; set; } = string.Empty;
+        public string? Cpf { get; set; }
         public string Objetivo { get; set; } = string.Empty;
         public string Modelo { get; set; } = string.Empty;
+        public string? CarroInteresse { get; set; }
         public string? Faixa { get; set; }
         public string? Pagamento { get; set; }
         public string? Entrada { get; set; }

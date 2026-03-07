@@ -61,12 +61,16 @@ sim AS (
 SELECT b.id,
        COALESCE(b.telefone_e164, '') AS Telefone,
        COALESCE(b.nome_cliente, '') AS Nome,
+       b.cpf AS Cpf,
        COALESCE(b.objetivo, '') AS Objetivo,
        CASE
          WHEN b.objetivo = 'trocar' THEN COALESCE(b.troca_modelo_desejado, b.modelo_interesse, '')
          WHEN b.objetivo = 'vender' THEN COALESCE(b.venda_modelo, '')
          ELSE COALESCE(b.modelo_interesse, '')
        END AS Modelo,
+       b.modelo_interesse AS ModeloInteresse,
+       b.troca_modelo_desejado AS TrocaModeloDesejado,
+       b.venda_modelo AS VendaModelo,
        b.faixa_investimento AS Faixa,
        b.forma_pagamento AS Pagamento,
        b.valor_entrada_texto AS Entrada,
@@ -92,20 +96,31 @@ SELECT b.id,
             })).ToList();
 
             var total = rows.FirstOrDefault()?.TotalRegistros ?? 0;
-            var itens = rows.Select(row => new GarageLeadListItemDto
+            var itens = rows.Select(row =>
             {
-                Id = row.Id,
-                Telefone = row.Telefone,
-                Nome = row.Nome,
-                Objetivo = row.Objetivo,
-                Modelo = row.Modelo,
-                Faixa = row.Faixa,
-                Pagamento = row.Pagamento,
-                Entrada = row.Entrada,
-                Urgencia = row.Urgencia,
-                Status = row.Status,
-                Data = row.Data,
-                SimulacoesCount = row.SimulacoesCount
+                var carroInteresse = ResolverCarroInteresse(
+                    row.Objetivo,
+                    row.ModeloInteresse,
+                    row.TrocaModeloDesejado,
+                    row.VendaModelo);
+
+                return new GarageLeadListItemDto
+                {
+                    Id = row.Id,
+                    Telefone = row.Telefone,
+                    Nome = row.Nome,
+                    Cpf = LimparFiltro(row.Cpf),
+                    Objetivo = row.Objetivo,
+                    Modelo = string.IsNullOrWhiteSpace(row.Modelo) ? (carroInteresse ?? string.Empty) : row.Modelo,
+                    CarroInteresse = carroInteresse,
+                    Faixa = row.Faixa,
+                    Pagamento = row.Pagamento,
+                    Entrada = row.Entrada,
+                    Urgencia = row.Urgencia,
+                    Status = row.Status,
+                    Data = row.Data,
+                    SimulacoesCount = row.SimulacoesCount
+                };
             }).ToList();
 
             return (itens, total);
@@ -151,6 +166,7 @@ SELECT cg.id,
        cg.id_cliente AS IdCliente,
        COALESCE(cg.telefone_e164, '') AS Telefone,
        COALESCE(cg.nome_cliente, '') AS Nome,
+       cg.cpf AS Cpf,
        COALESCE(cg.objetivo, '') AS Objetivo,
        CASE
          WHEN cg.objetivo = 'trocar' THEN COALESCE(cg.troca_modelo_desejado, cg.modelo_interesse, '')
@@ -211,6 +227,12 @@ SELECT s.id,
                 return null;
             }
 
+            detalhe.Cpf = LimparFiltro(detalhe.Cpf);
+            detalhe.CarroInteresse = ResolverCarroInteresse(
+                detalhe.Objetivo,
+                detalhe.ModeloInteresse,
+                detalhe.TrocaModeloDesejado,
+                detalhe.VendaModelo);
             var simulacoes = await connection.QueryAsync<GarageLeadSimulationRow>(sqlSimulacoes, new { IdLead = idLead });
             detalhe.Simulacoes = simulacoes.Select(MapearSimulacao).ToList();
             detalhe.SimulacoesCount = detalhe.Simulacoes.Count;
@@ -392,6 +414,22 @@ SELECT 1
             return valor.Trim();
         }
 
+        internal static string? ResolverCarroInteresse(
+            string? objetivo,
+            string? modeloInteresse,
+            string? trocaModeloDesejado,
+            string? vendaModelo)
+        {
+            var objetivoNormalizado = LimparFiltro(objetivo)?.ToLowerInvariant();
+
+            return objetivoNormalizado switch
+            {
+                "trocar" => LimparFiltro(trocaModeloDesejado) ?? LimparFiltro(modeloInteresse),
+                "vender" => LimparFiltro(vendaModelo),
+                _ => LimparFiltro(modeloInteresse)
+            };
+        }
+
         private static string SerializeArquivos(IReadOnlyCollection<GarageLeadSimulationFileDto>? arquivos)
         {
             var lista = arquivos?.ToList() ?? new List<GarageLeadSimulationFileDto>();
@@ -435,8 +473,12 @@ SELECT 1
             public Guid Id { get; set; }
             public string Telefone { get; set; } = string.Empty;
             public string Nome { get; set; } = string.Empty;
+            public string? Cpf { get; set; }
             public string Objetivo { get; set; } = string.Empty;
             public string Modelo { get; set; } = string.Empty;
+            public string? ModeloInteresse { get; set; }
+            public string? TrocaModeloDesejado { get; set; }
+            public string? VendaModelo { get; set; }
             public string? Faixa { get; set; }
             public string? Pagamento { get; set; }
             public string? Entrada { get; set; }

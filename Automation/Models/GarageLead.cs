@@ -10,6 +10,7 @@ namespace APIBack.Automation.Models
         public Guid IdCliente { get; set; }
         public string TelefoneE164 { get; set; } = string.Empty;
         public string? NomeCliente { get; set; }
+        public string? Cpf { get; set; }
         public string? Objetivo { get; set; }
         public string? ModeloInteresse { get; set; }
         public string? FaixaInvestimento { get; set; }
