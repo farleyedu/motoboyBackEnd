@@ -35,6 +35,7 @@ namespace APIBack.Automation.Services
                     using var scope = _scopeFactory.CreateScope();
 
                     var conversationProcessor = scope.ServiceProvider.GetRequiredService<ConversationProcessor>();
+                    var conversationRepository = scope.ServiceProvider.GetRequiredService<IConversationRepository>();
                     var contextInterceptor = scope.ServiceProvider.GetRequiredService<ContextInterceptorService>();
                     var iaResponseHandler = scope.ServiceProvider.GetRequiredService<IAResponseHandler>();
                     var assistant = scope.ServiceProvider.GetService<IAssistantService>();
@@ -47,6 +48,24 @@ namespace APIBack.Automation.Services
                     }
 
                     var idConversa = processamento.IdConversa ?? Guid.Empty;
+                    var controle = await conversationRepository.ObterControleConversaAsync(idConversa);
+                    if (controle == null)
+                    {
+                        _logger.LogWarning(
+                            "[Conversa={Conversa}] Pipeline automatico interrompido: controle da conversa nao encontrado",
+                            idConversa);
+                        continue;
+                    }
+
+                    if (!controle.CanBotReply)
+                    {
+                        _logger.LogInformation(
+                            "[Conversa={Conversa}] Pipeline automatico interrompido: status={Status}, agente={AgenteId}",
+                            idConversa,
+                            controle.Status,
+                            controle.AssignedAgentId);
+                        continue;
+                    }
 
                     var (intercepted, interceptedDecision) = await contextInterceptor.TryInterceptAsync(
                         idConversa,

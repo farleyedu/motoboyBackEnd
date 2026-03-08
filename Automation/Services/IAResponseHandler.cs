@@ -12,17 +12,20 @@ namespace APIBack.Automation.Services
 {
     public class IAResponseHandler
     {
+        private readonly IConversationRepository _conversationRepository;
         private readonly IMessageService _mensagemService;
         private readonly IQueueBus _fila;
         private readonly WhatsAppSender _whatsAppSender;
         private readonly ILogger<IAResponseHandler> _logger;
 
         public IAResponseHandler(
+            IConversationRepository conversationRepository,
             IMessageService mensagemService,
             IQueueBus fila,
             WhatsAppSender whatsAppSender,
             ILogger<IAResponseHandler> logger)
         {
+            _conversationRepository = conversationRepository;
             _mensagemService = mensagemService;
             _fila = fila;
             _whatsAppSender = whatsAppSender;
@@ -38,6 +41,25 @@ namespace APIBack.Automation.Services
             }
 
             var idConversa = processamento.IdConversa.Value;
+            var controle = await _conversationRepository.ObterControleConversaAsync(idConversa);
+            if (controle == null)
+            {
+                _logger.LogWarning(
+                    "[Conversa={Conversa}] Resposta automatica suprimida: controle da conversa nao encontrado",
+                    idConversa);
+                return;
+            }
+
+            if (!controle.CanBotReply)
+            {
+                _logger.LogInformation(
+                    "[Conversa={Conversa}] Resposta automatica suprimida: status={Status}, agente={AgenteId}",
+                    idConversa,
+                    controle.Status,
+                    controle.AssignedAgentId);
+                return;
+            }
+
             var numeroDestino = processamento.HandoverDetalhes?.Telefone;
             var phoneNumberDisplay = processamento.NumeroTelefoneExibicao;
             var phoneNumberId = processamento.NumeroWhatsappId;
