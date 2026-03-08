@@ -18,7 +18,7 @@ namespace APIBack.Automation.Services
                 CriadaPor = criadaPor,
                 DataHora = agora,
                 DataCriacao = agora,
-                Status = direcao == DirecaoMensagem.Entrada ? "recebida" : "fila",
+                Status = direcao == DirecaoMensagem.Entrada ? MessageStatusMapper.Entregue : MessageStatusMapper.Fila,
                 IdMensagemWa = idMensagemWa ?? $"local-{Guid.NewGuid():N}",
                 Tipo = tipoBanco,
                 TipoOriginal = tipoOrigem

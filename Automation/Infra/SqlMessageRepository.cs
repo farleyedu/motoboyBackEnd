@@ -73,9 +73,7 @@ namespace APIBack.Automation.Infra
             mensagem.CriadaPor = criadaPor;
             var tipoOriginalLog = string.IsNullOrWhiteSpace(tipoOrigemWa) ? "(indefinido)" : tipoOrigemWa.Trim();
             _logger.LogInformation("[Conversa={Conversa}] [Mensagem={Mensagem}] Tipo WA={TipoWa} -> Tipo Banco={TipoBanco}", mensagem.IdConversa, idMsg, tipoOriginalLog, tipo);
-            var status = string.IsNullOrWhiteSpace(mensagem.Status)
-                          ? (mensagem.Direcao == DirecaoMensagem.Entrada ? "entregue" : "fila")
-                          : mensagem.Status!;
+            var status = MessageStatusMapper.NormalizeForDatabase(mensagem.Status, mensagem.Direcao);
             var idProv = !string.IsNullOrWhiteSpace(mensagem.IdProvedor) ? mensagem.IdProvedor : mensagem.IdMensagemWa;
 
             // timestamps derivadas
@@ -91,14 +89,11 @@ namespace APIBack.Automation.Infra
                 switch (st)
                 {
                     case "fila":
-                    case "enviado":
-                    case "enviada":
+                    case MessageStatusMapper.Enviada:
                         dataEnvio = quandoUtc; break;
-                    case "entregue":
-                    case "entregada":
+                    case MessageStatusMapper.Entregue:
                         dataEnvio = quandoUtc; dataEntrega = quandoUtc; break;
-                    case "lido":
-                    case "lida":
+                    case MessageStatusMapper.Lida:
                         dataEnvio = quandoUtc; dataEntrega = quandoUtc; dataLeitura = quandoUtc; break;
                 }
             }
@@ -273,23 +268,25 @@ LIMIT @Limit;
 
         public async Task AtualizarStatusAsync(Guid idMensagem, string status, string? codigoErro = null, string? mensagemErro = null)
         {
+            var statusNormalizado = MessageStatusMapper.NormalizeForDatabase(status, DirecaoMensagem.Saida);
+
             const string sql = @"
 UPDATE mensagens
    SET status = @Status::status_mensagem_enum,
        codigo_erro = @CodigoErro,
        mensagem_erro = @MensagemErro,
        data_envio = CASE
-           WHEN @Status IN ('enviado', 'enviada', 'entregue', 'entregada', 'lido', 'lida')
+           WHEN @Status IN ('enviada', 'entregue', 'lida')
                THEN COALESCE(data_envio, NOW())
            ELSE data_envio
        END,
        data_entrega = CASE
-           WHEN @Status IN ('entregue', 'entregada', 'lido', 'lida')
+           WHEN @Status IN ('entregue', 'lida')
                THEN COALESCE(data_entrega, NOW())
            ELSE data_entrega
        END,
        data_leitura = CASE
-           WHEN @Status IN ('lido', 'lida')
+           WHEN @Status IN ('lida')
                THEN COALESCE(data_leitura, NOW())
            ELSE data_leitura
        END
@@ -299,7 +296,7 @@ UPDATE mensagens
             await cx.ExecuteAsync(sql, new
             {
                 Id = idMensagem,
-                Status = status,
+                Status = statusNormalizado,
                 CodigoErro = codigoErro,
                 MensagemErro = mensagemErro
             });

@@ -406,8 +406,8 @@ namespace APIBack.Automation.Services
             try
             {
                 await _whatsAppSender.SendTextAsync(mensagem.IdConversa, phoneNumberId, numeroDestino, texto);
-                await _messageService.AtualizarStatusAsync(mensagem.Id, "enviado");
-                mensagem.Status = "enviado";
+                await _messageService.AtualizarStatusAsync(mensagem.Id, MessageStatusMapper.Enviada);
+                mensagem.Status = MessageStatusMapper.Enviada;
             }
             catch (Exception ex)
             {
@@ -426,7 +426,7 @@ namespace APIBack.Automation.Services
                     CriadaPor = mensagem.CriadaPor ?? string.Empty,
                     Conteudo = mensagem.Conteudo,
                     Tipo = string.IsNullOrWhiteSpace(mensagem.Tipo) ? "texto" : mensagem.Tipo!,
-                    Status = mensagem.Status ?? "enviado",
+                    Status = mensagem.Status ?? MessageStatusMapper.Enviada,
                     DataEnvio = mensagem.DataEnvio,
                     DataCriacao = mensagem.DataCriacao ?? agora
                 });
