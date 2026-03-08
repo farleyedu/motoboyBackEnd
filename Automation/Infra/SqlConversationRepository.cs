@@ -659,7 +659,12 @@ VALUES (
 
         public async Task<IReadOnlyList<ConversationAgentDto>> ListarAgentesAsync(Guid? idEstabelecimento = null)
         {
-            const string sql = @"SELECT a.id, COALESCE(u.nome, CONCAT('Agente ', a.id::text)) AS Nome FROM agentes a LEFT JOIN usuario u ON u.id = a.usuarioid ORDER BY COALESCE(u.nome, CONCAT('Agente ', a.id::text));";
+            const string sql = @"SELECT a.id,
+                                        a.usuarioid AS UsuarioId,
+                                        COALESCE(u.nome, CONCAT('Agente ', a.id::text)) AS Nome
+                                   FROM agentes a
+                                   LEFT JOIN usuario u ON u.id = a.usuarioid
+                               ORDER BY COALESCE(u.nome, CONCAT('Agente ', a.id::text));";
             await using var cx = new NpgsqlConnection(_connectionString);
             var rows = await cx.QueryAsync<ConversationAgentDto>(sql);
             return rows.AsList();

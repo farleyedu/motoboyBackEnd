@@ -69,6 +69,7 @@ namespace APIBack.Automation.Infra
         public async Task<IReadOnlyList<ConversationAgentDto>> ListarAgentesAsync()
         {
             const string sql = @"SELECT a.id,
+                                        a.usuarioid AS UsuarioId,
                                         COALESCE(u.nome, CONCAT('Agente ', a.id::text)) AS Nome
                                    FROM agentes a
                                    LEFT JOIN usuario u ON u.id = a.usuarioid
