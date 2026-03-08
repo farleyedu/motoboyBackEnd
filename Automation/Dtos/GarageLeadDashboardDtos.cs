@@ -55,8 +55,23 @@ namespace APIBack.Automation.Dtos
         public Guid Id { get; set; }
         public string Titulo { get; set; } = string.Empty;
         public string Status { get; set; } = string.Empty;
+        public string? TipoSimulacao { get; set; }
         public string? Comentario { get; set; }
         public string? Valor { get; set; }
+        public string? VeiculoMarca { get; set; }
+        public string? VeiculoModelo { get; set; }
+        public string? VeiculoVersao { get; set; }
+        public int? VeiculoAno { get; set; }
+        public int? VeiculoKm { get; set; }
+        public decimal? VeiculoValor { get; set; }
+        public decimal? EntradaValor { get; set; }
+        public decimal? SaldoFinanciado { get; set; }
+        public int? ParcelasQuantidade { get; set; }
+        public decimal? ParcelaValor { get; set; }
+        public decimal? TaxaJurosMensal { get; set; }
+        public string? Observacoes { get; set; }
+        public DateTime? ValidadeEm { get; set; }
+        public int? CriadoPorUsuarioId { get; set; }
         public DateTime Criado { get; set; }
         public DateTime Atualizado { get; set; }
         public List<GarageLeadSimulationFileDto> Arquivos { get; set; } = new();
@@ -67,6 +82,8 @@ namespace APIBack.Automation.Dtos
         public Guid Id { get; set; }
         public string Nome { get; set; } = string.Empty;
         public long? Tamanho { get; set; }
+        public string? ContentType { get; set; }
+        public string? CaminhoRelativo { get; set; }
         public string? Url { get; set; }
         public DateTime? Data { get; set; }
     }
@@ -91,21 +108,46 @@ namespace APIBack.Automation.Dtos
         public string Status { get; set; } = string.Empty;
     }
 
-    public class CreateGarageLeadSimulationRequest
+    public class UpsertGarageLeadSimulationRequest
     {
         public string Titulo { get; set; } = string.Empty;
         public string? Status { get; set; }
+        public string? TipoSimulacao { get; set; }
         public string? Comentario { get; set; }
         public string? Valor { get; set; }
+        public string? VeiculoMarca { get; set; }
+        public string? VeiculoModelo { get; set; }
+        public string? VeiculoVersao { get; set; }
+        public int? VeiculoAno { get; set; }
+        public int? VeiculoKm { get; set; }
+        public decimal? VeiculoValor { get; set; }
+        public decimal? EntradaValor { get; set; }
+        public decimal? SaldoFinanciado { get; set; }
+        public int? ParcelasQuantidade { get; set; }
+        public decimal? ParcelaValor { get; set; }
+        public decimal? TaxaJurosMensal { get; set; }
+        public string? Observacoes { get; set; }
+        public DateTime? ValidadeEm { get; set; }
+        public int? CriadoPorUsuarioId { get; set; }
         public List<GarageLeadSimulationFileDto> Arquivos { get; set; } = new();
     }
 
-    public class UpdateGarageLeadSimulationRequest
+    public class CreateGarageLeadSimulationRequest : UpsertGarageLeadSimulationRequest
     {
-        public string? Titulo { get; set; }
-        public string? Status { get; set; }
-        public string? Comentario { get; set; }
-        public string? Valor { get; set; }
-        public List<GarageLeadSimulationFileDto>? Arquivos { get; set; }
+    }
+
+    public class UpdateGarageLeadSimulationRequest : UpsertGarageLeadSimulationRequest
+    {
+    }
+
+    public class UploadGarageLeadSimulationFileResponse
+    {
+        public Guid Id { get; set; }
+        public string Nome { get; set; } = string.Empty;
+        public string Url { get; set; } = string.Empty;
+        public long Tamanho { get; set; }
+        public string? ContentType { get; set; }
+        public string CaminhoRelativo { get; set; } = string.Empty;
+        public DateTime Data { get; set; }
     }
 }

@@ -5,7 +5,9 @@ using System.Threading.Tasks;
 using APIBack.Attributes;
 using APIBack.Automation.Dtos;
 using APIBack.Automation.Interfaces;
+using APIBack.Automation.Services;
 using APIBack.Extensions;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 
 namespace APIBack.Automation.Controllers
@@ -32,10 +34,12 @@ namespace APIBack.Automation.Controllers
         };
 
         private readonly IGaragemPainelRepository _repository;
+        private readonly GarageSimulationStorageService _storageService;
 
-        public GaragemLeadsController(IGaragemPainelRepository repository)
+        public GaragemLeadsController(IGaragemPainelRepository repository, GarageSimulationStorageService storageService)
         {
             _repository = repository;
+            _storageService = storageService;
         }
 
         [HttpGet]
@@ -56,14 +60,7 @@ namespace APIBack.Automation.Controllers
             var paginaNormalizada = pagina < 1 ? 1 : pagina;
             var tamanhoNormalizado = Math.Clamp(tamanhoPagina <= 0 ? 20 : tamanhoPagina, 1, 200);
 
-            var (itens, total) = await _repository.ListarLeadsAsync(
-                estabelecimentoId,
-                busca,
-                status,
-                objetivo,
-                paginaNormalizada,
-                tamanhoNormalizado);
-
+            var (itens, total) = await _repository.ListarLeadsAsync(estabelecimentoId, busca, status, objetivo, paginaNormalizada, tamanhoNormalizado);
             var contagens = await _repository.ContarLeadsPorStatusAsync(estabelecimentoId, busca, objetivo);
             var totaisPorStatus = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
             {
@@ -81,16 +78,14 @@ namespace APIBack.Automation.Controllers
                 }
             }
 
-            var response = new GarageLeadListResponseDto
+            return Ok(new GarageLeadListResponseDto
             {
                 Pagina = paginaNormalizada,
                 TamanhoPagina = tamanhoNormalizado,
                 Total = total,
                 TotaisPorStatus = totaisPorStatus,
                 Itens = itens
-            };
-
-            return Ok(response);
+            });
         }
 
         [HttpGet("{idLead:guid}")]
@@ -103,12 +98,7 @@ namespace APIBack.Automation.Controllers
             }
 
             var detalhe = await _repository.ObterLeadDetalheAsync(estabelecimentoId, idLead);
-            if (detalhe == null)
-            {
-                return NotFound();
-            }
-
-            return Ok(detalhe);
+            return detalhe == null ? NotFound(new { success = false, error = "Lead nao encontrado." }) : Ok(detalhe);
         }
 
         [HttpPatch("{idLead:guid}/status")]
@@ -134,7 +124,7 @@ namespace APIBack.Automation.Controllers
             var atualizado = await _repository.AtualizarStatusLeadAsync(estabelecimentoId, idLead, statusNormalizado);
             if (!atualizado)
             {
-                return NotFound();
+                return NotFound(new { success = false, error = "Lead nao encontrado." });
             }
 
             var detalhe = await _repository.ObterLeadDetalheAsync(estabelecimentoId, idLead);
@@ -155,28 +145,22 @@ namespace APIBack.Automation.Controllers
                 return BadRequest(new { success = false, error = "Titulo e obrigatorio." });
             }
 
-            if (!string.IsNullOrWhiteSpace(request.Status) &&
-                !StatusSimulacaoPermitidos.Contains(request.Status.Trim().ToLowerInvariant()))
+            if (!string.IsNullOrWhiteSpace(request.Status) && !StatusSimulacaoPermitidos.Contains(request.Status.Trim().ToLowerInvariant()))
             {
                 return BadRequest(new { success = false, error = "Status de simulacao invalido." });
             }
 
+            request.CriadoPorUsuarioId = HttpContext.GetUserId();
             var simulacao = await _repository.CriarSimulacaoAsync(estabelecimentoId, idLead, request);
-            if (simulacao == null)
-            {
-                return NotFound(new { success = false, error = "Lead nao encontrado para o estabelecimento informado." });
-            }
-
-            return StatusCode(201, simulacao);
+            return simulacao == null
+                ? NotFound(new { success = false, error = "Lead nao encontrado para o estabelecimento informado." })
+                : StatusCode(201, simulacao);
         }
 
+        [HttpPatch("{idLead:guid}/simulacoes/{idSimulacao:guid}")]
         [HttpPut("{idLead:guid}/simulacoes/{idSimulacao:guid}")]
         [RequirePermission("Garagem", "editar")]
-        public async Task<IActionResult> AtualizarSimulacao(
-            Guid idLead,
-            Guid idSimulacao,
-            [FromBody] UpdateGarageLeadSimulationRequest request,
-            [FromQuery] Guid? idEstabelecimento = null)
+        public async Task<IActionResult> AtualizarSimulacao(Guid idLead, Guid idSimulacao, [FromBody] UpdateGarageLeadSimulationRequest request, [FromQuery] Guid? idEstabelecimento = null)
         {
             if (!TryResolveEstabelecimento(idEstabelecimento, out var estabelecimentoId, out var error))
             {
@@ -188,37 +172,113 @@ namespace APIBack.Automation.Controllers
                 return BadRequest(new { success = false, error = "Corpo da requisicao e obrigatorio." });
             }
 
-            if (!string.IsNullOrWhiteSpace(request.Status) &&
-                !StatusSimulacaoPermitidos.Contains(request.Status.Trim().ToLowerInvariant()))
+            if (!string.IsNullOrWhiteSpace(request.Status) && !StatusSimulacaoPermitidos.Contains(request.Status.Trim().ToLowerInvariant()))
             {
                 return BadRequest(new { success = false, error = "Status de simulacao invalido." });
             }
 
             var simulacao = await _repository.AtualizarSimulacaoAsync(estabelecimentoId, idLead, idSimulacao, request);
-            if (simulacao == null)
-            {
-                return NotFound();
-            }
-
-            return Ok(simulacao);
+            return simulacao == null ? NotFound(new { success = false, error = "Simulacao nao encontrada." }) : Ok(simulacao);
         }
 
-        [HttpDelete("{idLead:guid}/simulacoes/{idSimulacao:guid}")]
-        [RequirePermission("Garagem", "deletar")]
-        public async Task<IActionResult> RemoverSimulacao(
-            Guid idLead,
-            Guid idSimulacao,
-            [FromQuery] Guid? idEstabelecimento = null)
+        [HttpPost("{idLead:guid}/simulacoes/{idSimulacao:guid}/arquivos")]
+        [RequirePermission("Garagem", "editar")]
+        public async Task<IActionResult> UploadArquivo(Guid idLead, Guid idSimulacao, [FromForm] IFormFile file, [FromQuery] Guid? idEstabelecimento = null)
         {
             if (!TryResolveEstabelecimento(idEstabelecimento, out var estabelecimentoId, out var error))
             {
                 return error!;
             }
 
+            var simulacao = await _repository.ObterSimulacaoAsync(estabelecimentoId, idLead, idSimulacao);
+            if (simulacao == null)
+            {
+                return NotFound(new { success = false, error = "Simulacao nao encontrada." });
+            }
+
+            try
+            {
+                var saved = await _storageService.SaveAsync(idSimulacao, file, HttpContext.RequestAborted);
+                var persisted = await _repository.AdicionarArquivoSimulacaoAsync(estabelecimentoId, idLead, idSimulacao, new GarageLeadSimulationFileDto
+                {
+                    Id = saved.Id,
+                    Nome = saved.Nome,
+                    Tamanho = saved.Tamanho,
+                    ContentType = saved.ContentType,
+                    CaminhoRelativo = saved.CaminhoRelativo,
+                    Url = saved.Url,
+                    Data = saved.Data
+                });
+
+                if (persisted == null)
+                {
+                    await _storageService.DeleteAsync(saved.CaminhoRelativo);
+                    return NotFound(new { success = false, error = "Nao foi possivel vincular o arquivo a simulacao." });
+                }
+
+                return Ok(saved);
+            }
+            catch (ConversationManagementException ex)
+            {
+                return StatusCode(ex.StatusCode, new { success = false, error = ex.Message });
+            }
+        }
+
+        [HttpDelete("{idLead:guid}/simulacoes/{idSimulacao:guid}/arquivos/{idArquivo:guid}")]
+        [RequirePermission("Garagem", "deletar")]
+        public async Task<IActionResult> RemoverArquivo(Guid idLead, Guid idSimulacao, Guid idArquivo, [FromQuery] Guid? idEstabelecimento = null)
+        {
+            if (!TryResolveEstabelecimento(idEstabelecimento, out var estabelecimentoId, out var error))
+            {
+                return error!;
+            }
+
+            var simulacao = await _repository.ObterSimulacaoAsync(estabelecimentoId, idLead, idSimulacao);
+            if (simulacao == null)
+            {
+                return NotFound(new { success = false, error = "Simulacao nao encontrada." });
+            }
+
+            var arquivo = simulacao.Arquivos.FirstOrDefault(a => a.Id == idArquivo);
+            if (arquivo == null)
+            {
+                return NotFound(new { success = false, error = "Arquivo nao encontrado." });
+            }
+
+            var removido = await _repository.RemoverArquivoSimulacaoAsync(estabelecimentoId, idLead, idSimulacao, idArquivo);
+            if (!removido)
+            {
+                return NotFound(new { success = false, error = "Arquivo nao encontrado." });
+            }
+
+            await _storageService.DeleteAsync(arquivo.CaminhoRelativo);
+            return NoContent();
+        }
+
+        [HttpDelete("{idLead:guid}/simulacoes/{idSimulacao:guid}")]
+        [RequirePermission("Garagem", "deletar")]
+        public async Task<IActionResult> RemoverSimulacao(Guid idLead, Guid idSimulacao, [FromQuery] Guid? idEstabelecimento = null)
+        {
+            if (!TryResolveEstabelecimento(idEstabelecimento, out var estabelecimentoId, out var error))
+            {
+                return error!;
+            }
+
+            var simulacao = await _repository.ObterSimulacaoAsync(estabelecimentoId, idLead, idSimulacao);
+            if (simulacao == null)
+            {
+                return NotFound(new { success = false, error = "Simulacao nao encontrada." });
+            }
+
             var removido = await _repository.RemoverSimulacaoAsync(estabelecimentoId, idLead, idSimulacao);
             if (!removido)
             {
-                return NotFound();
+                return NotFound(new { success = false, error = "Simulacao nao encontrada." });
+            }
+
+            foreach (var arquivo in simulacao.Arquivos)
+            {
+                await _storageService.DeleteAsync(arquivo.CaminhoRelativo);
             }
 
             return NoContent();

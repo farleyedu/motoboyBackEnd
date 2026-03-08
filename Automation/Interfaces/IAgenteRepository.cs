@@ -9,6 +9,8 @@ namespace APIBack.Automation.Interfaces
         Task<long?> ObterTelegramChatIdPorAgenteIdAsync(int agenteId);
         Task<HandoverAgentDto?> ObterAgentePorIdAsync(int agenteId);
         Task<HandoverAgentDto?> ObterAgenteSuporteAsync();
+        Task<HandoverAgentDto?> ObterAgentePorUsuarioIdAsync(int usuarioId);
+        Task<IReadOnlyList<ConversationAgentDto>> ListarAgentesAsync();
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================

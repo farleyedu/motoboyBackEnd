@@ -21,6 +21,15 @@ namespace APIBack.Automation.Services
         public Task<long?> ObterTelegramChatIdAsync(int agenteId)
             => _repo.ObterTelegramChatIdPorAgenteIdAsync(agenteId);
 
+        public Task<HandoverAgentDto?> ObterAgentePorIdAsync(int agenteId)
+            => _repo.ObterAgentePorIdAsync(agenteId);
+
+        public Task<HandoverAgentDto?> ObterAgentePorUsuarioIdAsync(int usuarioId)
+            => _repo.ObterAgentePorUsuarioIdAsync(usuarioId);
+
+        public Task<IReadOnlyList<ConversationAgentDto>> ListarAgentesAsync()
+            => _repo.ListarAgentesAsync();
+
         public async Task<HandoverAgentDto?> ObterAgenteSuporteAsync()
         {
             var agenteSuporte = await _repo.ObterAgenteSuporteAsync();

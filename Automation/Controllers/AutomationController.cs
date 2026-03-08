@@ -4,7 +4,6 @@ using System.Threading.Tasks;
 using APIBack.Attributes;
 using APIBack.Automation.Dtos;
 using APIBack.Automation.Interfaces;
-using APIBack.Automation.Models;
 using APIBack.Automation.Services;
 using APIBack.Automation.Validators;
 using APIBack.Extensions;
@@ -18,99 +17,112 @@ namespace APIBack.Automation.Controllers
     public class AutomationController : ControllerBase
     {
         private readonly ILogger<AutomationController> _logger;
-        private readonly ConversationService _servicoConversa;
-        private readonly HandoverService _servicoHandover;
-        private readonly IQueueBus _fila;
-        private readonly IWhatsappSender _enviadorWhatsapp;
-        private readonly IConversationRepository _repositorio;
-        private readonly AgentReplyRequestValidator _validador = new();
+        private readonly ConversationService _conversationService;
+        private readonly HandoverService _handoverService;
+        private readonly ConversationManagementService _managementService;
+        private readonly IConversationRepository _conversationRepository;
+        private readonly AgenteService _agenteService;
+        private readonly AgentReplyRequestValidator _validator = new();
 
         public AutomationController(
             ILogger<AutomationController> logger,
-            ConversationService servicoConversa,
-            HandoverService servicoHandover,
-            IQueueBus fila,
-            IWhatsappSender enviadorWhatsapp,
-            IConversationRepository repositorio)
+            ConversationService conversationService,
+            HandoverService handoverService,
+            ConversationManagementService managementService,
+            IConversationRepository conversationRepository,
+            AgenteService agenteService)
         {
             _logger = logger;
-            _servicoConversa = servicoConversa;
-            _servicoHandover = servicoHandover;
-            _fila = fila;
-            _enviadorWhatsapp = enviadorWhatsapp;
-            _repositorio = repositorio;
+            _conversationService = conversationService;
+            _handoverService = handoverService;
+            _managementService = managementService;
+            _conversationRepository = conversationRepository;
+            _agenteService = agenteService;
         }
 
         [HttpPost("conversation/{idConversa:guid}/handover")]
         [RequirePermission("WhatsApp", "editar")]
         public async Task<IActionResult> EncaminharParaHumano(Guid idConversa, [FromBody] HandoverRequest req)
         {
-            var estabelecimentoId = HttpContext.GetEstabelecimentoId();
-            if (!estabelecimentoId.HasValue)
+            try
             {
-                return BadRequest(new { error = "Selecione um estabelecimento para encaminhar conversas." });
-            }
+                var estabelecimentoId = RequireEstabelecimento();
+                var resposta = await _managementService.AssignAsync(
+                    idConversa,
+                    estabelecimentoId,
+                    HttpContext.GetUserId(),
+                    HttpContext.GetUserNome(),
+                    new AssignConversationRequest
+                    {
+                        IdAgente = req?.Agente?.Id ?? 0,
+                        NomeAgente = req?.Agente?.Nome
+                    });
 
-            var conversa = await _repositorio.ObterPorIdAsync(idConversa, estabelecimentoId.Value);
-            if (conversa == null)
+                HandoverAgentDto? agente = null;
+                if (resposta.Controle?.AssignedAgentId is int idAgente && idAgente > 0)
+                {
+                    agente = await _agenteService.ObterAgentePorIdAsync(idAgente);
+                }
+
+                await _handoverService.DefinirHumanoAsync(
+                    resposta.Controle?.ConversationId ?? idConversa,
+                    agente ?? req?.Agente,
+                    req?.ReservaConfirmada ?? false,
+                    req?.Detalhes);
+
+                return Ok(resposta);
+            }
+            catch (ConversationManagementException ex)
             {
-                return NotFound();
+                return StatusCode(ex.StatusCode, new { success = false, error = ex.Message });
             }
-
-            await _servicoHandover.DefinirHumanoAsync(conversa.IdConversa, req.Agente, req.ReservaConfirmada, req.Detalhes);
-            return Ok();
         }
 
         [HttpPost("conversation/{idConversa:guid}/back-to-bot")]
         [RequirePermission("WhatsApp", "editar")]
         public async Task<IActionResult> VoltarParaBot(Guid idConversa)
         {
-            var estabelecimentoId = HttpContext.GetEstabelecimentoId();
-            if (!estabelecimentoId.HasValue)
+            try
             {
-                return BadRequest(new { error = "Selecione um estabelecimento para atualizar conversas." });
-            }
+                var resposta = await _managementService.BackToBotAsync(
+                    idConversa,
+                    RequireEstabelecimento(),
+                    HttpContext.GetUserId(),
+                    HttpContext.GetUserNome());
 
-            var conversa = await _repositorio.ObterPorIdAsync(idConversa, estabelecimentoId.Value);
-            if (conversa == null)
+                return Ok(resposta);
+            }
+            catch (ConversationManagementException ex)
             {
-                return NotFound();
+                return StatusCode(ex.StatusCode, new { success = false, error = ex.Message });
             }
-
-            await _servicoConversa.DefinirModoBotAsync(conversa.IdConversa, "Transicao para bot");
-            return Ok();
         }
 
-        // [Authorize(Roles="Atendente")] // TODO: enable when security is configured
         [HttpPost("agent/reply")]
         [RequirePermission("WhatsApp", "criar")]
         public async Task<IActionResult> RespostaAgente([FromBody] AgentReplyRequest req)
         {
-            var estabelecimentoId = HttpContext.GetEstabelecimentoId();
-            if (!estabelecimentoId.HasValue)
+            var (valido, erro) = _validator.Validar(req);
+            if (!valido)
             {
-                return BadRequest(new { erro = "Selecione um estabelecimento para responder conversas." });
+                return BadRequest(new { erro });
             }
 
-            var (valido, erro) = _validador.Validar(req);
-            if (!valido) return BadRequest(new { erro });
-
-            var conversa = await _repositorio.ObterPorIdAsync(req.IdConversa, estabelecimentoId.Value);
-            if (conversa == null) return NotFound();
-
-            if (conversa.Modo != ModoConversa.Humano)
+            try
             {
-                return Conflict(new { erro = "Conversa nao esta em modo humano" });
+                var resposta = await _managementService.SendMessageAsync(
+                    req.IdConversa,
+                    RequireEstabelecimento(),
+                    HttpContext.GetUserId(),
+                    HttpContext.GetUserNome(),
+                    new SendConversationMessageRequest { Mensagem = req.Mensagem });
+
+                return Ok((object?)resposta.Mensagem ?? new { });
             }
-
-            var mensagem = await _servicoConversa.AcrescentarSaidaAsync(conversa.IdConversa, conversa.IdWa, req.Mensagem);
-            await _fila.PublicarSaidaAsync(mensagem);
-
-            // stub send to WA
-            _ = await _enviadorWhatsapp.EnviarTextoAsync(conversa.IdWa, req.Mensagem);
-
-            var payload = ConversationMessageView.FromMessage(mensagem);
-            return Ok(payload);
+            catch (ConversationManagementException ex)
+            {
+                return StatusCode(ex.StatusCode, new { erro = ex.Message });
+            }
         }
 
         [HttpGet("conversation/{idConversa:guid}")]
@@ -123,16 +135,19 @@ namespace APIBack.Automation.Controllers
                 return BadRequest(new { error = "Selecione um estabelecimento para consultar conversas." });
             }
 
-            var conversa = await _repositorio.ObterPorIdAsync(idConversa, estabelecimentoId.Value);
+            var conversa = await _conversationRepository.ObterPorIdAsync(idConversa, estabelecimentoId.Value);
             if (conversa == null)
             {
                 return NotFound();
             }
 
-            if (ultimas <= 0) ultimas = 20;
-            var resposta = await _servicoConversa.ObterConversaRespostaAsync(idConversa, estabelecimentoId.Value, ultimas);
-            if (resposta == null) return NotFound();
-            return Ok(resposta);
+            if (ultimas <= 0)
+            {
+                ultimas = 20;
+            }
+
+            var resposta = await _conversationService.ObterConversaRespostaAsync(idConversa, estabelecimentoId.Value, ultimas);
+            return resposta == null ? NotFound() : Ok(resposta);
         }
 
         [HttpGet("health")]
@@ -141,6 +156,17 @@ namespace APIBack.Automation.Controllers
         {
             var saude = servicoSaude.ObterSaude();
             return Ok(saude);
+        }
+
+        private Guid RequireEstabelecimento()
+        {
+            var estabelecimentoId = HttpContext.GetEstabelecimentoId();
+            if (!estabelecimentoId.HasValue)
+            {
+                throw new ConversationManagementException(422, "Selecione um estabelecimento para continuar.");
+            }
+
+            return estabelecimentoId.Value;
         }
     }
 }

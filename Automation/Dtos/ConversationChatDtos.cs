@@ -9,10 +9,14 @@ namespace APIBack.Automation.Dtos
     {
         public Guid Id { get; set; }
         public Guid IdCliente { get; set; }
+        public Guid IdConversaOperacional { get; set; }
+        public Guid IdConversaGrupo { get; set; }
         public string? ClienteNome { get; set; }
         public string? ClienteNumero { get; set; }
         public string Estado { get; set; } = string.Empty;
         public int? IdAgenteAtribuido { get; set; }
+        public string? AgenteNome { get; set; }
+        public int QtdNaoLidas { get; set; }
         public DateTime? DataPrimeiraMensagem { get; set; }
         public DateTime? DataUltimaMensagem { get; set; }
         public DateTime DataCriacao { get; set; }
@@ -27,10 +31,14 @@ namespace APIBack.Automation.Dtos
     {
         public Guid Id { get; set; }
         public Guid IdCliente { get; set; }
+        public Guid IdConversaOperacional { get; set; }
+        public Guid IdConversaGrupo { get; set; }
         public string? ClienteNome { get; set; }
         public string? ClienteNumero { get; set; }
         public string Estado { get; set; } = string.Empty;
         public int? IdAgenteAtribuido { get; set; }
+        public string? AgenteNome { get; set; }
+        public int QtdNaoLidas { get; set; }
         public DateTime? DataPrimeiraMensagem { get; set; }
         public DateTime? DataUltimaMensagem { get; set; }
         public DateTime DataCriacao { get; set; }
@@ -45,6 +53,8 @@ namespace APIBack.Automation.Dtos
         public Guid Id { get; set; }
         public string CriadaPor { get; set; } = string.Empty;
         public string Conteudo { get; set; } = string.Empty;
+        public string Tipo { get; set; } = "texto";
+        public string Status { get; set; } = string.Empty;
         public DateTime? DataEnvio { get; set; }
         public DateTime DataCriacao { get; set; }
     }
@@ -52,6 +62,8 @@ namespace APIBack.Automation.Dtos
     public class ConversationHistoryDto
     {
         public ConversationDetailsDto Conversa { get; set; } = new ConversationDetailsDto();
+        public ConversationControlDto? Controle { get; set; }
+        public IReadOnlyList<ConversationEventDto> Eventos { get; set; } = Array.Empty<ConversationEventDto>();
         public IReadOnlyList<ConversationMessageItemDto> Mensagens { get; set; } = Array.Empty<ConversationMessageItemDto>();
         public int Page { get; set; }
         public int PageSize { get; set; }

@@ -9,6 +9,7 @@ namespace APIBack.Automation.Interfaces
         Task<bool> ExistsByProviderIdAsync(string providerMessageId);
         Task AddMessageAsync(Message mensagem, string? phoneNumberId, string? idWa);
         Task<IReadOnlyList<Message>> GetByConversationAsync(Guid idConversa, int limit = 200);
+        Task AtualizarStatusAsync(Guid idMensagem, string status, string? codigoErro = null, string? mensagemErro = null);
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================

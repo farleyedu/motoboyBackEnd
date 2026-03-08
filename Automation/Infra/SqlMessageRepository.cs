@@ -270,6 +270,40 @@ LIMIT @Limit;
             });
             return list.AsList();
         }
+
+        public async Task AtualizarStatusAsync(Guid idMensagem, string status, string? codigoErro = null, string? mensagemErro = null)
+        {
+            const string sql = @"
+UPDATE mensagens
+   SET status = @Status::status_mensagem_enum,
+       codigo_erro = @CodigoErro,
+       mensagem_erro = @MensagemErro,
+       data_envio = CASE
+           WHEN @Status IN ('enviado', 'enviada', 'entregue', 'entregada', 'lido', 'lida')
+               THEN COALESCE(data_envio, NOW())
+           ELSE data_envio
+       END,
+       data_entrega = CASE
+           WHEN @Status IN ('entregue', 'entregada', 'lido', 'lida')
+               THEN COALESCE(data_entrega, NOW())
+           ELSE data_entrega
+       END,
+       data_leitura = CASE
+           WHEN @Status IN ('lido', 'lida')
+               THEN COALESCE(data_leitura, NOW())
+           ELSE data_leitura
+       END
+ WHERE id = @Id;";
+
+            await using var cx = new NpgsqlConnection(_connectionString);
+            await cx.ExecuteAsync(sql, new
+            {
+                Id = idMensagem,
+                Status = status,
+                CodigoErro = codigoErro,
+                MensagemErro = mensagemErro
+            });
+        }
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================

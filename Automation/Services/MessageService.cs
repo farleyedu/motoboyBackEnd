@@ -53,6 +53,11 @@ namespace APIBack.Automation.Services
             await _repo.AddMessageAsync(mensagem, phoneNumberId, idWa ?? string.Empty);
             return mensagem;
         }
+
+        public Task AtualizarStatusAsync(Guid idMensagem, string status, string? codigoErro = null, string? mensagemErro = null)
+        {
+            return _repo.AtualizarStatusAsync(idMensagem, status, codigoErro, mensagemErro);
+        }
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================

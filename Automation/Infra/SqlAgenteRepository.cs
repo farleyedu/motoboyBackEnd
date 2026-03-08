@@ -51,6 +51,32 @@ namespace APIBack.Automation.Infra
             await using var cx = new NpgsqlConnection(_connectionString);
             return await cx.QueryFirstOrDefaultAsync<HandoverAgentDto>(sql, new { Funcao = "Suporte" });
         }
+
+        public async Task<HandoverAgentDto?> ObterAgentePorUsuarioIdAsync(int usuarioId)
+        {
+            const string sql = @"SELECT a.id,
+                                        u.nome,
+                                        NULLIF(a.telegramchatid, '')::bigint AS TelegramChatId
+                                   FROM agentes a
+                                   LEFT JOIN usuario u ON u.id = a.usuarioid
+                                  WHERE a.usuarioid = @UsuarioId
+                                  ORDER BY a.id
+                                  LIMIT 1;";
+            await using var cx = new NpgsqlConnection(_connectionString);
+            return await cx.QueryFirstOrDefaultAsync<HandoverAgentDto>(sql, new { UsuarioId = usuarioId });
+        }
+
+        public async Task<IReadOnlyList<ConversationAgentDto>> ListarAgentesAsync()
+        {
+            const string sql = @"SELECT a.id,
+                                        COALESCE(u.nome, CONCAT('Agente ', a.id::text)) AS Nome
+                                   FROM agentes a
+                                   LEFT JOIN usuario u ON u.id = a.usuarioid
+                               ORDER BY COALESCE(u.nome, CONCAT('Agente ', a.id::text));";
+            await using var cx = new NpgsqlConnection(_connectionString);
+            var rows = await cx.QueryAsync<ConversationAgentDto>(sql);
+            return rows.AsList();
+        }
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================

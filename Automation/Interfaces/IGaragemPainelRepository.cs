@@ -35,6 +35,23 @@ namespace APIBack.Automation.Interfaces
             Guid idSimulacao,
             UpdateGarageLeadSimulationRequest request);
 
+        Task<GarageLeadSimulationDto?> ObterSimulacaoAsync(
+            Guid idEstabelecimento,
+            Guid idLead,
+            Guid idSimulacao);
+
+        Task<GarageLeadSimulationFileDto?> AdicionarArquivoSimulacaoAsync(
+            Guid idEstabelecimento,
+            Guid idLead,
+            Guid idSimulacao,
+            GarageLeadSimulationFileDto arquivo);
+
+        Task<bool> RemoverArquivoSimulacaoAsync(
+            Guid idEstabelecimento,
+            Guid idLead,
+            Guid idSimulacao,
+            Guid idArquivo);
+
         Task<bool> RemoverSimulacaoAsync(Guid idEstabelecimento, Guid idLead, Guid idSimulacao);
     }
 }

@@ -137,6 +137,8 @@ builder.Services.AddScoped<IAlertSender, AlertSenderTelegram>();
 builder.Services.AddScoped<IAgenteRepository, SqlAgenteRepository>();
 builder.Services.AddScoped<AgenteService>();
 builder.Services.AddScoped<ConversationService>();
+builder.Services.AddScoped<ConversationManagementService>();
+builder.Services.AddScoped<GarageSimulationStorageService>();
 builder.Services.AddSingleton<PromptAssembler>();
 builder.Services.AddScoped<IMessageService, MessageService>();
 builder.Services.AddScoped<HandoverService>();
@@ -238,6 +240,7 @@ if (app.Environment.IsDevelopment() || app.Environment.IsProduction())
 
 // Usar o middleware de CORS
 app.UseCors("AllowAll");
+app.UseStaticFiles();
 
 app.UseMiddleware<JwtAuthenticationMiddleware>();
 app.UseAuthorization();

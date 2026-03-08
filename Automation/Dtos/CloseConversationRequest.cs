@@ -5,6 +5,7 @@ namespace APIBack.Automation.Dtos
     {
         public int? IdAgente { get; set; }
         public string? Motivo { get; set; }
+        public string? Tipo { get; set; }
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================

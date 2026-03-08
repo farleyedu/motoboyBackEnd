@@ -15,6 +15,7 @@ namespace APIBack.Automation.Infra
     {
         private readonly string _connectionString;
         private readonly ILogger<SqlWabaPhoneRepository>? _logger;
+        private static (bool PhoneNumberId, bool DisplayPhoneNumber)? _cachedColumns;
 
         public SqlWabaPhoneRepository(IConfiguration configuration)
         {
@@ -35,19 +36,33 @@ namespace APIBack.Automation.Infra
 
             var digitsOnly = new string(phoneNumberId.Where(char.IsDigit).ToArray());
 
-            const string sql = @"SELECT id_estabelecimento
-                                  FROM waba_phone
-                                  WHERE ativo = TRUE
-                                    AND (
-                                         display_phone_number  = @Raw
-                                         OR regexp_replace(display_phone_number, '[^0-9]', '', 'g') = @Digits
-                                        )
-                                  ORDER BY data_atualizacao DESC
-                                  LIMIT 1;";
-
             try
             {
                 await using var connection = new NpgsqlConnection(_connectionString);
+                var columns = await ObterColunasAsync(connection);
+                var comparisons = new System.Collections.Generic.List<string>();
+                if (columns.PhoneNumberId)
+                {
+                    comparisons.Add("phone_number_id = @Raw");
+                    comparisons.Add("regexp_replace(phone_number_id, '[^0-9]', '', 'g') = @Digits");
+                }
+                if (columns.DisplayPhoneNumber)
+                {
+                    comparisons.Add("display_phone_number = @Raw");
+                    comparisons.Add("regexp_replace(display_phone_number, '[^0-9]', '', 'g') = @Digits");
+                }
+
+                if (comparisons.Count == 0)
+                {
+                    return null;
+                }
+
+                var sql = $@"SELECT id_estabelecimento
+                                FROM waba_phone
+                               WHERE ativo = TRUE
+                                 AND ({string.Join(" OR ", comparisons)})
+                               ORDER BY data_atualizacao DESC
+                               LIMIT 1;";
                 var result = await connection.ExecuteScalarAsync<Guid?>(sql, new { Raw = phoneNumberId, Digits = digitsOnly });
                 return result;
             }
@@ -63,16 +78,20 @@ namespace APIBack.Automation.Infra
             if (string.IsNullOrWhiteSpace(displayPhoneNumber))
                 return null;
 
-            const string sql = @"
-        SELECT id_estabelecimento
-        FROM waba_phone
-        WHERE display_phone_number = @displayPhoneNumber
-          AND ativo = true
-        LIMIT 1;";
-
             try
             {
                 await using var connection = new NpgsqlConnection(_connectionString);
+                var columns = await ObterColunasAsync(connection);
+                if (!columns.DisplayPhoneNumber)
+                {
+                    return null;
+                }
+                const string sql = @"
+SELECT id_estabelecimento
+  FROM waba_phone
+ WHERE display_phone_number = @displayPhoneNumber
+   AND ativo = true
+ LIMIT 1;";
                 var idEstabelecimento = await connection.QueryFirstOrDefaultAsync<Guid?>(
                     sql,
                     new { displayPhoneNumber });
@@ -96,18 +115,24 @@ namespace APIBack.Automation.Infra
             var criado = wabaPhone.DataCriacao != default ? DateTime.SpecifyKind(wabaPhone.DataCriacao, DateTimeKind.Utc) : DateTime.UtcNow;
             var atualizado = DateTime.UtcNow;
 
-            const string sql = @"INSERT INTO waba_phone (display_phone_number , id_estabelecimento, ativo, descricao, data_criacao, data_atualizacao)
-                                 VALUES (@PhoneNumberId, @IdEstabelecimento, @Ativo, @Descricao, @DataCriacao, @DataAtualizacao)
-                                 ON CONFLICT (display_phone_number )
-                                 DO UPDATE SET
-                                   id_estabelecimento = EXCLUDED.id_estabelecimento,
-                                   ativo              = EXCLUDED.ativo,
-                                   descricao          = EXCLUDED.descricao,
-                                   data_atualizacao   = EXCLUDED.data_atualizacao;";
-
             try
             {
                 await using var connection = new NpgsqlConnection(_connectionString);
+                var columns = await ObterColunasAsync(connection);
+                if (!columns.PhoneNumberId && !columns.DisplayPhoneNumber)
+                {
+                    return false;
+                }
+
+                var targetColumn = columns.PhoneNumberId ? "phone_number_id" : "display_phone_number";
+                var sql = $@"INSERT INTO waba_phone ({targetColumn}, id_estabelecimento, ativo, descricao, data_criacao, data_atualizacao)
+                             VALUES (@PhoneNumberId, @IdEstabelecimento, @Ativo, @Descricao, @DataCriacao, @DataAtualizacao)
+                             ON CONFLICT ({targetColumn})
+                             DO UPDATE SET
+                               id_estabelecimento = EXCLUDED.id_estabelecimento,
+                               ativo              = EXCLUDED.ativo,
+                               descricao          = EXCLUDED.descricao,
+                               data_atualizacao   = EXCLUDED.data_atualizacao;";
                 var rows = await connection.ExecuteAsync(sql, new
                 {
                     PhoneNumberId = wabaPhone.PhoneNumberId,
@@ -133,18 +158,32 @@ namespace APIBack.Automation.Infra
 
             var digitsOnly = new string(phoneNumberId.Where(char.IsDigit).ToArray());
 
-            const string sql = @"SELECT 1
-                                  FROM waba_phone
-                                  WHERE ativo = TRUE
-                                    AND (
-                                         display_phone_number  = @Raw
-                                         OR regexp_replace(display_phone_number , '[^0-9]', '', 'g') = @Digits
-                                        )
-                                  LIMIT 1;";
-
             try
             {
                 await using var connection = new NpgsqlConnection(_connectionString);
+                var columns = await ObterColunasAsync(connection);
+                var comparisons = new System.Collections.Generic.List<string>();
+                if (columns.PhoneNumberId)
+                {
+                    comparisons.Add("phone_number_id = @Raw");
+                    comparisons.Add("regexp_replace(phone_number_id, '[^0-9]', '', 'g') = @Digits");
+                }
+                if (columns.DisplayPhoneNumber)
+                {
+                    comparisons.Add("display_phone_number = @Raw");
+                    comparisons.Add("regexp_replace(display_phone_number, '[^0-9]', '', 'g') = @Digits");
+                }
+
+                if (comparisons.Count == 0)
+                {
+                    return false;
+                }
+
+                var sql = $@"SELECT 1
+                                FROM waba_phone
+                               WHERE ativo = TRUE
+                                 AND ({string.Join(" OR ", comparisons)})
+                               LIMIT 1;";
                 var existe = await connection.ExecuteScalarAsync<int?>(sql, new { Raw = phoneNumberId, Digits = digitsOnly });
                 return existe.HasValue;
             }
@@ -153,6 +192,89 @@ namespace APIBack.Automation.Infra
                 _logger?.LogError(ex, "Erro ao verificar se WabaPhone esta ativo {PhoneNumberId}", phoneNumberId);
                 return false;
             }
+        }
+
+        public async Task<string?> ObterPhoneNumberIdPorEstabelecimentoAsync(Guid idEstabelecimento)
+        {
+            if (idEstabelecimento == Guid.Empty)
+            {
+                return null;
+            }
+
+            try
+            {
+                await using var connection = new NpgsqlConnection(_connectionString);
+                var columns = await ObterColunasAsync(connection);
+                if (!columns.PhoneNumberId)
+                {
+                    return null;
+                }
+
+                return await connection.ExecuteScalarAsync<string?>(
+                    @"SELECT phone_number_id
+                        FROM waba_phone
+                       WHERE id_estabelecimento = @IdEstabelecimento
+                         AND ativo = TRUE
+                    ORDER BY data_atualizacao DESC
+                       LIMIT 1;",
+                    new { IdEstabelecimento = idEstabelecimento });
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError(ex, "Erro ao buscar phone_number_id por estabelecimento {IdEstabelecimento}", idEstabelecimento);
+                return null;
+            }
+        }
+
+        public async Task<string?> ObterDisplayPhonePorEstabelecimentoAsync(Guid idEstabelecimento)
+        {
+            if (idEstabelecimento == Guid.Empty)
+            {
+                return null;
+            }
+
+            try
+            {
+                await using var connection = new NpgsqlConnection(_connectionString);
+                var columns = await ObterColunasAsync(connection);
+                if (!columns.DisplayPhoneNumber)
+                {
+                    return null;
+                }
+
+                return await connection.ExecuteScalarAsync<string?>(
+                    @"SELECT display_phone_number
+                        FROM waba_phone
+                       WHERE id_estabelecimento = @IdEstabelecimento
+                         AND ativo = TRUE
+                    ORDER BY data_atualizacao DESC
+                       LIMIT 1;",
+                    new { IdEstabelecimento = idEstabelecimento });
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError(ex, "Erro ao buscar display_phone_number por estabelecimento {IdEstabelecimento}", idEstabelecimento);
+                return null;
+            }
+        }
+
+        private async Task<(bool PhoneNumberId, bool DisplayPhoneNumber)> ObterColunasAsync(NpgsqlConnection connection)
+        {
+            if (_cachedColumns.HasValue)
+            {
+                return _cachedColumns.Value;
+            }
+
+            var rows = await connection.QueryAsync<string>(
+                @"SELECT column_name
+                    FROM information_schema.columns
+                   WHERE table_name = 'waba_phone';");
+
+            var hash = rows.Select(r => r.Trim().ToLowerInvariant()).ToHashSet();
+            _cachedColumns = (
+                hash.Contains("phone_number_id"),
+                hash.Contains("display_phone_number"));
+            return _cachedColumns.Value;
         }
     }
 }
