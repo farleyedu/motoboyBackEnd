@@ -192,9 +192,17 @@ namespace APIBack.Extensions
                 }
             }
 
-            return builder
+            var token = builder
                 .ToString()
                 .Normalize(NormalizationForm.FormC);
+
+            return token switch
+            {
+                "cadastrar" => "criar",
+                "cadastro" => "criar",
+                "excluir" => "deletar",
+                _ => token
+            };
         }
     }
 }

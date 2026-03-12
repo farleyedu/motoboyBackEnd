@@ -113,6 +113,7 @@ builder.Services.AddScoped<IEstabelecimentoRepository, SqlEstabelecimentoReposit
 builder.Services.AddScoped<IClienteRepository, SqlClienteRepository>();
 builder.Services.AddScoped<IGaragemLeadRepository, SqlGaragemLeadRepository>();
 builder.Services.AddScoped<IGaragemPainelRepository, SqlGaragemPainelRepository>();
+builder.Services.AddScoped<IGaragemVeiculoRepository, SqlGaragemVeiculoRepository>();
 builder.Services.AddSingleton<IQueueBus, InMemoryQueueBus>();
 builder.Services.AddScoped<IWebhookSignatureValidator, WebhookSignatureValidator>();
 builder.Services.AddScoped<IWhatsappSender, WhatsappSenderStub>();
