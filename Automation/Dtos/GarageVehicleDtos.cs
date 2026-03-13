@@ -35,6 +35,11 @@ namespace APIBack.Automation.Dtos
         public List<GarageVehicleConditionItemDto> ConditionItems { get; set; } = new();
     }
 
+    public class GarageVehicleAdminDto : GarageVehicleDto
+    {
+        public string? Plate { get; set; }
+    }
+
     public class GarageVehicleConditionItemDto
     {
         public string Label { get; set; } = string.Empty;
@@ -44,7 +49,7 @@ namespace APIBack.Automation.Dtos
 
     public class GarageVehicleListResponseDto
     {
-        public IReadOnlyList<GarageVehicleDto> Items { get; set; } = Array.Empty<GarageVehicleDto>();
+        public IReadOnlyList<GarageVehicleAdminDto> Items { get; set; } = Array.Empty<GarageVehicleAdminDto>();
         public int Total { get; set; }
         public int Page { get; set; }
         public int PageSize { get; set; }

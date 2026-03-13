@@ -28,7 +28,7 @@ namespace APIBack.Automation.Infra
                 ?? throw new InvalidOperationException("Connection string 'DefaultConnection' nao encontrada.");
         }
 
-        public async Task<(IReadOnlyList<GarageVehicleDto> Items, int Total)> ListarAsync(
+        public async Task<(IReadOnlyList<GarageVehicleAdminDto> Items, int Total)> ListarAsync(
             Guid idEstabelecimento,
             string? status,
             string? categoria,
@@ -48,15 +48,16 @@ SELECT COUNT(*)::int
  WHERE v.id_estabelecimento = @IdEstabelecimento
    AND (@Status IS NULL OR v.status = @Status)
    AND (@Categoria IS NULL OR v.categoria = @Categoria)
-   AND (
-        @Search IS NULL OR @Search = '' OR
-        COALESCE(v.titulo, '') ILIKE '%' || @Search || '%' OR
-        COALESCE(v.marca, '') ILIKE '%' || @Search || '%' OR
-        COALESCE(v.modelo, '') ILIKE '%' || @Search || '%' OR
-        COALESCE(v.cidade, '') ILIKE '%' || @Search || '%' OR
-        COALESCE(v.codigo_estoque, '') ILIKE '%' || @Search || '%' OR
-        COALESCE(v.slug, '') ILIKE '%' || @Search || '%'
-   );
+    AND (
+         @Search IS NULL OR @Search = '' OR
+         COALESCE(v.titulo, '') ILIKE '%' || @Search || '%' OR
+         COALESCE(v.marca, '') ILIKE '%' || @Search || '%' OR
+         COALESCE(v.modelo, '') ILIKE '%' || @Search || '%' OR
+         COALESCE(v.cidade, '') ILIKE '%' || @Search || '%' OR
+         COALESCE(v.codigo_estoque, '') ILIKE '%' || @Search || '%' OR
+         COALESCE(v.placa, '') ILIKE '%' || @Search || '%' OR
+         COALESCE(v.slug, '') ILIKE '%' || @Search || '%'
+    );
 
 SELECT v.id,
        v.id_estabelecimento AS IdEstabelecimento,
@@ -73,6 +74,7 @@ SELECT v.id,
        v.combustivel,
        v.cambio,
        v.cor,
+       v.placa AS Placa,
        v.cidade,
        v.carroceria,
        v.portas,
@@ -90,17 +92,18 @@ SELECT v.id,
  WHERE v.id_estabelecimento = @IdEstabelecimento
    AND (@Status IS NULL OR v.status = @Status)
    AND (@Categoria IS NULL OR v.categoria = @Categoria)
-   AND (
-        @Search IS NULL OR @Search = '' OR
-        COALESCE(v.titulo, '') ILIKE '%' || @Search || '%' OR
-        COALESCE(v.marca, '') ILIKE '%' || @Search || '%' OR
-        COALESCE(v.modelo, '') ILIKE '%' || @Search || '%' OR
-        COALESCE(v.cidade, '') ILIKE '%' || @Search || '%' OR
-        COALESCE(v.codigo_estoque, '') ILIKE '%' || @Search || '%' OR
-        COALESCE(v.slug, '') ILIKE '%' || @Search || '%'
-   )
- ORDER BY v.destaque DESC, COALESCE(v.data_atualizacao, v.data_criacao) DESC, v.id DESC
- LIMIT @Limit OFFSET @Offset;";
+    AND (
+         @Search IS NULL OR @Search = '' OR
+         COALESCE(v.titulo, '') ILIKE '%' || @Search || '%' OR
+         COALESCE(v.marca, '') ILIKE '%' || @Search || '%' OR
+         COALESCE(v.modelo, '') ILIKE '%' || @Search || '%' OR
+         COALESCE(v.cidade, '') ILIKE '%' || @Search || '%' OR
+         COALESCE(v.codigo_estoque, '') ILIKE '%' || @Search || '%' OR
+         COALESCE(v.placa, '') ILIKE '%' || @Search || '%' OR
+         COALESCE(v.slug, '') ILIKE '%' || @Search || '%'
+    )
+  ORDER BY v.destaque DESC, COALESCE(v.data_atualizacao, v.data_criacao) DESC, v.id DESC
+  LIMIT @Limit OFFSET @Offset;";
 
             await using var connection = new NpgsqlConnection(_connectionString);
             await connection.OpenAsync();
@@ -117,11 +120,11 @@ SELECT v.id,
 
             var total = await multi.ReadFirstAsync<int>();
             var rows = (await multi.ReadAsync<GarageVehicleRow>()).ToList();
-            var items = await MapVehiclesAsync(connection, rows);
+            var items = await MapAdminVehiclesAsync(connection, rows);
             return (items, total);
         }
 
-        public async Task<GarageVehicleDto?> ObterPorIdAsync(
+        public async Task<GarageVehicleAdminDto?> ObterPorIdAsync(
             Guid id,
             Guid? idEstabelecimento = null,
             bool somenteDisponiveis = false)
@@ -144,6 +147,7 @@ SELECT v.id,
        v.combustivel,
        v.cambio,
        v.cor,
+       v.placa AS Placa,
        v.cidade,
        v.carroceria,
        v.portas,
@@ -178,11 +182,11 @@ SELECT v.id,
                 return null;
             }
 
-            var mapped = await MapVehiclesAsync(connection, new[] { row });
+            var mapped = await MapAdminVehiclesAsync(connection, new[] { row });
             return mapped.FirstOrDefault();
         }
 
-        public async Task<GarageVehicleDto> CriarAsync(Guid idEstabelecimento, CreateGarageVehicleRequest request)
+        public async Task<GarageVehicleAdminDto> CriarAsync(Guid idEstabelecimento, CreateGarageVehicleRequest request)
         {
             await EnsureSchemaAsync();
 
@@ -246,7 +250,7 @@ VALUES (
             }
         }
 
-        public async Task<GarageVehicleDto?> AtualizarAsync(Guid id, Guid idEstabelecimento, UpsertGarageVehicleRequest request)
+        public async Task<GarageVehicleAdminDto?> AtualizarAsync(Guid id, Guid idEstabelecimento, UpsertGarageVehicleRequest request)
         {
             await EnsureSchemaAsync();
 
@@ -442,7 +446,7 @@ SELECT v.id,
                 Search = LimparFiltro(search)
             })).ToList();
 
-            var items = await MapVehiclesAsync(connection, rows);
+            var items = await MapPublicVehiclesAsync(connection, rows);
             var destaques = items.Where(item => item.Featured).Take(8).ToList();
 
             return new GarageVehicleShowcaseResponseDto
@@ -468,7 +472,29 @@ SELECT COUNT(*)::int AS Total,
             return await connection.QueryFirstAsync<GarageVehicleMetricsDto>(sql, new { IdEstabelecimento = idEstabelecimento });
         }
 
-        private async Task<IReadOnlyList<GarageVehicleDto>> MapVehiclesAsync(
+        private async Task<IReadOnlyList<GarageVehicleAdminDto>> MapAdminVehiclesAsync(
+            NpgsqlConnection connection,
+            IReadOnlyCollection<GarageVehicleRow> rows)
+        {
+            if (rows.Count == 0)
+            {
+                return Array.Empty<GarageVehicleAdminDto>();
+            }
+
+            var galleryByVehicle = await LoadGalleryByVehicleAsync(connection, rows);
+            return rows.Select(row =>
+            {
+                var dto = new GarageVehicleAdminDto
+                {
+                    Plate = LimparFiltro(row.Placa)
+                };
+
+                PopulateVehicleDto(dto, row, galleryByVehicle);
+                return dto;
+            }).ToList();
+        }
+
+        private async Task<IReadOnlyList<GarageVehicleDto>> MapPublicVehiclesAsync(
             NpgsqlConnection connection,
             IReadOnlyCollection<GarageVehicleRow> rows)
         {
@@ -477,13 +503,26 @@ SELECT COUNT(*)::int AS Total,
                 return Array.Empty<GarageVehicleDto>();
             }
 
+            var galleryByVehicle = await LoadGalleryByVehicleAsync(connection, rows);
+            return rows.Select(row =>
+            {
+                var dto = new GarageVehicleDto();
+                PopulateVehicleDto(dto, row, galleryByVehicle);
+                return dto;
+            }).ToList();
+        }
+
+        private async Task<IReadOnlyDictionary<Guid, List<string>>> LoadGalleryByVehicleAsync(
+            NpgsqlConnection connection,
+            IReadOnlyCollection<GarageVehicleRow> rows)
+        {
             var ids = rows.Select(row => row.Id).ToArray();
             var photos = (await connection.QueryAsync<GarageVehiclePhotoRow>(@"
 SELECT id_veiculo AS VehicleId,
        url,
        ordem
   FROM garagem_veiculo_foto
- WHERE id_veiculo = ANY(@Ids)
+  WHERE id_veiculo = ANY(@Ids)
  ORDER BY id_veiculo ASC, ordem ASC;",
                 new { Ids = ids }))
                 .ToList();
@@ -494,37 +533,42 @@ SELECT id_veiculo AS VehicleId,
                     group => group.Key,
                     group => group.Select(photo => photo.Url ?? string.Empty).Where(url => !string.IsNullOrWhiteSpace(url)).ToList());
 
-            return rows.Select(row => new GarageVehicleDto
-            {
-                Id = row.Id,
-                Slug = row.Slug ?? string.Empty,
-                Title = row.Titulo ?? string.Empty,
-                Brand = row.Marca ?? string.Empty,
-                Model = row.Modelo ?? string.Empty,
-                Category = NormalizeCategory(row.Categoria) ?? string.Empty,
-                Year = row.AnoFabricacao,
-                ModelYear = row.AnoModelo,
-                Price = row.Preco,
-                OldPrice = row.PrecoAnterior,
-                Km = row.Km ?? 0,
-                Fuel = row.Combustivel ?? string.Empty,
-                Transmission = row.Cambio ?? string.Empty,
-                Color = row.Cor ?? string.Empty,
-                City = row.Cidade ?? string.Empty,
-                Body = row.Carroceria ?? string.Empty,
-                Doors = row.Portas ?? 0,
-                Seats = row.Assentos ?? 0,
-                Status = NormalizeStatus(row.Status) ?? string.Empty,
-                Condition = NormalizeVehicleType(row.TipoVeiculo),
-                Featured = row.Destaque,
-                SpotlightLabel = LimparFiltro(row.LabelDestaque),
-                StockCode = row.CodigoEstoque ?? string.Empty,
-                DriveType = LimparFiltro(row.Tracao),
-                Description = row.Descricao ?? string.Empty,
-                Optionals = DeserializeStringList(row.OpcionaisJson),
-                Gallery = galleryByVehicle.TryGetValue(row.Id, out var gallery) ? gallery : new List<string>(),
-                ConditionItems = DeserializeConditionItems(row.CondicoesJson)
-            }).ToList();
+            return galleryByVehicle;
+        }
+
+        private static void PopulateVehicleDto(
+            GarageVehicleDto dto,
+            GarageVehicleRow row,
+            IReadOnlyDictionary<Guid, List<string>> galleryByVehicle)
+        {
+            dto.Id = row.Id;
+            dto.Slug = row.Slug ?? string.Empty;
+            dto.Title = row.Titulo ?? string.Empty;
+            dto.Brand = row.Marca ?? string.Empty;
+            dto.Model = row.Modelo ?? string.Empty;
+            dto.Category = NormalizeCategory(row.Categoria) ?? string.Empty;
+            dto.Year = row.AnoFabricacao;
+            dto.ModelYear = row.AnoModelo;
+            dto.Price = row.Preco;
+            dto.OldPrice = row.PrecoAnterior;
+            dto.Km = row.Km ?? 0;
+            dto.Fuel = row.Combustivel ?? string.Empty;
+            dto.Transmission = row.Cambio ?? string.Empty;
+            dto.Color = row.Cor ?? string.Empty;
+            dto.City = row.Cidade ?? string.Empty;
+            dto.Body = row.Carroceria ?? string.Empty;
+            dto.Doors = row.Portas ?? 0;
+            dto.Seats = row.Assentos ?? 0;
+            dto.Status = NormalizeStatus(row.Status) ?? string.Empty;
+            dto.Condition = NormalizeVehicleType(row.TipoVeiculo);
+            dto.Featured = row.Destaque;
+            dto.SpotlightLabel = LimparFiltro(row.LabelDestaque);
+            dto.StockCode = row.CodigoEstoque ?? string.Empty;
+            dto.DriveType = LimparFiltro(row.Tracao);
+            dto.Description = row.Descricao ?? string.Empty;
+            dto.Optionals = DeserializeStringList(row.OpcionaisJson);
+            dto.Gallery = galleryByVehicle.TryGetValue(row.Id, out var gallery) ? gallery : new List<string>();
+            dto.ConditionItems = DeserializeConditionItems(row.CondicoesJson);
         }
 
         private async Task ReplacePhotosAsync(
@@ -1105,6 +1149,7 @@ CREATE INDEX IF NOT EXISTS ix_garagem_veiculo_foto_veiculo
             public string? Combustivel { get; set; }
             public string? Cambio { get; set; }
             public string? Cor { get; set; }
+            public string? Placa { get; set; }
             public string? Cidade { get; set; }
             public string? Carroceria { get; set; }
             public int? Portas { get; set; }

@@ -209,7 +209,9 @@ namespace APIBack.Automation.Controllers
 
             if (string.IsNullOrWhiteSpace(request.Status))
             {
-                return UnprocessableEntity(new { success = false, error = "Status de veiculo e obrigatorio." });
+                return ValidationError(
+                    "Status de veiculo e obrigatorio.",
+                    ("status", "Status de veiculo e obrigatorio."));
             }
 
             if (!TryNormalizeStatus(request.Status, out var statusNormalizado, out error) || statusNormalizado == null)
@@ -299,58 +301,86 @@ namespace APIBack.Automation.Controllers
             request.Placa = LimparTexto(request.Placa);
             request.LabelDestaque = request.Destaque ? LimparTexto(request.LabelDestaque) : null;
 
-            if (string.IsNullOrWhiteSpace(request.Marca) ||
-                string.IsNullOrWhiteSpace(request.Modelo) ||
-                string.IsNullOrWhiteSpace(request.Categoria) ||
-                string.IsNullOrWhiteSpace(request.TipoVeiculo) ||
-                !request.AnoModelo.HasValue ||
-                !request.Preco.HasValue)
+            var missingFields = new List<(string Field, string Error)>();
+            if (string.IsNullOrWhiteSpace(request.Marca))
             {
-                error = UnprocessableEntity(new { success = false, error = "Informe marca, modelo, categoria, tipo do veiculo, ano modelo e preco." });
+                missingFields.Add(("marca", "Marca e obrigatoria."));
+            }
+
+            if (string.IsNullOrWhiteSpace(request.Modelo))
+            {
+                missingFields.Add(("modelo", "Modelo e obrigatorio."));
+            }
+
+            if (string.IsNullOrWhiteSpace(request.Categoria))
+            {
+                missingFields.Add(("categoria", "Categoria e obrigatoria."));
+            }
+
+            if (string.IsNullOrWhiteSpace(request.TipoVeiculo))
+            {
+                missingFields.Add(("tipoVeiculo", "Tipo de veiculo e obrigatorio."));
+            }
+
+            if (!request.AnoModelo.HasValue)
+            {
+                missingFields.Add(("anoModelo", "Ano modelo e obrigatorio."));
+            }
+
+            if (!request.Preco.HasValue)
+            {
+                missingFields.Add(("preco", "Preco e obrigatorio."));
+            }
+
+            if (missingFields.Count > 0)
+            {
+                error = ValidationError("Informe marca, modelo, categoria, tipo do veiculo, ano modelo e preco.", missingFields.ToArray());
                 return false;
             }
 
             var maxAno = DateTime.UtcNow.Year + 2;
-            if (request.AnoModelo.Value < 1900 || request.AnoModelo.Value > maxAno)
+            var anoModelo = request.AnoModelo ?? 0;
+            if (anoModelo < 1900 || anoModelo > maxAno)
             {
-                error = UnprocessableEntity(new { success = false, error = "Ano modelo invalido." });
+                error = ValidationError("Ano modelo invalido.", ("anoModelo", "Ano modelo invalido."));
                 return false;
             }
 
             request.AnoFabricacao ??= request.AnoModelo;
             if (!request.AnoFabricacao.HasValue || request.AnoFabricacao.Value < 1900 || request.AnoFabricacao.Value > maxAno)
             {
-                error = UnprocessableEntity(new { success = false, error = "Ano de fabricacao invalido." });
+                error = ValidationError("Ano de fabricacao invalido.", ("anoFabricacao", "Ano de fabricacao invalido."));
                 return false;
             }
 
-            if (request.Preco.Value <= 0)
+            var preco = request.Preco ?? 0m;
+            if (preco <= 0)
             {
-                error = UnprocessableEntity(new { success = false, error = "Preco do veiculo deve ser maior que zero." });
+                error = ValidationError("Preco do veiculo deve ser maior que zero.", ("preco", "Preco do veiculo deve ser maior que zero."));
                 return false;
             }
 
             if (request.PrecoAnterior.HasValue && request.PrecoAnterior.Value < 0)
             {
-                error = UnprocessableEntity(new { success = false, error = "Preco anterior invalido." });
+                error = ValidationError("Preco anterior invalido.", ("precoAnterior", "Preco anterior invalido."));
                 return false;
             }
 
             if (request.Km.HasValue && request.Km.Value < 0)
             {
-                error = UnprocessableEntity(new { success = false, error = "Km do veiculo deve ser maior ou igual a zero." });
+                error = ValidationError("Km do veiculo deve ser maior ou igual a zero.", ("km", "Km do veiculo deve ser maior ou igual a zero."));
                 return false;
             }
 
             if (request.Portas.HasValue && request.Portas.Value <= 0)
             {
-                error = UnprocessableEntity(new { success = false, error = "Quantidade de portas invalida." });
+                error = ValidationError("Quantidade de portas invalida.", ("portas", "Quantidade de portas invalida."));
                 return false;
             }
 
             if (request.Assentos.HasValue && request.Assentos.Value <= 0)
             {
-                error = UnprocessableEntity(new { success = false, error = "Quantidade de assentos invalida." });
+                error = ValidationError("Quantidade de assentos invalida.", ("assentos", "Quantidade de assentos invalida."));
                 return false;
             }
 
@@ -372,14 +402,14 @@ namespace APIBack.Automation.Controllers
 
             if (tipoVeiculoNormalizado == "seminovo" && !request.Km.HasValue)
             {
-                error = UnprocessableEntity(new { success = false, error = "Km e obrigatorio para veiculos seminovos." });
+                error = ValidationError("Km e obrigatorio para veiculos seminovos.", ("km", "Km e obrigatorio para veiculos seminovos."));
                 return false;
             }
 
             request.Categoria = categoriaNormalizada;
             request.TipoVeiculo = tipoVeiculoNormalizado;
             request.Status = statusNormalizado;
-            request.Titulo ??= $"{request.Marca} {request.Modelo} {request.AnoModelo.Value.ToString(CultureInfo.InvariantCulture)}";
+            request.Titulo ??= $"{request.Marca} {request.Modelo} {anoModelo.ToString(CultureInfo.InvariantCulture)}";
 
             request.Opcionais = (request.Opcionais ?? new List<string>())
                 .Select(LimparTexto)
@@ -399,7 +429,9 @@ namespace APIBack.Automation.Controllers
                 var itemNormalizado = LimparTexto(item.Item);
                 if (string.IsNullOrWhiteSpace(itemNormalizado))
                 {
-                    error = UnprocessableEntity(new { success = false, error = "Cada item de condicao precisa informar o nome do item." });
+                    error = ValidationError(
+                        "Cada item de condicao precisa informar o nome do item.",
+                        ("condicoes", "Cada item de condicao precisa informar o nome do item."));
                     return false;
                 }
 
@@ -439,41 +471,126 @@ namespace APIBack.Automation.Controllers
             request.LabelDestaque = request.Destaque ? LimparTexto(request.LabelDestaque) : null;
             request.Slug = null;
 
-            if (string.IsNullOrWhiteSpace(request.Titulo) ||
-                string.IsNullOrWhiteSpace(request.Marca) ||
-                string.IsNullOrWhiteSpace(request.Modelo) ||
-                string.IsNullOrWhiteSpace(request.Cor) ||
-                string.IsNullOrWhiteSpace(request.Cidade) ||
-                string.IsNullOrWhiteSpace(request.Carroceria) ||
-                string.IsNullOrWhiteSpace(request.Categoria) ||
-                string.IsNullOrWhiteSpace(request.TipoVeiculo) ||
-                string.IsNullOrWhiteSpace(request.Status) ||
-                string.IsNullOrWhiteSpace(request.Combustivel) ||
-                string.IsNullOrWhiteSpace(request.Cambio) ||
-                string.IsNullOrWhiteSpace(request.Descricao) ||
-                string.IsNullOrWhiteSpace(request.CodigoEstoque))
+            var missingFields = new List<(string Field, string Error)>();
+            if (string.IsNullOrWhiteSpace(request.Titulo))
             {
-                error = UnprocessableEntity(new { success = false, error = "Preencha os campos obrigatorios do veiculo." });
+                missingFields.Add(("titulo", "Titulo e obrigatorio."));
+            }
+
+            if (string.IsNullOrWhiteSpace(request.Marca))
+            {
+                missingFields.Add(("marca", "Marca e obrigatoria."));
+            }
+
+            if (string.IsNullOrWhiteSpace(request.Modelo))
+            {
+                missingFields.Add(("modelo", "Modelo e obrigatorio."));
+            }
+
+            if (string.IsNullOrWhiteSpace(request.Cor))
+            {
+                missingFields.Add(("cor", "Cor e obrigatoria."));
+            }
+
+            if (string.IsNullOrWhiteSpace(request.Cidade))
+            {
+                missingFields.Add(("cidade", "Cidade e obrigatoria."));
+            }
+
+            if (string.IsNullOrWhiteSpace(request.Carroceria))
+            {
+                missingFields.Add(("carroceria", "Carroceria e obrigatoria."));
+            }
+
+            if (string.IsNullOrWhiteSpace(request.Categoria))
+            {
+                missingFields.Add(("categoria", "Categoria e obrigatoria."));
+            }
+
+            if (string.IsNullOrWhiteSpace(request.TipoVeiculo))
+            {
+                missingFields.Add(("tipoVeiculo", "Tipo de veiculo e obrigatorio."));
+            }
+
+            if (string.IsNullOrWhiteSpace(request.Status))
+            {
+                missingFields.Add(("status", "Status e obrigatorio."));
+            }
+
+            if (string.IsNullOrWhiteSpace(request.Combustivel))
+            {
+                missingFields.Add(("combustivel", "Combustivel e obrigatorio."));
+            }
+
+            if (string.IsNullOrWhiteSpace(request.Cambio))
+            {
+                missingFields.Add(("cambio", "Cambio e obrigatorio."));
+            }
+
+            if (string.IsNullOrWhiteSpace(request.Descricao))
+            {
+                missingFields.Add(("descricao", "Descricao e obrigatoria."));
+            }
+
+            if (string.IsNullOrWhiteSpace(request.CodigoEstoque))
+            {
+                missingFields.Add(("codigoEstoque", "Codigo de estoque e obrigatorio."));
+            }
+
+            if (missingFields.Count > 0)
+            {
+                error = ValidationError("Preencha os campos obrigatorios do veiculo.", missingFields.ToArray());
                 return false;
             }
 
             var maxAno = DateTime.UtcNow.Year + 2;
-            if (request.AnoFabricacao < 1900 || request.AnoFabricacao > maxAno ||
-                request.AnoModelo < 1900 || request.AnoModelo > maxAno)
+            var yearErrors = new List<(string Field, string Error)>();
+            if (request.AnoFabricacao < 1900 || request.AnoFabricacao > maxAno)
             {
-                error = UnprocessableEntity(new { success = false, error = "Ano de fabricacao ou ano modelo invalido." });
+                yearErrors.Add(("anoFabricacao", "Ano de fabricacao invalido."));
+            }
+
+            if (request.AnoModelo < 1900 || request.AnoModelo > maxAno)
+            {
+                yearErrors.Add(("anoModelo", "Ano modelo invalido."));
+            }
+
+            if (yearErrors.Count > 0)
+            {
+                error = ValidationError("Ano de fabricacao ou ano modelo invalido.", yearErrors.ToArray());
                 return false;
             }
 
-            if (request.Preco <= 0 || request.Km < 0 || request.Portas <= 0 || request.Assentos <= 0)
+            var numericErrors = new List<(string Field, string Error)>();
+            if (request.Preco <= 0)
             {
-                error = UnprocessableEntity(new { success = false, error = "Preco e dados estruturais do veiculo devem ser validos." });
+                numericErrors.Add(("preco", "Preco deve ser maior que zero."));
+            }
+
+            if (request.Km < 0)
+            {
+                numericErrors.Add(("km", "Km deve ser maior ou igual a zero."));
+            }
+
+            if (request.Portas <= 0)
+            {
+                numericErrors.Add(("portas", "Quantidade de portas invalida."));
+            }
+
+            if (request.Assentos <= 0)
+            {
+                numericErrors.Add(("assentos", "Quantidade de assentos invalida."));
+            }
+
+            if (numericErrors.Count > 0)
+            {
+                error = ValidationError("Preco e dados estruturais do veiculo devem ser validos.", numericErrors.ToArray());
                 return false;
             }
 
             if (request.PrecoAnterior.HasValue && request.PrecoAnterior.Value < 0)
             {
-                error = UnprocessableEntity(new { success = false, error = "Preco anterior invalido." });
+                error = ValidationError("Preco anterior invalido.", ("precoAnterior", "Preco anterior invalido."));
                 return false;
             }
 
@@ -514,7 +631,9 @@ namespace APIBack.Automation.Controllers
                 var itemNormalizado = LimparTexto(item.Item);
                 if (string.IsNullOrWhiteSpace(itemNormalizado))
                 {
-                    error = UnprocessableEntity(new { success = false, error = "Cada item de condicao precisa informar o nome do item." });
+                    error = ValidationError(
+                        "Cada item de condicao precisa informar o nome do item.",
+                        ("condicoes", "Cada item de condicao precisa informar o nome do item."));
                     return false;
                 }
 
@@ -533,6 +652,24 @@ namespace APIBack.Automation.Controllers
 
             request.Condicoes = condicoes;
             return true;
+        }
+
+        private IActionResult ValidationError(string message, params (string Field, string Error)[] fieldErrors)
+        {
+            var errors = (fieldErrors ?? Array.Empty<(string Field, string Error)>())
+                .Where(item => !string.IsNullOrWhiteSpace(item.Field) && !string.IsNullOrWhiteSpace(item.Error))
+                .GroupBy(item => item.Field, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    group => group.Key,
+                    group => group.Select(item => item.Error).Distinct().ToArray(),
+                    StringComparer.OrdinalIgnoreCase);
+
+            return UnprocessableEntity(new
+            {
+                success = false,
+                error = message,
+                errors
+            });
         }
 
         private bool TryNormalizeCategory(string? value, bool allowTodos, out string? normalized, out IActionResult? error)
@@ -557,7 +694,7 @@ namespace APIBack.Automation.Controllers
                 return true;
             }
 
-            error = UnprocessableEntity(new { success = false, error = "Categoria de veiculo invalida." });
+            error = ValidationError("Categoria de veiculo invalida.", ("categoria", "Categoria de veiculo invalida."));
             return false;
         }
 
@@ -578,7 +715,7 @@ namespace APIBack.Automation.Controllers
                 return true;
             }
 
-            error = UnprocessableEntity(new { success = false, error = "Status de veiculo invalido." });
+            error = ValidationError("Status de veiculo invalido.", ("status", "Status de veiculo invalido."));
             return false;
         }
 
@@ -594,7 +731,7 @@ namespace APIBack.Automation.Controllers
                 return true;
             }
 
-            error = UnprocessableEntity(new { success = false, error = "Tipo de veiculo invalido." });
+            error = ValidationError("Tipo de veiculo invalido.", ("tipoVeiculo", "Tipo de veiculo invalido."));
             return false;
         }
 
@@ -610,7 +747,7 @@ namespace APIBack.Automation.Controllers
                 return true;
             }
 
-            error = UnprocessableEntity(new { success = false, error = "Status de condicao invalido." });
+            error = ValidationError("Status de condicao invalido.", ("condicoes", "Status de condicao invalido."));
             return false;
         }
 

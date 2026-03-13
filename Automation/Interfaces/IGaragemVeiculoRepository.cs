@@ -7,7 +7,7 @@ namespace APIBack.Automation.Interfaces
 {
     public interface IGaragemVeiculoRepository
     {
-        Task<(IReadOnlyList<GarageVehicleDto> Items, int Total)> ListarAsync(
+        Task<(IReadOnlyList<GarageVehicleAdminDto> Items, int Total)> ListarAsync(
             Guid idEstabelecimento,
             string? status,
             string? categoria,
@@ -15,16 +15,16 @@ namespace APIBack.Automation.Interfaces
             int page,
             int pageSize);
 
-        Task<GarageVehicleDto?> ObterPorIdAsync(
+        Task<GarageVehicleAdminDto?> ObterPorIdAsync(
             Guid id,
             Guid? idEstabelecimento = null,
             bool somenteDisponiveis = false);
 
-        Task<GarageVehicleDto> CriarAsync(
+        Task<GarageVehicleAdminDto> CriarAsync(
             Guid idEstabelecimento,
             CreateGarageVehicleRequest request);
 
-        Task<GarageVehicleDto?> AtualizarAsync(
+        Task<GarageVehicleAdminDto?> AtualizarAsync(
             Guid id,
             Guid idEstabelecimento,
             UpsertGarageVehicleRequest request);
