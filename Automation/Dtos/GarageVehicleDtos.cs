@@ -64,6 +64,38 @@ namespace APIBack.Automation.Dtos
         public decimal TicketMedio { get; set; }
     }
 
+    public class CreateGarageVehicleRequest
+    {
+        public Guid IdEstabelecimento { get; set; }
+        public string? Titulo { get; set; }
+        public string? Marca { get; set; }
+        public string? Modelo { get; set; }
+        public int? AnoFabricacao { get; set; }
+        public int? AnoModelo { get; set; }
+        public string? Cor { get; set; }
+        public string? Placa { get; set; }
+        public string? Cidade { get; set; }
+        public string? Carroceria { get; set; }
+        public string? Categoria { get; set; }
+        public string? TipoVeiculo { get; set; }
+        public string? Status { get; set; }
+        public decimal? Preco { get; set; }
+        public decimal? PrecoAnterior { get; set; }
+        public int? Km { get; set; }
+        public string? Combustivel { get; set; }
+        public string? Cambio { get; set; }
+        public string? Tracao { get; set; }
+        public int? Portas { get; set; }
+        public int? Assentos { get; set; }
+        public bool Destaque { get; set; }
+        public string? LabelDestaque { get; set; }
+        public string? Descricao { get; set; }
+        public string? CodigoEstoque { get; set; }
+        public List<string> Opcionais { get; set; } = new();
+        public List<GarageVehicleConditionRequestDto> Condicoes { get; set; } = new();
+        public List<string> Fotos { get; set; } = new();
+    }
+
     public class UpsertGarageVehicleRequest
     {
         public Guid IdEstabelecimento { get; set; }

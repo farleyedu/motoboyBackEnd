@@ -182,7 +182,7 @@ SELECT v.id,
             return mapped.FirstOrDefault();
         }
 
-        public async Task<GarageVehicleDto> CriarAsync(Guid idEstabelecimento, UpsertGarageVehicleRequest request)
+        public async Task<GarageVehicleDto> CriarAsync(Guid idEstabelecimento, CreateGarageVehicleRequest request)
         {
             await EnsureSchemaAsync();
 
@@ -194,8 +194,23 @@ SELECT v.id,
 
             try
             {
-                await GarantirCodigoEstoqueUnicoAsync(connection, transaction, idEstabelecimento, request.CodigoEstoque, null);
-                var slug = await GerarSlugUnicoAsync(connection, transaction, request.Marca, request.Modelo, request.AnoModelo, null);
+                var codigoEstoque = await ResolveCodigoEstoqueAsync(
+                    connection,
+                    transaction,
+                    idEstabelecimento,
+                    request.CodigoEstoque,
+                    request.Marca,
+                    request.Modelo,
+                    request.AnoModelo,
+                    null);
+
+                var slug = await GerarSlugUnicoAsync(
+                    connection,
+                    transaction,
+                    request.Marca ?? string.Empty,
+                    request.Modelo ?? string.Empty,
+                    request.AnoModelo ?? 0,
+                    null);
 
                 const string sql = @"
 INSERT INTO garagem_veiculo (
@@ -211,7 +226,7 @@ VALUES (
     @CodigoEstoque, @Tracao, @Descricao, @OpcionaisJson::jsonb, @CondicoesJson::jsonb, NOW(), NOW()
 );";
 
-                await connection.ExecuteAsync(sql, BuildVehicleParameters(id, idEstabelecimento, slug, request), transaction);
+                await connection.ExecuteAsync(sql, BuildCreateVehicleParameters(id, idEstabelecimento, slug, codigoEstoque, request), transaction);
                 await ReplacePhotosAsync(connection, transaction, id, request.Fotos);
 
                 await transaction.CommitAsync();
@@ -491,14 +506,14 @@ SELECT id_veiculo AS VehicleId,
                 ModelYear = row.AnoModelo,
                 Price = row.Preco,
                 OldPrice = row.PrecoAnterior,
-                Km = row.Km,
+                Km = row.Km ?? 0,
                 Fuel = row.Combustivel ?? string.Empty,
                 Transmission = row.Cambio ?? string.Empty,
                 Color = row.Cor ?? string.Empty,
                 City = row.Cidade ?? string.Empty,
                 Body = row.Carroceria ?? string.Empty,
-                Doors = row.Portas,
-                Seats = row.Assentos,
+                Doors = row.Portas ?? 0,
+                Seats = row.Assentos ?? 0,
                 Status = NormalizeStatus(row.Status) ?? string.Empty,
                 Condition = NormalizeVehicleType(row.TipoVeiculo),
                 Featured = row.Destaque,
@@ -547,6 +562,33 @@ VALUES (@Id, @IdVeiculo, @Url, @Ordem, NOW());";
             }
         }
 
+        private async Task<string> ResolveCodigoEstoqueAsync(
+            NpgsqlConnection connection,
+            NpgsqlTransaction transaction,
+            Guid idEstabelecimento,
+            string? codigoEstoque,
+            string? marca,
+            string? modelo,
+            int? anoModelo,
+            Guid? ignorarId)
+        {
+            var normalized = LimparFiltro(codigoEstoque);
+            if (!string.IsNullOrWhiteSpace(normalized))
+            {
+                await GarantirCodigoEstoqueUnicoAsync(connection, transaction, idEstabelecimento, normalized, ignorarId);
+                return normalized;
+            }
+
+            return await GerarCodigoEstoqueUnicoAsync(
+                connection,
+                transaction,
+                idEstabelecimento,
+                marca ?? string.Empty,
+                modelo ?? string.Empty,
+                anoModelo ?? 0,
+                ignorarId);
+        }
+
         private async Task GarantirCodigoEstoqueUnicoAsync(
             NpgsqlConnection connection,
             NpgsqlTransaction transaction,
@@ -573,6 +615,66 @@ SELECT 1
             {
                 throw new InvalidOperationException("Codigo de estoque ja existe para este estabelecimento.");
             }
+        }
+
+        private async Task<string> GerarCodigoEstoqueUnicoAsync(
+            NpgsqlConnection connection,
+            NpgsqlTransaction transaction,
+            Guid idEstabelecimento,
+            string marca,
+            string modelo,
+            int anoModelo,
+            Guid? ignorarId)
+        {
+            var baseCode = BuildStockCodeBase(marca, modelo, anoModelo);
+
+            const string sql = @"
+SELECT codigo_estoque AS CodigoEstoque
+  FROM garagem_veiculo
+ WHERE id_estabelecimento = @IdEstabelecimento
+   AND (lower(codigo_estoque) = lower(@CodigoBase) OR lower(codigo_estoque) LIKE lower(@CodigoLike))
+   AND (@IgnorarId IS NULL OR id <> @IgnorarId);";
+
+            var existentes = (await connection.QueryAsync<GarageVehicleStockCodeRow>(sql, new
+            {
+                IdEstabelecimento = idEstabelecimento,
+                CodigoBase = baseCode,
+                CodigoLike = $"{baseCode}-%",
+                IgnorarId = ignorarId
+            }, transaction)).ToList();
+
+            if (existentes.Count == 0 || existentes.All(item => !string.Equals(item.CodigoEstoque, baseCode, StringComparison.OrdinalIgnoreCase)))
+            {
+                return baseCode;
+            }
+
+            var maiorSufixo = 1;
+            foreach (var item in existentes)
+            {
+                if (string.IsNullOrWhiteSpace(item.CodigoEstoque))
+                {
+                    continue;
+                }
+
+                if (string.Equals(item.CodigoEstoque, baseCode, StringComparison.OrdinalIgnoreCase))
+                {
+                    maiorSufixo = Math.Max(maiorSufixo, 1);
+                    continue;
+                }
+
+                if (!item.CodigoEstoque.StartsWith(baseCode + "-", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var sufixoTexto = item.CodigoEstoque[(baseCode.Length + 1)..];
+                if (int.TryParse(sufixoTexto, NumberStyles.Integer, CultureInfo.InvariantCulture, out var sufixoNumero))
+                {
+                    maiorSufixo = Math.Max(maiorSufixo, sufixoNumero);
+                }
+            }
+
+            return $"{baseCode}-{maiorSufixo + 1}";
         }
 
         private async Task<string> GerarSlugUnicoAsync(
@@ -631,6 +733,45 @@ SELECT id, slug
 
             return $"{baseSlug}-{maiorSufixo + 1}";
         }
+
+        private static object BuildCreateVehicleParameters(
+            Guid id,
+            Guid idEstabelecimento,
+            string slug,
+            string codigoEstoque,
+            CreateGarageVehicleRequest request)
+            => new
+            {
+                Id = id,
+                IdEstabelecimento = idEstabelecimento,
+                Slug = slug,
+                Titulo = request.Titulo!,
+                Marca = request.Marca!,
+                Modelo = request.Modelo!,
+                Categoria = request.Categoria!,
+                AnoFabricacao = request.AnoFabricacao!.Value,
+                AnoModelo = request.AnoModelo!.Value,
+                Preco = request.Preco!.Value,
+                PrecoAnterior = request.PrecoAnterior,
+                Km = request.Km,
+                Combustivel = LimparFiltro(request.Combustivel),
+                Cambio = LimparFiltro(request.Cambio),
+                Cor = LimparFiltro(request.Cor),
+                Placa = LimparFiltro(request.Placa),
+                Cidade = LimparFiltro(request.Cidade),
+                Carroceria = LimparFiltro(request.Carroceria),
+                Portas = request.Portas,
+                Assentos = request.Assentos,
+                Status = request.Status!,
+                TipoVeiculo = request.TipoVeiculo!,
+                Destaque = request.Destaque,
+                LabelDestaque = request.Destaque ? LimparFiltro(request.LabelDestaque) : null,
+                CodigoEstoque = codigoEstoque,
+                Tracao = LimparFiltro(request.Tracao),
+                Descricao = LimparFiltro(request.Descricao),
+                OpcionaisJson = SerializeStringList(request.Opcionais),
+                CondicoesJson = SerializeConditionItems(request.Condicoes)
+            };
 
         private static object BuildVehicleParameters(Guid id, Guid idEstabelecimento, string slug, UpsertGarageVehicleRequest request)
             => new
@@ -694,22 +835,22 @@ CREATE TABLE IF NOT EXISTS garagem_veiculo (
     ano_modelo INTEGER NOT NULL,
     preco NUMERIC(14,2) NOT NULL,
     preco_anterior NUMERIC(14,2) NULL,
-    km INTEGER NOT NULL,
-    combustivel VARCHAR(80) NOT NULL,
-    cambio VARCHAR(80) NOT NULL,
-    cor VARCHAR(80) NOT NULL,
+    km INTEGER NULL,
+    combustivel VARCHAR(80) NULL,
+    cambio VARCHAR(80) NULL,
+    cor VARCHAR(80) NULL,
     placa VARCHAR(20) NULL,
-    cidade VARCHAR(180) NOT NULL,
-    carroceria VARCHAR(120) NOT NULL,
-    portas INTEGER NOT NULL,
-    assentos INTEGER NOT NULL,
-    status VARCHAR(40) NOT NULL,
+    cidade VARCHAR(180) NULL,
+    carroceria VARCHAR(120) NULL,
+    portas INTEGER NULL,
+    assentos INTEGER NULL,
+    status VARCHAR(40) NOT NULL DEFAULT 'disponivel',
     tipo_veiculo VARCHAR(40) NOT NULL,
     destaque BOOLEAN NOT NULL DEFAULT FALSE,
     label_destaque VARCHAR(120) NULL,
     codigo_estoque VARCHAR(80) NOT NULL,
     tracao VARCHAR(40) NULL,
-    descricao TEXT NOT NULL,
+    descricao TEXT NULL,
     opcionais JSONB NOT NULL DEFAULT '[]'::jsonb,
     condicoes JSONB NOT NULL DEFAULT '[]'::jsonb,
     data_criacao TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -889,7 +1030,12 @@ CREATE INDEX IF NOT EXISTS ix_garagem_veiculo_foto_veiculo
         private static string NormalizeVehicleType(string? value)
         {
             var normalized = NormalizeToken(value);
-            return normalized == "novo" ? "novo" : "seminovo";
+            return normalized switch
+            {
+                "novo" => "novo",
+                "seminovo" => "seminovo",
+                _ => string.Empty
+            };
         }
 
         private static string? NormalizeCategory(string? value)
@@ -955,14 +1101,14 @@ CREATE INDEX IF NOT EXISTS ix_garagem_veiculo_foto_veiculo
             public int AnoModelo { get; set; }
             public decimal Preco { get; set; }
             public decimal? PrecoAnterior { get; set; }
-            public int Km { get; set; }
+            public int? Km { get; set; }
             public string? Combustivel { get; set; }
             public string? Cambio { get; set; }
             public string? Cor { get; set; }
             public string? Cidade { get; set; }
             public string? Carroceria { get; set; }
-            public int Portas { get; set; }
-            public int Assentos { get; set; }
+            public int? Portas { get; set; }
+            public int? Assentos { get; set; }
             public string? Status { get; set; }
             public string? TipoVeiculo { get; set; }
             public bool Destaque { get; set; }
@@ -993,11 +1139,35 @@ CREATE INDEX IF NOT EXISTS ix_garagem_veiculo_foto_veiculo
             public string? Slug { get; set; }
         }
 
+        private sealed class GarageVehicleStockCodeRow
+        {
+            public string? CodigoEstoque { get; set; }
+        }
+
         private sealed class GarageVehicleConditionStorageItem
         {
             public string? Item { get; set; }
             public string? Status { get; set; }
             public string? Nota { get; set; }
+        }
+
+        private static string BuildStockCodeBase(string marca, string modelo, int anoModelo)
+        {
+            var marcaToken = BuildStockCodeToken(marca, 3, "VEI");
+            var modeloToken = BuildStockCodeToken(modelo, 4, "ITEM");
+            return $"{marcaToken}-{modeloToken}-{anoModelo.ToString(CultureInfo.InvariantCulture)}";
+        }
+
+        private static string BuildStockCodeToken(string? value, int maxLength, string fallback)
+        {
+            var normalized = NormalizeToken(value);
+            var token = new string(normalized.Where(char.IsLetterOrDigit).ToArray()).ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                return fallback;
+            }
+
+            return token.Length <= maxLength ? token : token[..maxLength];
         }
     }
 }

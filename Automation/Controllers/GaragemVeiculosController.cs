@@ -115,7 +115,7 @@ namespace APIBack.Automation.Controllers
 
         [HttpPost("veiculos")]
         [RequirePermission("Garagem", "cadastrar")]
-        public async Task<IActionResult> Criar([FromBody] UpsertGarageVehicleRequest? request)
+        public async Task<IActionResult> Criar([FromBody] CreateGarageVehicleRequest? request)
         {
             if (request == null)
             {
@@ -127,7 +127,7 @@ namespace APIBack.Automation.Controllers
                 return error!;
             }
 
-            if (!TryNormalizeUpsertRequest(request, out error))
+            if (!TryNormalizeCreateRequest(request, out error))
             {
                 return error!;
             }
@@ -279,6 +279,145 @@ namespace APIBack.Automation.Controllers
 
             var metrics = await _repository.ObterMetricasAsync(effectiveEstabelecimentoId);
             return Ok(metrics);
+        }
+
+        private bool TryNormalizeCreateRequest(CreateGarageVehicleRequest request, out IActionResult? error)
+        {
+            error = null;
+
+            request.Titulo = LimparTexto(request.Titulo);
+            request.Marca = LimparTexto(request.Marca);
+            request.Modelo = LimparTexto(request.Modelo);
+            request.Cor = LimparTexto(request.Cor);
+            request.Cidade = LimparTexto(request.Cidade);
+            request.Carroceria = LimparTexto(request.Carroceria);
+            request.Combustivel = LimparTexto(request.Combustivel);
+            request.Cambio = LimparTexto(request.Cambio);
+            request.Descricao = LimparTexto(request.Descricao);
+            request.CodigoEstoque = LimparTexto(request.CodigoEstoque);
+            request.Tracao = LimparTexto(request.Tracao);
+            request.Placa = LimparTexto(request.Placa);
+            request.LabelDestaque = request.Destaque ? LimparTexto(request.LabelDestaque) : null;
+
+            if (string.IsNullOrWhiteSpace(request.Marca) ||
+                string.IsNullOrWhiteSpace(request.Modelo) ||
+                string.IsNullOrWhiteSpace(request.Categoria) ||
+                string.IsNullOrWhiteSpace(request.TipoVeiculo) ||
+                !request.AnoModelo.HasValue ||
+                !request.Preco.HasValue)
+            {
+                error = UnprocessableEntity(new { success = false, error = "Informe marca, modelo, categoria, tipo do veiculo, ano modelo e preco." });
+                return false;
+            }
+
+            var maxAno = DateTime.UtcNow.Year + 2;
+            if (request.AnoModelo.Value < 1900 || request.AnoModelo.Value > maxAno)
+            {
+                error = UnprocessableEntity(new { success = false, error = "Ano modelo invalido." });
+                return false;
+            }
+
+            request.AnoFabricacao ??= request.AnoModelo;
+            if (!request.AnoFabricacao.HasValue || request.AnoFabricacao.Value < 1900 || request.AnoFabricacao.Value > maxAno)
+            {
+                error = UnprocessableEntity(new { success = false, error = "Ano de fabricacao invalido." });
+                return false;
+            }
+
+            if (request.Preco.Value <= 0)
+            {
+                error = UnprocessableEntity(new { success = false, error = "Preco do veiculo deve ser maior que zero." });
+                return false;
+            }
+
+            if (request.PrecoAnterior.HasValue && request.PrecoAnterior.Value < 0)
+            {
+                error = UnprocessableEntity(new { success = false, error = "Preco anterior invalido." });
+                return false;
+            }
+
+            if (request.Km.HasValue && request.Km.Value < 0)
+            {
+                error = UnprocessableEntity(new { success = false, error = "Km do veiculo deve ser maior ou igual a zero." });
+                return false;
+            }
+
+            if (request.Portas.HasValue && request.Portas.Value <= 0)
+            {
+                error = UnprocessableEntity(new { success = false, error = "Quantidade de portas invalida." });
+                return false;
+            }
+
+            if (request.Assentos.HasValue && request.Assentos.Value <= 0)
+            {
+                error = UnprocessableEntity(new { success = false, error = "Quantidade de assentos invalida." });
+                return false;
+            }
+
+            if (!TryNormalizeCategory(request.Categoria, allowTodos: false, out var categoriaNormalizada, out error) || categoriaNormalizada == null)
+            {
+                return false;
+            }
+
+            if (!TryNormalizeVehicleCondition(request.TipoVeiculo, out var tipoVeiculoNormalizado, out error))
+            {
+                return false;
+            }
+
+            var statusInformado = string.IsNullOrWhiteSpace(request.Status) ? "disponivel" : request.Status;
+            if (!TryNormalizeStatus(statusInformado, out var statusNormalizado, out error) || statusNormalizado == null)
+            {
+                return false;
+            }
+
+            if (tipoVeiculoNormalizado == "seminovo" && !request.Km.HasValue)
+            {
+                error = UnprocessableEntity(new { success = false, error = "Km e obrigatorio para veiculos seminovos." });
+                return false;
+            }
+
+            request.Categoria = categoriaNormalizada;
+            request.TipoVeiculo = tipoVeiculoNormalizado;
+            request.Status = statusNormalizado;
+            request.Titulo ??= $"{request.Marca} {request.Modelo} {request.AnoModelo.Value.ToString(CultureInfo.InvariantCulture)}";
+
+            request.Opcionais = (request.Opcionais ?? new List<string>())
+                .Select(LimparTexto)
+                .Where(item => !string.IsNullOrWhiteSpace(item))
+                .Select(item => item!)
+                .ToList();
+
+            request.Fotos = (request.Fotos ?? new List<string>())
+                .Select(LimparTexto)
+                .Where(item => !string.IsNullOrWhiteSpace(item))
+                .Select(item => item!)
+                .ToList();
+
+            var condicoes = new List<GarageVehicleConditionRequestDto>();
+            foreach (var item in request.Condicoes ?? new List<GarageVehicleConditionRequestDto>())
+            {
+                var itemNormalizado = LimparTexto(item.Item);
+                if (string.IsNullOrWhiteSpace(itemNormalizado))
+                {
+                    error = UnprocessableEntity(new { success = false, error = "Cada item de condicao precisa informar o nome do item." });
+                    return false;
+                }
+
+                if (!TryNormalizeConditionStatus(item.Status, out var statusCondicaoNormalizado, out error))
+                {
+                    return false;
+                }
+
+                condicoes.Add(new GarageVehicleConditionRequestDto
+                {
+                    Item = itemNormalizado,
+                    Status = statusCondicaoNormalizado,
+                    Nota = LimparTexto(item.Nota) ?? string.Empty
+                });
+            }
+
+            request.Condicoes = condicoes;
+            return true;
         }
 
         private bool TryNormalizeUpsertRequest(UpsertGarageVehicleRequest request, out IActionResult? error)

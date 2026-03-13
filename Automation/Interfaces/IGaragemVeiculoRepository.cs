@@ -22,7 +22,7 @@ namespace APIBack.Automation.Interfaces
 
         Task<GarageVehicleDto> CriarAsync(
             Guid idEstabelecimento,
-            UpsertGarageVehicleRequest request);
+            CreateGarageVehicleRequest request);
 
         Task<GarageVehicleDto?> AtualizarAsync(
             Guid id,
