@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json.Serialization;
+using APIBack.Infrastructure;
 
 namespace APIBack.DTOs.Gestao
 {
@@ -126,6 +128,7 @@ namespace APIBack.DTOs.Gestao
 
     public class SalvarEstabelecimentoRequest
     {
+        [JsonConverter(typeof(LenientGuidConverter))]
         public Guid? EmpresaId { get; set; }
         public string? TipoUnidade { get; set; }
         public string NomeFantasia { get; set; } = string.Empty;
@@ -152,6 +155,7 @@ namespace APIBack.DTOs.Gestao
         public decimal? TaxaEntregaFixa { get; set; }
         public decimal? TaxaEntregaPorKm { get; set; }
         public int? TempoPreparoMin { get; set; }
+        [JsonConverter(typeof(LenientGuidConverter))]
         public Guid? TipoEstabelecimentoId { get; set; }
         public string? TipoEstabelecimentoSlug { get; set; }
         public string? TipoEstabelecimentoNome { get; set; }
