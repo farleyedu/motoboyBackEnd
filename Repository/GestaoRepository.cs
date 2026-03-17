@@ -650,7 +650,15 @@ INSERT INTO usuario_empresas (
     data_convite, data_aprovacao, ativo, created_at, updated_at)
 VALUES (
     @Id, @UserId, @EmpresaId, @TipoAcesso, 'ativo', @ActorUserId, @ActorUserId,
-    NOW(), NOW(), TRUE, NOW(), NOW());";
+    NOW(), NOW(), TRUE, NOW(), NOW())
+ON CONFLICT (id_usuario, id_empresa) DO UPDATE
+SET tipo_acesso     = EXCLUDED.tipo_acesso,
+    status          = 'ativo',
+    ativo           = TRUE,
+    data_remocao    = NULL,
+    aprovado_por    = EXCLUDED.aprovado_por,
+    data_aprovacao  = NOW(),
+    updated_at      = NOW();";
 
             await connection.ExecuteAsync(sqlUsuarioEmpresa, new
             {
@@ -669,7 +677,16 @@ INSERT INTO usuario_estabelecimentos (
     data_convite, data_aprovacao, permissoes_customizadas, ativo, created_at, updated_at)
 VALUES (
     @Id, @UserId, @EstabelecimentoId, @TipoAcesso, 'ativo', @ActorUserId, @ActorUserId,
-    NOW(), NOW(), @PermissoesCustomizadas::jsonb, TRUE, NOW(), NOW());";
+    NOW(), NOW(), @PermissoesCustomizadas::jsonb, TRUE, NOW(), NOW())
+ON CONFLICT (id_usuario, id_estabelecimento) DO UPDATE
+SET tipo_acesso              = EXCLUDED.tipo_acesso,
+    status                   = 'ativo',
+    ativo                    = TRUE,
+    data_remocao             = NULL,
+    aprovado_por             = EXCLUDED.aprovado_por,
+    data_aprovacao           = NOW(),
+    permissoes_customizadas  = EXCLUDED.permissoes_customizadas,
+    updated_at               = NOW();";
 
                 foreach (var estabelecimentoId in command.EstabelecimentoIds)
                 {
