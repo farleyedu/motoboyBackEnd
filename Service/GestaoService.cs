@@ -483,7 +483,7 @@ namespace APIBack.Service
                 AddError(errors, "estabelecimentoIds", "Selecione apenas estabelecimentos ativos.");
             }
 
-            if (!scope.IsSuperAdmin && IsEstablishmentManager(scope))
+            if (!scope.IsSuperAdmin && !IsCompanyManager(scope) && IsEstablishmentManager(scope))
             {
                 if (!scope.EstabelecimentoId.HasValue)
                 {
