@@ -138,7 +138,14 @@ SELECT  ue.id               AS Id,
  LIMIT 1";
 
             await using var connection = new NpgsqlConnection(_connectionString);
-            return await connection.QueryFirstOrDefaultAsync<UsuarioEmpresaAcesso>(sql, new { UserId = userId, EmpresaId = empresaId });
+            try
+            {
+                return await connection.QueryFirstOrDefaultAsync<UsuarioEmpresaAcesso>(sql, new { UserId = userId, EmpresaId = empresaId });
+            }
+            catch (PostgresException ex) when (EhTabelaUsuarioEmpresasAusente(ex))
+            {
+                return null;
+            }
         }
 
         public async Task<UsuarioEstabelecimentoAcesso?> ObterVinculoPorIdAsync(Guid vinculoId)
@@ -253,6 +260,21 @@ SELECT  m.nome              AS Modulo,
                 .Where(p => !string.IsNullOrWhiteSpace(p))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
+        }
+
+        private static bool EhTabelaUsuarioEmpresasAusente(PostgresException ex)
+        {
+            if (ex.SqlState != PostgresErrorCodes.UndefinedTable)
+            {
+                return false;
+            }
+
+            if (string.Equals(ex.TableName, "usuario_empresas", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            return ex.MessageText?.IndexOf("usuario_empresas", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         private sealed class PermissaoRow

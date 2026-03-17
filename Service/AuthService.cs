@@ -107,15 +107,7 @@ SELECT id,
             }
 
             // Super admin sem estabelecimento: token básico sem contexto de estabelecimento
-            if (usuario.IsSuperAdmin && usuario.UltimoEstabelecimentoAcessado == null)
-            {
-                var superAdminResponse = await BuildTokenResponseAsync(connection, usuario, null);
-                await PersistRefreshTokenAsync(connection, usuario.Id, superAdminResponse.RefreshToken, null, null);
-                return superAdminResponse;
-            }
-
-            var estabelecimentoId = usuario.UltimoEstabelecimentoAcessado
-                                 ?? await ObterPrimeiroEstabelecimentoDoUsuarioAsync(connection, usuario.Id);
+            var estabelecimentoId = await ResolverEstabelecimentoParaTokenAsync(connection, usuario);
 
             var response = await BuildTokenResponseAsync(connection, usuario, estabelecimentoId);
             await PersistRefreshTokenAsync(connection, usuario.Id, response.RefreshToken, null, null);
@@ -161,12 +153,7 @@ SELECT id,
                 throw new UnauthorizedAccessException("Usuário não encontrado para refresh token.");
             }
 
-            Guid? estabelecimentoId = null;
-            if (!(usuario.IsSuperAdmin && usuario.UltimoEstabelecimentoAcessado == null))
-            {
-                estabelecimentoId = usuario.UltimoEstabelecimentoAcessado
-                    ?? await ObterPrimeiroEstabelecimentoDoUsuarioAsync(connection, usuario.Id);
-            }
+            var estabelecimentoId = await ResolverEstabelecimentoParaTokenAsync(connection, usuario);
 
             var response = await BuildTokenResponseAsync(connection, usuario, estabelecimentoId);
             var newRefreshTokenHash = HashRefreshToken(response.RefreshToken);
@@ -294,13 +281,7 @@ SELECT id,
             await using var connection = new NpgsqlConnection(_connectionString);
             var usuario = await GarantirContaGoogleAsync(connection, profile);
 
-            Guid? estabelecimentoId = null;
-
-            if (!(usuario.IsSuperAdmin && usuario.UltimoEstabelecimentoAcessado == null))
-            {
-                estabelecimentoId = usuario.UltimoEstabelecimentoAcessado
-                    ?? await ObterPrimeiroEstabelecimentoDoUsuarioAsync(connection, usuario.Id);
-            }
+            var estabelecimentoId = await ResolverEstabelecimentoParaTokenAsync(connection, usuario);
 
             var token = await BuildTokenResponseAsync(connection, usuario, estabelecimentoId);
             await PersistRefreshTokenAsync(connection, usuario.Id, token.RefreshToken, null, null);
@@ -841,6 +822,17 @@ SELECT id,
             return estabelecimentoId.Value;
         }
 
+        private async Task<Guid?> ResolverEstabelecimentoParaTokenAsync(NpgsqlConnection connection, UsuarioDb usuario)
+        {
+            if (usuario.IsSuperAdmin)
+            {
+                return usuario.UltimoEstabelecimentoAcessado;
+            }
+
+            return usuario.UltimoEstabelecimentoAcessado
+                ?? await ObterPrimeiroEstabelecimentoDoUsuarioAsync(connection, usuario.Id);
+        }
+
         private async Task<Guid?> TentarObterPrimeiroEstabelecimentoAsync(
             NpgsqlConnection connection,
             int userId,
@@ -884,7 +876,11 @@ SELECT id_estabelecimento
 
             if (estabelecimentoId.HasValue)
             {
-                var contexto = await ObterContextoEstabelecimentoAsync(connection, usuario.Id, estabelecimentoId.Value, usuario.IsSuperAdmin);
+                var contexto = await ObterContextoEstabelecimentoAsync(
+                    connection,
+                    usuario.Id,
+                    estabelecimentoId.Value,
+                    usuario.IsSuperAdmin);
 
                 if (!usuario.IsSuperAdmin && contexto.VinculoId == null)
                 {
@@ -1005,11 +1001,25 @@ SELECT  e.id                    AS EstabelecimentoId,
         AND uemp.status = 'ativo'
  WHERE e.id = @EstabelecimentoId";
 
-            var contexto = await connection.QueryFirstOrDefaultAsync<EstabelecimentoContextoDb>(sql, new
+            EstabelecimentoContextoDb? contexto;
+
+            try
             {
-                UserId = userId,
-                EstabelecimentoId = estabelecimentoId
-            });
+                contexto = await connection.QueryFirstOrDefaultAsync<EstabelecimentoContextoDb>(sql, new
+                {
+                    UserId = userId,
+                    EstabelecimentoId = estabelecimentoId
+                });
+            }
+            catch (PostgresException ex) when (EhTabelaUsuarioEmpresasAusente(ex))
+            {
+                _logger.LogWarning(
+                    "Tabela usuario_empresas ausente ao montar contexto do estabelecimento. Aplicando fallback legado. UserId={UserId} EstabelecimentoId={EstabelecimentoId}",
+                    userId,
+                    estabelecimentoId);
+
+                contexto = await ObterContextoEstabelecimentoLegadoAsync(connection, userId, estabelecimentoId);
+            }
 
             if (contexto == null)
             {
@@ -1022,6 +1032,54 @@ SELECT  e.id                    AS EstabelecimentoId,
             }
 
             return contexto;
+        }
+
+        private async Task<EstabelecimentoContextoDb?> ObterContextoEstabelecimentoLegadoAsync(
+            NpgsqlConnection connection,
+            int userId,
+            Guid estabelecimentoId)
+        {
+            const string sql = @"
+SELECT  e.id                    AS EstabelecimentoId,
+        e.id_empresa            AS EmpresaId,
+        emp.nome_fantasia       AS EmpresaNome,
+        e.nome_fantasia         AS EstabelecimentoNome,
+        te.nome                 AS TipoEstabelecimento,
+        ue.id                   AS VinculoId,
+        ue.tipo_acesso          AS TipoAcesso,
+        ue.permissoes_customizadas::text AS PermissoesCustomizadas,
+        NULL::uuid              AS EmpresaVinculoId,
+        NULL::varchar           AS TipoAcessoEmpresa
+  FROM estabelecimentos e
+  JOIN empresas emp ON emp.id = e.id_empresa
+  JOIN tipo_estabelecimento te ON te.id = e.id_tipo_estabelecimento
+  LEFT JOIN usuario_estabelecimentos ue
+         ON ue.id_estabelecimento = e.id
+        AND ue.id_usuario = @UserId
+        AND ue.ativo = TRUE
+        AND ue.status = 'ativo'
+ WHERE e.id = @EstabelecimentoId";
+
+            return await connection.QueryFirstOrDefaultAsync<EstabelecimentoContextoDb>(sql, new
+            {
+                UserId = userId,
+                EstabelecimentoId = estabelecimentoId
+            });
+        }
+
+        private static bool EhTabelaUsuarioEmpresasAusente(PostgresException ex)
+        {
+            if (ex.SqlState != PostgresErrorCodes.UndefinedTable)
+            {
+                return false;
+            }
+
+            if (string.Equals(ex.TableName, "usuario_empresas", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            return ex.MessageText?.IndexOf("usuario_empresas", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         private async Task<Dictionary<string, List<string>>> ObterPermissoesAsync(
