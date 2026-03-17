@@ -139,6 +139,11 @@ namespace APIBack.Automation.Services
             Dictionary<string, List<string>> destino,
             Dictionary<string, List<string>> origem)
         {
+            if (destino == null)
+            {
+                return;
+            }
+
             if (origem == null)
             {
                 return;
