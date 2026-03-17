@@ -145,6 +145,26 @@ namespace APIBack.Service
                 claims.Add(new Claim(JwtRegisteredClaimNames.Sub, payload.UserId.Value.ToString()));
             }
 
+            if (payload.EmpresaId.HasValue)
+            {
+                claims.Add(new Claim("empresa_id", payload.EmpresaId.Value.ToString()));
+            }
+
+            if (!string.IsNullOrWhiteSpace(payload.EmpresaNome))
+            {
+                claims.Add(new Claim("empresa_nome", payload.EmpresaNome));
+            }
+
+            if (!string.IsNullOrWhiteSpace(payload.TipoAcessoEmpresa))
+            {
+                claims.Add(new Claim("tipo_acesso_empresa", payload.TipoAcessoEmpresa));
+            }
+
+            if (payload.EmpresaVinculoId.HasValue)
+            {
+                claims.Add(new Claim("empresa_vinculo_id", payload.EmpresaVinculoId.Value.ToString()));
+            }
+
             if (payload.EstabelecimentoId.HasValue)
             {
                 claims.Add(new Claim("estabelecimento_id", payload.EstabelecimentoId.Value.ToString()));
@@ -207,6 +227,24 @@ namespace APIBack.Service
                         break;
                     case "is_super_admin":
                         payload.IsSuperAdmin = string.Equals(claim.Value, "true", StringComparison.OrdinalIgnoreCase);
+                        break;
+                    case "empresa_id":
+                        if (Guid.TryParse(claim.Value, out var empresaId))
+                        {
+                            payload.EmpresaId = empresaId;
+                        }
+                        break;
+                    case "empresa_nome":
+                        payload.EmpresaNome = claim.Value;
+                        break;
+                    case "tipo_acesso_empresa":
+                        payload.TipoAcessoEmpresa = claim.Value;
+                        break;
+                    case "empresa_vinculo_id":
+                        if (Guid.TryParse(claim.Value, out var empresaVinculoId))
+                        {
+                            payload.EmpresaVinculoId = empresaVinculoId;
+                        }
                         break;
                     case "estabelecimento_id":
                         if (Guid.TryParse(claim.Value, out var estId))

@@ -94,12 +94,16 @@ SELECT id,
                 throw new UnauthorizedAccessException("Usuário ou senha inválidos.");
             }
 
-            // ⚠️ TEMPORÁRIO: Comparação direta de senhas (SEM BCrypt)
-            // TODO: Trocar por BCrypt antes de ir para produção!
             if (string.IsNullOrWhiteSpace(usuario.Senha) ||
-                !string.Equals(request.Senha, usuario.Senha, StringComparison.Ordinal))
+                !PasswordSecurity.Verify(request.Senha, usuario.Senha))
             {
                 throw new UnauthorizedAccessException("Usuário ou senha inválidos.");
+            }
+
+            if (!PasswordSecurity.IsHash(usuario.Senha))
+            {
+                usuario.Senha = PasswordSecurity.Hash(request.Senha);
+                await AtualizarSenhaUsuarioAsync(connection, usuario.Id, usuario.Senha);
             }
 
             // Super admin sem estabelecimento: token básico sem contexto de estabelecimento
@@ -611,7 +615,7 @@ UPDATE usuario
                 return usuarioPorEmail;
             }
 
-            var senha = GenerateRandomPassword();
+            var senha = PasswordSecurity.Hash(GenerateRandomPassword());
 
             const string sqlInsert = @"
 INSERT INTO usuario (nome,
@@ -887,15 +891,10 @@ SELECT id_estabelecimento
                     throw new UnauthorizedAccessException("Usuário não possui acesso ao estabelecimento selecionado.");
                 }
 
-                var tipoAcessoNormalizado = RoleCatalog.Normalize(contexto.TipoAcesso);
-                if (string.IsNullOrWhiteSpace(tipoAcessoNormalizado) && usuario.IsSuperAdmin)
-                {
-                    tipoAcessoNormalizado = "super_admin";
-                }
-
                 var permissoes = await ObterPermissoesAsync(
                     connection,
-                    tipoAcessoNormalizado,
+                    contexto.TipoAcessoEmpresa,
+                    contexto.TipoAcesso,
                     contexto.PermissoesCustomizadas,
                     contexto.EstabelecimentoId);
 
@@ -905,20 +904,29 @@ SELECT id_estabelecimento
                     Nome = usuario.Nome ?? string.Empty,
                     Email = usuario.Email ?? string.Empty,
                     IsSuperAdmin = usuario.IsSuperAdmin,
+                    EmpresaId = contexto.EmpresaId,
+                    EmpresaNome = contexto.EmpresaNome,
+                    TipoAcessoEmpresa = contexto.TipoAcessoEmpresa,
+                    EmpresaVinculoId = contexto.EmpresaVinculoId,
                     EstabelecimentoId = contexto.EstabelecimentoId,
                     EstabelecimentoNome = contexto.EstabelecimentoNome,
                     TipoEstabelecimento = contexto.TipoEstabelecimento,
-                    TipoAcesso = string.IsNullOrWhiteSpace(tipoAcessoNormalizado) ? null : tipoAcessoNormalizado,
+                    TipoAcesso = string.IsNullOrWhiteSpace(contexto.TipoAcesso) ? null : contexto.TipoAcesso,
                     VinculoId = contexto.VinculoId,
                     Permissoes = permissoes
                 };
+
+                var tipoAcessoTela = RoleCatalog.ResolveScreenRole(
+                    contexto.TipoAcessoEmpresa,
+                    contexto.TipoAcesso,
+                    usuario.IsSuperAdmin);
 
                 estabelecimentoInfo = new EstabelecimentoInfo
                 {
                     Id = contexto.EstabelecimentoId,
                     Nome = contexto.EstabelecimentoNome ?? string.Empty,
                     Tipo = contexto.TipoEstabelecimento ?? string.Empty,
-                    TipoAcesso = tipoAcessoNormalizado
+                    TipoAcesso = tipoAcessoTela
                 };
             }
             else
@@ -952,6 +960,14 @@ SELECT id_estabelecimento
                     Nome = usuario.Nome ?? string.Empty,
                     Email = usuario.Email ?? string.Empty,
                     IsSuperAdmin = usuario.IsSuperAdmin,
+                    EmpresaAtual = payload.EmpresaId.HasValue
+                        ? new EmpresaInfo
+                        {
+                            Id = payload.EmpresaId.Value,
+                            Nome = payload.EmpresaNome ?? string.Empty,
+                            TipoAcesso = payload.TipoAcessoEmpresa
+                        }
+                        : null,
                     EstabelecimentoAtual = estabelecimentoInfo
                 }
             };
@@ -965,18 +981,28 @@ SELECT id_estabelecimento
         {
             const string sql = @"
 SELECT  e.id                    AS EstabelecimentoId,
+        e.id_empresa            AS EmpresaId,
+        emp.nome_fantasia       AS EmpresaNome,
         e.nome_fantasia         AS EstabelecimentoNome,
         te.nome                 AS TipoEstabelecimento,
         ue.id                   AS VinculoId,
         ue.tipo_acesso          AS TipoAcesso,
-        ue.permissoes_customizadas::text AS PermissoesCustomizadas
+        ue.permissoes_customizadas::text AS PermissoesCustomizadas,
+        uemp.id                 AS EmpresaVinculoId,
+        COALESCE(uemp.tipo_acesso, 'colaborador') AS TipoAcessoEmpresa
   FROM estabelecimentos e
+  JOIN empresas emp ON emp.id = e.id_empresa
   JOIN tipo_estabelecimento te ON te.id = e.id_tipo_estabelecimento
   LEFT JOIN usuario_estabelecimentos ue 
          ON ue.id_estabelecimento = e.id 
         AND ue.id_usuario = @UserId 
         AND ue.ativo = TRUE
         AND ue.status = 'ativo'
+  LEFT JOIN usuario_empresas uemp
+         ON uemp.id_empresa = e.id_empresa
+        AND uemp.id_usuario = @UserId
+        AND uemp.ativo = TRUE
+        AND uemp.status = 'ativo'
  WHERE e.id = @EstabelecimentoId";
 
             var contexto = await connection.QueryFirstOrDefaultAsync<EstabelecimentoContextoDb>(sql, new
@@ -1000,13 +1026,19 @@ SELECT  e.id                    AS EstabelecimentoId,
 
         private async Task<Dictionary<string, List<string>>> ObterPermissoesAsync(
             NpgsqlConnection connection,
-            string? tipoAcesso,
+            string? tipoAcessoEmpresa,
+            string? tipoAcessoEstabelecimento,
             string? permissoesCustomizadas,
             Guid estabelecimentoId)
         {
             var permissoes = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
 
-            if (!string.IsNullOrWhiteSpace(tipoAcesso))
+            foreach (var tipoAcesso in new[]
+                     {
+                         RoleCatalog.Normalize(tipoAcessoEmpresa),
+                         RoleCatalog.Normalize(tipoAcessoEstabelecimento)
+                     }.Where(tipo => !string.IsNullOrWhiteSpace(tipo))
+                     .Distinct(StringComparer.OrdinalIgnoreCase))
             {
                 const string sqlPadrao = @"
 SELECT  m.nome                  AS Modulo,
@@ -1021,7 +1053,19 @@ SELECT  m.nome                  AS Modulo,
                 {
                     if (!string.IsNullOrWhiteSpace(linha.Modulo))
                     {
-                        permissoes[linha.Modulo] = ParsePermissoes(linha.Permissoes);
+                        if (!permissoes.TryGetValue(linha.Modulo, out var existentes))
+                        {
+                            existentes = new List<string>();
+                            permissoes[linha.Modulo] = existentes;
+                        }
+
+                        foreach (var permissao in ParsePermissoes(linha.Permissoes))
+                        {
+                            if (!existentes.Any(item => string.Equals(item, permissao, StringComparison.OrdinalIgnoreCase)))
+                            {
+                                existentes.Add(permissao);
+                            }
+                        }
                     }
                 }
             }
@@ -1066,6 +1110,20 @@ SELECT unnest(modulos_ativos)::text
                 .Where(m => !string.IsNullOrWhiteSpace(m))
                 .Select(m => m.Trim())
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        }
+
+        private static async Task AtualizarSenhaUsuarioAsync(
+            NpgsqlConnection connection,
+            int userId,
+            string senhaHash)
+        {
+            const string sql = @"
+UPDATE usuario
+   SET senha = @Senha,
+       updated_at = NOW()
+ WHERE id = @UserId";
+
+            await connection.ExecuteAsync(sql, new { UserId = userId, Senha = senhaHash });
         }
 
         private static void ApplyCustomPermissions(
@@ -1361,6 +1419,10 @@ SELECT unnest(modulos_ativos)::text
 
         private sealed class EstabelecimentoContextoDb
         {
+            public Guid EmpresaId { get; set; }
+            public string? EmpresaNome { get; set; }
+            public Guid? EmpresaVinculoId { get; set; }
+            public string? TipoAcessoEmpresa { get; set; }
             public Guid EstabelecimentoId { get; set; }
             public string? EstabelecimentoNome { get; set; }
             public string? TipoEstabelecimento { get; set; }

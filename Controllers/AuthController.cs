@@ -166,6 +166,14 @@ namespace APIBack.Controllers
                 Nome = payload.Nome ?? string.Empty,
                 Email = payload.Email ?? string.Empty,
                 IsSuperAdmin = payload.IsSuperAdmin,
+                EmpresaAtual = payload.EmpresaId.HasValue
+                    ? new MeEmpresaAtualResponse
+                    {
+                        Id = payload.EmpresaId.Value,
+                        Nome = payload.EmpresaNome ?? string.Empty,
+                        TipoAcesso = payload.TipoAcessoEmpresa
+                    }
+                    : null,
                 EstabelecimentoAtual = payload.EstabelecimentoId.HasValue
                     ? new MeEstabelecimentoAtualResponse
                     {

@@ -39,6 +39,10 @@ namespace APIBack.Middleware
                         context.Items["UserEmail"] = payload.Email;
                         context.Items["UserNome"] = payload.Nome;
                         context.Items["IsSuperAdmin"] = payload.IsSuperAdmin;
+                        context.Items["EmpresaId"] = payload.EmpresaId;
+                        context.Items["EmpresaNome"] = payload.EmpresaNome;
+                        context.Items["TipoAcessoEmpresa"] = payload.TipoAcessoEmpresa;
+                        context.Items["EmpresaVinculoId"] = payload.EmpresaVinculoId;
                         context.Items["EstabelecimentoId"] = payload.EstabelecimentoId;
                         context.Items["EstabelecimentoNome"] = payload.EstabelecimentoNome;
                         context.Items["TipoEstabelecimento"] = payload.TipoEstabelecimento;

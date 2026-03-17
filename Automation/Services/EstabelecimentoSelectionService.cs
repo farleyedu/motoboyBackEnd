@@ -75,6 +75,9 @@ namespace APIBack.Automation.Services
                 await _repository.ObterEstabelecimentoDetalheAsync(estabelecimentoId));
 
             var vinculo = await _repository.ObterVinculoAsync(userId, estabelecimentoId);
+            var vinculoEmpresa = estabelecimento != null
+                ? await _repository.ObterVinculoEmpresaAsync(userId, estabelecimento.EmpresaId)
+                : null;
             _validator.EnsureVinculoPermitido(vinculo, usuario.IsSuperAdmin);
 
             await _repository.AtualizarUltimoEstabelecimentoAsync(userId, estabelecimentoId);
@@ -82,7 +85,12 @@ namespace APIBack.Automation.Services
             var tipoAcesso = usuario.IsSuperAdmin
                 ? "super_admin"
                 : RoleCatalog.Normalize(vinculo?.TipoAcesso);
-            var permissoes = await _repository.ObterPermissoesPorTipoAsync(tipoAcesso);
+            var tipoAcessoEmpresa = usuario.IsSuperAdmin
+                ? "super_admin"
+                : RoleCatalog.Normalize(vinculoEmpresa?.TipoAcesso);
+
+            var permissoes = await _repository.ObterPermissoesPorTipoAsync(tipoAcessoEmpresa);
+            MergePermissoes(permissoes, await _repository.ObterPermissoesPorTipoAsync(tipoAcesso));
             ApplyCustomPermissions(permissoes, vinculo?.PermissoesCustomizadas);
 
             var payload = new JwtPayload
@@ -91,6 +99,10 @@ namespace APIBack.Automation.Services
                 Nome = usuario.Nome,
                 Email = usuario.Email,
                 IsSuperAdmin = usuario.IsSuperAdmin,
+                EmpresaId = estabelecimento.EmpresaId,
+                EmpresaNome = estabelecimento.EmpresaNome,
+                TipoAcessoEmpresa = tipoAcessoEmpresa,
+                EmpresaVinculoId = vinculoEmpresa?.Id,
                 EstabelecimentoId = estabelecimento.Id,
                 EstabelecimentoNome = estabelecimento.Nome,
                 TipoEstabelecimento = estabelecimento.TipoEstabelecimento,
@@ -121,6 +133,33 @@ namespace APIBack.Automation.Services
                     Status = _validator.NormalizarStatusEstabelecimento(estabelecimento.Status, estabelecimento.Ativo)
                 }
             };
+        }
+
+        private static void MergePermissoes(
+            Dictionary<string, List<string>> destino,
+            Dictionary<string, List<string>> origem)
+        {
+            if (origem == null)
+            {
+                return;
+            }
+
+            foreach (var kvp in origem)
+            {
+                if (!destino.TryGetValue(kvp.Key, out var existentes))
+                {
+                    existentes = new List<string>();
+                    destino[kvp.Key] = existentes;
+                }
+
+                foreach (var permissao in kvp.Value)
+                {
+                    if (!existentes.Any(item => string.Equals(item, permissao, StringComparison.OrdinalIgnoreCase)))
+                    {
+                        existentes.Add(permissao);
+                    }
+                }
+            }
         }
 
         private UsuarioEstabelecimentoDto MapUsuarioEstabelecimento(UsuarioTenant usuario, UsuarioEstabelecimentoVinculo vinculo)

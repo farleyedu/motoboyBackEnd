@@ -40,6 +40,8 @@ namespace APIBack.Automation.Models
     public class EstabelecimentoDetalhe
     {
         public Guid Id { get; set; }
+        public Guid EmpresaId { get; set; }
+        public string EmpresaNome { get; set; } = string.Empty;
         public string Nome { get; set; } = string.Empty;
         public string TipoEstabelecimento { get; set; } = string.Empty;
         public string? Plano { get; set; }
@@ -56,5 +58,15 @@ namespace APIBack.Automation.Models
         public bool? VinculoAtivo { get; set; }
         public string? TipoAcesso { get; set; }
         public string? PermissoesCustomizadas { get; set; }
+    }
+
+    public class UsuarioEmpresaAcesso
+    {
+        public Guid Id { get; set; }
+        public Guid EmpresaId { get; set; }
+        public int UsuarioId { get; set; }
+        public string Status { get; set; } = string.Empty;
+        public bool? VinculoAtivo { get; set; }
+        public string? TipoAcesso { get; set; }
     }
 }

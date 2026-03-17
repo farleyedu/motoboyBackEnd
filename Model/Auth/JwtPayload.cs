@@ -9,6 +9,10 @@ namespace APIBack.Model.Auth
         public string Nome { get; set; } = string.Empty;
         public string Email { get; set; } = string.Empty;
         public bool IsSuperAdmin { get; set; }
+        public Guid? EmpresaId { get; set; }
+        public string? EmpresaNome { get; set; }
+        public string? TipoAcessoEmpresa { get; set; }
+        public Guid? EmpresaVinculoId { get; set; }
         public Guid? EstabelecimentoId { get; set; }
         public string? EstabelecimentoNome { get; set; }
         public string? TipoEstabelecimento { get; set; }

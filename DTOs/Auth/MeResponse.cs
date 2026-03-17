@@ -18,6 +18,9 @@ namespace APIBack.DTOs.Auth
         [JsonPropertyName("isSuperAdmin")]
         public bool IsSuperAdmin { get; set; }
 
+        [JsonPropertyName("empresaAtual")]
+        public MeEmpresaAtualResponse? EmpresaAtual { get; set; }
+
         [JsonPropertyName("estabelecimentoAtual")]
         public MeEstabelecimentoAtualResponse? EstabelecimentoAtual { get; set; }
 
@@ -35,6 +38,18 @@ namespace APIBack.DTOs.Auth
 
         [JsonPropertyName("tipo")]
         public string Tipo { get; set; } = string.Empty;
+
+        [JsonPropertyName("tipoAcesso")]
+        public string? TipoAcesso { get; set; }
+    }
+
+    public class MeEmpresaAtualResponse
+    {
+        [JsonPropertyName("id")]
+        public Guid Id { get; set; }
+
+        [JsonPropertyName("nome")]
+        public string Nome { get; set; } = string.Empty;
 
         [JsonPropertyName("tipoAcesso")]
         public string? TipoAcesso { get; set; }

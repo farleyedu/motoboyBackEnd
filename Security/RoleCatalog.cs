@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace APIBack.Security
 {
@@ -11,13 +12,31 @@ namespace APIBack.Security
             ["funcionário"] = "funcionario",
             ["atendente"] = "atendente",
             ["atendente_whatsapp"] = "atendente",
-            ["cabeleireiro"] = "cabeleireiro",
-            ["barbeiro"] = "cabeleireiro",
+            ["agente"] = "atendente",
+            ["cabeleireiro"] = "profissional",
+            ["barbeiro"] = "profissional",
+            ["profissional"] = "profissional",
+            ["vendedor"] = "vendedor",
             ["motoboy"] = "motoboy",
-            ["gerente"] = "gerente",
+            ["admin"] = "gerente_empresa",
+            ["gerente"] = "gerente_estabelecimento",
+            ["gerente_empresa"] = "gerente_empresa",
+            ["gerente_estabelecimento"] = "gerente_estabelecimento",
             ["dono"] = "dono",
+            ["colaborador"] = "colaborador",
             ["super_admin"] = "super_admin"
         };
+
+        private static readonly Dictionary<string, string[]> AllowedRolesByEstablishmentType =
+            new(StringComparer.OrdinalIgnoreCase)
+            {
+                ["barbearia"] = new[] { "gerente_estabelecimento", "profissional", "atendente", "funcionario" },
+                ["clinica"] = new[] { "gerente_estabelecimento", "profissional", "atendente", "funcionario" },
+                ["clínica"] = new[] { "gerente_estabelecimento", "profissional", "atendente", "funcionario" },
+                ["garagem"] = new[] { "gerente_estabelecimento", "vendedor", "atendente", "funcionario" },
+                ["hotel"] = new[] { "gerente_estabelecimento", "atendente", "funcionario" },
+                ["restaurante"] = new[] { "gerente_estabelecimento", "atendente", "motoboy", "funcionario" }
+            };
 
         public static string Normalize(string? role)
         {
@@ -41,12 +60,15 @@ namespace APIBack.Security
 
             return Normalize(role) switch
             {
-                "dono" => 900,
-                "gerente" => 800,
+                "dono" => 950,
+                "gerente_empresa" => 900,
+                "gerente_estabelecimento" => 800,
                 "atendente" => 600,
-                "cabeleireiro" => 600,
+                "profissional" => 600,
+                "vendedor" => 600,
                 "motoboy" => 600,
                 "funcionario" => 500,
+                "colaborador" => 300,
                 _ => 100
             };
         }
@@ -60,7 +82,101 @@ namespace APIBack.Security
 
             var normalized = Normalize(role);
             return string.Equals(normalized, "dono", StringComparison.OrdinalIgnoreCase)
-                || string.Equals(normalized, "gerente", StringComparison.OrdinalIgnoreCase);
+                || string.Equals(normalized, "gerente_empresa", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(normalized, "gerente_estabelecimento", StringComparison.OrdinalIgnoreCase);
+        }
+
+        public static bool CanViewUsers(string? companyRole, string? establishmentRole, bool isSuperAdmin)
+        {
+            if (isSuperAdmin)
+            {
+                return true;
+            }
+
+            var normalizedCompanyRole = Normalize(companyRole);
+            var normalizedEstablishmentRole = Normalize(establishmentRole);
+
+            return string.Equals(normalizedCompanyRole, "dono", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(normalizedCompanyRole, "gerente_empresa", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(normalizedEstablishmentRole, "gerente_estabelecimento", StringComparison.OrdinalIgnoreCase);
+        }
+
+        public static bool CanCreateUsers(string? companyRole, string? establishmentRole, bool isSuperAdmin)
+            => CanViewUsers(companyRole, establishmentRole, isSuperAdmin);
+
+        public static bool CanCreateManagers(bool isSuperAdmin) => isSuperAdmin;
+
+        public static string ResolveScreenRole(string? companyRole, string? establishmentRole, bool isSuperAdmin)
+        {
+            if (isSuperAdmin)
+            {
+                return "super_admin";
+            }
+
+            var normalizedCompanyRole = Normalize(companyRole);
+            if (string.Equals(normalizedCompanyRole, "dono", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(normalizedCompanyRole, "gerente_empresa", StringComparison.OrdinalIgnoreCase))
+            {
+                return normalizedCompanyRole;
+            }
+
+            var normalizedEstablishmentRole = Normalize(establishmentRole);
+            if (string.Equals(normalizedEstablishmentRole, "gerente_estabelecimento", StringComparison.OrdinalIgnoreCase))
+            {
+                return normalizedEstablishmentRole;
+            }
+
+            return "usuario_comum";
+        }
+
+        public static IReadOnlyCollection<string> GetAllowedTargetUserTypes(string? establishmentType)
+        {
+            if (string.IsNullOrWhiteSpace(establishmentType))
+            {
+                return Array.Empty<string>();
+            }
+
+            return AllowedRolesByEstablishmentType.TryGetValue(establishmentType.Trim(), out var roles)
+                ? roles
+                : Array.Empty<string>();
+        }
+
+        public static IReadOnlyCollection<string> GetAllowedManagerTypes(bool isSuperAdmin)
+        {
+            if (!isSuperAdmin)
+            {
+                return Array.Empty<string>();
+            }
+
+            return new[] { "gerente_estabelecimento", "gerente_empresa" };
+        }
+
+        public static bool IsCompanyRole(string? role)
+        {
+            var normalized = Normalize(role);
+            return string.Equals(normalized, "dono", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(normalized, "gerente_empresa", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(normalized, "colaborador", StringComparison.OrdinalIgnoreCase);
+        }
+
+        public static bool IsManagerRole(string? role)
+        {
+            var normalized = Normalize(role);
+            return string.Equals(normalized, "dono", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(normalized, "gerente_empresa", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(normalized, "gerente_estabelecimento", StringComparison.OrdinalIgnoreCase);
+        }
+
+        public static bool IsAllowedForEstablishmentType(string? role, string? establishmentType)
+        {
+            var normalized = Normalize(role);
+            if (string.Equals(normalized, "gerente_empresa", StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            return GetAllowedTargetUserTypes(establishmentType)
+                .Any(item => string.Equals(item, normalized, StringComparison.OrdinalIgnoreCase));
         }
     }
 }

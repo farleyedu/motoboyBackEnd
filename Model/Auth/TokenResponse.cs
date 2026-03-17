@@ -43,6 +43,9 @@ namespace APIBack.Model.Auth
         [JsonPropertyName("isSuperAdmin")]
         public bool IsSuperAdmin { get; set; }
 
+        [JsonPropertyName("empresaAtual")]
+        public EmpresaInfo? EmpresaAtual { get; set; }
+
         [JsonPropertyName("estabelecimentoAtual")]
         public EstabelecimentoInfo? EstabelecimentoAtual { get; set; }
     }

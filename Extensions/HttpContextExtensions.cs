@@ -75,6 +75,38 @@ namespace APIBack.Extensions
             return null;
         }
 
+        public static Guid? GetEmpresaId(this HttpContext context)
+        {
+            if (context.Items.TryGetValue("EmpresaId", out var value))
+            {
+                if (value is Guid guid)
+                {
+                    return guid;
+                }
+
+                if (Guid.TryParse(value?.ToString(), out var parsed))
+                {
+                    return parsed;
+                }
+            }
+
+            return null;
+        }
+
+        public static string GetEmpresaNome(this HttpContext context)
+        {
+            return context.Items.TryGetValue("EmpresaNome", out var value)
+                ? value?.ToString() ?? string.Empty
+                : string.Empty;
+        }
+
+        public static string GetTipoAcessoEmpresa(this HttpContext context)
+        {
+            return context.Items.TryGetValue("TipoAcessoEmpresa", out var value)
+                ? value?.ToString() ?? string.Empty
+                : string.Empty;
+        }
+
         public static string GetEstabelecimentoNome(this HttpContext context)
         {
             return context.Items.TryGetValue("EstabelecimentoNome", out var value)
@@ -99,6 +131,24 @@ namespace APIBack.Extensions
         public static Guid? GetVinculoId(this HttpContext context)
         {
             if (context.Items.TryGetValue("VinculoId", out var value))
+            {
+                if (value is Guid guid)
+                {
+                    return guid;
+                }
+
+                if (Guid.TryParse(value?.ToString(), out var parsed))
+                {
+                    return parsed;
+                }
+            }
+
+            return null;
+        }
+
+        public static Guid? GetEmpresaVinculoId(this HttpContext context)
+        {
+            if (context.Items.TryGetValue("EmpresaVinculoId", out var value))
             {
                 if (value is Guid guid)
                 {

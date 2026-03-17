@@ -86,12 +86,15 @@ SELECT  e.id              AS EstabelecimentoId,
         {
             const string sql = @"
 SELECT  e.id            AS Id,
+        e.id_empresa    AS EmpresaId,
+        emp.nome_fantasia AS EmpresaNome,
         e.nome_fantasia AS Nome,
         te.nome         AS TipoEstabelecimento,
         NULL::text      AS Plano,
         e.status        AS Status,
         e.ativo         AS Ativo
   FROM estabelecimentos e
+  JOIN empresas emp ON emp.id = e.id_empresa
   JOIN tipo_estabelecimento te ON te.id = e.id_tipo_estabelecimento
  WHERE e.id = @EstabelecimentoId";
 
@@ -117,6 +120,25 @@ SELECT  ue.id                   AS Id,
 
             await using var connection = new NpgsqlConnection(_connectionString);
             return await connection.QueryFirstOrDefaultAsync<UsuarioEstabelecimentoAcesso>(sql, new { UserId = userId, EstabelecimentoId = estabelecimentoId });
+        }
+
+        public async Task<UsuarioEmpresaAcesso?> ObterVinculoEmpresaAsync(int userId, Guid empresaId)
+        {
+            const string sql = @"
+SELECT  ue.id               AS Id,
+        ue.id_usuario       AS UsuarioId,
+        ue.id_empresa       AS EmpresaId,
+        ue.status           AS Status,
+        ue.ativo            AS VinculoAtivo,
+        ue.tipo_acesso      AS TipoAcesso
+  FROM usuario_empresas ue
+ WHERE ue.id_usuario = @UserId
+   AND ue.id_empresa = @EmpresaId
+ ORDER BY ue.created_at DESC
+ LIMIT 1";
+
+            await using var connection = new NpgsqlConnection(_connectionString);
+            return await connection.QueryFirstOrDefaultAsync<UsuarioEmpresaAcesso>(sql, new { UserId = userId, EmpresaId = empresaId });
         }
 
         public async Task<UsuarioEstabelecimentoAcesso?> ObterVinculoPorIdAsync(Guid vinculoId)
