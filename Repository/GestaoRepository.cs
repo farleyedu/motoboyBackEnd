@@ -610,7 +610,7 @@ UPDATE usuario
                 await connection.ExecuteAsync(@"
 UPDATE usuario_empresas
    SET ativo = FALSE,
-       status = 'inativo',
+       status = 'removido',
        data_remocao = NOW(),
        updated_at = NOW()
  WHERE id_usuario = @UserId
@@ -619,7 +619,7 @@ UPDATE usuario_empresas
                 await connection.ExecuteAsync(@"
 UPDATE usuario_estabelecimentos
    SET ativo = FALSE,
-       status = 'inativo',
+       status = 'removido',
        data_remocao = NOW(),
        updated_at = NOW()
  WHERE id_usuario = @UserId
@@ -716,7 +716,7 @@ UPDATE usuario
             await connection.ExecuteAsync(@"
 UPDATE usuario_empresas
    SET ativo = FALSE,
-       status = 'inativo',
+       status = 'removido',
        data_remocao = NOW(),
        updated_at = NOW()
  WHERE id_usuario = @UserId
@@ -725,7 +725,7 @@ UPDATE usuario_empresas
             await connection.ExecuteAsync(@"
 UPDATE usuario_estabelecimentos
    SET ativo = FALSE,
-       status = 'inativo',
+       status = 'removido',
        data_remocao = NOW(),
        updated_at = NOW()
  WHERE id_usuario = @UserId
