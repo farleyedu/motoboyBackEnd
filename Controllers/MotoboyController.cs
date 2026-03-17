@@ -53,7 +53,7 @@ namespace APIBack.Controllers
         }
 
         [HttpPost("{id}/upload-avatar")]
-        [RequirePermission("Delivery", "editar")]
+        [RequirePermission("Delivery", "gestao_motoboy")]
         public async Task<IActionResult> UploadAvatar(int id, IFormFile avatar)
         {
             if (avatar == null || avatar.Length == 0)

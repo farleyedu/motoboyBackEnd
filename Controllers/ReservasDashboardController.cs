@@ -75,7 +75,7 @@ namespace APIBack.Controllers
         }
 
         [HttpGet("metricas-dia")]
-        [RequirePermission("Relatorios", "visualizar")]
+        [RequirePermission("Relatorios", "ver_metricas")]
         public IActionResult ObterMetricasDia([FromQuery] DateTime data, [FromQuery] Guid estabelecimentoId)
         {
             if (estabelecimentoId == Guid.Empty || data == default)
@@ -101,7 +101,7 @@ namespace APIBack.Controllers
         }
 
         [HttpGet("metricas-mes")]
-        [RequirePermission("Relatorios", "visualizar")]
+        [RequirePermission("Relatorios", "ver_metricas")]
         public IActionResult ObterMetricasMes([FromQuery] int month, [FromQuery] int year, [FromQuery] Guid estabelecimentoId)
         {
             if (!MesAnoValidos(month, year) || estabelecimentoId == Guid.Empty)
@@ -127,7 +127,7 @@ namespace APIBack.Controllers
         }
 
         [HttpGet("metricas-periodo")]
-        [RequirePermission("Relatorios", "visualizar")]
+        [RequirePermission("Relatorios", "ver_metricas")]
         public IActionResult ObterMetricasPeriodo(
             [FromQuery] DateTime dataInicio,
             [FromQuery] DateTime dataFim,

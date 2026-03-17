@@ -155,7 +155,7 @@ namespace APIBack.Controllers
                 return UnauthorizedResponse();
             }
 
-            if (!HasAnyPermission(("Usuarios", "editar"), ("Usuarios", "deletar"), ("Configuracoes", "editar"), ("Configuracoes", "deletar")))
+            if (!HasAnyPermission(("Usuarios", "editar"), ("Usuarios", "desativar"), ("Usuarios", "deletar"), ("Configuracoes", "editar"), ("Configuracoes", "deletar")))
             {
                 return ForbiddenResponse();
             }

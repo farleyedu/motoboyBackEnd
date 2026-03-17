@@ -54,7 +54,7 @@ namespace APIBack.Automation.Controllers
         }
 
         [HttpGet("veiculos")]
-        [RequirePermission("Garagem", "visualizar")]
+        [RequirePermission("Garagem", "estoque_visualizar")]
         public async Task<IActionResult> Listar(
             [FromQuery] Guid? estabelecimentoId = null,
             [FromQuery] string? status = null,
@@ -99,7 +99,7 @@ namespace APIBack.Automation.Controllers
         }
 
         [HttpGet("veiculos/{id:guid}")]
-        [RequirePermission("Garagem", "visualizar")]
+        [RequirePermission("Garagem", "estoque_visualizar")]
         public async Task<IActionResult> Obter(Guid id, [FromQuery] Guid? estabelecimentoId = null)
         {
             if (!TryResolveOptionalEstabelecimento(estabelecimentoId, out var effectiveEstabelecimentoId, out var error))
@@ -114,7 +114,7 @@ namespace APIBack.Automation.Controllers
         }
 
         [HttpPost("veiculos")]
-        [RequirePermission("Garagem", "cadastrar")]
+        [RequirePermission("Garagem", "estoque_criar")]
         public async Task<IActionResult> Criar([FromBody] CreateGarageVehicleRequest? request)
         {
             if (request == null)
@@ -144,7 +144,7 @@ namespace APIBack.Automation.Controllers
         }
 
         [HttpPut("veiculos/{id:guid}")]
-        [RequirePermission("Garagem", "editar")]
+        [RequirePermission("Garagem", "estoque_editar")]
         public async Task<IActionResult> Atualizar(Guid id, [FromBody] UpsertGarageVehicleRequest? request)
         {
             if (request == null)
@@ -176,7 +176,7 @@ namespace APIBack.Automation.Controllers
         }
 
         [HttpDelete("veiculos/{id:guid}")]
-        [RequirePermission("Garagem", "excluir")]
+        [RequirePermission("Garagem", "estoque_excluir")]
         public async Task<IActionResult> Remover(Guid id, [FromQuery] Guid? estabelecimentoId = null)
         {
             if (!TryResolveOptionalEstabelecimento(estabelecimentoId, out var effectiveEstabelecimentoId, out var error))
@@ -191,7 +191,7 @@ namespace APIBack.Automation.Controllers
         }
 
         [HttpPatch("veiculos/{id:guid}/status")]
-        [RequirePermission("Garagem", "editar")]
+        [RequirePermission("Garagem", "estoque_atualizar_status")]
         public async Task<IActionResult> AtualizarStatus(
             Guid id,
             [FromBody] UpdateGarageVehicleStatusRequest? request,
@@ -226,7 +226,7 @@ namespace APIBack.Automation.Controllers
         }
 
         [HttpPatch("veiculos/{id:guid}/destaque")]
-        [RequirePermission("Garagem", "editar")]
+        [RequirePermission("Garagem", "estoque_destacar")]
         public async Task<IActionResult> AtualizarDestaque(
             Guid id,
             [FromBody] UpdateGarageVehicleHighlightRequest? request,
@@ -271,7 +271,7 @@ namespace APIBack.Automation.Controllers
         }
 
         [HttpGet("metricas")]
-        [RequirePermission("Garagem", "visualizar")]
+        [RequirePermission("Garagem", "estoque_visualizar")]
         public async Task<IActionResult> ObterMetricas([FromQuery] Guid? estabelecimentoId = null)
         {
             if (!TryResolveRequiredEstabelecimento(estabelecimentoId, out var effectiveEstabelecimentoId, out var error))

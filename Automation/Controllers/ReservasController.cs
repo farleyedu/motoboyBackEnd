@@ -378,7 +378,7 @@ namespace APIBack.Controllers
         /// <param name="id">ID da reserva a ser cancelada</param>
         /// <returns>Confirmação de cancelamento</returns>
         [HttpDelete("{id}")]
-        [RequirePermission("Reservas", "deletar")]
+        [RequirePermission("Reservas", "cancelar")]
         [ProducesResponseType(200)]
         [ProducesResponseType(404)]
         public async Task<IActionResult> CancelarReserva(int id)

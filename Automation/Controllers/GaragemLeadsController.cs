@@ -43,7 +43,7 @@ namespace APIBack.Automation.Controllers
         }
 
         [HttpGet]
-        [RequirePermission("Garagem", "visualizar")]
+        [RequirePermission("Garagem", "leads_visualizar")]
         public async Task<IActionResult> Listar(
             [FromQuery] string? busca,
             [FromQuery] string? status,
@@ -89,7 +89,7 @@ namespace APIBack.Automation.Controllers
         }
 
         [HttpGet("{idLead:guid}")]
-        [RequirePermission("Garagem", "visualizar")]
+        [RequirePermission("Garagem", "leads_visualizar")]
         public async Task<IActionResult> ObterDetalhe(Guid idLead, [FromQuery] Guid? idEstabelecimento = null)
         {
             if (!TryResolveEstabelecimento(idEstabelecimento, out var estabelecimentoId, out var error))
@@ -102,7 +102,7 @@ namespace APIBack.Automation.Controllers
         }
 
         [HttpPatch("{idLead:guid}/status")]
-        [RequirePermission("Garagem", "editar")]
+        [RequirePermission("Garagem", "leads_mudar_status")]
         public async Task<IActionResult> AtualizarStatus(Guid idLead, [FromBody] UpdateGarageLeadStatusRequest request, [FromQuery] Guid? idEstabelecimento = null)
         {
             if (!TryResolveEstabelecimento(idEstabelecimento, out var estabelecimentoId, out var error))
@@ -132,7 +132,7 @@ namespace APIBack.Automation.Controllers
         }
 
         [HttpPost("{idLead:guid}/simulacoes")]
-        [RequirePermission("Garagem", "criar")]
+        [RequirePermission("Garagem", "leads_criar_simulacao")]
         public async Task<IActionResult> CriarSimulacao(Guid idLead, [FromBody] CreateGarageLeadSimulationRequest request, [FromQuery] Guid? idEstabelecimento = null)
         {
             if (!TryResolveEstabelecimento(idEstabelecimento, out var estabelecimentoId, out var error))
@@ -159,7 +159,7 @@ namespace APIBack.Automation.Controllers
 
         [HttpPatch("{idLead:guid}/simulacoes/{idSimulacao:guid}")]
         [HttpPut("{idLead:guid}/simulacoes/{idSimulacao:guid}")]
-        [RequirePermission("Garagem", "editar")]
+        [RequirePermission("Garagem", "leads_editar_simulacao")]
         public async Task<IActionResult> AtualizarSimulacao(Guid idLead, Guid idSimulacao, [FromBody] UpdateGarageLeadSimulationRequest request, [FromQuery] Guid? idEstabelecimento = null)
         {
             if (!TryResolveEstabelecimento(idEstabelecimento, out var estabelecimentoId, out var error))
@@ -182,7 +182,7 @@ namespace APIBack.Automation.Controllers
         }
 
         [HttpPost("{idLead:guid}/simulacoes/{idSimulacao:guid}/arquivos")]
-        [RequirePermission("Garagem", "editar")]
+        [RequirePermission("Garagem", "leads_anexar_arquivo")]
         public async Task<IActionResult> UploadArquivo(Guid idLead, Guid idSimulacao, [FromForm] IFormFile file, [FromQuery] Guid? idEstabelecimento = null)
         {
             if (!TryResolveEstabelecimento(idEstabelecimento, out var estabelecimentoId, out var error))
@@ -225,7 +225,7 @@ namespace APIBack.Automation.Controllers
         }
 
         [HttpDelete("{idLead:guid}/simulacoes/{idSimulacao:guid}/arquivos/{idArquivo:guid}")]
-        [RequirePermission("Garagem", "deletar")]
+        [RequirePermission("Garagem", "leads_remover_arquivo")]
         public async Task<IActionResult> RemoverArquivo(Guid idLead, Guid idSimulacao, Guid idArquivo, [FromQuery] Guid? idEstabelecimento = null)
         {
             if (!TryResolveEstabelecimento(idEstabelecimento, out var estabelecimentoId, out var error))
@@ -256,7 +256,7 @@ namespace APIBack.Automation.Controllers
         }
 
         [HttpDelete("{idLead:guid}/simulacoes/{idSimulacao:guid}")]
-        [RequirePermission("Garagem", "deletar")]
+        [RequirePermission("Garagem", "leads_excluir_simulacao")]
         public async Task<IActionResult> RemoverSimulacao(Guid idLead, Guid idSimulacao, [FromQuery] Guid? idEstabelecimento = null)
         {
             if (!TryResolveEstabelecimento(idEstabelecimento, out var estabelecimentoId, out var error))

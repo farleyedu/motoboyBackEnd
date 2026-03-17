@@ -17,7 +17,7 @@ public class EntregasController : Controller
     }
 
     [HttpPost("confirmar")]
-    [RequirePermission("Delivery", "editar")]
+    [RequirePermission("Delivery", "integracao_ifood")]
     public async Task<IActionResult> ConfirmarEntrega([FromBody] ConfirmarEntregaRequest request)
     {
         try

@@ -51,7 +51,7 @@ namespace APIBack.Controllers
 
         // POST: api/pedidos
         [HttpPost]
-        [RequirePermission("Delivery", "criar")]
+        [RequirePermission("Delivery", "criar_pedido")]
         public ActionResult<Pedido> PostPedido(Pedido pedido)
         {
             _pedidoService.CriarPedido();
@@ -163,7 +163,7 @@ namespace APIBack.Controllers
 
         // PUT: api/pedidos/1
         [HttpPut("{id}")]
-        [RequirePermission("Delivery", "editar")]
+        [RequirePermission("Delivery", "editar_pedido")]
         public IActionResult PutPedido(int id, Pedido pedido)
         {
             var pedidoExistente = _pedidoService.GetPedidosId(id);
@@ -177,7 +177,7 @@ namespace APIBack.Controllers
         }
 
         [HttpPut("AtribuirMotoboy")]
-        [RequirePermission("Delivery", "editar")]
+        [RequirePermission("Delivery", "atribuir_motoboy")]
         public IActionResult AtribuirMotoboy([FromBody] EnviarPedidosParaRotaDTO dto)
         {
             if (dto.PedidosIds == null || !dto.PedidosIds.Any())
@@ -190,7 +190,7 @@ namespace APIBack.Controllers
 
 
         [HttpPost("PedidoIfood")]
-        [RequirePermission("Delivery", "criar")]
+        [RequirePermission("Delivery", "integracao_ifood")]
         public async Task<IActionResult> CriarPedidosIfood(PedidoCapturado pedidos)
         {
             if (pedidos == null)

@@ -73,27 +73,27 @@ namespace APIBack.Automation.Controllers
         }
 
         [HttpPost("{id:guid}/assign")]
-        [RequirePermission("WhatsApp", "editar")]
+        [RequirePermission("WhatsApp", "assumir_conversa")]
         public async Task<IActionResult> AtribuirConversa(Guid id, [FromBody] AssignConversationRequest request)
             => await ExecuteManagementAsync(() => _managementService.AssignAsync(id, RequireEstabelecimento(), HttpContext.GetUserId(), HttpContext.GetUserNome(), request));
 
         [HttpPost("{id:guid}/back-to-bot")]
-        [RequirePermission("WhatsApp", "editar")]
+        [RequirePermission("WhatsApp", "devolver_robo")]
         public async Task<IActionResult> VoltarParaBot(Guid id)
             => await ExecuteManagementAsync(() => _managementService.BackToBotAsync(id, RequireEstabelecimento(), HttpContext.GetUserId(), HttpContext.GetUserNome()));
 
         [HttpPatch("{id:guid}/status")]
-        [RequirePermission("WhatsApp", "editar")]
+        [RequirePermission("WhatsApp", "assumir_conversa")]
         public async Task<IActionResult> AtualizarStatus(Guid id, [FromBody] UpdateConversationStatusRequest request)
             => await ExecuteManagementAsync(() => _managementService.UpdateStatusAsync(id, RequireEstabelecimento(), HttpContext.GetUserId(), HttpContext.GetUserNome(), request));
 
         [HttpPost("{id:guid}/close")]
-        [RequirePermission("WhatsApp", "editar")]
+        [RequirePermission("WhatsApp", "encerrar")]
         public async Task<IActionResult> FecharConversa(Guid id, [FromBody] CloseConversationRequest request)
             => await ExecuteManagementAsync(() => _managementService.CloseAsync(id, RequireEstabelecimento(), HttpContext.GetUserId(), HttpContext.GetUserNome(), request));
 
         [HttpPost("{id:guid}/reopen")]
-        [RequirePermission("WhatsApp", "editar")]
+        [RequirePermission("WhatsApp", "reabrir")]
         public async Task<IActionResult> ReabrirConversa(Guid id, [FromBody] ReopenConversationRequest request)
             => await ExecuteManagementAsync(() => _managementService.ReopenAsync(id, RequireEstabelecimento(), HttpContext.GetUserId(), HttpContext.GetUserNome(), request));
 
@@ -103,12 +103,12 @@ namespace APIBack.Automation.Controllers
             => await ExecuteManagementAsync(() => _managementService.MarkAsReadAsync(id, RequireEstabelecimento()));
 
         [HttpPost("{id:guid}/mensagens")]
-        [RequirePermission("WhatsApp", "criar")]
+        [RequirePermission("WhatsApp", "enviar_mensagem")]
         public async Task<IActionResult> EnviarMensagem(Guid id, [FromBody] SendConversationMessageRequest request)
             => await ExecuteManagementAsync(() => _managementService.SendMessageAsync(id, RequireEstabelecimento(), HttpContext.GetUserId(), HttpContext.GetUserNome(), request));
 
         [HttpPost("{id:guid}/archive")]
-        [RequirePermission("WhatsApp", "editar")]
+        [RequirePermission("WhatsApp", "arquivar")]
         public async Task<IActionResult> ArquivarConversa(Guid id)
         {
             var estabelecimentoId = RequireEstabelecimento();

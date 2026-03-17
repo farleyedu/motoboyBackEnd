@@ -41,7 +41,7 @@ namespace APIBack.Automation.Controllers
         }
 
         [HttpPost("conversation/{idConversa:guid}/handover")]
-        [RequirePermission("WhatsApp", "editar")]
+        [RequirePermission("WhatsApp", "assumir_conversa")]
         public async Task<IActionResult> EncaminharParaHumano(Guid idConversa, [FromBody] HandoverRequest req)
         {
             try
@@ -79,7 +79,7 @@ namespace APIBack.Automation.Controllers
         }
 
         [HttpPost("conversation/{idConversa:guid}/back-to-bot")]
-        [RequirePermission("WhatsApp", "editar")]
+        [RequirePermission("WhatsApp", "devolver_robo")]
         public async Task<IActionResult> VoltarParaBot(Guid idConversa)
         {
             try
@@ -99,7 +99,7 @@ namespace APIBack.Automation.Controllers
         }
 
         [HttpPost("agent/reply")]
-        [RequirePermission("WhatsApp", "criar")]
+        [RequirePermission("WhatsApp", "enviar_mensagem")]
         public async Task<IActionResult> RespostaAgente([FromBody] AgentReplyRequest req)
         {
             var (valido, erro) = _validator.Validar(req);
