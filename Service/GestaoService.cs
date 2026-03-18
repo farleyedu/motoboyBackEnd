@@ -4,6 +4,8 @@ using System.Linq;
 using System.Text.Json;
 using System.Text;
 using System.Threading.Tasks;
+using APIBack.Automation.Interfaces;
+using APIBack.Automation.Models;
 using APIBack.DTOs.Gestao;
 using APIBack.Model.Gestao;
 using APIBack.Repository.Interface;
@@ -17,11 +19,13 @@ namespace APIBack.Service
     {
         private readonly IGestaoRepository _repository;
         private readonly ILogger<GestaoService> _logger;
+        private readonly IWabaPhoneRepository? _wabaPhoneRepository;
 
-        public GestaoService(IGestaoRepository repository, ILogger<GestaoService> logger)
+        public GestaoService(IGestaoRepository repository, ILogger<GestaoService> logger, IWabaPhoneRepository? wabaPhoneRepository = null)
         {
             _repository = repository;
             _logger = logger;
+            _wabaPhoneRepository = wabaPhoneRepository;
         }
 
         public async Task<IReadOnlyCollection<GestaoEmpresaDto>> ListarEmpresasAsync(
@@ -141,6 +145,18 @@ namespace APIBack.Service
             }
 
             var createdId = await _repository.CriarEstabelecimentoAsync(request);
+
+            if (_wabaPhoneRepository != null && !string.IsNullOrWhiteSpace(request.WabaPhoneNumberId))
+            {
+                await _wabaPhoneRepository.InserirOuAtualizarAsync(new WabaPhone
+                {
+                    PhoneNumberId = request.WabaPhoneNumberId,
+                    IdEstabelecimento = createdId,
+                    Ativo = true,
+                    Descricao = request.NomeFantasia
+                });
+            }
+
             var created = await _repository.ObterEstabelecimentoAsync(createdId)
                 ?? throw new InvalidOperationException("Estabelecimento criado mas nao encontrado.");
 
@@ -170,6 +186,17 @@ namespace APIBack.Service
             }
 
             await _repository.AtualizarEstabelecimentoAsync(targetEstabelecimentoId, request);
+
+            if (_wabaPhoneRepository != null && !string.IsNullOrWhiteSpace(request.WabaPhoneNumberId))
+            {
+                await _wabaPhoneRepository.InserirOuAtualizarAsync(new WabaPhone
+                {
+                    PhoneNumberId = request.WabaPhoneNumberId,
+                    IdEstabelecimento = targetEstabelecimentoId,
+                    Ativo = true,
+                    Descricao = request.NomeFantasia
+                });
+            }
 
             var updated = await _repository.ObterEstabelecimentoAsync(targetEstabelecimentoId)
                 ?? throw new KeyNotFoundException("Estabelecimento nao encontrado.");
@@ -679,7 +706,8 @@ namespace APIBack.Service
                 ModulosAtivos = MapModulesToUi(row.NomeFantasia, row.ModulosAtivosRaw),
                 Ativo = row.Ativo,
                 Status = NormalizeStatus(row.Status),
-                Endereco = BuildAddress(row)
+                Endereco = BuildAddress(row),
+                WabaPhoneNumberId = row.WabaPhoneNumberId
             };
         }
 

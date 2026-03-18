@@ -72,6 +72,7 @@ namespace APIBack.DTOs.Gestao
         public bool Ativo { get; set; } = true;
         public string Status { get; set; } = "ativo";
         public string? Endereco { get; set; }
+        public string? WabaPhoneNumberId { get; set; }
     }
 
     public class GestaoUsuarioEmpresaDto
@@ -161,6 +162,7 @@ namespace APIBack.DTOs.Gestao
         public string? TipoEstabelecimentoNome { get; set; }
         public string? Slug { get; set; }
         public List<string> ModulosAtivos { get; set; } = new();
+        public string? WabaPhoneNumberId { get; set; }
     }
 
     public class SalvarUsuarioRequest
