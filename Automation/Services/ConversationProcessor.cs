@@ -6,11 +6,10 @@ using APIBack.Automation.Dtos;
 using APIBack.Automation.Interfaces;
 using APIBack.Automation.Models;
 using APIBack.Automation.Helpers;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
-using Microsoft.VisualStudio.TestPlatform.CommunicationUtilities;
 using System;
 using System.Collections.Generic;
-using System.Drawing;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -20,6 +19,12 @@ namespace APIBack.Automation.Services
 {
     public class ConversationProcessor
     {
+        private static readonly System.Text.RegularExpressions.Regex PessoasRegex =
+            new(@"(\d{1,3})\s*pessoas?", System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+        private static readonly System.Text.RegularExpressions.Regex HoraRegex =
+            new(@"(\d{1,2}):(\d{2})", System.Text.RegularExpressions.RegexOptions.Compiled);
+
         private readonly ConversationService _conversationService;
         private readonly IQueueBus _fila;
         private readonly IWabaPhoneRepository _wabaRepo;
@@ -28,7 +33,20 @@ namespace APIBack.Automation.Services
         private readonly IMessageRepository _mensagemRepository;
         private readonly PromptAssembler _promptAssembler;
         private readonly CentralRoutingService _centralRouting;
+        private readonly IMemoryCache _cache;
         private readonly ILogger<ConversationProcessor> _logger;
+
+        private static readonly MemoryCacheEntryOptions ModulosCacheOptions = new()
+        {
+            AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(60),
+            Priority = CacheItemPriority.Normal
+        };
+
+        private static readonly MemoryCacheEntryOptions PromptsCacheOptions = new()
+        {
+            AbsoluteExpirationRelativeToNow = TimeSpan.FromSeconds(60),
+            Priority = CacheItemPriority.Normal
+        };
 
         public ConversationProcessor(
             ConversationService conversationService,
@@ -39,6 +57,7 @@ namespace APIBack.Automation.Services
             IMessageRepository mensagemRepository,
             PromptAssembler promptAssembler,
             CentralRoutingService centralRouting,
+            IMemoryCache cache,
             ILogger<ConversationProcessor> logger)
         {
             _conversationService = conversationService;
@@ -49,6 +68,7 @@ namespace APIBack.Automation.Services
             _mensagemRepository = mensagemRepository;
             _promptAssembler = promptAssembler;
             _centralRouting = centralRouting;
+            _cache = cache;
             _logger = logger;
         }
 
@@ -67,7 +87,7 @@ namespace APIBack.Automation.Services
             var telefoneNormalizado = NormalizarTelefoneContato(input.Mensagem?.De);
 
             var criada = await _conversationService.AcrescentarEntradaAsync(
-                idWa: input.Mensagem.De!,
+                idWa: input.Mensagem!.De!,
                 idMensagemWa: input.Mensagem.Id!,
                 conteudo: input.Texto,
                 displayPhoneNumber: input.PhoneNumberDisplay ?? string.Empty,
@@ -85,8 +105,11 @@ namespace APIBack.Automation.Services
             criada.CriadaPor ??= "cliente";
             await _fila.PublicarEntradaAsync(criada);
 
-            var contexto = await ObterContextoAsync(criada.IdConversa, input.PhoneNumberDisplay);
-            var historico = await ObterHistoricoAsync(criada.IdConversa);
+            var tarefaContexto = ObterContextoAsync(criada.IdConversa, input.PhoneNumberDisplay);
+            var tarefaHistorico = ObterHistoricoAsync(criada.IdConversa);
+            await Task.WhenAll(tarefaContexto, tarefaHistorico);
+            var contexto = tarefaContexto.Result;
+            var historico = tarefaHistorico.Result;
             var handoverDetalhes = MontarHandoverDetalhes(input, criada, historico, contexto);
 
             return new ConversationProcessingResult(
@@ -192,8 +215,14 @@ namespace APIBack.Automation.Services
                     return null;
                 }
 
-                var prompts = await _regrasRepo.ObterPromptsCompostosAsync(idEstabelecimento.Value, modulosAtivos);
-                return _promptAssembler.Assemble(prompts);
+                var promptsCacheKey = $"prompts:{idEstabelecimento.Value}:{string.Join(",", modulosAtivos.OrderBy(m => m))}";
+                if (!_cache.TryGetValue(promptsCacheKey, out string? promptMontado))
+                {
+                    var prompts = await _regrasRepo.ObterPromptsCompostosAsync(idEstabelecimento.Value, modulosAtivos);
+                    promptMontado = _promptAssembler.Assemble(prompts);
+                    _cache.Set(promptsCacheKey, promptMontado, PromptsCacheOptions);
+                }
+                return promptMontado;
             }
             catch (Exception ex)
             {
@@ -204,6 +233,12 @@ namespace APIBack.Automation.Services
 
         private async Task<IReadOnlyCollection<string>> DeterminarModulosAtivosAsync(Guid idEstabelecimento)
         {
+            var cacheKey = $"modulos:{idEstabelecimento}";
+            if (_cache.TryGetValue(cacheKey, out IReadOnlyCollection<string>? cached) && cached != null)
+            {
+                return cached;
+            }
+
             try
             {
                 var modulosAtivos = await _estabelecimentoRepo.ObterModulosAtivosAsync(idEstabelecimento);
@@ -211,12 +246,14 @@ namespace APIBack.Automation.Services
                 if (modulosAtivos.Count == 0)
                 {
                     _logger.LogWarning("Nenhum modulo ativo encontrado para estabelecimento {Estabelecimento}", idEstabelecimento);
+                    _cache.Set<IReadOnlyCollection<string>>(cacheKey, [], ModulosCacheOptions);
                     return Array.Empty<string>();
                 }
 
                 _logger.LogDebug("Modulos ativos encontrados para estabelecimento {Estabelecimento}: {Modulos}",
                     idEstabelecimento, string.Join(", ", modulosAtivos));
 
+                _cache.Set(cacheKey, modulosAtivos, ModulosCacheOptions);
                 return modulosAtivos;
             }
             catch (Exception ex)
@@ -253,13 +290,7 @@ namespace APIBack.Automation.Services
         {
             try
             {
-                var historico = await _mensagemRepository.GetByConversationAsync(idConversa, limit: 200);
-
-                // ✨ ADICIONADO: Log do total de mensagens buscadas no banco
-                _logger.LogWarning(
-                    "[HISTORICO-DEBUG] Conversa={Conversa} | Buscou {Total} mensagens do banco",
-                    idConversa,
-                    historico.Count);
+                var historico = await _mensagemRepository.GetByConversationAsync(idConversa, limit: 50);
 
                 var turnos = historico
                     .Where(m => !string.IsNullOrWhiteSpace(m.Conteudo))
@@ -271,18 +302,10 @@ namespace APIBack.Automation.Services
                     })
                     .ToList();
 
-                // Compactar se mais de 20 turnos
                 if (turnos.Count > 20)
                 {
-                    // ✨ ADICIONADO: Log informando compactação
-                    _logger.LogWarning(
-                        "[HISTORICO-DEBUG] Conversa={Conversa} | Histórico será COMPACTADO de {Original} para ~16 turnos (1 resumo + 15 recentes)",
-                        idConversa,
-                        turnos.Count);
-
                     var turnosRecentes = turnos.TakeLast(15).ToList();
                     var turnosAntigos = turnos.Take(turnos.Count - 15).ToList();
-
                     var resumo = CriarResumoCompacto(turnosAntigos);
 
                     var turnosCompactados = new List<AssistantChatTurn>
@@ -296,21 +319,8 @@ namespace APIBack.Automation.Services
                     };
 
                     turnosCompactados.AddRange(turnosRecentes);
-
-                    // ✨ ADICIONADO: Log confirmando compactação
-                    _logger.LogWarning(
-                        "[HISTORICO-DEBUG] Conversa={Conversa} | Retornando {Final} turnos (após compactação)",
-                        idConversa,
-                        turnosCompactados.Count);
-
                     return turnosCompactados;
                 }
-
-                // ✨ ADICIONADO: Log quando não precisa compactar
-                _logger.LogWarning(
-                    "[HISTORICO-DEBUG] Conversa={Conversa} | Retornando {Total} turnos (sem compactação necessária)",
-                    idConversa,
-                    turnos.Count);
 
                 return turnos;
             }
@@ -336,13 +346,13 @@ namespace APIBack.Automation.Services
                         dadosExtraidos.Add($"Nome={conteudo.Substring(0, Math.Min(50, conteudo.Length))}");
                     }
 
-                    var matchPessoas = System.Text.RegularExpressions.Regex.Match(conteudo, @"(\d{1,3})\s*pessoas?", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                    var matchPessoas = PessoasRegex.Match(conteudo);
                     if (matchPessoas.Success)
                     {
                         dadosExtraidos.Add($"QtdPessoas={matchPessoas.Groups[1].Value}");
                     }
 
-                    var matchHora = System.Text.RegularExpressions.Regex.Match(conteudo, @"(\d{1,2}):(\d{2})");
+                    var matchHora = HoraRegex.Match(conteudo);
                     if (matchHora.Success)
                     {
                         dadosExtraidos.Add($"Horario={matchHora.Value}");

@@ -37,6 +37,7 @@ namespace APIBack.Automation.Services
         private const string ChaveVendaAno = "garagem_venda_ano";
         private const string ChaveVendaKm = "garagem_venda_km";
         private const string ChaveVendaQuitado = "garagem_venda_quitado";
+        private const string ChaveCpf = "garagem_cpf";
 
         private const string EtapaNome = "nome";
         private const string EtapaObjetivo = "objetivo";
@@ -55,6 +56,7 @@ namespace APIBack.Automation.Services
         private const string EtapaVendaKm = "venda_km";
         private const string EtapaVendaQuitado = "venda_quitado";
         private const string EtapaUrgencia = "urgencia";
+        private const string EtapaCpf = "cpf";
 
         private const string ObjetivoComprar = "comprar";
         private const string ObjetivoVender = "vender";
@@ -455,13 +457,25 @@ namespace APIBack.Automation.Services
                     }
 
                     lead.Urgencia = urgencia;
+                    await _garagemLeadRepository.AtualizarAsync(lead);
+                    await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaCpf, viaNumeroCentral);
+                    return CriarPergunta(EtapaCpf, lead, nomeEstabelecimento, incluirErro: false);
+                }
+
+                case EtapaCpf:
+                    if (string.IsNullOrWhiteSpace(mensagemTexto))
+                    {
+                        await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaCpf, viaNumeroCentral);
+                        return CriarPergunta(EtapaCpf, lead, nomeEstabelecimento, incluirErro: false);
+                    }
+
+                    lead.Cpf = mensagemTexto.Trim();
                     await _garagemLeadRepository.ConcluirAsync(lead);
 
                     lead.Status = "concluido";
                     lead.DataConclusao = DateTime.UtcNow;
                     await SalvarContextoConcluidoAsync(idConversa, contextoAtual, lead, viaNumeroCentral);
                     return CriarMensagemConclusao(lead.NomeCliente);
-                }
 
                 default:
                     await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaNome, viaNumeroCentral);
@@ -549,7 +563,7 @@ namespace APIBack.Automation.Services
             await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
             {
                 Estado = EstadoConcluido,
-                DadosColetados = BuildDadosContexto(contextoAtual, lead, EtapaUrgencia, viaNumeroCentral),
+                DadosColetados = BuildDadosContexto(contextoAtual, lead, EtapaCpf, viaNumeroCentral),
                 ExpiracaoEstado = null
             });
         }
@@ -651,6 +665,11 @@ namespace APIBack.Automation.Services
             if (!string.IsNullOrWhiteSpace(lead.VendaQuitado))
             {
                 dados[ChaveVendaQuitado] = lead.VendaQuitado!;
+            }
+
+            if (!string.IsNullOrWhiteSpace(lead.Cpf))
+            {
+                dados[ChaveCpf] = lead.Cpf!;
             }
 
             if (viaNumeroCentral)
@@ -820,6 +839,12 @@ namespace APIBack.Automation.Services
                     null,
                     null,
                     BuildUrgenciaButtons()),
+                EtapaCpf => new AssistantDecision(
+                    $"Otimo! Por ultimo, qual e o seu CPF? 📋\n\nEle sera usado apenas para facilitar a simulacao de credito.",
+                    "none",
+                    null,
+                    false,
+                    null),
                 _ => CriarBoasVindas(nomeEstabelecimento)
             };
         }
@@ -1068,7 +1093,12 @@ namespace APIBack.Automation.Services
                     return EtapaTrocaCondicao;
                 }
 
-                return EtapaUrgencia;
+                if (string.IsNullOrWhiteSpace(lead.Urgencia))
+                {
+                    return EtapaUrgencia;
+                }
+
+                return EtapaCpf;
             }
 
             if (string.Equals(objetivo, ObjetivoVender, StringComparison.Ordinal))
@@ -1093,7 +1123,12 @@ namespace APIBack.Automation.Services
                     return EtapaVendaQuitado;
                 }
 
-                return EtapaUrgencia;
+                if (string.IsNullOrWhiteSpace(lead.Urgencia))
+                {
+                    return EtapaUrgencia;
+                }
+
+                return EtapaCpf;
             }
 
             if (string.IsNullOrWhiteSpace(lead.ModeloInteresse))
@@ -1116,7 +1151,12 @@ namespace APIBack.Automation.Services
                 return EtapaValorEntrada;
             }
 
-            return EtapaUrgencia;
+            if (string.IsNullOrWhiteSpace(lead.Urgencia))
+            {
+                return EtapaUrgencia;
+            }
+
+            return EtapaCpf;
         }
 
         private static string? ObterEtapaDoContexto(ConversationContext? contexto)

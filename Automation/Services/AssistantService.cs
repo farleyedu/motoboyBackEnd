@@ -32,7 +32,7 @@ namespace APIBack.Automation.Services
         private const string MensagemTimeoutFallback = "Desculpe, estou levando mais tempo que o esperado para processar 😔. Pode tentar novamente?";
 
         private const int MaxRetryAttempts = 3;
-        private const int TimeoutSeconds = 120;
+        private const int TimeoutSeconds = 45;
 
         private readonly IHttpClientFactory _httpFactory;
         private readonly ILogger<AssistantService> _logger;
@@ -259,7 +259,7 @@ namespace APIBack.Automation.Services
                         {
                             if (attempt < MaxRetryAttempts)
                             {
-                                var delayMs = attempt * 2000;
+                                var delayMs = attempt * 2000 + Random.Shared.Next(0, 500);
                                 _logger.LogInformation("[Conversa={Conversa}] Aguardando {Delay}ms antes do retry", idConversa, delayMs);
                                 await Task.Delay(delayMs);
                                 continue;
@@ -316,7 +316,7 @@ namespace APIBack.Automation.Services
                     if (attempt < MaxRetryAttempts)
                     {
                         _logger.LogInformation("[Conversa={Conversa}] Tentando novamente após timeout...", idConversa);
-                        await Task.Delay(1000 * attempt);
+                        await Task.Delay(1000 * attempt + Random.Shared.Next(0, 300));
                         continue;
                     }
                 }
@@ -327,7 +327,7 @@ namespace APIBack.Automation.Services
 
                     if (attempt < MaxRetryAttempts)
                     {
-                        await Task.Delay(2000 * attempt);
+                        await Task.Delay(2000 * attempt + Random.Shared.Next(0, 300));
                         continue;
                     }
                 }
