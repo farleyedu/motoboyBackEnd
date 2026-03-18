@@ -959,6 +959,18 @@ SELECT EXISTS(
                     case "estabelecimento":
                         modules.Add("ESTABELECIMENTO");
                         break;
+                    case "usuarios":
+                    case "usuario":
+                        modules.Add("USUARIOS");
+                        break;
+                    case "empresas":
+                    case "empresa":
+                        modules.Add("EMPRESAS");
+                        break;
+                    case "configuracoes":
+                    case "configuracao":
+                        modules.Add("CONFIGURACOES");
+                        break;
                 }
             }
 

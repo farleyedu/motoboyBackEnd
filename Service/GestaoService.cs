@@ -709,6 +709,18 @@ namespace APIBack.Service
                     case "estabelecimento":
                         modules.Add("Estabelecimentos");
                         break;
+                    case "usuarios":
+                    case "usuario":
+                        modules.Add("Usuarios");
+                        break;
+                    case "empresas":
+                    case "empresa":
+                        modules.Add("Empresas");
+                        break;
+                    case "configuracoes":
+                    case "configuracao":
+                        modules.Add("Configuracoes");
+                        break;
                 }
             }
 
