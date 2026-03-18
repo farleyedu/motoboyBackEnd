@@ -175,11 +175,9 @@ SELECT  e.id                      AS Id,
         e.slug                    AS Slug,
         e.modulos_ativos::text[]  AS ModulosAtivosRaw,
         e.ativo                   AS Ativo,
-        COALESCE(e.status, 'ativo') AS Status,
-        wp.phone_number_id        AS WabaPhoneNumberId
+        COALESCE(e.status, 'ativo') AS Status
   FROM estabelecimentos e
   LEFT JOIN tipo_estabelecimento te ON te.id = e.id_tipo_estabelecimento
-  LEFT JOIN waba_phone wp ON wp.id_estabelecimento = e.id AND wp.ativo = TRUE
  WHERE (@EmpresaId IS NULL OR e.id_empresa = @EmpresaId)
    AND (@EstabelecimentoId IS NULL OR e.id = @EstabelecimentoId)
  ORDER BY e.nome_fantasia;";

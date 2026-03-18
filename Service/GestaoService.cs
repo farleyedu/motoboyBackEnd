@@ -118,7 +118,15 @@ namespace APIBack.Service
                 scope.IsSuperAdmin ? null : scope.EmpresaId,
                 scope.IsSuperAdmin || IsCompanyManager(scope) ? null : scope.EstabelecimentoId);
 
-            return rows.Select(MapEstabelecimento).ToArray();
+            var dtos = new List<GestaoEstabelecimentoDto>();
+            foreach (var row in rows)
+            {
+                var wabaPhoneNumberId = _wabaPhoneRepository != null
+                    ? await _wabaPhoneRepository.ObterPhoneNumberIdPorEstabelecimentoAsync(row.Id)
+                    : null;
+                dtos.Add(MapEstabelecimento(row, wabaPhoneNumberId));
+            }
+            return dtos;
         }
 
         public async Task<GestaoEstabelecimentoDto> CriarEstabelecimentoAsync(
@@ -160,7 +168,11 @@ namespace APIBack.Service
             var created = await _repository.ObterEstabelecimentoAsync(createdId)
                 ?? throw new InvalidOperationException("Estabelecimento criado mas nao encontrado.");
 
-            return MapEstabelecimento(created);
+            var createdWabaId = _wabaPhoneRepository != null
+                ? await _wabaPhoneRepository.ObterPhoneNumberIdPorEstabelecimentoAsync(createdId)
+                : null;
+
+            return MapEstabelecimento(created, createdWabaId);
         }
 
         public async Task<GestaoEstabelecimentoDto> AtualizarEstabelecimentoAsync(
@@ -201,7 +213,11 @@ namespace APIBack.Service
             var updated = await _repository.ObterEstabelecimentoAsync(targetEstabelecimentoId)
                 ?? throw new KeyNotFoundException("Estabelecimento nao encontrado.");
 
-            return MapEstabelecimento(updated);
+            var updatedWabaId = _wabaPhoneRepository != null
+                ? await _wabaPhoneRepository.ObterPhoneNumberIdPorEstabelecimentoAsync(targetEstabelecimentoId)
+                : null;
+
+            return MapEstabelecimento(updated, updatedWabaId);
         }
 
         public async Task AtualizarStatusEstabelecimentoAsync(
@@ -666,7 +682,7 @@ namespace APIBack.Service
             };
         }
 
-        private static GestaoEstabelecimentoDto MapEstabelecimento(GestaoEstabelecimentoRow row)
+        private static GestaoEstabelecimentoDto MapEstabelecimento(GestaoEstabelecimentoRow row, string? wabaPhoneNumberId = null)
         {
             return new GestaoEstabelecimentoDto
             {
@@ -707,7 +723,7 @@ namespace APIBack.Service
                 Ativo = row.Ativo,
                 Status = NormalizeStatus(row.Status),
                 Endereco = BuildAddress(row),
-                WabaPhoneNumberId = row.WabaPhoneNumberId
+                WabaPhoneNumberId = wabaPhoneNumberId
             };
         }
 
