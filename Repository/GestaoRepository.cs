@@ -116,7 +116,7 @@ UPDATE empresas
                 EmpresaId = empresaId,
                 NomeFantasia = NormalizeText(request.NomeFantasia),
                 RazaoSocial = NormalizeNullable(request.RazaoSocial),
-                Cnpj = NormalizeNullable(request.Cnpj),
+                Cnpj = NormalizeDocumentDigits(request.Cnpj),
                 Telefone = NormalizeNullable(request.Telefone),
                 Email = NormalizeNullable(request.Email),
                 Site = NormalizeNullable(request.Site),
@@ -288,7 +288,7 @@ UPDATE estabelecimentos
                 EmpresaId = request.EmpresaId,
                 TipoUnidade = tipoUnidade,
                 NomeFantasia = NormalizeText(request.NomeFantasia),
-                CnpjLoja = NormalizeNullable(request.CnpjLoja),
+                CnpjLoja = NormalizeDocumentDigits(request.CnpjLoja),
                 InscricaoEstadual = NormalizeNullable(request.InscricaoEstadual),
                 InscricaoMunicipal = NormalizeNullable(request.InscricaoMunicipal),
                 Telefone = NormalizeNullable(request.Telefone),
@@ -762,7 +762,7 @@ RETURNING id;";
             {
                 NomeFantasia = NormalizeText(request.NomeFantasia),
                 RazaoSocial = NormalizeNullable(request.RazaoSocial),
-                Cnpj = NormalizeNullable(request.Cnpj),
+                Cnpj = NormalizeDocumentDigits(request.Cnpj),
                 Telefone = NormalizeNullable(request.Telefone),
                 Email = NormalizeNullable(request.Email),
                 Site = NormalizeNullable(request.Site),
@@ -805,7 +805,7 @@ RETURNING id;";
                 EmpresaId = empresaId.Value,
                 TipoUnidade = tipoUnidade,
                 NomeFantasia = NormalizeText(request.NomeFantasia),
-                CnpjLoja = NormalizeNullable(request.CnpjLoja),
+                CnpjLoja = NormalizeDocumentDigits(request.CnpjLoja),
                 InscricaoEstadual = NormalizeNullable(request.InscricaoEstadual),
                 InscricaoMunicipal = NormalizeNullable(request.InscricaoMunicipal),
                 Telefone = NormalizeNullable(request.Telefone),
@@ -1025,6 +1025,26 @@ SELECT EXISTS(
         {
             var normalized = NormalizeText(value);
             return string.IsNullOrWhiteSpace(normalized) ? null : normalized;
+        }
+
+        private static string? NormalizeDocumentDigits(string? value)
+        {
+            var normalized = NormalizeNullable(value);
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                return null;
+            }
+
+            var builder = new StringBuilder(normalized.Length);
+            foreach (var ch in normalized)
+            {
+                if (char.IsDigit(ch))
+                {
+                    builder.Append(ch);
+                }
+            }
+
+            return builder.Length == 0 ? null : builder.ToString();
         }
 
         private static string NormalizeToken(string? value)

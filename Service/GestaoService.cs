@@ -55,6 +55,15 @@ namespace APIBack.Service
             var scope = BuildScope(empresaId, estabelecimentoId, companyRole, establishmentRole, isSuperAdmin);
             EnsureCanCreateCompany(scope);
             ValidateRequired(request.NomeFantasia, "nomeFantasia", "Nome fantasia obrigatorio.");
+            ValidateOptionalCnpj(request.Cnpj, "cnpj", "CNPJ deve conter 14 digitos.");
+
+            if (request.InitialEstablishment != null)
+            {
+                ValidateOptionalCnpj(
+                    request.InitialEstablishment.CnpjLoja,
+                    "initialEstablishment.cnpjLoja",
+                    "CNPJ do estabelecimento deve conter 14 digitos.");
+            }
 
             var createdId = request.InitialEstablishment != null
                 ? await _repository.CriarEmpresaComEstabelecimentoAsync(request, request.InitialEstablishment)
@@ -79,6 +88,7 @@ namespace APIBack.Service
             var scope = BuildScope(empresaId, estabelecimentoId, companyRole, establishmentRole, isSuperAdmin);
             EnsureCanManageCompany(scope, targetEmpresaId);
             ValidateRequired(request.NomeFantasia, "nomeFantasia", "Nome fantasia obrigatorio.");
+            ValidateOptionalCnpj(request.Cnpj, "cnpj", "CNPJ deve conter 14 digitos.");
 
             await _repository.AtualizarEmpresaAsync(targetEmpresaId, request);
 
@@ -141,6 +151,7 @@ namespace APIBack.Service
             var scope = BuildScope(empresaId, estabelecimentoId, companyRole, establishmentRole, isSuperAdmin);
             EnsureCanCreateEstablishment(scope);
             ValidateRequired(request.NomeFantasia, "nomeFantasia", "Nome fantasia obrigatorio.");
+            ValidateOptionalCnpj(request.CnpjLoja, "cnpjLoja", "CNPJ do estabelecimento deve conter 14 digitos.");
 
             if (!scope.IsSuperAdmin)
             {
@@ -191,6 +202,7 @@ namespace APIBack.Service
 
             EnsureCanManageEstablishment(scope, current);
             ValidateRequired(request.NomeFantasia, "nomeFantasia", "Nome fantasia obrigatorio.");
+            ValidateOptionalCnpj(request.CnpjLoja, "cnpjLoja", "CNPJ do estabelecimento deve conter 14 digitos.");
 
             if (!scope.IsSuperAdmin)
             {
@@ -1077,6 +1089,19 @@ namespace APIBack.Service
             }
         }
 
+        private static void ValidateOptionalCnpj(string? value, string field, string message)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return;
+            }
+
+            if (ExtractDigits(value).Length != 14)
+            {
+                throw ValidationException("Dados invalidos.", (field, message));
+            }
+        }
+
         private static void ValidateRequired(string? value, string field, string message, Dictionary<string, List<string>> errors)
         {
             if (string.IsNullOrWhiteSpace(value))
@@ -1108,6 +1133,25 @@ namespace APIBack.Service
             {
                 list.Add(message);
             }
+        }
+
+        private static string ExtractDigits(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return string.Empty;
+            }
+
+            var builder = new StringBuilder(value.Length);
+            foreach (var ch in value)
+            {
+                if (char.IsDigit(ch))
+                {
+                    builder.Append(ch);
+                }
+            }
+
+            return builder.ToString();
         }
     }
 }
