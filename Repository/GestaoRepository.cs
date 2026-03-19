@@ -292,7 +292,7 @@ UPDATE estabelecimentos
                 InscricaoEstadual = NormalizeNullable(request.InscricaoEstadual),
                 InscricaoMunicipal = NormalizeNullable(request.InscricaoMunicipal),
                 Telefone = NormalizeNullable(request.Telefone),
-                WhatsappE164 = NormalizeNullable(request.WhatsappE164),
+                WhatsappE164 = NormalizeWhatsappE164(request.WhatsappE164),
                 Email = NormalizeNullable(request.Email),
                 Logradouro = NormalizeNullable(request.Logradouro),
                 Numero = NormalizeNullable(request.Numero),
@@ -809,7 +809,7 @@ RETURNING id;";
                 InscricaoEstadual = NormalizeNullable(request.InscricaoEstadual),
                 InscricaoMunicipal = NormalizeNullable(request.InscricaoMunicipal),
                 Telefone = NormalizeNullable(request.Telefone),
-                WhatsappE164 = NormalizeNullable(request.WhatsappE164),
+                WhatsappE164 = NormalizeWhatsappE164(request.WhatsappE164),
                 Email = NormalizeNullable(request.Email),
                 Logradouro = NormalizeNullable(request.Logradouro),
                 Numero = NormalizeNullable(request.Numero),
@@ -1045,6 +1045,30 @@ SELECT EXISTS(
             }
 
             return builder.Length == 0 ? null : builder.ToString();
+        }
+
+        private static string? NormalizeWhatsappE164(string? value)
+        {
+            var normalized = NormalizeNullable(value);
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                return null;
+            }
+
+            var digits = NormalizeDocumentDigits(normalized);
+            if (string.IsNullOrWhiteSpace(digits))
+            {
+                return null;
+            }
+
+            if (normalized.StartsWith("+", StringComparison.Ordinal))
+            {
+                return "+" + digits;
+            }
+
+            return digits.StartsWith("55", StringComparison.Ordinal)
+                ? "+" + digits
+                : "+55" + digits;
         }
 
         private static string NormalizeToken(string? value)

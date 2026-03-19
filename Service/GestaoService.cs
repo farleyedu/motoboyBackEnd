@@ -63,6 +63,10 @@ namespace APIBack.Service
                     request.InitialEstablishment.CnpjLoja,
                     "initialEstablishment.cnpjLoja",
                     "CNPJ do estabelecimento deve conter 14 digitos.");
+                ValidateOptionalWhatsappE164(
+                    request.InitialEstablishment.WhatsappE164,
+                    "initialEstablishment.whatsappE164",
+                    "WhatsApp deve estar em formato E.164 valido.");
             }
 
             var createdId = request.InitialEstablishment != null
@@ -152,6 +156,7 @@ namespace APIBack.Service
             EnsureCanCreateEstablishment(scope);
             ValidateRequired(request.NomeFantasia, "nomeFantasia", "Nome fantasia obrigatorio.");
             ValidateOptionalCnpj(request.CnpjLoja, "cnpjLoja", "CNPJ do estabelecimento deve conter 14 digitos.");
+            ValidateOptionalWhatsappE164(request.WhatsappE164, "whatsappE164", "WhatsApp deve estar em formato E.164 valido.");
 
             if (!scope.IsSuperAdmin)
             {
@@ -203,6 +208,7 @@ namespace APIBack.Service
             EnsureCanManageEstablishment(scope, current);
             ValidateRequired(request.NomeFantasia, "nomeFantasia", "Nome fantasia obrigatorio.");
             ValidateOptionalCnpj(request.CnpjLoja, "cnpjLoja", "CNPJ do estabelecimento deve conter 14 digitos.");
+            ValidateOptionalWhatsappE164(request.WhatsappE164, "whatsappE164", "WhatsApp deve estar em formato E.164 valido.");
 
             if (!scope.IsSuperAdmin)
             {
@@ -1102,6 +1108,21 @@ namespace APIBack.Service
             }
         }
 
+        private static void ValidateOptionalWhatsappE164(string? value, string field, string message)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return;
+            }
+
+            var normalized = NormalizeWhatsappE164(value);
+            var digits = ExtractDigits(normalized);
+            if (string.IsNullOrWhiteSpace(normalized) || digits.Length < 8 || digits.Length > 15 || digits[0] == '0')
+            {
+                throw ValidationException("Dados invalidos.", (field, message));
+            }
+        }
+
         private static void ValidateRequired(string? value, string field, string message, Dictionary<string, List<string>> errors)
         {
             if (string.IsNullOrWhiteSpace(value))
@@ -1152,6 +1173,30 @@ namespace APIBack.Service
             }
 
             return builder.ToString();
+        }
+
+        private static string? NormalizeWhatsappE164(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return null;
+            }
+
+            var trimmed = value.Trim();
+            var digits = ExtractDigits(trimmed);
+            if (string.IsNullOrWhiteSpace(digits))
+            {
+                return null;
+            }
+
+            if (trimmed.StartsWith("+", StringComparison.Ordinal))
+            {
+                return "+" + digits;
+            }
+
+            return digits.StartsWith("55", StringComparison.Ordinal)
+                ? "+" + digits
+                : "+55" + digits;
         }
     }
 }
