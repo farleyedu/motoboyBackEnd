@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using APIBack.Automation.Dtos;
 using APIBack.Automation.Interfaces;
 using APIBack.Automation.Models;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace APIBack.Automation.Services
@@ -62,6 +63,7 @@ namespace APIBack.Automation.Services
         private const string ObjetivoComprar = "comprar";
         private const string ObjetivoVender = "vender";
         private const string ObjetivoTrocar = "trocar";
+        private const string DefaultGaragePublicBaseUrl = "https://zippy-admin-one.vercel.app";
 
         private readonly IConversationRepository _conversationRepository;
         private readonly IClienteRepository _clienteRepository;
@@ -70,6 +72,7 @@ namespace APIBack.Automation.Services
         private readonly IGaragemVeiculoRepository _garagemVeiculoRepository;
         private readonly CentralRoutingService _centralRouting;
         private readonly ILogger<GarageFlowService> _logger;
+        private readonly string? _garagePublicBaseUrl;
 
         public GarageFlowService(
             IConversationRepository conversationRepository,
@@ -78,6 +81,7 @@ namespace APIBack.Automation.Services
             IGaragemLeadRepository garagemLeadRepository,
             IGaragemVeiculoRepository garagemVeiculoRepository,
             CentralRoutingService centralRouting,
+            IConfiguration configuration,
             ILogger<GarageFlowService> logger)
         {
             _conversationRepository = conversationRepository;
@@ -86,6 +90,10 @@ namespace APIBack.Automation.Services
             _garagemLeadRepository = garagemLeadRepository;
             _garagemVeiculoRepository = garagemVeiculoRepository;
             _centralRouting = centralRouting;
+            _garagePublicBaseUrl = NormalizeBaseUrl(
+                configuration["Automation:GaragePublicBaseUrl"]
+                ?? configuration["Automation:PublicWebBaseUrl"]
+                ?? DefaultGaragePublicBaseUrl);
             _logger = logger;
         }
 
@@ -272,6 +280,7 @@ namespace APIBack.Automation.Services
                                 vitrine.Items.Take(8).ToList(),
                                 vitrineUrl,
                                 estabelecimentoPublico?.Slug,
+                                _garagePublicBaseUrl,
                                 ExtrairPrimeiroNome(lead.NomeCliente));
                         }
                     }
@@ -398,6 +407,7 @@ namespace APIBack.Automation.Services
                             vitrineParaTroca.Items.Take(8).ToList(),
                             vitrineUrlTroca,
                             estabelecimentoPublico?.Slug,
+                            _garagePublicBaseUrl,
                             ExtrairPrimeiroNome(lead.NomeCliente));
                     }
 
@@ -539,7 +549,7 @@ namespace APIBack.Automation.Services
                     {
                         await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaCatalogoLista, viaNumeroCentral);
                         return CriarMensagemLinkVitrine(
-                            BuildCanonicalStoreUrl(vitrineUrl, estabelecimentoPublico?.Slug));
+                            BuildCanonicalStoreUrl(vitrineUrl, estabelecimentoPublico?.Slug, _garagePublicBaseUrl));
                     }
 
                     if (int.TryParse(mensagemTexto?.Trim(), out var numero) && numero >= 1 && numero <= veiculos.Count)
@@ -547,7 +557,7 @@ namespace APIBack.Automation.Services
                         var veiculo = veiculos[numero - 1];
                         lead.IdVeiculoSelecionado = veiculo.Id;
                         lead.VeiculoSelecionadoTitulo = veiculo.Title;
-                        var urlVeiculo = BuildCanonicalVehicleUrl(vitrineUrl, estabelecimentoPublico?.Slug, veiculo.Slug);
+                        var urlVeiculo = BuildCanonicalVehicleUrl(vitrineUrl, estabelecimentoPublico?.Slug, veiculo.Slug, _garagePublicBaseUrl);
 
                         if (string.Equals(lead.Objetivo, ObjetivoComprar, StringComparison.Ordinal))
                         {
@@ -581,6 +591,7 @@ namespace APIBack.Automation.Services
                         veiculos,
                         vitrineUrl,
                         estabelecimentoPublico?.Slug,
+                        _garagePublicBaseUrl,
                         ExtrairPrimeiroNome(lead.NomeCliente),
                         incluirErro: true);
                 }
@@ -1309,12 +1320,13 @@ namespace APIBack.Automation.Services
             IReadOnlyList<GarageVehicleDto> veiculos,
             string? vitrineUrl,
             string? estabelecimentoSlug,
+            string? publicBaseUrl,
             string primeiroNome,
             bool incluirErro = false)
         {
             var ptBr = CultureInfo.GetCultureInfo("pt-BR");
             var sb = new StringBuilder();
-            var lojaUrl = BuildCanonicalStoreUrl(vitrineUrl, estabelecimentoSlug);
+            var lojaUrl = BuildCanonicalStoreUrl(vitrineUrl, estabelecimentoSlug, publicBaseUrl);
 
             if (incluirErro)
             {
@@ -1333,7 +1345,7 @@ namespace APIBack.Automation.Services
                 var preco = v.Price.ToString("N0", ptBr);
                 var km = v.Km > 0 ? $" | {v.Km.ToString("N0", ptBr)} km" : string.Empty;
                 sb.AppendLine($"{i + 1}. *{v.Title}* - R$ {preco}{km}");
-                var veiculoUrl = BuildCanonicalVehicleUrl(vitrineUrl, estabelecimentoSlug, v.Slug);
+                var veiculoUrl = BuildCanonicalVehicleUrl(vitrineUrl, estabelecimentoSlug, v.Slug, publicBaseUrl);
                 if (!string.IsNullOrWhiteSpace(veiculoUrl))
                 {
                     sb.AppendLine($"🔗 {veiculoUrl}");
@@ -1400,26 +1412,27 @@ namespace APIBack.Automation.Services
             return !string.Equals(NormalizeText(formaPagamento), "avista", StringComparison.Ordinal);
         }
 
-        internal static string? BuildCanonicalStoreUrl(string? vitrineUrl, string? estabelecimentoSlug)
+        internal static string? BuildCanonicalStoreUrl(string? vitrineUrl, string? estabelecimentoSlug, string? publicBaseUrl = null)
         {
-            var slug = NormalizeNullable(estabelecimentoSlug);
+            var slug = ResolveCanonicalStoreSlug(vitrineUrl, estabelecimentoSlug);
             if (string.IsNullOrWhiteSpace(slug))
             {
                 return NormalizeNullable(vitrineUrl);
             }
 
             var path = $"/garagem/vitrine/{slug}";
-            if (Uri.TryCreate(vitrineUrl, UriKind.Absolute, out var absolute))
+            var origin = ResolvePreferredOrigin(publicBaseUrl, vitrineUrl);
+            if (!string.IsNullOrWhiteSpace(origin))
             {
-                return $"{absolute.Scheme}://{absolute.Authority}{path}";
+                return $"{origin}{path}";
             }
 
             return path;
         }
 
-        internal static string? BuildCanonicalVehicleUrl(string? vitrineUrl, string? estabelecimentoSlug, string? veiculoSlug)
+        internal static string? BuildCanonicalVehicleUrl(string? vitrineUrl, string? estabelecimentoSlug, string? veiculoSlug, string? publicBaseUrl = null)
         {
-            var slugLoja = NormalizeNullable(estabelecimentoSlug);
+            var slugLoja = ResolveCanonicalStoreSlug(vitrineUrl, estabelecimentoSlug);
             var slugVeiculo = NormalizeNullable(veiculoSlug);
             if (string.IsNullOrWhiteSpace(slugVeiculo))
             {
@@ -1428,7 +1441,7 @@ namespace APIBack.Automation.Services
 
             if (!string.IsNullOrWhiteSpace(slugLoja))
             {
-                var lojaUrl = BuildCanonicalStoreUrl(vitrineUrl, slugLoja);
+                var lojaUrl = BuildCanonicalStoreUrl(vitrineUrl, slugLoja, publicBaseUrl);
                 return string.IsNullOrWhiteSpace(lojaUrl)
                     ? null
                     : $"{lojaUrl.TrimEnd('/')}/{slugVeiculo}";
@@ -1437,7 +1450,7 @@ namespace APIBack.Automation.Services
             var vitrineLegada = NormalizeNullable(vitrineUrl);
             return string.IsNullOrWhiteSpace(vitrineLegada)
                 ? null
-                : $"{vitrineLegada}?v={slugVeiculo}";
+                : $"{vitrineLegada}{(vitrineLegada.Contains('?') ? "&" : "?")}v={slugVeiculo}";
         }
 
         internal static string BuildMensagemSelecaoVeiculo(string veiculoTitulo, string? veiculoUrl, string proximaPergunta)
@@ -1466,6 +1479,170 @@ namespace APIBack.Automation.Services
         private static bool TemVeiculoSelecionado(GarageLead lead)
         {
             return lead.IdVeiculoSelecionado.HasValue || !string.IsNullOrWhiteSpace(lead.VeiculoSelecionadoTitulo);
+        }
+
+        private static string? ResolveCanonicalStoreSlug(string? vitrineUrl, string? estabelecimentoSlug)
+        {
+            var slugInformado = NormalizeNullable(estabelecimentoSlug);
+            if (!string.IsNullOrWhiteSpace(slugInformado))
+            {
+                return slugInformado;
+            }
+
+            return ExtractStoreSlugFromUrl(vitrineUrl);
+        }
+
+        private static string? ExtractStoreSlugFromUrl(string? vitrineUrl)
+        {
+            var normalizedUrl = NormalizeNullable(vitrineUrl);
+            if (string.IsNullOrWhiteSpace(normalizedUrl))
+            {
+                return null;
+            }
+
+            string path;
+            string? query;
+
+            if (Uri.TryCreate(normalizedUrl, UriKind.Absolute, out var absolute))
+            {
+                path = absolute.AbsolutePath;
+                query = absolute.Query;
+            }
+            else
+            {
+                var fragmentIndex = normalizedUrl.IndexOf('#');
+                if (fragmentIndex >= 0)
+                {
+                    normalizedUrl = normalizedUrl[..fragmentIndex];
+                }
+
+                var queryIndex = normalizedUrl.IndexOf('?');
+                if (queryIndex >= 0)
+                {
+                    path = normalizedUrl[..queryIndex];
+                    query = normalizedUrl[queryIndex..];
+                }
+                else
+                {
+                    path = normalizedUrl;
+                    query = null;
+                }
+            }
+
+            var slugFromPath = ExtractStoreSlugFromPath(path);
+            if (!string.IsNullOrWhiteSpace(slugFromPath))
+            {
+                return slugFromPath;
+            }
+
+            var slugFromQuery = ExtractQueryValue(query, "estabelecimentoSlug");
+            if (!string.IsNullOrWhiteSpace(slugFromQuery))
+            {
+                return slugFromQuery;
+            }
+
+            var legacyStoreToken = ExtractQueryValue(query, "estabelecimentoId");
+            if (!string.IsNullOrWhiteSpace(legacyStoreToken) &&
+                !Guid.TryParse(legacyStoreToken, out _))
+            {
+                return legacyStoreToken;
+            }
+
+            return null;
+        }
+
+        private static string? ExtractStoreSlugFromPath(string? path)
+        {
+            var normalizedPath = NormalizeNullable(path);
+            if (string.IsNullOrWhiteSpace(normalizedPath))
+            {
+                return null;
+            }
+
+            var segments = normalizedPath
+                .Replace('\\', '/')
+                .Split('/', StringSplitOptions.RemoveEmptyEntries);
+
+            for (var i = 0; i < segments.Length; i++)
+            {
+                if (!string.Equals(segments[i], "vitrine", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                if (i + 1 >= segments.Length)
+                {
+                    return null;
+                }
+
+                return Uri.UnescapeDataString(segments[i + 1]).Trim();
+            }
+
+            return null;
+        }
+
+        private static string? ExtractQueryValue(string? query, string key)
+        {
+            if (string.IsNullOrWhiteSpace(query) || string.IsNullOrWhiteSpace(key))
+            {
+                return null;
+            }
+
+            var pairs = query.TrimStart('?')
+                .Split('&', StringSplitOptions.RemoveEmptyEntries);
+
+            foreach (var pair in pairs)
+            {
+                var separatorIndex = pair.IndexOf('=');
+                var rawKey = separatorIndex >= 0 ? pair[..separatorIndex] : pair;
+                if (!string.Equals(Uri.UnescapeDataString(rawKey), key, StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                var rawValue = separatorIndex >= 0 ? pair[(separatorIndex + 1)..] : string.Empty;
+                var value = Uri.UnescapeDataString(rawValue).Trim();
+                return string.IsNullOrWhiteSpace(value) ? null : value;
+            }
+
+            return null;
+        }
+
+        private static string? ExtractAbsoluteOrigin(string? url)
+        {
+            if (!Uri.TryCreate(url, UriKind.Absolute, out var absolute))
+            {
+                return null;
+            }
+
+            return $"{absolute.Scheme}://{absolute.Authority}";
+        }
+
+        private static string? ResolvePreferredOrigin(string? publicBaseUrl, string? fallbackUrl)
+        {
+            var preferred = NormalizeBaseUrl(publicBaseUrl);
+            if (!string.IsNullOrWhiteSpace(preferred))
+            {
+                return preferred;
+            }
+
+            return ExtractAbsoluteOrigin(fallbackUrl);
+        }
+
+        private static string? NormalizeBaseUrl(string? value)
+        {
+            var normalized = NormalizeNullable(value);
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                return null;
+            }
+
+            if (!Uri.TryCreate(normalized, UriKind.Absolute, out var absolute))
+            {
+                return null;
+            }
+
+            return $"{absolute.Scheme}://{absolute.Authority}";
         }
 
         private static string? NormalizeNullable(string? value)
