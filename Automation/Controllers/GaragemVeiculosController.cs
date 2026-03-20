@@ -257,7 +257,7 @@ namespace APIBack.Automation.Controllers
         [HttpGet("vitrine")]
         [AllowAnonymous]
         public async Task<IActionResult> ObterVitrine(
-            [FromQuery] Guid? estabelecimentoId = null,
+            [FromQuery] string? estabelecimentoId = null,
             [FromQuery] string? estabelecimentoSlug = null,
             [FromQuery] string? categoria = null,
             [FromQuery] string? search = null)
@@ -282,7 +282,7 @@ namespace APIBack.Automation.Controllers
         [AllowAnonymous]
         public async Task<IActionResult> ObterVeiculoPublico(
             string slug,
-            [FromQuery] Guid? estabelecimentoId = null,
+            [FromQuery] string? estabelecimentoId = null,
             [FromQuery] string? estabelecimentoSlug = null)
         {
             var (estabelecimento, resolveError) = await ResolvePublicEstabelecimentoAsync(estabelecimentoId, estabelecimentoSlug);
@@ -879,11 +879,30 @@ namespace APIBack.Automation.Controllers
         }
 
         private async Task<(EstabelecimentoPublicoResumo? Estabelecimento, IActionResult? Error)> ResolvePublicEstabelecimentoAsync(
-            Guid? requestedId,
+            string? requestedId,
             string? requestedSlug)
         {
-            var hasId = requestedId.HasValue && requestedId.Value != Guid.Empty;
-            var hasSlug = !string.IsNullOrWhiteSpace(requestedSlug);
+            var requestedIdToken = LimparTexto(requestedId);
+            var requestedSlugToken = LimparTexto(requestedSlug);
+            Guid? parsedId = null;
+
+            if (!string.IsNullOrWhiteSpace(requestedIdToken)
+                && Guid.TryParse(requestedIdToken, out var estabelecimentoGuid)
+                && estabelecimentoGuid != Guid.Empty)
+            {
+                parsedId = estabelecimentoGuid;
+            }
+
+            var effectiveSlug = requestedSlugToken;
+            if (string.IsNullOrWhiteSpace(effectiveSlug)
+                && !string.IsNullOrWhiteSpace(requestedIdToken)
+                && !parsedId.HasValue)
+            {
+                effectiveSlug = requestedIdToken;
+            }
+
+            var hasId = parsedId.HasValue;
+            var hasSlug = !string.IsNullOrWhiteSpace(effectiveSlug);
 
             if (!hasId && !hasSlug)
             {
@@ -899,12 +918,12 @@ namespace APIBack.Automation.Controllers
 
             if (hasId)
             {
-                byId = await _estabelecimentoRepository.ObterResumoPublicoAsync(requestedId!.Value);
+                byId = await _estabelecimentoRepository.ObterResumoPublicoAsync(parsedId!.Value);
             }
 
             if (hasSlug)
             {
-                bySlug = await _estabelecimentoRepository.ObterResumoPublicoPorSlugAsync(requestedSlug!);
+                bySlug = await _estabelecimentoRepository.ObterResumoPublicoPorSlugAsync(effectiveSlug!);
             }
 
             if (byId != null && bySlug != null && byId.Id != bySlug.Id)
