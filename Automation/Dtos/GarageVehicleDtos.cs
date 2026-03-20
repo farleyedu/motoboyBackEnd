@@ -7,6 +7,9 @@ namespace APIBack.Automation.Dtos
     {
         public Guid Id { get; set; }
         public string Slug { get; set; } = string.Empty;
+        public string EstabelecimentoSlug { get; set; } = string.Empty;
+        public string EstabelecimentoNome { get; set; } = string.Empty;
+        public string? VitrineUrlBase { get; set; }
         public string Title { get; set; } = string.Empty;
         public string Brand { get; set; } = string.Empty;
         public string Model { get; set; } = string.Empty;
@@ -27,7 +30,6 @@ namespace APIBack.Automation.Dtos
         public string Condition { get; set; } = string.Empty;
         public bool Featured { get; set; }
         public string? SpotlightLabel { get; set; }
-        public string StockCode { get; set; } = string.Empty;
         public string? DriveType { get; set; }
         public string Description { get; set; } = string.Empty;
         public List<string> Optionals { get; set; } = new();
@@ -37,6 +39,7 @@ namespace APIBack.Automation.Dtos
 
     public class GarageVehicleAdminDto : GarageVehicleDto
     {
+        public string StockCode { get; set; } = string.Empty;
         public string? Plate { get; set; }
     }
 
@@ -57,6 +60,9 @@ namespace APIBack.Automation.Dtos
 
     public class GarageVehicleShowcaseResponseDto
     {
+        public string EstabelecimentoSlug { get; set; } = string.Empty;
+        public string EstabelecimentoNome { get; set; } = string.Empty;
+        public string? VitrineUrlBase { get; set; }
         public IReadOnlyList<GarageVehicleDto> Items { get; set; } = Array.Empty<GarageVehicleDto>();
         public IReadOnlyList<GarageVehicleDto> Destaques { get; set; } = Array.Empty<GarageVehicleDto>();
     }

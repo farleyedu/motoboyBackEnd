@@ -576,7 +576,8 @@ ON CONFLICT (id_estabelecimento) DO UPDATE
             {
                 var dto = new GarageVehicleAdminDto
                 {
-                    Plate = LimparFiltro(row.Placa)
+                    Plate = LimparFiltro(row.Placa),
+                    StockCode = row.CodigoEstoque ?? string.Empty
                 };
 
                 PopulateVehicleDto(dto, row, galleryByVehicle);
@@ -653,7 +654,6 @@ SELECT id_veiculo AS VehicleId,
             dto.Condition = NormalizeVehicleType(row.TipoVeiculo);
             dto.Featured = row.Destaque;
             dto.SpotlightLabel = LimparFiltro(row.LabelDestaque);
-            dto.StockCode = row.CodigoEstoque ?? string.Empty;
             dto.DriveType = LimparFiltro(row.Tracao);
             dto.Description = row.Descricao ?? string.Empty;
             dto.Optionals = DeserializeStringList(row.OpcionaisJson);

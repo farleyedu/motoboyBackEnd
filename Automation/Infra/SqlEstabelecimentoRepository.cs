@@ -111,6 +111,60 @@ SELECT nome_fantasia
                 return null;
             }
         }
+
+        public async Task<EstabelecimentoPublicoResumo?> ObterResumoPublicoAsync(Guid idEstabelecimento)
+        {
+            const string sql = @"
+SELECT id,
+       nome_fantasia AS NomeFantasia,
+       slug
+  FROM estabelecimentos
+ WHERE id = @IdEstabelecimento
+   AND COALESCE(ativo, TRUE) = TRUE
+   AND COALESCE(status, 'ativo') = 'ativo'
+ LIMIT 1;";
+
+            try
+            {
+                await using var connection = new NpgsqlConnection(_connectionString);
+                return await connection.QueryFirstOrDefaultAsync<EstabelecimentoPublicoResumo>(sql, new
+                {
+                    IdEstabelecimento = idEstabelecimento
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao buscar resumo publico do estabelecimento {IdEstabelecimento}", idEstabelecimento);
+                return null;
+            }
+        }
+
+        public async Task<EstabelecimentoPublicoResumo?> ObterResumoPublicoPorSlugAsync(string slug)
+        {
+            const string sql = @"
+SELECT id,
+       nome_fantasia AS NomeFantasia,
+       slug
+  FROM estabelecimentos
+ WHERE lower(slug) = lower(@Slug)
+   AND COALESCE(ativo, TRUE) = TRUE
+   AND COALESCE(status, 'ativo') = 'ativo'
+ LIMIT 1;";
+
+            try
+            {
+                await using var connection = new NpgsqlConnection(_connectionString);
+                return await connection.QueryFirstOrDefaultAsync<EstabelecimentoPublicoResumo>(sql, new
+                {
+                    Slug = slug.Trim()
+                });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao buscar resumo publico do estabelecimento pelo slug {Slug}", slug);
+                return null;
+            }
+        }
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================

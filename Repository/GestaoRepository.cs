@@ -245,7 +245,17 @@ SELECT  e.id                    AS Id,
             await using var transaction = await connection.BeginTransactionAsync();
 
             var tipoEstabelecimentoId = await ResolverTipoEstabelecimentoIdAsync(connection, transaction, request, "tipoEstabelecimento");
-            var slug = await GarantirSlugDisponivelAsync(connection, transaction, request.Slug, request.NomeFantasia, estabelecimentoId);
+            var slugAtual = await connection.ExecuteScalarAsync<string?>(@"
+SELECT slug
+  FROM estabelecimentos
+ WHERE id = @EstabelecimentoId
+ LIMIT 1
+ FOR UPDATE;", new
+            {
+                EstabelecimentoId = estabelecimentoId
+            }, transaction);
+            var slugPreferencial = string.IsNullOrWhiteSpace(request.Slug) ? slugAtual : request.Slug;
+            var slug = await GarantirSlugDisponivelAsync(connection, transaction, slugPreferencial, request.NomeFantasia, estabelecimentoId);
             var modulos = MapModulesToDatabase(request.ModulosAtivos);
             var tipoUnidade = NormalizeTipoUnidade(request.TipoUnidade);
 

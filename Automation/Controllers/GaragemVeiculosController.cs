@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using APIBack.Attributes;
 using APIBack.Automation.Dtos;
 using APIBack.Automation.Interfaces;
+using APIBack.Automation.Models;
 using APIBack.Extensions;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -47,10 +48,14 @@ namespace APIBack.Automation.Controllers
         };
 
         private readonly IGaragemVeiculoRepository _repository;
+        private readonly IEstabelecimentoRepository _estabelecimentoRepository;
 
-        public GaragemVeiculosController(IGaragemVeiculoRepository repository)
+        public GaragemVeiculosController(
+            IGaragemVeiculoRepository repository,
+            IEstabelecimentoRepository estabelecimentoRepository)
         {
             _repository = repository;
+            _estabelecimentoRepository = estabelecimentoRepository;
         }
 
         [HttpGet("veiculos")]
@@ -252,13 +257,15 @@ namespace APIBack.Automation.Controllers
         [HttpGet("vitrine")]
         [AllowAnonymous]
         public async Task<IActionResult> ObterVitrine(
-            [FromQuery] Guid estabelecimentoId,
+            [FromQuery] Guid? estabelecimentoId = null,
+            [FromQuery] string? estabelecimentoSlug = null,
             [FromQuery] string? categoria = null,
             [FromQuery] string? search = null)
         {
-            if (estabelecimentoId == Guid.Empty)
+            var (estabelecimento, resolveError) = await ResolvePublicEstabelecimentoAsync(estabelecimentoId, estabelecimentoSlug);
+            if (resolveError != null)
             {
-                return BadRequest(new { success = false, error = "Informe um estabelecimento valido." });
+                return resolveError;
             }
 
             if (!TryNormalizeCategory(categoria, allowTodos: true, out var categoriaNormalizada, out var error))
@@ -266,7 +273,8 @@ namespace APIBack.Automation.Controllers
                 return error!;
             }
 
-            var vitrine = await _repository.ObterVitrineAsync(estabelecimentoId, categoriaNormalizada, LimparTexto(search));
+            var vitrine = await _repository.ObterVitrineAsync(estabelecimento!.Id, categoriaNormalizada, LimparTexto(search));
+            EnrichShowcase(vitrine, estabelecimento);
             return Ok(vitrine);
         }
 
@@ -274,11 +282,13 @@ namespace APIBack.Automation.Controllers
         [AllowAnonymous]
         public async Task<IActionResult> ObterVeiculoPublico(
             string slug,
-            [FromQuery] Guid estabelecimentoId)
+            [FromQuery] Guid? estabelecimentoId = null,
+            [FromQuery] string? estabelecimentoSlug = null)
         {
-            if (estabelecimentoId == Guid.Empty)
+            var (estabelecimento, resolveError) = await ResolvePublicEstabelecimentoAsync(estabelecimentoId, estabelecimentoSlug);
+            if (resolveError != null)
             {
-                return BadRequest(new { success = false, error = "Informe um estabelecimento valido." });
+                return resolveError;
             }
 
             if (string.IsNullOrWhiteSpace(slug))
@@ -286,7 +296,12 @@ namespace APIBack.Automation.Controllers
                 return BadRequest(new { success = false, error = "Informe o slug do veiculo." });
             }
 
-            var veiculo = await _repository.ObterPorSlugPublicoAsync(estabelecimentoId, slug.Trim());
+            var veiculo = await _repository.ObterPorSlugPublicoAsync(estabelecimento!.Id, slug.Trim());
+            if (veiculo != null)
+            {
+                EnrichPublicVehicle(veiculo, estabelecimento);
+            }
+
             return veiculo == null
                 ? NotFound(new { success = false, error = "Veiculo nao encontrado." })
                 : Ok(veiculo);
@@ -862,6 +877,89 @@ namespace APIBack.Automation.Controllers
             error = null;
             return true;
         }
+
+        private async Task<(EstabelecimentoPublicoResumo? Estabelecimento, IActionResult? Error)> ResolvePublicEstabelecimentoAsync(
+            Guid? requestedId,
+            string? requestedSlug)
+        {
+            var hasId = requestedId.HasValue && requestedId.Value != Guid.Empty;
+            var hasSlug = !string.IsNullOrWhiteSpace(requestedSlug);
+
+            if (!hasId && !hasSlug)
+            {
+                return (null, BadRequest(new
+                {
+                    success = false,
+                    error = "Informe estabelecimentoId ou estabelecimentoSlug."
+                }));
+            }
+
+            EstabelecimentoPublicoResumo? byId = null;
+            EstabelecimentoPublicoResumo? bySlug = null;
+
+            if (hasId)
+            {
+                byId = await _estabelecimentoRepository.ObterResumoPublicoAsync(requestedId!.Value);
+            }
+
+            if (hasSlug)
+            {
+                bySlug = await _estabelecimentoRepository.ObterResumoPublicoPorSlugAsync(requestedSlug!);
+            }
+
+            if (byId != null && bySlug != null && byId.Id != bySlug.Id)
+            {
+                return (null, BadRequest(new
+                {
+                    success = false,
+                    error = "estabelecimentoId e estabelecimentoSlug apontam para lojas diferentes."
+                }));
+            }
+
+            var resolved = bySlug ?? byId;
+            if (resolved == null)
+            {
+                return (null, NotFound(new
+                {
+                    success = false,
+                    error = "Estabelecimento nao encontrado."
+                }));
+            }
+
+            return (resolved, null);
+        }
+
+        private static void EnrichShowcase(GarageVehicleShowcaseResponseDto showcase, EstabelecimentoPublicoResumo estabelecimento)
+        {
+            var vitrineUrlBase = BuildCanonicalVitrineUrlBase(estabelecimento.Slug);
+
+            showcase.EstabelecimentoSlug = estabelecimento.Slug;
+            showcase.EstabelecimentoNome = estabelecimento.NomeFantasia;
+            showcase.VitrineUrlBase = vitrineUrlBase;
+
+            foreach (var item in showcase.Items)
+            {
+                EnrichPublicVehicle(item, estabelecimento, vitrineUrlBase);
+            }
+
+            foreach (var destaque in showcase.Destaques)
+            {
+                EnrichPublicVehicle(destaque, estabelecimento, vitrineUrlBase);
+            }
+        }
+
+        private static void EnrichPublicVehicle(
+            GarageVehicleDto vehicle,
+            EstabelecimentoPublicoResumo estabelecimento,
+            string? vitrineUrlBase = null)
+        {
+            vehicle.EstabelecimentoSlug = estabelecimento.Slug;
+            vehicle.EstabelecimentoNome = estabelecimento.NomeFantasia;
+            vehicle.VitrineUrlBase = vitrineUrlBase ?? BuildCanonicalVitrineUrlBase(estabelecimento.Slug);
+        }
+
+        private static string BuildCanonicalVitrineUrlBase(string estabelecimentoSlug)
+            => $"/garagem/vitrine/{estabelecimentoSlug}";
 
         private static string? LimparTexto(string? value)
             => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
