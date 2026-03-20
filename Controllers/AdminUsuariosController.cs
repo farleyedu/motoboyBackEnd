@@ -14,7 +14,7 @@ namespace APIBack.Controllers
 {
     [ApiController]
     [Route("api/admin/usuarios")]
-    public class AdminUsuariosController : ControllerBase
+    public class AdminUsuariosController : ApiControllerBase
     {
         private readonly IAdminUsuariosService _service;
         private readonly ILogger<AdminUsuariosController> _logger;
@@ -113,14 +113,17 @@ namespace APIBack.Controllers
 
                 return StatusCode(StatusCodes.Status201Created, ApiResponse<AdminUsuarioListItemDto>.Ok(response));
             }
-            catch (AdminUsuarioValidationException ex)
+            catch (RequestValidationException ex)
             {
-                return UnprocessableEntity(new
-                {
-                    success = false,
-                    error = ex.Message,
-                    errors = ex.Errors
-                });
+                _logger.LogWarning(
+                    "Validacao ao criar usuario administrativo falhou para UserId={UserId}. Email={Email} TipoUsuario={TipoUsuario} EmpresaId={EmpresaId} EstabelecimentoIds={@EstabelecimentoIds} Errors={@Errors}",
+                    userId.Value,
+                    request.Email,
+                    request.TipoUsuario,
+                    request.EmpresaId,
+                    request.EstabelecimentoIds,
+                    ex.Errors);
+                return ValidationErrorResponse(ex);
             }
             catch (UnauthorizedAccessException ex)
             {

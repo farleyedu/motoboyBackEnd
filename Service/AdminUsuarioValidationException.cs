@@ -3,14 +3,11 @@ using System.Collections.Generic;
 
 namespace APIBack.Service
 {
-    public class AdminUsuarioValidationException : Exception
+    public class AdminUsuarioValidationException : RequestValidationException
     {
         public AdminUsuarioValidationException(string message, Dictionary<string, List<string>> errors)
-            : base(message)
+            : base(message, errors)
         {
-            Errors = errors ?? new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
         }
-
-        public Dictionary<string, List<string>> Errors { get; }
     }
 }

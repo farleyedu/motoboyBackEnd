@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
+using System.Text;
 
 namespace APIBack.Security
 {
@@ -9,7 +11,6 @@ namespace APIBack.Security
         private static readonly Dictionary<string, string> Aliases = new(StringComparer.OrdinalIgnoreCase)
         {
             ["funcionario"] = "funcionario",
-            ["funcionário"] = "funcionario",
             ["atendente"] = "atendente",
             ["atendente_whatsapp"] = "atendente",
             ["agente"] = "atendente",
@@ -32,7 +33,6 @@ namespace APIBack.Security
             {
                 ["barbearia"] = new[] { "gerente_estabelecimento", "profissional", "atendente", "funcionario" },
                 ["clinica"] = new[] { "gerente_estabelecimento", "profissional", "atendente", "funcionario" },
-                ["clínica"] = new[] { "gerente_estabelecimento", "profissional", "atendente", "funcionario" },
                 ["garagem"] = new[] { "gerente_estabelecimento", "vendedor", "atendente", "funcionario" },
                 ["hotel"] = new[] { "gerente_estabelecimento", "atendente", "funcionario" },
                 ["restaurante"] = new[] { "gerente_estabelecimento", "atendente", "motoboy", "funcionario" }
@@ -45,7 +45,7 @@ namespace APIBack.Security
                 return string.Empty;
             }
 
-            var key = role.Trim().ToLowerInvariant();
+            var key = NormalizeToken(role);
             return Aliases.TryGetValue(key, out var normalized)
                 ? normalized
                 : key;
@@ -136,7 +136,7 @@ namespace APIBack.Security
                 return Array.Empty<string>();
             }
 
-            return AllowedRolesByEstablishmentType.TryGetValue(establishmentType.Trim(), out var roles)
+            return AllowedRolesByEstablishmentType.TryGetValue(NormalizeToken(establishmentType), out var roles)
                 ? roles
                 : Array.Empty<string>();
         }
@@ -177,6 +177,44 @@ namespace APIBack.Security
 
             return GetAllowedTargetUserTypes(establishmentType)
                 .Any(item => string.Equals(item, normalized, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static string NormalizeToken(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return string.Empty;
+            }
+
+            var normalized = value.Trim().ToLowerInvariant().Normalize(NormalizationForm.FormD);
+            var builder = new StringBuilder(normalized.Length);
+            var lastWasSeparator = false;
+
+            foreach (var ch in normalized)
+            {
+                if (CharUnicodeInfo.GetUnicodeCategory(ch) == UnicodeCategory.NonSpacingMark)
+                {
+                    continue;
+                }
+
+                if (char.IsLetterOrDigit(ch))
+                {
+                    builder.Append(ch);
+                    lastWasSeparator = false;
+                    continue;
+                }
+
+                if (ch == '_' || ch == '-' || char.IsWhiteSpace(ch))
+                {
+                    if (!lastWasSeparator && builder.Length > 0)
+                    {
+                        builder.Append('_');
+                        lastWasSeparator = true;
+                    }
+                }
+            }
+
+            return builder.ToString().Trim('_').Normalize(NormalizationForm.FormC);
         }
     }
 }

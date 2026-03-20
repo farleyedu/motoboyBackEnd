@@ -86,9 +86,17 @@ namespace APIBack.Controllers
                     request);
                 return StatusCode(StatusCodes.Status201Created, ApiResponse<GestaoUsuarioDto>.Ok(response));
             }
-            catch (AdminUsuarioValidationException ex)
+            catch (RequestValidationException ex)
             {
-                return UnprocessableEntity(new { success = false, error = ex.Message, errors = ex.Errors });
+                _logger.LogWarning(
+                    "Validacao ao criar usuario de gestao falhou para UserId={UserId}. Email={Email} TipoUsuario={TipoUsuario} EmpresaId={EmpresaId} EstabelecimentoIds={@EstabelecimentoIds} Errors={@Errors}",
+                    CurrentUserId.Value,
+                    request.Email,
+                    request.TipoUsuario,
+                    request.EmpresaId,
+                    request.EstabelecimentoIds,
+                    ex.Errors);
+                return ValidationErrorResponse(ex);
             }
             catch (UnauthorizedAccessException ex)
             {
@@ -132,9 +140,18 @@ namespace APIBack.Controllers
             {
                 return NotFound(ApiResponse<object>.Fail(ex.Message));
             }
-            catch (AdminUsuarioValidationException ex)
+            catch (RequestValidationException ex)
             {
-                return UnprocessableEntity(new { success = false, error = ex.Message, errors = ex.Errors });
+                _logger.LogWarning(
+                    "Validacao ao atualizar usuario de gestao falhou para UserId={UserId} TargetUserId={TargetUserId}. Email={Email} TipoUsuario={TipoUsuario} EmpresaId={EmpresaId} EstabelecimentoIds={@EstabelecimentoIds} Errors={@Errors}",
+                    CurrentUserId.Value,
+                    userId,
+                    request.Email,
+                    request.TipoUsuario,
+                    request.EmpresaId,
+                    request.EstabelecimentoIds,
+                    ex.Errors);
+                return ValidationErrorResponse(ex);
             }
             catch (UnauthorizedAccessException ex)
             {

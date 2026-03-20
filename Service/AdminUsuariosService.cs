@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net.Mail;
 using System.Threading.Tasks;
 using APIBack.DTOs.AdminUsers;
 using APIBack.Model.AdminUsers;
@@ -119,26 +120,28 @@ namespace APIBack.Service
 
             var errors = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
 
-            ValidateRequired(request.Nome, "nome", "Nome obrigatÃ³rio.", errors);
-            ValidateRequired(request.Email, "email", "E-mail obrigatÃ³rio.", errors);
-            ValidateRequired(request.SenhaInicial, "senhaInicial", "Senha inicial obrigatÃ³ria.", errors);
-            ValidateRequired(request.TipoUsuario, "tipoUsuario", "Tipo de usuÃ¡rio obrigatÃ³rio.", errors);
+            ValidateRequired(request.Nome, "nome", "Nome obrigatorio.", errors);
+            ValidateRequired(request.Email, "email", "E-mail obrigatorio.", errors);
+            ValidateOptionalEmail(request.Email, "email", "E-mail invalido.", errors);
+            ValidateRequired(request.SenhaInicial, "senhaInicial", "Senha inicial obrigatoria.", errors);
+            ValidatePassword(request.SenhaInicial, "senhaInicial", errors);
+            ValidateRequired(request.TipoUsuario, "tipoUsuario", "Tipo de usuario obrigatorio.", errors);
 
             var tipoUsuario = RoleCatalog.Normalize(request.TipoUsuario);
             if (string.IsNullOrWhiteSpace(tipoUsuario))
             {
-                AddError(errors, "tipoUsuario", "Tipo de usuÃ¡rio obrigatÃ³rio.");
+                AddError(errors, "tipoUsuario", "Tipo de usuario obrigatorio.");
             }
 
             var empresaId = actor.IsSuperAdmin ? request.EmpresaId : actor.EmpresaId;
             if (!empresaId.HasValue || empresaId == Guid.Empty)
             {
-                AddError(errors, "empresaId", "Empresa obrigatÃ³ria.");
+                AddError(errors, "empresaId", "Empresa obrigatoria.");
             }
 
             if (!actor.IsSuperAdmin && request.EmpresaId.HasValue && actor.EmpresaId.HasValue && request.EmpresaId.Value != actor.EmpresaId.Value)
             {
-                AddError(errors, "empresaId", "Gerentes sÃ³ podem criar usuÃ¡rios na empresa atual.");
+                AddError(errors, "empresaId", "Gerentes so podem criar usuarios na empresa atual.");
             }
 
             var ids = request.EstabelecimentoIds?
@@ -185,7 +188,7 @@ namespace APIBack.Service
                 }
                 else if (ids.Length != 1 || ids[0] != actor.EstabelecimentoId.Value)
                 {
-                    AddError(errors, "estabelecimentoIds", "Gerentes sÃ³ podem criar usuÃ¡rios no estabelecimento atual.");
+                AddError(errors, "estabelecimentoIds", "Gerentes so podem criar usuarios no estabelecimento atual.");
                 }
             }
 
@@ -227,12 +230,12 @@ namespace APIBack.Service
                 default:
                     if (RoleCatalog.IsManagerRole(tipoUsuario))
                     {
-                        AddError(errors, "tipoUsuario", "Tipo de usuÃ¡rio nÃ£o suportado no fluxo atual.");
+                        AddError(errors, "tipoUsuario", "Tipo de usuario nao suportado no fluxo atual.");
                     }
 
                     if (ids.Length != 1)
                     {
-                        AddError(errors, "estabelecimentoIds", "UsuÃ¡rios operacionais exigem exatamente um estabelecimento.");
+                        AddError(errors, "estabelecimentoIds", "Usuarios operacionais exigem exatamente um estabelecimento.");
                     }
 
                     companyRole = "colaborador";
@@ -242,7 +245,7 @@ namespace APIBack.Service
 
             if (!actor.IsSuperAdmin && RoleCatalog.IsManagerRole(tipoUsuario))
             {
-                AddError(errors, "tipoUsuario", "Gerentes nÃ£o podem criar outros gerentes.");
+                AddError(errors, "tipoUsuario", "Gerentes nao podem criar outros gerentes.");
             }
 
             if (!RoleCatalog.IsManagerRole(tipoUsuario) && targetEstabelecimentos.Count == 1)
@@ -250,18 +253,18 @@ namespace APIBack.Service
                 var establishmentType = targetEstabelecimentos[0].TipoEstabelecimento;
                 if (!RoleCatalog.IsAllowedForEstablishmentType(tipoUsuario, establishmentType))
                 {
-                    AddError(errors, "tipoUsuario", "Tipo de usuÃ¡rio nÃ£o permitido para o estabelecimento selecionado.");
+                    AddError(errors, "tipoUsuario", "Tipo de usuario nao permitido para o estabelecimento selecionado.");
                 }
             }
 
             if (errors.Count == 0 && await _repository.EmailExisteAsync(request.Email.Trim()))
             {
-                AddError(errors, "email", "E-mail jÃ¡ cadastrado.");
+                AddError(errors, "email", "E-mail ja cadastrado.");
             }
 
             if (errors.Count > 0)
             {
-                throw new AdminUsuarioValidationException("Dados invÃ¡lidos.", errors);
+                throw new AdminUsuarioValidationException("Dados invalidos.", errors);
             }
 
             var command = new AdminCreateUserCommand
@@ -422,6 +425,40 @@ namespace APIBack.Service
             if (string.IsNullOrWhiteSpace(value))
             {
                 AddError(errors, field, message);
+            }
+        }
+
+        private static void ValidateOptionalEmail(string? value, string field, string message, Dictionary<string, List<string>> errors)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return;
+            }
+
+            try
+            {
+                var parsed = new MailAddress(value.Trim());
+                if (!string.Equals(parsed.Address, value.Trim(), StringComparison.OrdinalIgnoreCase))
+                {
+                    AddError(errors, field, message);
+                }
+            }
+            catch
+            {
+                AddError(errors, field, message);
+            }
+        }
+
+        private static void ValidatePassword(string? value, string field, Dictionary<string, List<string>> errors)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return;
+            }
+
+            if (value.Trim().Length < 6)
+            {
+                AddError(errors, field, "Senha inicial deve conter ao menos 6 caracteres.");
             }
         }
 

@@ -28,6 +28,21 @@ namespace APIBack.Repository
             return connection.QueryFirstOrDefault<Usuario>("SELECT * FROM usuario WHERE id = @Id", new { Id = id });
         }
 
+        public bool EmailExiste(string email, int? ignoreId = null)
+        {
+            using var connection = new NpgsqlConnection(_connectionString);
+            const string sql = @"
+SELECT EXISTS(
+    SELECT 1
+      FROM usuario
+     WHERE LOWER(email) = LOWER(@Email)
+       AND deleted_at IS NULL
+       AND (@IgnoreId IS NULL OR id <> @IgnoreId)
+)";
+
+            return connection.ExecuteScalar<bool>(sql, new { Email = email, IgnoreId = ignoreId });
+        }
+
         public void AddUsuario(Usuario usuario)
         {
             using var connection = new NpgsqlConnection(_connectionString);

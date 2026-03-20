@@ -7,6 +7,7 @@ namespace APIBack.Repository
     {
         IEnumerable<Usuario> GetUsuarios();
         Usuario GetUsuario(int id);
+        bool EmailExiste(string email, int? ignoreId = null);
         void AddUsuario(Usuario usuario);
         void UpdateUsuario(Usuario usuario);
         void DeleteUsuario(int id);

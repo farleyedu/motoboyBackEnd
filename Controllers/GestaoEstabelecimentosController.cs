@@ -86,9 +86,17 @@ namespace APIBack.Controllers
                     request);
                 return StatusCode(StatusCodes.Status201Created, ApiResponse<GestaoEstabelecimentoDto>.Ok(response));
             }
-            catch (AdminUsuarioValidationException ex)
+            catch (RequestValidationException ex)
             {
-                return UnprocessableEntity(new { success = false, error = ex.Message, errors = ex.Errors });
+                _logger.LogWarning(
+                    "Validacao ao criar estabelecimento de gestao falhou para UserId={UserId}. NomeFantasia={NomeFantasia} EmpresaId={EmpresaId} TipoEstabelecimentoId={TipoEstabelecimentoId} TipoEstabelecimentoSlug={TipoEstabelecimentoSlug} Errors={@Errors}",
+                    CurrentUserId.Value,
+                    request.NomeFantasia,
+                    request.EmpresaId,
+                    request.TipoEstabelecimentoId,
+                    request.TipoEstabelecimentoSlug,
+                    ex.Errors);
+                return ValidationErrorResponse(ex);
             }
             catch (UnauthorizedAccessException ex)
             {
@@ -132,9 +140,18 @@ namespace APIBack.Controllers
             {
                 return NotFound(ApiResponse<object>.Fail(ex.Message));
             }
-            catch (AdminUsuarioValidationException ex)
+            catch (RequestValidationException ex)
             {
-                return UnprocessableEntity(new { success = false, error = ex.Message, errors = ex.Errors });
+                _logger.LogWarning(
+                    "Validacao ao atualizar estabelecimento de gestao falhou para UserId={UserId} EstabelecimentoId={EstabelecimentoId}. NomeFantasia={NomeFantasia} EmpresaId={EmpresaId} TipoEstabelecimentoId={TipoEstabelecimentoId} TipoEstabelecimentoSlug={TipoEstabelecimentoSlug} Errors={@Errors}",
+                    CurrentUserId.Value,
+                    estabelecimentoId,
+                    request.NomeFantasia,
+                    request.EmpresaId,
+                    request.TipoEstabelecimentoId,
+                    request.TipoEstabelecimentoSlug,
+                    ex.Errors);
+                return ValidationErrorResponse(ex);
             }
             catch (UnauthorizedAccessException ex)
             {

@@ -86,9 +86,14 @@ namespace APIBack.Controllers
                     request);
                 return StatusCode(StatusCodes.Status201Created, ApiResponse<GestaoEmpresaDto>.Ok(response));
             }
-            catch (AdminUsuarioValidationException ex)
+            catch (RequestValidationException ex)
             {
-                return UnprocessableEntity(new { success = false, error = ex.Message, errors = ex.Errors });
+                _logger.LogWarning(
+                    "Validacao ao criar empresa de gestao falhou para UserId={UserId}. NomeFantasia={NomeFantasia} Errors={@Errors}",
+                    CurrentUserId.Value,
+                    request.NomeFantasia,
+                    ex.Errors);
+                return ValidationErrorResponse(ex);
             }
             catch (UnauthorizedAccessException ex)
             {
@@ -132,9 +137,15 @@ namespace APIBack.Controllers
             {
                 return NotFound(ApiResponse<object>.Fail(ex.Message));
             }
-            catch (AdminUsuarioValidationException ex)
+            catch (RequestValidationException ex)
             {
-                return UnprocessableEntity(new { success = false, error = ex.Message, errors = ex.Errors });
+                _logger.LogWarning(
+                    "Validacao ao atualizar empresa de gestao falhou para UserId={UserId} EmpresaId={EmpresaId}. NomeFantasia={NomeFantasia} Errors={@Errors}",
+                    CurrentUserId.Value,
+                    empresaId,
+                    request.NomeFantasia,
+                    ex.Errors);
+                return ValidationErrorResponse(ex);
             }
             catch (UnauthorizedAccessException ex)
             {

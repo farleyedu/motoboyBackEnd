@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using APIBack.DTOs.Gestao;
 using APIBack.Model.Gestao;
 using APIBack.Repository.Interface;
+using APIBack.Service;
 using Dapper;
 using Microsoft.Extensions.Configuration;
 using Npgsql;
@@ -90,7 +91,7 @@ SELECT  emp.id                    AS Id,
             await using var transaction = await connection.BeginTransactionAsync();
 
             var empresaId = await InserirEmpresaAsync(connection, transaction, request);
-            await InserirEstabelecimentoAsync(connection, transaction, estabelecimentoRequest, empresaId);
+            await InserirEstabelecimentoAsync(connection, transaction, estabelecimentoRequest, empresaId, "initialEstablishment.tipoEstabelecimento");
 
             await transaction.CommitAsync();
             return empresaId;
@@ -231,7 +232,7 @@ SELECT  e.id                    AS Id,
             await connection.OpenAsync();
             await using var transaction = await connection.BeginTransactionAsync();
 
-            var id = await InserirEstabelecimentoAsync(connection, transaction, request, empresaIdOverride);
+            var id = await InserirEstabelecimentoAsync(connection, transaction, request, empresaIdOverride, "tipoEstabelecimento");
 
             await transaction.CommitAsync();
             return id;
@@ -243,7 +244,7 @@ SELECT  e.id                    AS Id,
             await connection.OpenAsync();
             await using var transaction = await connection.BeginTransactionAsync();
 
-            var tipoEstabelecimentoId = await ResolverTipoEstabelecimentoIdAsync(connection, transaction, request);
+            var tipoEstabelecimentoId = await ResolverTipoEstabelecimentoIdAsync(connection, transaction, request, "tipoEstabelecimento");
             var slug = await GarantirSlugDisponivelAsync(connection, transaction, request.Slug, request.NomeFantasia, estabelecimentoId);
             var modulos = MapModulesToDatabase(request.ModulosAtivos);
             var tipoUnidade = NormalizeTipoUnidade(request.TipoUnidade);
@@ -774,7 +775,8 @@ RETURNING id;";
             NpgsqlConnection connection,
             NpgsqlTransaction transaction,
             SalvarEstabelecimentoRequest request,
-            Guid? empresaIdOverride)
+            Guid? empresaIdOverride,
+            string tipoEstabelecimentoField)
         {
             var empresaId = empresaIdOverride ?? request.EmpresaId;
             if (!empresaId.HasValue || empresaId == Guid.Empty)
@@ -782,7 +784,7 @@ RETURNING id;";
                 throw new InvalidOperationException("Empresa obrigatoria para salvar estabelecimento.");
             }
 
-            var tipoEstabelecimentoId = await ResolverTipoEstabelecimentoIdAsync(connection, transaction, request);
+            var tipoEstabelecimentoId = await ResolverTipoEstabelecimentoIdAsync(connection, transaction, request, tipoEstabelecimentoField);
             var slug = await GarantirSlugDisponivelAsync(connection, transaction, request.Slug, request.NomeFantasia, null);
             var modulos = MapModulesToDatabase(request.ModulosAtivos);
             var tipoUnidade = NormalizeTipoUnidade(request.TipoUnidade);
@@ -834,8 +836,17 @@ RETURNING id;";
             }, transaction);
         }
 
-        private async Task<Guid> ResolverTipoEstabelecimentoIdAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, SalvarEstabelecimentoRequest request)
+        private async Task<Guid> ResolverTipoEstabelecimentoIdAsync(
+            NpgsqlConnection connection,
+            NpgsqlTransaction transaction,
+            SalvarEstabelecimentoRequest request,
+            string fieldName)
         {
+            var requestedType =
+                (request.TipoEstabelecimentoId.HasValue && request.TipoEstabelecimentoId.Value != Guid.Empty) ||
+                !string.IsNullOrWhiteSpace(request.TipoEstabelecimentoSlug) ||
+                !string.IsNullOrWhiteSpace(request.TipoEstabelecimentoNome);
+
             if (request.TipoEstabelecimentoId.HasValue && request.TipoEstabelecimentoId.Value != Guid.Empty)
             {
                 var byId = await connection.ExecuteScalarAsync<Guid?>(@"
@@ -881,6 +892,11 @@ SELECT id
                 }
             }
 
+            if (requestedType)
+            {
+                throw BuildValidationException(fieldName, "Tipo de estabelecimento informado nao existe.");
+            }
+
             var fallback = await connection.ExecuteScalarAsync<Guid?>(@"
 SELECT id
   FROM tipo_estabelecimento
@@ -889,10 +905,20 @@ SELECT id
 
             if (!fallback.HasValue)
             {
-                throw new InvalidOperationException("Nenhum tipo de estabelecimento cadastrado.");
+                throw BuildValidationException(fieldName, "Nenhum tipo de estabelecimento cadastrado.");
             }
 
             return fallback.Value;
+        }
+
+        private static RequestValidationException BuildValidationException(string fieldName, string message)
+        {
+            return new RequestValidationException(
+                "Dados invalidos.",
+                new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [fieldName] = new List<string> { message }
+                });
         }
 
         private async Task<string> GarantirSlugDisponivelAsync(

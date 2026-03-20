@@ -4,7 +4,7 @@ using Microsoft.AspNetCore.Mvc;
 
 namespace APIBack.Controllers
 {
-    public abstract class GestaoControllerBase : ControllerBase
+    public abstract class GestaoControllerBase : ApiControllerBase
     {
         protected int? CurrentUserId => HttpContext.GetUserId();
         protected Guid? CurrentEmpresaId => HttpContext.GetEmpresaId();

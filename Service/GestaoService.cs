@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Net.Mail;
 using System.Text.Json;
 using System.Text;
 using System.Threading.Tasks;
@@ -54,20 +55,7 @@ namespace APIBack.Service
         {
             var scope = BuildScope(empresaId, estabelecimentoId, companyRole, establishmentRole, isSuperAdmin);
             EnsureCanCreateCompany(scope);
-            ValidateRequired(request.NomeFantasia, "nomeFantasia", "Nome fantasia obrigatorio.");
-            ValidateOptionalCnpj(request.Cnpj, "cnpj", "CNPJ deve conter 14 digitos.");
-
-            if (request.InitialEstablishment != null)
-            {
-                ValidateOptionalCnpj(
-                    request.InitialEstablishment.CnpjLoja,
-                    "initialEstablishment.cnpjLoja",
-                    "CNPJ do estabelecimento deve conter 14 digitos.");
-                ValidateOptionalWhatsappE164(
-                    request.InitialEstablishment.WhatsappE164,
-                    "initialEstablishment.whatsappE164",
-                    "WhatsApp deve estar em formato E.164 valido.");
-            }
+            ValidateSalvarEmpresaRequest(request);
 
             var createdId = request.InitialEstablishment != null
                 ? await _repository.CriarEmpresaComEstabelecimentoAsync(request, request.InitialEstablishment)
@@ -91,8 +79,7 @@ namespace APIBack.Service
         {
             var scope = BuildScope(empresaId, estabelecimentoId, companyRole, establishmentRole, isSuperAdmin);
             EnsureCanManageCompany(scope, targetEmpresaId);
-            ValidateRequired(request.NomeFantasia, "nomeFantasia", "Nome fantasia obrigatorio.");
-            ValidateOptionalCnpj(request.Cnpj, "cnpj", "CNPJ deve conter 14 digitos.");
+            ValidateSalvarEmpresaRequest(request);
 
             await _repository.AtualizarEmpresaAsync(targetEmpresaId, request);
 
@@ -154,19 +141,11 @@ namespace APIBack.Service
         {
             var scope = BuildScope(empresaId, estabelecimentoId, companyRole, establishmentRole, isSuperAdmin);
             EnsureCanCreateEstablishment(scope);
-            ValidateRequired(request.NomeFantasia, "nomeFantasia", "Nome fantasia obrigatorio.");
-            ValidateOptionalCnpj(request.CnpjLoja, "cnpjLoja", "CNPJ do estabelecimento deve conter 14 digitos.");
-            ValidateOptionalWhatsappE164(request.WhatsappE164, "whatsappE164", "WhatsApp deve estar em formato E.164 valido.");
-
             if (!scope.IsSuperAdmin)
             {
                 request.EmpresaId = scope.EmpresaId;
             }
-
-            if (!request.EmpresaId.HasValue || request.EmpresaId.Value == Guid.Empty)
-            {
-                throw ValidationException("Dados invalidos.", ("empresaId", "Empresa obrigatoria."));
-            }
+            ValidateSalvarEstabelecimentoRequest(request, requireEmpresaId: true);
 
             var createdId = await _repository.CriarEstabelecimentoAsync(request);
 
@@ -206,14 +185,12 @@ namespace APIBack.Service
                 ?? throw new KeyNotFoundException("Estabelecimento nao encontrado.");
 
             EnsureCanManageEstablishment(scope, current);
-            ValidateRequired(request.NomeFantasia, "nomeFantasia", "Nome fantasia obrigatorio.");
-            ValidateOptionalCnpj(request.CnpjLoja, "cnpjLoja", "CNPJ do estabelecimento deve conter 14 digitos.");
-            ValidateOptionalWhatsappE164(request.WhatsappE164, "whatsappE164", "WhatsApp deve estar em formato E.164 valido.");
 
             if (!scope.IsSuperAdmin)
             {
                 request.EmpresaId = current.EmpresaId;
             }
+            ValidateSalvarEstabelecimentoRequest(request, requireEmpresaId: true);
 
             await _repository.AtualizarEstabelecimentoAsync(targetEstabelecimentoId, request);
 
@@ -485,11 +462,13 @@ namespace APIBack.Service
 
             ValidateRequired(request.Nome, "nome", "Nome obrigatorio.", errors);
             ValidateRequired(request.Email, "email", "E-mail obrigatorio.", errors);
+            ValidateOptionalEmail(request.Email, "email", "E-mail invalido.", errors);
             ValidateRequired(request.TipoUsuario, "tipoUsuario", "Tipo de usuario obrigatorio.", errors);
             if (!targetUserId.HasValue)
             {
                 ValidateRequired(request.SenhaInicial, "senhaInicial", "Senha inicial obrigatoria.", errors);
             }
+            ValidatePassword(request.SenhaInicial, "senhaInicial", !targetUserId.HasValue, errors);
 
             var tipoUsuario = RoleCatalog.Normalize(request.TipoUsuario);
             if (string.IsNullOrWhiteSpace(tipoUsuario))
@@ -675,6 +654,109 @@ namespace APIBack.Service
             if (!scope.IsSuperAdmin && actorRank <= targetMaxRank)
             {
                 throw new UnauthorizedAccessException("Voce so pode gerenciar usuarios abaixo do seu nivel.");
+            }
+        }
+
+        private static void ValidateSalvarEmpresaRequest(SalvarEmpresaRequest request)
+        {
+            var errors = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+
+            ValidateRequired(request.NomeFantasia, "nomeFantasia", "Nome fantasia obrigatorio.", errors);
+            ValidateOptionalCnpj(request.Cnpj, "cnpj", "CNPJ deve conter 14 digitos.", errors);
+            ValidateOptionalEmail(request.Email, "email", "E-mail invalido.", errors);
+
+            if (request.InitialEstablishment != null)
+            {
+                ValidateSalvarEstabelecimentoRequest(
+                    request.InitialEstablishment,
+                    requireEmpresaId: false,
+                    fieldPrefix: "initialEstablishment.",
+                    errors);
+            }
+
+            ThrowIfValidationErrors(errors);
+        }
+
+        private static void ValidateSalvarEstabelecimentoRequest(
+            SalvarEstabelecimentoRequest request,
+            bool requireEmpresaId,
+            string fieldPrefix = "",
+            Dictionary<string, List<string>>? externalErrors = null)
+        {
+            var errors = externalErrors ?? new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+
+            if (requireEmpresaId && (!request.EmpresaId.HasValue || request.EmpresaId.Value == Guid.Empty))
+            {
+                AddError(errors, BuildFieldPath(fieldPrefix, "empresaId"), "Empresa obrigatoria.");
+            }
+
+            ValidateRequired(
+                request.NomeFantasia,
+                BuildFieldPath(fieldPrefix, "nomeFantasia"),
+                fieldPrefix.Length == 0 ? "Nome fantasia obrigatorio." : "Nome fantasia do estabelecimento obrigatorio.",
+                errors);
+            ValidateOptionalCnpj(
+                request.CnpjLoja,
+                BuildFieldPath(fieldPrefix, "cnpjLoja"),
+                "CNPJ do estabelecimento deve conter 14 digitos.",
+                errors);
+            ValidateOptionalWhatsappE164(
+                request.WhatsappE164,
+                BuildFieldPath(fieldPrefix, "whatsappE164"),
+                "WhatsApp deve estar em formato E.164 valido.",
+                errors);
+            ValidateOptionalEmail(
+                request.Email,
+                BuildFieldPath(fieldPrefix, "email"),
+                "E-mail invalido.",
+                errors);
+            ValidateOptionalCep(
+                request.Cep,
+                BuildFieldPath(fieldPrefix, "cep"),
+                "CEP deve conter 8 digitos.",
+                errors);
+            ValidateOptionalUf(
+                request.Uf,
+                BuildFieldPath(fieldPrefix, "uf"),
+                "UF deve conter 2 letras.",
+                errors);
+            ValidateOptionalLatitude(
+                request.Latitude,
+                BuildFieldPath(fieldPrefix, "latitude"),
+                errors);
+            ValidateOptionalLongitude(
+                request.Longitude,
+                BuildFieldPath(fieldPrefix, "longitude"),
+                errors);
+            ValidateOptionalNonNegative(
+                request.RaioEntregaKm,
+                BuildFieldPath(fieldPrefix, "raioEntregaKm"),
+                "Raio de entrega deve ser maior ou igual a zero.",
+                errors);
+            ValidateOptionalNonNegative(
+                request.PedidoMinimo,
+                BuildFieldPath(fieldPrefix, "pedidoMinimo"),
+                "Pedido minimo deve ser maior ou igual a zero.",
+                errors);
+            ValidateOptionalNonNegative(
+                request.TaxaEntregaFixa,
+                BuildFieldPath(fieldPrefix, "taxaEntregaFixa"),
+                "Taxa de entrega fixa deve ser maior ou igual a zero.",
+                errors);
+            ValidateOptionalNonNegative(
+                request.TaxaEntregaPorKm,
+                BuildFieldPath(fieldPrefix, "taxaEntregaPorKm"),
+                "Taxa de entrega por km deve ser maior ou igual a zero.",
+                errors);
+            ValidateOptionalPositiveInt(
+                request.TempoPreparoMin,
+                BuildFieldPath(fieldPrefix, "tempoPreparoMin"),
+                "Tempo de preparo deve ser maior que zero.",
+                errors);
+
+            if (externalErrors == null)
+            {
+                ThrowIfValidationErrors(errors);
             }
         }
 
@@ -1108,6 +1190,19 @@ namespace APIBack.Service
             }
         }
 
+        private static void ValidateOptionalCnpj(string? value, string field, string message, Dictionary<string, List<string>> errors)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return;
+            }
+
+            if (ExtractDigits(value).Length != 14)
+            {
+                AddError(errors, field, message);
+            }
+        }
+
         private static void ValidateOptionalWhatsappE164(string? value, string field, string message)
         {
             if (string.IsNullOrWhiteSpace(value))
@@ -1123,6 +1218,139 @@ namespace APIBack.Service
             }
         }
 
+        private static void ValidateOptionalWhatsappE164(string? value, string field, string message, Dictionary<string, List<string>> errors)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return;
+            }
+
+            var normalized = NormalizeWhatsappE164(value);
+            var digits = ExtractDigits(normalized);
+            if (string.IsNullOrWhiteSpace(normalized) || digits.Length < 8 || digits.Length > 15 || digits[0] == '0')
+            {
+                AddError(errors, field, message);
+            }
+        }
+
+        private static void ValidateOptionalEmail(string? value, string field, string message, Dictionary<string, List<string>> errors)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return;
+            }
+
+            try
+            {
+                var parsed = new MailAddress(value.Trim());
+                if (!string.Equals(parsed.Address, value.Trim(), StringComparison.OrdinalIgnoreCase))
+                {
+                    AddError(errors, field, message);
+                }
+            }
+            catch
+            {
+                AddError(errors, field, message);
+            }
+        }
+
+        private static void ValidatePassword(string? value, string field, bool required, Dictionary<string, List<string>> errors)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                if (required)
+                {
+                    return;
+                }
+
+                return;
+            }
+
+            if (value.Trim().Length < 6)
+            {
+                AddError(errors, field, "Senha inicial deve conter ao menos 6 caracteres.");
+            }
+        }
+
+        private static void ValidateOptionalCep(string? value, string field, string message, Dictionary<string, List<string>> errors)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return;
+            }
+
+            if (ExtractDigits(value).Length != 8)
+            {
+                AddError(errors, field, message);
+            }
+        }
+
+        private static void ValidateOptionalUf(string? value, string field, string message, Dictionary<string, List<string>> errors)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return;
+            }
+
+            var normalized = value.Trim();
+            if (normalized.Length != 2 || !normalized.All(char.IsLetter))
+            {
+                AddError(errors, field, message);
+            }
+        }
+
+        private static void ValidateOptionalLatitude(double? value, string field, Dictionary<string, List<string>> errors)
+        {
+            if (!value.HasValue)
+            {
+                return;
+            }
+
+            if (value.Value < -90 || value.Value > 90)
+            {
+                AddError(errors, field, "Latitude deve estar entre -90 e 90.");
+            }
+        }
+
+        private static void ValidateOptionalLongitude(double? value, string field, Dictionary<string, List<string>> errors)
+        {
+            if (!value.HasValue)
+            {
+                return;
+            }
+
+            if (value.Value < -180 || value.Value > 180)
+            {
+                AddError(errors, field, "Longitude deve estar entre -180 e 180.");
+            }
+        }
+
+        private static void ValidateOptionalNonNegative(decimal? value, string field, string message, Dictionary<string, List<string>> errors)
+        {
+            if (!value.HasValue)
+            {
+                return;
+            }
+
+            if (value.Value < 0)
+            {
+                AddError(errors, field, message);
+            }
+        }
+
+        private static void ValidateOptionalPositiveInt(int? value, string field, string message, Dictionary<string, List<string>> errors)
+        {
+            if (!value.HasValue)
+            {
+                return;
+            }
+
+            if (value.Value <= 0)
+            {
+                AddError(errors, field, message);
+            }
+        }
+
         private static void ValidateRequired(string? value, string field, string message, Dictionary<string, List<string>> errors)
         {
             if (string.IsNullOrWhiteSpace(value))
@@ -1131,7 +1359,7 @@ namespace APIBack.Service
             }
         }
 
-        private static AdminUsuarioValidationException ValidationException(string message, params (string Field, string Message)[] errors)
+        private static RequestValidationException ValidationException(string message, params (string Field, string Message)[] errors)
         {
             var dict = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
             foreach (var error in errors)
@@ -1139,7 +1367,7 @@ namespace APIBack.Service
                 AddError(dict, error.Field, error.Message);
             }
 
-            return new AdminUsuarioValidationException(message, dict);
+            return new RequestValidationException(message, dict);
         }
 
         private static void AddError(Dictionary<string, List<string>> errors, string field, string message)
@@ -1154,6 +1382,21 @@ namespace APIBack.Service
             {
                 list.Add(message);
             }
+        }
+
+        private static void ThrowIfValidationErrors(Dictionary<string, List<string>> errors)
+        {
+            if (errors.Count > 0)
+            {
+                throw new RequestValidationException("Dados invalidos.", errors);
+            }
+        }
+
+        private static string BuildFieldPath(string prefix, string field)
+        {
+            return string.IsNullOrWhiteSpace(prefix)
+                ? field
+                : prefix + field;
         }
 
         private static string ExtractDigits(string? value)
