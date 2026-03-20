@@ -50,5 +50,11 @@ namespace APIBack.Automation.Interfaces
             string? search);
 
         Task<GarageVehicleMetricsDto> ObterMetricasAsync(Guid idEstabelecimento);
+
+        Task<GarageVehicleDto?> ObterPorSlugPublicoAsync(Guid idEstabelecimento, string slug);
+
+        Task<string?> ObterVitrineBaseUrlAsync(Guid idEstabelecimento);
+
+        Task AtualizarVitrineBaseUrlAsync(Guid idEstabelecimento, string url);
     }
 }

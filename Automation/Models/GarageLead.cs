@@ -28,6 +28,8 @@ namespace APIBack.Automation.Models
         public string? VendaKm { get; set; }
         public string? VendaQuitado { get; set; }
         public string Status { get; set; } = "em_andamento";
+        public Guid? IdVeiculoSelecionado { get; set; }
+        public string? VeiculoSelecionadoTitulo { get; set; }
         public bool ViaNumeroCentral { get; set; }
         public DateTime? DataConclusao { get; set; }
         public DateTime DataCriacao { get; set; }

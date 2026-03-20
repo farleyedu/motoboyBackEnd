@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 using APIBack.Automation.Interfaces;
 using APIBack.Automation.Models;
@@ -12,6 +13,9 @@ namespace APIBack.Automation.Infra
     {
         private readonly string _connectionString;
 
+        private static volatile bool _colunasEnsured;
+        private static readonly SemaphoreSlim ColunasLock = new(1, 1);
+
         public SqlGaragemLeadRepository(IConfiguration configuration)
         {
             _connectionString = configuration.GetConnectionString("DefaultConnection")
@@ -19,8 +23,39 @@ namespace APIBack.Automation.Infra
                 ?? throw new InvalidOperationException("Connection string 'DefaultConnection' nao encontrada.");
         }
 
+        private async Task EnsureColunasAsync()
+        {
+            if (_colunasEnsured)
+            {
+                return;
+            }
+
+            await ColunasLock.WaitAsync();
+            try
+            {
+                if (_colunasEnsured)
+                {
+                    return;
+                }
+
+                const string sql = @"
+ALTER TABLE cliente_garagem ADD COLUMN IF NOT EXISTS id_veiculo_selecionado UUID;
+ALTER TABLE cliente_garagem ADD COLUMN IF NOT EXISTS veiculo_selecionado_titulo VARCHAR(300);";
+
+                await using var connection = new NpgsqlConnection(_connectionString);
+                await connection.ExecuteAsync(sql);
+                _colunasEnsured = true;
+            }
+            finally
+            {
+                ColunasLock.Release();
+            }
+        }
+
         public async Task<GarageLead?> ObterLeadAbertoAsync(Guid idEstabelecimento, string telefoneE164)
         {
+            await EnsureColunasAsync();
+
             const string sql = @"
 SELECT id,
        id_estabelecimento AS IdEstabelecimento,
@@ -47,6 +82,8 @@ SELECT id,
        urgencia,
        status,
        via_numero_central AS ViaNumeroCentral,
+       id_veiculo_selecionado AS IdVeiculoSelecionado,
+       veiculo_selecionado_titulo AS VeiculoSelecionadoTitulo,
        data_conclusao     AS DataConclusao,
        data_criacao       AS DataCriacao,
        data_atualizacao   AS DataAtualizacao
@@ -67,6 +104,8 @@ SELECT id,
 
         public async Task<GarageLead?> ObterPorConversaAsync(Guid idConversa)
         {
+            await EnsureColunasAsync();
+
             const string sql = @"
 SELECT id,
        id_estabelecimento AS IdEstabelecimento,
@@ -93,6 +132,8 @@ SELECT id,
        urgencia,
        status,
        via_numero_central AS ViaNumeroCentral,
+       id_veiculo_selecionado AS IdVeiculoSelecionado,
+       veiculo_selecionado_titulo AS VeiculoSelecionadoTitulo,
        data_conclusao     AS DataConclusao,
        data_criacao       AS DataCriacao,
        data_atualizacao   AS DataAtualizacao
@@ -107,6 +148,8 @@ SELECT id,
 
         public async Task<Guid> CriarAsync(GarageLead lead)
         {
+            await EnsureColunasAsync();
+
             const string sql = @"
 INSERT INTO cliente_garagem (
     id,
@@ -134,6 +177,8 @@ INSERT INTO cliente_garagem (
     urgencia,
     status,
     via_numero_central,
+    id_veiculo_selecionado,
+    veiculo_selecionado_titulo,
     data_conclusao,
     data_criacao,
     data_atualizacao
@@ -163,6 +208,8 @@ INSERT INTO cliente_garagem (
     @Urgencia,
     @Status,
     @ViaNumeroCentral,
+    @IdVeiculoSelecionado,
+    @VeiculoSelecionadoTitulo,
     @DataConclusao,
     @DataCriacao,
     @DataAtualizacao
@@ -188,6 +235,8 @@ INSERT INTO cliente_garagem (
 
         public async Task AtualizarAsync(GarageLead lead)
         {
+            await EnsureColunasAsync();
+
             const string sql = @"
 UPDATE cliente_garagem
    SET id_conversa = @IdConversa,
@@ -213,6 +262,8 @@ UPDATE cliente_garagem
        urgencia = @Urgencia,
        status = @Status,
        via_numero_central = @ViaNumeroCentral,
+       id_veiculo_selecionado = @IdVeiculoSelecionado,
+       veiculo_selecionado_titulo = @VeiculoSelecionadoTitulo,
        data_conclusao = @DataConclusao,
        data_atualizacao = @DataAtualizacao
  WHERE id = @Id;";
@@ -225,6 +276,8 @@ UPDATE cliente_garagem
 
         public async Task ConcluirAsync(GarageLead lead)
         {
+            await EnsureColunasAsync();
+
             const string sql = @"
 UPDATE cliente_garagem
    SET nome_cliente = @NomeCliente,
@@ -245,6 +298,8 @@ UPDATE cliente_garagem
        venda_km = @VendaKm,
        venda_quitado = @VendaQuitado,
        urgencia = @Urgencia,
+       id_veiculo_selecionado = @IdVeiculoSelecionado,
+       veiculo_selecionado_titulo = @VeiculoSelecionadoTitulo,
        status = 'concluido',
        data_conclusao = NOW(),
        data_atualizacao = NOW()

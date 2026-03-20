@@ -270,6 +270,28 @@ namespace APIBack.Automation.Controllers
             return Ok(vitrine);
         }
 
+        [HttpGet("vitrine/{slug}")]
+        [AllowAnonymous]
+        public async Task<IActionResult> ObterVeiculoPublico(
+            string slug,
+            [FromQuery] Guid estabelecimentoId)
+        {
+            if (estabelecimentoId == Guid.Empty)
+            {
+                return BadRequest(new { success = false, error = "Informe um estabelecimento valido." });
+            }
+
+            if (string.IsNullOrWhiteSpace(slug))
+            {
+                return BadRequest(new { success = false, error = "Informe o slug do veiculo." });
+            }
+
+            var veiculo = await _repository.ObterPorSlugPublicoAsync(estabelecimentoId, slug.Trim());
+            return veiculo == null
+                ? NotFound(new { success = false, error = "Veiculo nao encontrado." })
+                : Ok(veiculo);
+        }
+
         [HttpGet("metricas")]
         [RequirePermission("Garagem", "estoque_visualizar")]
         public async Task<IActionResult> ObterMetricas([FromQuery] Guid? estabelecimentoId = null)

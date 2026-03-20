@@ -472,6 +472,96 @@ SELECT COUNT(*)::int AS Total,
             return await connection.QueryFirstAsync<GarageVehicleMetricsDto>(sql, new { IdEstabelecimento = idEstabelecimento });
         }
 
+        public async Task<GarageVehicleDto?> ObterPorSlugPublicoAsync(Guid idEstabelecimento, string slug)
+        {
+            await EnsureSchemaAsync();
+
+            const string sql = @"
+SELECT v.id,
+       v.id_estabelecimento AS IdEstabelecimento,
+       v.slug,
+       v.titulo,
+       v.marca,
+       v.modelo,
+       v.categoria,
+       v.ano_fabricacao AS AnoFabricacao,
+       v.ano_modelo AS AnoModelo,
+       v.preco,
+       v.preco_anterior AS PrecoAnterior,
+       v.km,
+       v.combustivel,
+       v.cambio,
+       v.cor,
+       v.cidade,
+       v.carroceria,
+       v.portas,
+       v.assentos,
+       v.status,
+       v.tipo_veiculo AS TipoVeiculo,
+       v.destaque,
+       v.label_destaque AS LabelDestaque,
+       v.codigo_estoque AS CodigoEstoque,
+       v.tracao,
+       v.descricao,
+       v.opcionais::text AS OpcionaisJson,
+       v.condicoes::text AS CondicoesJson
+  FROM garagem_veiculo v
+ WHERE v.id_estabelecimento = @IdEstabelecimento
+   AND v.slug = @Slug
+   AND v.status = 'disponivel'
+ LIMIT 1;";
+
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync();
+
+            var row = await connection.QueryFirstOrDefaultAsync<GarageVehicleRow>(sql, new
+            {
+                IdEstabelecimento = idEstabelecimento,
+                Slug = slug.Trim().ToLowerInvariant()
+            });
+
+            if (row == null)
+            {
+                return null;
+            }
+
+            var items = await MapPublicVehiclesAsync(connection, new[] { row });
+            return items.FirstOrDefault();
+        }
+
+        public async Task<string?> ObterVitrineBaseUrlAsync(Guid idEstabelecimento)
+        {
+            await EnsureSchemaAsync();
+
+            const string sql = @"
+SELECT vitrine_url_base
+  FROM garagem_config
+ WHERE id_estabelecimento = @IdEstabelecimento;";
+
+            await using var connection = new NpgsqlConnection(_connectionString);
+            var url = await connection.QueryFirstOrDefaultAsync<string?>(sql, new { IdEstabelecimento = idEstabelecimento });
+            return string.IsNullOrWhiteSpace(url) ? null : url.TrimEnd('/');
+        }
+
+        public async Task AtualizarVitrineBaseUrlAsync(Guid idEstabelecimento, string url)
+        {
+            await EnsureSchemaAsync();
+
+            const string sql = @"
+INSERT INTO garagem_config (id_estabelecimento, vitrine_url_base, data_criacao, data_atualizacao)
+VALUES (@IdEstabelecimento, @Url, NOW(), NOW())
+ON CONFLICT (id_estabelecimento) DO UPDATE
+   SET vitrine_url_base = EXCLUDED.vitrine_url_base,
+       data_atualizacao = NOW();";
+
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.ExecuteAsync(sql, new
+            {
+                IdEstabelecimento = idEstabelecimento,
+                Url = url.Trim().TrimEnd('/')
+            });
+        }
+
         private async Task<IReadOnlyList<GarageVehicleAdminDto>> MapAdminVehiclesAsync(
             NpgsqlConnection connection,
             IReadOnlyCollection<GarageVehicleRow> rows)
@@ -928,7 +1018,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS ux_garagem_veiculo_foto_ordem
     ON garagem_veiculo_foto (id_veiculo, ordem);
 
 CREATE INDEX IF NOT EXISTS ix_garagem_veiculo_foto_veiculo
-    ON garagem_veiculo_foto (id_veiculo, ordem);";
+    ON garagem_veiculo_foto (id_veiculo, ordem);
+
+CREATE TABLE IF NOT EXISTS garagem_config (
+    id_estabelecimento UUID PRIMARY KEY,
+    vitrine_url_base TEXT,
+    data_criacao TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    data_atualizacao TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);";
 
                 await using var connection = new NpgsqlConnection(_connectionString);
                 await connection.ExecuteAsync(sql);
