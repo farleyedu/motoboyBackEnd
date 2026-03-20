@@ -39,6 +39,7 @@ WITH base AS (
             @Busca IS NULL OR @Busca = '' OR
             COALESCE(cg.nome_cliente, '') ILIKE '%' || @Busca || '%' OR
             COALESCE(cg.telefone_e164, '') ILIKE '%' || @Busca || '%' OR
+            COALESCE(cg.veiculo_selecionado_titulo, '') ILIKE '%' || @Busca || '%' OR
             COALESCE(cg.modelo_interesse, '') ILIKE '%' || @Busca || '%' OR
             COALESCE(cg.troca_modelo_desejado, '') ILIKE '%' || @Busca || '%' OR
             COALESCE(cg.venda_modelo, '') ILIKE '%' || @Busca || '%'
@@ -57,11 +58,16 @@ SELECT b.id,
        COALESCE(b.nome_cliente, '') AS Nome,
        b.cpf AS Cpf,
        COALESCE(b.objetivo, '') AS Objetivo,
+       COALESCE(b.veiculo_selecionado_titulo,
        CASE
          WHEN b.objetivo = 'trocar' THEN COALESCE(b.troca_modelo_desejado, b.modelo_interesse, '')
          WHEN b.objetivo = 'vender' THEN COALESCE(b.venda_modelo, '')
          ELSE COALESCE(b.modelo_interesse, '')
-       END AS Modelo,
+       END) AS Modelo,
+       b.id_veiculo_selecionado AS IdVeiculoSelecionado,
+       COALESCE(b.veiculo_selecionado_titulo, gv.titulo) AS VeiculoSelecionadoTitulo,
+       gv.slug AS VeiculoSelecionadoSlug,
+       e.slug AS EstabelecimentoSlug,
        b.modelo_interesse AS ModeloInteresse,
        b.troca_modelo_desejado AS TrocaModeloDesejado,
        b.venda_modelo AS VendaModelo,
@@ -75,6 +81,8 @@ SELECT b.id,
        (SELECT total FROM tot) AS TotalRegistros
   FROM base b
   LEFT JOIN sim ON sim.id_lead = b.id
+  LEFT JOIN garagem_veiculo gv ON gv.id = b.id_veiculo_selecionado
+  LEFT JOIN estabelecimentos e ON e.id = b.id_estabelecimento
  ORDER BY COALESCE(b.data_conclusao, b.data_atualizacao, b.data_criacao) DESC
  LIMIT @Limit OFFSET @Offset;";
 
@@ -106,6 +114,7 @@ SELECT COALESCE(cg.status, '') AS Status,
         @Busca IS NULL OR @Busca = '' OR
         COALESCE(cg.nome_cliente, '') ILIKE '%' || @Busca || '%' OR
         COALESCE(cg.telefone_e164, '') ILIKE '%' || @Busca || '%' OR
+        COALESCE(cg.veiculo_selecionado_titulo, '') ILIKE '%' || @Busca || '%' OR
         COALESCE(cg.modelo_interesse, '') ILIKE '%' || @Busca || '%' OR
         COALESCE(cg.troca_modelo_desejado, '') ILIKE '%' || @Busca || '%' OR
         COALESCE(cg.venda_modelo, '') ILIKE '%' || @Busca || '%'
@@ -133,11 +142,16 @@ SELECT cg.id,
        COALESCE(cg.nome_cliente, '') AS Nome,
        cg.cpf AS Cpf,
        COALESCE(cg.objetivo, '') AS Objetivo,
+       COALESCE(cg.veiculo_selecionado_titulo,
        CASE
          WHEN cg.objetivo = 'trocar' THEN COALESCE(cg.troca_modelo_desejado, cg.modelo_interesse, '')
          WHEN cg.objetivo = 'vender' THEN COALESCE(cg.venda_modelo, '')
          ELSE COALESCE(cg.modelo_interesse, '')
-       END AS Modelo,
+       END) AS Modelo,
+       cg.id_veiculo_selecionado AS IdVeiculoSelecionado,
+       COALESCE(cg.veiculo_selecionado_titulo, gv.titulo) AS VeiculoSelecionadoTitulo,
+       gv.slug AS VeiculoSelecionadoSlug,
+       e.slug AS EstabelecimentoSlug,
        cg.faixa_investimento AS Faixa,
        cg.forma_pagamento AS Pagamento,
        cg.valor_entrada_texto AS Entrada,
@@ -163,6 +177,8 @@ SELECT cg.id,
        cg.venda_km AS VendaKm,
        cg.venda_quitado AS VendaQuitado
   FROM cliente_garagem cg
+  LEFT JOIN garagem_veiculo gv ON gv.id = cg.id_veiculo_selecionado
+  LEFT JOIN estabelecimentos e ON e.id = cg.id_estabelecimento
  WHERE cg.id_estabelecimento = @IdEstabelecimento
    AND cg.id = @IdLead
  LIMIT 1;";
@@ -175,7 +191,13 @@ SELECT cg.id,
             }
 
             detalhe.Cpf = LimparFiltro(detalhe.Cpf);
-            detalhe.CarroInteresse = ResolverCarroInteresse(detalhe.Objetivo, detalhe.ModeloInteresse, detalhe.TrocaModeloDesejado, detalhe.VendaModelo);
+            detalhe.CarroInteresse = ResolverCarroInteresse(
+                detalhe.Objetivo,
+                detalhe.VeiculoSelecionadoTitulo,
+                detalhe.ModeloInteresse,
+                detalhe.TrocaModeloDesejado,
+                detalhe.VendaModelo);
+            detalhe.VeiculoSelecionadoUrl = BuildSelectedVehicleUrl(detalhe.EstabelecimentoSlug, detalhe.VeiculoSelecionadoSlug);
             detalhe.Simulacoes = (await ObterSimulacoesAsync(connection, idLead)).ToList();
             detalhe.SimulacoesCount = detalhe.Simulacoes.Count;
             return detalhe;
@@ -514,7 +536,12 @@ SELECT id AS Id,
 
         private static GarageLeadListItemDto MapListItem(GarageLeadListRow row)
         {
-            var carroInteresse = ResolverCarroInteresse(row.Objetivo, row.ModeloInteresse, row.TrocaModeloDesejado, row.VendaModelo);
+            var carroInteresse = ResolverCarroInteresse(
+                row.Objetivo,
+                row.VeiculoSelecionadoTitulo,
+                row.ModeloInteresse,
+                row.TrocaModeloDesejado,
+                row.VendaModelo);
             return new GarageLeadListItemDto
             {
                 Id = row.Id,
@@ -524,6 +551,11 @@ SELECT id AS Id,
                 Objetivo = row.Objetivo,
                 Modelo = string.IsNullOrWhiteSpace(row.Modelo) ? (carroInteresse ?? string.Empty) : row.Modelo,
                 CarroInteresse = carroInteresse,
+                EstabelecimentoSlug = row.EstabelecimentoSlug,
+                IdVeiculoSelecionado = row.IdVeiculoSelecionado,
+                VeiculoSelecionadoTitulo = row.VeiculoSelecionadoTitulo,
+                VeiculoSelecionadoSlug = row.VeiculoSelecionadoSlug,
+                VeiculoSelecionadoUrl = BuildSelectedVehicleUrl(row.EstabelecimentoSlug, row.VeiculoSelecionadoSlug),
                 Faixa = row.Faixa,
                 Pagamento = row.Pagamento,
                 Entrada = row.Entrada,
@@ -536,13 +568,38 @@ SELECT id AS Id,
 
         private static string? LimparFiltro(string? valor) => string.IsNullOrWhiteSpace(valor) ? null : valor.Trim();
 
-        internal static string? ResolverCarroInteresse(string? objetivo, string? modeloInteresse, string? trocaModeloDesejado, string? vendaModelo)
-            => LimparFiltro(objetivo)?.ToLowerInvariant() switch
+        internal static string? ResolverCarroInteresse(
+            string? objetivo,
+            string? veiculoSelecionadoTitulo,
+            string? modeloInteresse,
+            string? trocaModeloDesejado,
+            string? vendaModelo)
+        {
+            var selecionado = LimparFiltro(veiculoSelecionadoTitulo);
+            if (!string.IsNullOrWhiteSpace(selecionado))
+            {
+                return selecionado;
+            }
+
+            return LimparFiltro(objetivo)?.ToLowerInvariant() switch
             {
                 "trocar" => LimparFiltro(trocaModeloDesejado) ?? LimparFiltro(modeloInteresse),
                 "vender" => LimparFiltro(vendaModelo),
                 _ => LimparFiltro(modeloInteresse)
             };
+        }
+
+        internal static string? BuildSelectedVehicleUrl(string? estabelecimentoSlug, string? veiculoSlug)
+        {
+            var loja = LimparFiltro(estabelecimentoSlug);
+            var veiculo = LimparFiltro(veiculoSlug);
+            if (string.IsNullOrWhiteSpace(loja) || string.IsNullOrWhiteSpace(veiculo))
+            {
+                return null;
+            }
+
+            return $"/garagem/vitrine/{loja}/{veiculo}";
+        }
 
         private static List<GarageLeadSimulationFileDto> DeserializeArquivos(string? arquivosJson)
         {
@@ -578,6 +635,10 @@ SELECT id AS Id,
             public string? Cpf { get; set; }
             public string Objetivo { get; set; } = string.Empty;
             public string Modelo { get; set; } = string.Empty;
+            public Guid? IdVeiculoSelecionado { get; set; }
+            public string? VeiculoSelecionadoTitulo { get; set; }
+            public string? VeiculoSelecionadoSlug { get; set; }
+            public string? EstabelecimentoSlug { get; set; }
             public string? ModeloInteresse { get; set; }
             public string? TrocaModeloDesejado { get; set; }
             public string? VendaModelo { get; set; }

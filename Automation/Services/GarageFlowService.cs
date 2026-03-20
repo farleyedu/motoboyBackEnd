@@ -266,8 +266,13 @@ namespace APIBack.Automation.Services
                         if (vitrine.Items.Count > 0)
                         {
                             var vitrineUrl = await _garagemVeiculoRepository.ObterVitrineBaseUrlAsync(idEstabelecimento);
+                            var estabelecimentoPublico = await _estabelecimentoRepository.ObterResumoPublicoAsync(idEstabelecimento);
                             await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaCatalogoLista, viaNumeroCentral);
-                            return CriarMensagemCatalogo(vitrine.Items.Take(8).ToList(), vitrineUrl, ExtrairPrimeiroNome(lead.NomeCliente));
+                            return CriarMensagemCatalogo(
+                                vitrine.Items.Take(8).ToList(),
+                                vitrineUrl,
+                                estabelecimentoPublico?.Slug,
+                                ExtrairPrimeiroNome(lead.NomeCliente));
                         }
                     }
 
@@ -311,8 +316,16 @@ namespace APIBack.Automation.Services
 
                     lead.FormaPagamento = formaPagamento;
                     await _garagemLeadRepository.AtualizarAsync(lead);
-                    await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaValorEntrada, viaNumeroCentral);
-                    return CriarPergunta(EtapaValorEntrada, lead, nomeEstabelecimento, incluirErro: false);
+                    if (RequerPerguntaValorEntrada(formaPagamento))
+                    {
+                        await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaValorEntrada, viaNumeroCentral);
+                        return CriarPergunta(EtapaValorEntrada, lead, nomeEstabelecimento, incluirErro: false);
+                    }
+
+                    lead.ValorEntradaTexto = null;
+                    await _garagemLeadRepository.AtualizarAsync(lead);
+                    await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaUrgencia, viaNumeroCentral);
+                    return CriarPergunta(EtapaUrgencia, lead, nomeEstabelecimento, incluirErro: false);
                 }
 
                 case EtapaValorEntrada:
@@ -379,8 +392,13 @@ namespace APIBack.Automation.Services
                     if (vitrineParaTroca.Items.Count > 0)
                     {
                         var vitrineUrlTroca = await _garagemVeiculoRepository.ObterVitrineBaseUrlAsync(idEstabelecimento);
+                        var estabelecimentoPublico = await _estabelecimentoRepository.ObterResumoPublicoAsync(idEstabelecimento);
                         await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaCatalogoLista, viaNumeroCentral);
-                        return CriarMensagemCatalogo(vitrineParaTroca.Items.Take(8).ToList(), vitrineUrlTroca, ExtrairPrimeiroNome(lead.NomeCliente));
+                        return CriarMensagemCatalogo(
+                            vitrineParaTroca.Items.Take(8).ToList(),
+                            vitrineUrlTroca,
+                            estabelecimentoPublico?.Slug,
+                            ExtrairPrimeiroNome(lead.NomeCliente));
                     }
 
                     await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaTrocaModeloDesejado, viaNumeroCentral);
@@ -507,6 +525,7 @@ namespace APIBack.Automation.Services
                     var vitrine = await _garagemVeiculoRepository.ObterVitrineAsync(idEstabelecimento, null, null);
                     var veiculos = vitrine.Items.Take(8).ToList();
                     var vitrineUrl = await _garagemVeiculoRepository.ObterVitrineBaseUrlAsync(idEstabelecimento);
+                    var estabelecimentoPublico = await _estabelecimentoRepository.ObterResumoPublicoAsync(idEstabelecimento);
                     var proximaEtapaAposCatalogo = DeterminarProximaEtapaAposCatalogo(lead.Objetivo);
                     var inputCatalogo = NormalizeText(mensagemTexto);
 
@@ -518,9 +537,9 @@ namespace APIBack.Automation.Services
 
                     if (inputCatalogo == "vitrine" || inputCatalogo == "ver vitrine" || inputCatalogo == "garagem_catalogo_vitrine")
                     {
-                        await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, proximaEtapaAposCatalogo, viaNumeroCentral);
-                        var perguntaProxima = CriarPergunta(proximaEtapaAposCatalogo, lead, nomeEstabelecimento, incluirErro: false);
-                        return new AssistantDecision(perguntaProxima.Reply, "none", null, false, null, null, perguntaProxima.ReplyButtons);
+                        await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaCatalogoLista, viaNumeroCentral);
+                        return CriarMensagemLinkVitrine(
+                            BuildCanonicalStoreUrl(vitrineUrl, estabelecimentoPublico?.Slug));
                     }
 
                     if (int.TryParse(mensagemTexto?.Trim(), out var numero) && numero >= 1 && numero <= veiculos.Count)
@@ -528,16 +547,22 @@ namespace APIBack.Automation.Services
                         var veiculo = veiculos[numero - 1];
                         lead.IdVeiculoSelecionado = veiculo.Id;
                         lead.VeiculoSelecionadoTitulo = veiculo.Title;
+                        var urlVeiculo = BuildCanonicalVehicleUrl(vitrineUrl, estabelecimentoPublico?.Slug, veiculo.Slug);
 
                         if (string.Equals(lead.Objetivo, ObjetivoComprar, StringComparison.Ordinal))
                         {
                             lead.ModeloInteresse = veiculo.Title;
                             await _garagemLeadRepository.AtualizarAsync(lead);
-                            await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaFaixaInvestimento, viaNumeroCentral);
-                            var perguntaFaixa = CriarPergunta(EtapaFaixaInvestimento, lead, nomeEstabelecimento, incluirErro: false);
+                            await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaFormaPagamento, viaNumeroCentral);
+                            var perguntaPagamento = CriarPergunta(EtapaFormaPagamento, lead, nomeEstabelecimento, incluirErro: false);
                             return new AssistantDecision(
-                                $"Otimo! Selecionei o *{veiculo.Title}* para voce 😊\n\n{perguntaFaixa.Reply}",
-                                "none", null, false, null);
+                                BuildMensagemSelecaoVeiculo(veiculo.Title, urlVeiculo, perguntaPagamento.Reply),
+                                "none",
+                                null,
+                                false,
+                                null,
+                                null,
+                                perguntaPagamento.ReplyButtons);
                         }
                         else
                         {
@@ -546,13 +571,18 @@ namespace APIBack.Automation.Services
                             await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaTrocaCondicao, viaNumeroCentral);
                             var perguntaCondicao = CriarPergunta(EtapaTrocaCondicao, lead, nomeEstabelecimento, incluirErro: false);
                             return new AssistantDecision(
-                                $"Otimo! Selecionei o *{veiculo.Title}* para voce 😊\n\n{perguntaCondicao.Reply}",
+                                BuildMensagemSelecaoVeiculo(veiculo.Title, urlVeiculo, perguntaCondicao.Reply),
                                 "none", null, false, null, null, perguntaCondicao.ReplyButtons);
                         }
                     }
 
                     await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaCatalogoLista, viaNumeroCentral);
-                    return CriarMensagemCatalogo(veiculos, vitrineUrl, ExtrairPrimeiroNome(lead.NomeCliente), incluirErro: true);
+                    return CriarMensagemCatalogo(
+                        veiculos,
+                        vitrineUrl,
+                        estabelecimentoPublico?.Slug,
+                        ExtrairPrimeiroNome(lead.NomeCliente),
+                        incluirErro: true);
                 }
 
                 default:
@@ -1128,7 +1158,7 @@ namespace APIBack.Automation.Services
             };
         }
 
-        private static string DeterminarEtapaAtual(GarageLead lead)
+        internal static string DeterminarEtapaAtual(GarageLead lead)
         {
             if (string.IsNullOrWhiteSpace(lead.NomeCliente))
             {
@@ -1217,7 +1247,7 @@ namespace APIBack.Automation.Services
                 return EtapaModelo;
             }
 
-            if (string.IsNullOrWhiteSpace(lead.FaixaInvestimento))
+            if (DevePerguntarFaixaInvestimento(lead) && string.IsNullOrWhiteSpace(lead.FaixaInvestimento))
             {
                 return EtapaFaixaInvestimento;
             }
@@ -1227,7 +1257,7 @@ namespace APIBack.Automation.Services
                 return EtapaFormaPagamento;
             }
 
-            if (string.IsNullOrWhiteSpace(lead.ValorEntradaTexto))
+            if (RequerPerguntaValorEntrada(lead.FormaPagamento) && string.IsNullOrWhiteSpace(lead.ValorEntradaTexto))
             {
                 return EtapaValorEntrada;
             }
@@ -1278,11 +1308,13 @@ namespace APIBack.Automation.Services
         private static AssistantDecision CriarMensagemCatalogo(
             IReadOnlyList<GarageVehicleDto> veiculos,
             string? vitrineUrl,
+            string? estabelecimentoSlug,
             string primeiroNome,
             bool incluirErro = false)
         {
             var ptBr = CultureInfo.GetCultureInfo("pt-BR");
             var sb = new StringBuilder();
+            var lojaUrl = BuildCanonicalStoreUrl(vitrineUrl, estabelecimentoSlug);
 
             if (incluirErro)
             {
@@ -1301,9 +1333,10 @@ namespace APIBack.Automation.Services
                 var preco = v.Price.ToString("N0", ptBr);
                 var km = v.Km > 0 ? $" | {v.Km.ToString("N0", ptBr)} km" : string.Empty;
                 sb.AppendLine($"{i + 1}. *{v.Title}* - R$ {preco}{km}");
-                if (!string.IsNullOrWhiteSpace(vitrineUrl))
+                var veiculoUrl = BuildCanonicalVehicleUrl(vitrineUrl, estabelecimentoSlug, v.Slug);
+                if (!string.IsNullOrWhiteSpace(veiculoUrl))
                 {
-                    sb.AppendLine($"🔗 {vitrineUrl}?v={v.Slug}");
+                    sb.AppendLine($"🔗 {veiculoUrl}");
                 }
 
                 if (i < veiculos.Count - 1)
@@ -1312,18 +1345,19 @@ namespace APIBack.Automation.Services
                 }
             }
 
-            if (!string.IsNullOrWhiteSpace(vitrineUrl))
+            if (!string.IsNullOrWhiteSpace(lojaUrl))
             {
                 sb.AppendLine();
-                sb.AppendLine($"Ver toda a vitrine: {vitrineUrl}");
+                sb.AppendLine($"Ver toda a vitrine: {lojaUrl}");
             }
 
             sb.AppendLine();
             sb.AppendLine("Algum desses te interessou? Digite o *numero* do veiculo.");
+            sb.AppendLine("Se escolher um numero, eu te envio o link do carro.");
             sb.Append("Ou *PULAR* para continuar.");
 
             var buttons = new List<WhatsAppReplyButtonOption>();
-            if (!string.IsNullOrWhiteSpace(vitrineUrl))
+            if (!string.IsNullOrWhiteSpace(lojaUrl))
             {
                 buttons.Add(new WhatsAppReplyButtonOption("garagem_catalogo_vitrine", "Ver vitrine 🌐"));
             }
@@ -1340,11 +1374,103 @@ namespace APIBack.Automation.Services
                 buttons);
         }
 
+        private static AssistantDecision CriarMensagemLinkVitrine(string? lojaUrl)
+        {
+            var reply = string.IsNullOrWhiteSpace(lojaUrl)
+                ? "Nao consegui montar o link da vitrine agora. Se preferir, me envie o *numero* do carro ou *PULAR* para continuar."
+                : $"Aqui esta a vitrine completa: {lojaUrl}\n\nSe preferir, me envie o *numero* do carro ou *PULAR* para continuar.";
+
+            return new AssistantDecision(
+                reply,
+                "none",
+                null,
+                false,
+                null,
+                null,
+                new[] { new WhatsAppReplyButtonOption("garagem_catalogo_pular", "Pular ➡️") });
+        }
+
+        internal static bool DevePerguntarFaixaInvestimento(GarageLead lead)
+        {
+            return !TemVeiculoSelecionado(lead);
+        }
+
+        internal static bool RequerPerguntaValorEntrada(string? formaPagamento)
+        {
+            return !string.Equals(NormalizeText(formaPagamento), "avista", StringComparison.Ordinal);
+        }
+
+        internal static string? BuildCanonicalStoreUrl(string? vitrineUrl, string? estabelecimentoSlug)
+        {
+            var slug = NormalizeNullable(estabelecimentoSlug);
+            if (string.IsNullOrWhiteSpace(slug))
+            {
+                return NormalizeNullable(vitrineUrl);
+            }
+
+            var path = $"/garagem/vitrine/{slug}";
+            if (Uri.TryCreate(vitrineUrl, UriKind.Absolute, out var absolute))
+            {
+                return $"{absolute.Scheme}://{absolute.Authority}{path}";
+            }
+
+            return path;
+        }
+
+        internal static string? BuildCanonicalVehicleUrl(string? vitrineUrl, string? estabelecimentoSlug, string? veiculoSlug)
+        {
+            var slugLoja = NormalizeNullable(estabelecimentoSlug);
+            var slugVeiculo = NormalizeNullable(veiculoSlug);
+            if (string.IsNullOrWhiteSpace(slugVeiculo))
+            {
+                return null;
+            }
+
+            if (!string.IsNullOrWhiteSpace(slugLoja))
+            {
+                var lojaUrl = BuildCanonicalStoreUrl(vitrineUrl, slugLoja);
+                return string.IsNullOrWhiteSpace(lojaUrl)
+                    ? null
+                    : $"{lojaUrl.TrimEnd('/')}/{slugVeiculo}";
+            }
+
+            var vitrineLegada = NormalizeNullable(vitrineUrl);
+            return string.IsNullOrWhiteSpace(vitrineLegada)
+                ? null
+                : $"{vitrineLegada}?v={slugVeiculo}";
+        }
+
+        internal static string BuildMensagemSelecaoVeiculo(string veiculoTitulo, string? veiculoUrl, string proximaPergunta)
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine($"Otimo! Selecionei o *{veiculoTitulo}* para voce 😊");
+
+            if (!string.IsNullOrWhiteSpace(veiculoUrl))
+            {
+                sb.AppendLine();
+                sb.AppendLine($"Veja o carro aqui: {veiculoUrl}");
+            }
+
+            sb.AppendLine();
+            sb.Append(proximaPergunta);
+            return sb.ToString().Trim();
+        }
+
         private static string DeterminarProximaEtapaAposCatalogo(string? objetivo)
         {
             return string.Equals(objetivo, ObjetivoTrocar, StringComparison.Ordinal)
                 ? EtapaTrocaModeloDesejado
                 : EtapaModelo;
+        }
+
+        private static bool TemVeiculoSelecionado(GarageLead lead)
+        {
+            return lead.IdVeiculoSelecionado.HasValue || !string.IsNullOrWhiteSpace(lead.VeiculoSelecionadoTitulo);
+        }
+
+        private static string? NormalizeNullable(string? value)
+        {
+            return string.IsNullOrWhiteSpace(value) ? null : value.Trim().TrimEnd('/');
         }
 
         private static string ExtrairPrimeiroNome(string? nomeCompleto)

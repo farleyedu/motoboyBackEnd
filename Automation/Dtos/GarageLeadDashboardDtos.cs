@@ -12,6 +12,11 @@ namespace APIBack.Automation.Dtos
         public string Objetivo { get; set; } = string.Empty;
         public string Modelo { get; set; } = string.Empty;
         public string? CarroInteresse { get; set; }
+        public string? EstabelecimentoSlug { get; set; }
+        public Guid? IdVeiculoSelecionado { get; set; }
+        public string? VeiculoSelecionadoTitulo { get; set; }
+        public string? VeiculoSelecionadoSlug { get; set; }
+        public string? VeiculoSelecionadoUrl { get; set; }
         public string? Faixa { get; set; }
         public string? Pagamento { get; set; }
         public string? Entrada { get; set; }
