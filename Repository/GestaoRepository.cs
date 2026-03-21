@@ -127,15 +127,72 @@ UPDATE empresas
 
         public async Task AtualizarStatusEmpresaAsync(Guid empresaId, bool ativa)
         {
-            const string sql = @"
-UPDATE estabelecimentos
-   SET ativo = @Ativa,
-       status = CASE WHEN @Ativa THEN 'ativo' ELSE 'inativo' END,
-       data_atualizacao = NOW()
- WHERE id_empresa = @EmpresaId;";
-
             await using var connection = new NpgsqlConnection(_connectionString);
-            await connection.ExecuteAsync(sql, new { EmpresaId = empresaId, Ativa = ativa });
+            await connection.OpenAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+
+            if (ativa)
+            {
+                await connection.ExecuteAsync(@"
+UPDATE estabelecimentos
+   SET ativo = TRUE,
+       data_atualizacao = NOW()
+ WHERE id_empresa = @EmpresaId
+   AND COALESCE(ativo, TRUE) = FALSE
+   AND COALESCE(status, 'ativo') IN ('ativo', 'trial');", new { EmpresaId = empresaId }, transaction);
+
+                await connection.ExecuteAsync(@"
+UPDATE usuario_estabelecimentos ue
+   SET ativo = TRUE,
+       data_remocao = NULL,
+       updated_at = NOW()
+  FROM estabelecimentos e
+ WHERE e.id = ue.id_estabelecimento
+   AND e.id_empresa = @EmpresaId
+   AND COALESCE(e.ativo, TRUE) = TRUE
+   AND COALESCE(e.status, 'ativo') IN ('ativo', 'trial')
+   AND COALESCE(ue.ativo, TRUE) = FALSE
+   AND COALESCE(ue.status, 'ativo') = 'ativo';", new { EmpresaId = empresaId }, transaction);
+
+                await connection.ExecuteAsync(@"
+UPDATE usuario_empresas
+   SET ativo = TRUE,
+       data_remocao = NULL,
+       updated_at = NOW()
+ WHERE id_empresa = @EmpresaId
+   AND COALESCE(ativo, TRUE) = FALSE
+   AND COALESCE(status, 'ativo') = 'ativo';", new { EmpresaId = empresaId }, transaction);
+            }
+            else
+            {
+                await connection.ExecuteAsync(@"
+UPDATE usuario_estabelecimentos ue
+   SET ativo = FALSE,
+       updated_at = NOW()
+  FROM estabelecimentos e
+ WHERE e.id = ue.id_estabelecimento
+   AND e.id_empresa = @EmpresaId
+   AND COALESCE(ue.ativo, TRUE) = TRUE
+   AND COALESCE(ue.status, 'ativo') = 'ativo';", new { EmpresaId = empresaId }, transaction);
+
+                await connection.ExecuteAsync(@"
+UPDATE usuario_empresas
+   SET ativo = FALSE,
+       updated_at = NOW()
+ WHERE id_empresa = @EmpresaId
+   AND COALESCE(ativo, TRUE) = TRUE
+   AND COALESCE(status, 'ativo') = 'ativo';", new { EmpresaId = empresaId }, transaction);
+
+                await connection.ExecuteAsync(@"
+UPDATE estabelecimentos
+   SET ativo = FALSE,
+       data_atualizacao = NOW()
+ WHERE id_empresa = @EmpresaId
+   AND COALESCE(ativo, TRUE) = TRUE
+   AND COALESCE(status, 'ativo') IN ('ativo', 'trial');", new { EmpresaId = empresaId }, transaction);
+            }
+
+            await transaction.CommitAsync();
         }
 
         public async Task<IReadOnlyCollection<GestaoEstabelecimentoRow>> ListarEstabelecimentosAsync(Guid? empresaId, Guid? estabelecimentoId)
@@ -332,15 +389,58 @@ UPDATE estabelecimentos
 
         public async Task AtualizarStatusEstabelecimentoAsync(Guid estabelecimentoId, bool ativa)
         {
-            const string sql = @"
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+
+            var empresaId = await connection.ExecuteScalarAsync<Guid?>(@"
+SELECT id_empresa
+  FROM estabelecimentos
+ WHERE id = @EstabelecimentoId
+ LIMIT 1
+ FOR UPDATE;", new { EstabelecimentoId = estabelecimentoId }, transaction);
+
+            if (!empresaId.HasValue)
+            {
+                await transaction.RollbackAsync();
+                return;
+            }
+
+            await connection.ExecuteAsync(@"
 UPDATE estabelecimentos
    SET ativo = @Ativa,
-       status = CASE WHEN @Ativa THEN 'ativo' ELSE 'inativo' END,
+       status = CASE
+                    WHEN @Ativa AND COALESCE(status, 'ativo') = 'trial' THEN 'trial'
+                    WHEN @Ativa THEN 'ativo'
+                    ELSE 'suspenso'
+                END,
        data_atualizacao = NOW()
- WHERE id = @EstabelecimentoId;";
+ WHERE id = @EstabelecimentoId;", new { EstabelecimentoId = estabelecimentoId, Ativa = ativa }, transaction);
 
-            await using var connection = new NpgsqlConnection(_connectionString);
-            await connection.ExecuteAsync(sql, new { EstabelecimentoId = estabelecimentoId, Ativa = ativa });
+            if (ativa)
+            {
+                await connection.ExecuteAsync(@"
+UPDATE usuario_estabelecimentos
+   SET ativo = TRUE,
+       data_remocao = NULL,
+       updated_at = NOW()
+ WHERE id_estabelecimento = @EstabelecimentoId
+   AND COALESCE(ativo, TRUE) = FALSE
+   AND COALESCE(status, 'ativo') = 'ativo';", new { EstabelecimentoId = estabelecimentoId }, transaction);
+            }
+            else
+            {
+                await connection.ExecuteAsync(@"
+UPDATE usuario_estabelecimentos
+   SET ativo = FALSE,
+       updated_at = NOW()
+ WHERE id_estabelecimento = @EstabelecimentoId
+   AND COALESCE(ativo, TRUE) = TRUE
+   AND COALESCE(status, 'ativo') = 'ativo';", new { EstabelecimentoId = estabelecimentoId }, transaction);
+            }
+
+            await SincronizarVinculosEmpresaPorEstabelecimentosAsync(connection, transaction, empresaId.Value);
+            await transaction.CommitAsync();
         }
 
         public async Task<IReadOnlyCollection<GestaoUsuarioResumoRow>> ListarUsuariosResumoAsync(
@@ -1160,6 +1260,54 @@ SELECT EXISTS(
                 .Where(item => !string.IsNullOrWhiteSpace(item))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
+        }
+
+        private static async Task SincronizarVinculosEmpresaPorEstabelecimentosAsync(
+            NpgsqlConnection connection,
+            NpgsqlTransaction transaction,
+            Guid empresaId)
+        {
+            const string sqlDesativar = @"
+UPDATE usuario_empresas uemp
+   SET ativo = FALSE,
+       updated_at = NOW()
+ WHERE uemp.id_empresa = @EmpresaId
+   AND COALESCE(uemp.status, 'ativo') = 'ativo'
+   AND COALESCE(uemp.ativo, TRUE) = TRUE
+   AND NOT EXISTS (
+        SELECT 1
+          FROM usuario_estabelecimentos ue
+          JOIN estabelecimentos e ON e.id = ue.id_estabelecimento
+         WHERE ue.id_usuario = uemp.id_usuario
+           AND e.id_empresa = uemp.id_empresa
+           AND COALESCE(ue.ativo, TRUE) = TRUE
+           AND COALESCE(ue.status, 'ativo') = 'ativo'
+           AND COALESCE(e.ativo, TRUE) = TRUE
+           AND COALESCE(e.status, 'ativo') IN ('ativo', 'trial')
+   );";
+
+            const string sqlReativar = @"
+UPDATE usuario_empresas uemp
+   SET ativo = TRUE,
+       data_remocao = NULL,
+       updated_at = NOW()
+ WHERE uemp.id_empresa = @EmpresaId
+   AND COALESCE(uemp.status, 'ativo') = 'ativo'
+   AND COALESCE(uemp.ativo, TRUE) = FALSE
+   AND EXISTS (
+        SELECT 1
+          FROM usuario_estabelecimentos ue
+          JOIN estabelecimentos e ON e.id = ue.id_estabelecimento
+         WHERE ue.id_usuario = uemp.id_usuario
+           AND e.id_empresa = uemp.id_empresa
+           AND COALESCE(ue.ativo, TRUE) = TRUE
+           AND COALESCE(ue.status, 'ativo') = 'ativo'
+           AND COALESCE(e.ativo, TRUE) = TRUE
+           AND COALESCE(e.status, 'ativo') IN ('ativo', 'trial')
+   );";
+
+            await connection.ExecuteAsync(sqlDesativar, new { EmpresaId = empresaId }, transaction);
+            await connection.ExecuteAsync(sqlReativar, new { EmpresaId = empresaId }, transaction);
         }
 
         private sealed class PermissaoPadraoRow

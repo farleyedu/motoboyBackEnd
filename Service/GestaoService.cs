@@ -784,6 +784,8 @@ namespace APIBack.Service
 
         private static GestaoEstabelecimentoDto MapEstabelecimento(GestaoEstabelecimentoRow row, string? wabaPhoneNumberId = null)
         {
+            var normalizedStatus = NormalizeStatus(row.Status);
+
             return new GestaoEstabelecimentoDto
             {
                 Id = row.Id,
@@ -821,7 +823,9 @@ namespace APIBack.Service
                 Slug = row.Slug,
                 ModulosAtivos = MapModulesToUi(row.NomeFantasia, row.ModulosAtivosRaw),
                 Ativo = row.Ativo,
-                Status = NormalizeStatus(row.Status),
+                Status = !row.Ativo && (normalizedStatus == "ativo" || normalizedStatus == "trial")
+                    ? "inativo"
+                    : normalizedStatus,
                 Endereco = BuildAddress(row),
                 WabaPhoneNumberId = wabaPhoneNumberId
             };
@@ -1146,7 +1150,19 @@ namespace APIBack.Service
 
         private static string NormalizeStatus(string? status)
         {
-            return NormalizeToken(status) == "inativo" ? "inativo" : "ativo";
+            return NormalizeToken(status) switch
+            {
+                "trial" => "trial",
+                "suspenso" => "suspenso",
+                "cancelado" => "cancelado",
+                "pendente_aprovacao" => "pendente_aprovacao",
+                "pausado" => "pausado",
+                "recusado" => "recusado",
+                "removido" => "removido",
+                "inativo" => "inativo",
+                "ativo" => "ativo",
+                _ => "ativo"
+            };
         }
 
         private static string NormalizeToken(string? value)
