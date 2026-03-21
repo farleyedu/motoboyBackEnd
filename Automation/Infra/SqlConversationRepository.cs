@@ -20,6 +20,9 @@ namespace APIBack.Automation.Infra
 {
     public class SqlConversationRepository : IConversationRepository
     {
+        private const string WindowExpiredReason = "Janela de 24 horas do WhatsApp expirada";
+        private const string WindowExpiredBlockCode = "whatsapp_window_expired";
+
         private const string SelectConversation = @"
 SELECT c.id AS Id,
        COALESCE(c.id_conversa_grupo, c.id) AS IdConversaGrupo,
@@ -91,7 +94,7 @@ SELECT c.id AS Id,
             await using var cx = new NpgsqlConnection(_connectionString);
             var row = idEstabelecimento.HasValue
                 ? await ResolveForEstablishmentAsync(cx, id, idEstabelecimento.Value)
-                : await ExactAsync(cx, id);
+                : await ExactSyncedAsync(cx, id);
 
             return row == null ? null : ToConversation(row);
         }
@@ -307,6 +310,7 @@ UPDATE conversas
         {
             const string sql = @"SELECT id FROM conversas WHERE id_cliente = @IdCliente AND id_estabelecimento = @IdEstabelecimento AND estado NOT IN ('fechado_automaticamente'::estado_conversa_enum, 'fechado_agente'::estado_conversa_enum, 'arquivada'::estado_conversa_enum) ORDER BY data_criacao DESC LIMIT 1;";
             await using var cx = new NpgsqlConnection(_connectionString);
+            await ExpireExpiredConversationsForEstablishmentAsync(cx, idEstabelecimento);
             return (await cx.ExecuteScalarAsync<Guid?>(sql, new { IdCliente = idCliente, IdEstabelecimento = idEstabelecimento })) ?? Guid.Empty;
         }
 
@@ -314,6 +318,7 @@ UPDATE conversas
         {
             const string sql = @"SELECT id FROM conversas WHERE COALESCE(id_conversa_grupo, id) = @IdConversaGrupo AND id_estabelecimento = @IdEstabelecimento AND id <> COALESCE(id_conversa_grupo, id) AND estado NOT IN ('fechado_automaticamente'::estado_conversa_enum, 'fechado_agente'::estado_conversa_enum, 'arquivada'::estado_conversa_enum) ORDER BY COALESCE(data_ultima_mensagem, data_atualizacao, data_criacao) DESC LIMIT 1;";
             await using var cx = new NpgsqlConnection(_connectionString);
+            await ExpireExpiredConversationGroupAsync(cx, idConversaGrupo, idEstabelecimento);
             return (await cx.ExecuteScalarAsync<Guid?>(sql, new { IdConversaGrupo = idConversaGrupo, IdEstabelecimento = idEstabelecimento })) ?? Guid.Empty;
         }
 
@@ -326,6 +331,7 @@ UPDATE conversas
         public async Task<IReadOnlyList<ConversationListItemDto>> ListarConversasAsync(string? estado, int? idAgente, bool incluirArquivadas, Guid? idEstabelecimento = null)
         {
             await using var cx = new NpgsqlConnection(_connectionString);
+            await ExpireExpiredConversationsForEstablishmentAsync(cx, idEstabelecimento);
             var sql = SelectConversation + (idEstabelecimento.HasValue ? " WHERE c.id_estabelecimento = @IdEstabelecimento" : string.Empty);
             var rows = (await cx.QueryAsync<ConversationRow>(sql, new { IdEstabelecimento = idEstabelecimento })).ToList();
             var itens = new List<ConversationListItemDto>();
@@ -370,7 +376,7 @@ UPDATE conversas
             pageSize = pageSize <= 0 ? 50 : pageSize;
 
             await using var cx = new NpgsqlConnection(_connectionString);
-            var exact = await ExactAsync(cx, idConversa);
+            var exact = await ExactSyncedAsync(cx, idConversa);
             if (exact == null)
             {
                 return null;
@@ -484,7 +490,7 @@ UPDATE conversas
         public async Task<ConversationDetailsDto?> ObterDetalhesConversaAsync(Guid idConversa, Guid? idEstabelecimento = null)
         {
             await using var cx = new NpgsqlConnection(_connectionString);
-            var row = await ExactAsync(cx, idConversa);
+            var row = await ExactSyncedAsync(cx, idConversa);
             if (row == null)
             {
                 return null;
@@ -573,7 +579,7 @@ UPDATE conversas
             await using var cx = new NpgsqlConnection(_connectionString);
             var alvo = idEstabelecimento.HasValue
                 ? await ResolveForEstablishmentAsync(cx, idConversa, idEstabelecimento.Value)
-                : await ExactAsync(cx, idConversa);
+                : await ExactSyncedAsync(cx, idConversa);
 
             if (alvo == null)
             {
@@ -594,7 +600,7 @@ UPDATE conversas
             await using var cx = new NpgsqlConnection(_connectionString);
             var alvo = idEstabelecimento.HasValue
                 ? await ResolveForEstablishmentAsync(cx, idConversa, idEstabelecimento.Value)
-                : await ExactAsync(cx, idConversa);
+                : await ExactSyncedAsync(cx, idConversa);
 
             if (alvo == null)
             {
@@ -609,7 +615,7 @@ UPDATE conversas
             await using var cx = new NpgsqlConnection(_connectionString);
             var alvo = idEstabelecimento.HasValue
                 ? await ResolveForEstablishmentAsync(cx, idConversa, idEstabelecimento.Value)
-                : await ExactAsync(cx, idConversa);
+                : await ExactSyncedAsync(cx, idConversa);
 
             if (alvo == null)
             {
@@ -650,7 +656,7 @@ VALUES (
             await using var cx = new NpgsqlConnection(_connectionString);
             var alvo = idEstabelecimento.HasValue
                 ? await ResolveForEstablishmentAsync(cx, idConversa, idEstabelecimento.Value)
-                : await ExactAsync(cx, idConversa);
+                : await ExactSyncedAsync(cx, idConversa);
 
             return alvo == null
                 ? Array.Empty<ConversationEventDto>()
@@ -699,7 +705,7 @@ VALUES (
 
         private async Task<ConversationRow?> ResolveForEstablishmentAsync(NpgsqlConnection cx, Guid id, Guid idEstabelecimento)
         {
-            var exact = await ExactAsync(cx, id);
+            var exact = await ExactSyncedAsync(cx, id);
             if (exact == null)
             {
                 return null;
@@ -722,12 +728,115 @@ VALUES (
         private async Task<ConversationRow?> ResolveOperationTargetAsync(Guid idConversa, Guid? idEstabelecimento)
         {
             await using var cx = new NpgsqlConnection(_connectionString);
-            return idEstabelecimento.HasValue ? await ResolveForEstablishmentAsync(cx, idConversa, idEstabelecimento.Value) : await ExactAsync(cx, idConversa);
+            return idEstabelecimento.HasValue
+                ? await ResolveForEstablishmentAsync(cx, idConversa, idEstabelecimento.Value)
+                : await ExactSyncedAsync(cx, idConversa);
+        }
+
+        private async Task<ConversationRow?> ExactSyncedAsync(NpgsqlConnection cx, Guid id)
+        {
+            var exact = await ExactAsync(cx, id);
+            if (exact == null)
+            {
+                return null;
+            }
+
+            await ExpireExpiredConversationGroupAsync(cx, exact.IdConversaGrupo, exact.IdEstabelecimento);
+            return await ExactAsync(cx, id);
         }
 
         private Task<ConversationRow?> ExactAsync(NpgsqlConnection cx, Guid id) => cx.QueryFirstOrDefaultAsync<ConversationRow>(SelectConversation + " WHERE c.id = @Id LIMIT 1;", new { Id = id });
         private Task<ConversationRow?> RootAsync(NpgsqlConnection cx, ConversationRow row) => cx.QueryFirstOrDefaultAsync<ConversationRow>(SelectConversation + " WHERE c.id = @Id LIMIT 1;", new { Id = row.IdConversaGrupo });
         private Task<ConversationRow?> OperationalAsync(NpgsqlConnection cx, Guid groupId) => cx.QueryFirstOrDefaultAsync<ConversationRow>(SelectConversation + " WHERE COALESCE(c.id_conversa_grupo, c.id) = @GroupId ORDER BY CASE WHEN c.id <> COALESCE(c.id_conversa_grupo, c.id) AND c.estado NOT IN ('fechado_automaticamente'::estado_conversa_enum, 'fechado_agente'::estado_conversa_enum, 'arquivada'::estado_conversa_enum) THEN 0 WHEN c.id <> COALESCE(c.id_conversa_grupo, c.id) THEN 1 ELSE 2 END, COALESCE(c.data_ultima_mensagem, c.data_atualizacao, c.data_criacao) DESC LIMIT 1;", new { GroupId = groupId });
+
+        private Task ExpireExpiredConversationsForEstablishmentAsync(NpgsqlConnection cx, Guid? idEstabelecimento)
+            => ExpireExpiredConversationsAsync(cx, idEstabelecimento, null);
+
+        private Task ExpireExpiredConversationGroupAsync(NpgsqlConnection cx, Guid groupId, Guid? idEstabelecimento = null)
+            => ExpireExpiredConversationsAsync(cx, idEstabelecimento, groupId);
+
+        private async Task ExpireExpiredConversationsAsync(NpgsqlConnection cx, Guid? idEstabelecimento, Guid? groupId)
+        {
+            var candidates = (await cx.QueryAsync<ExpiredConversationCandidateRow>(@"
+SELECT c.id AS Id,
+       COALESCE(c.id_conversa_grupo, c.id) AS IdConversaGrupo,
+       c.id_estabelecimento AS IdEstabelecimento,
+       c.estado::text AS Estado,
+       COALESCE(NULLIF(c.status_atendimento, ''), '') AS StatusAtendimento,
+       c.id_agente_atribuido AS IdAgenteAtribuido
+  FROM conversas c
+ WHERE c.janela_24h_fim IS NOT NULL
+   AND c.janela_24h_fim <= NOW()
+   AND c.estado IN ('aberto'::estado_conversa_enum, 'em_atendimento'::estado_conversa_enum)
+   AND (@IdEstabelecimento IS NULL OR c.id_estabelecimento = @IdEstabelecimento)
+   AND (@GroupId IS NULL OR COALESCE(c.id_conversa_grupo, c.id) = @GroupId);",
+                new { IdEstabelecimento = idEstabelecimento, GroupId = groupId })).ToList();
+
+            if (candidates.Count == 0)
+            {
+                return;
+            }
+
+            var candidateIds = candidates.Select(candidate => candidate.Id).Distinct().ToArray();
+            var updatedIds = (await cx.QueryAsync<Guid>(@"
+UPDATE conversas
+   SET estado = 'fechado_automaticamente'::estado_conversa_enum,
+       status_atendimento = 'encerrada_inatividade',
+       motivo_fechamento = @Motivo,
+       fechado_por_id = NULL,
+       data_fechamento = COALESCE(data_fechamento, NOW()),
+       data_atualizacao = NOW()
+ WHERE id = ANY(@Ids)
+   AND estado IN ('aberto'::estado_conversa_enum, 'em_atendimento'::estado_conversa_enum)
+RETURNING id;",
+                new { Ids = candidateIds, Motivo = WindowExpiredReason })).ToHashSet();
+
+            if (updatedIds.Count == 0)
+            {
+                return;
+            }
+
+            var now = DateTime.UtcNow;
+            var eventos = candidates
+                .Where(candidate => updatedIds.Contains(candidate.Id))
+                .Select(candidate => new
+                {
+                    Id = Guid.NewGuid(),
+                    IdConversa = candidate.Id,
+                    IdConversaGrupo = candidate.IdConversaGrupo,
+                    Tipo = "closed",
+                    Origem = "system",
+                    AtorUsuarioId = (int?)null,
+                    AtorAgenteId = (int?)null,
+                    AtorNome = (string?)null,
+                    StatusAnterior = CanonicalStatus(
+                        candidate.StatusAtendimento,
+                        candidate.Estado,
+                        candidate.IdAgenteAtribuido.HasValue ? ModoConversa.Humano : ModoConversa.Bot),
+                    StatusNovo = "encerrada_inatividade",
+                    Motivo = WindowExpiredReason,
+                    TipoFechamento = "inatividade",
+                    Dados = (string?)null,
+                    DataCriacao = now
+                })
+                .ToArray();
+
+            if (eventos.Length == 0)
+            {
+                return;
+            }
+
+            await cx.ExecuteAsync(@"
+INSERT INTO conversa_eventos (
+    id, id_conversa, id_conversa_grupo, tipo, origem, ator_usuario_id, ator_agente_id,
+    ator_nome, status_anterior, status_novo, motivo, tipo_fechamento, dados, data_criacao
+)
+VALUES (
+    @Id, @IdConversa, @IdConversaGrupo, @Tipo, @Origem, @AtorUsuarioId, @AtorAgenteId,
+    @AtorNome, @StatusAnterior, @StatusNovo, @Motivo, @TipoFechamento, CAST(@Dados AS jsonb), @DataCriacao
+);",
+                eventos);
+        }
 
         private async Task<ConversationListItemDto> BuildStandardListItemAsync(NpgsqlConnection cx, ConversationRow row)
         {
@@ -833,6 +942,8 @@ VALUES (
         private async Task<ConversationControlDto> BuildControlAsync(NpgsqlConnection cx, ConversationRow row, Guid idEstabelecimento)
         {
             var status = CanonicalStatus(row.StatusAtendimento, row.Estado, row.IdAgenteAtribuido.HasValue ? ModoConversa.Humano : ModoConversa.Bot);
+            var windowExpired = IsWindowExpired(row.Janela24hFim);
+            var closed = IsClosedStatus(status);
             var unreadCount = IsCentral(idEstabelecimento) ? await GroupUnreadCountAsync(cx, row.IdConversaGrupo) : row.QtdNaoLidas;
             return new ConversationControlDto
             {
@@ -840,7 +951,9 @@ VALUES (
                 ClientId = row.IdCliente,
                 ConversationGroupId = row.IdConversaGrupo,
                 Status = status,
-                CanBotReply = string.Equals(status, "com_bot", StringComparison.OrdinalIgnoreCase),
+                CanBotReply = string.Equals(status, "com_bot", StringComparison.OrdinalIgnoreCase) && !closed && !windowExpired,
+                CanManualReply = IsHumanStatus(status) && !closed && !windowExpired,
+                SendBlockReasonCode = ResolveSendBlockReasonCode(row, status),
                 AssignedAgentId = row.IdAgenteAtribuido,
                 AssignedAgentName = row.AgenteNome,
                 LastInteractionAt = row.DataUltimaMensagem ?? row.DataAtualizacao,
@@ -944,6 +1057,14 @@ VALUES (
         private static string NormalizeLegacyState(string? estado) => (estado ?? string.Empty).Trim().ToLowerInvariant() switch { "aguardando_atendimento" => "em_atendimento", "fechado_bot" => "fechado_automaticamente", "arquivado" => "arquivada", _ => (estado ?? string.Empty).Trim().ToLowerInvariant() };
         private static string NormalizeStatus(string? status) => (status ?? string.Empty).Trim().ToLowerInvariant() switch { "aberto" => "com_bot", "novo_bot" => "com_bot", "pendente" => "com_bot", "em_atendimento" => "em_andamento", "em_atendimento_humano" => "em_andamento", "fechado_bot" => "encerrada_inatividade", "fechado_agente" => "encerrada_manual", "arquivada" => "encerrada_manual", _ => (status ?? string.Empty).Trim().ToLowerInvariant() };
         private static string NormalizeCloseType(string? closeType) => string.IsNullOrWhiteSpace(closeType) ? "manual" : closeType.Trim().ToLowerInvariant();
+        private static bool IsHumanStatus(string status) => string.Equals(status, "em_andamento", StringComparison.OrdinalIgnoreCase) || string.Equals(status, "aguardando_cliente", StringComparison.OrdinalIgnoreCase) || string.Equals(status, "aguardando_interno", StringComparison.OrdinalIgnoreCase);
+        private static bool IsClosedStatus(string status) => string.Equals(status, "encerrada_manual", StringComparison.OrdinalIgnoreCase) || string.Equals(status, "encerrada_inatividade", StringComparison.OrdinalIgnoreCase);
+        private static bool IsWindowExpired(DateTime? expiresAt) => expiresAt.HasValue && expiresAt.Value <= DateTime.UtcNow;
+        private static string? ResolveSendBlockReasonCode(ConversationRow row, string status)
+            => string.Equals(status, "encerrada_inatividade", StringComparison.OrdinalIgnoreCase)
+                && string.Equals(row.MotivoFechamento, WindowExpiredReason, StringComparison.OrdinalIgnoreCase)
+                ? WindowExpiredBlockCode
+                : null;
         private static ConversationContext? Deserialize(string? json) { try { return string.IsNullOrWhiteSpace(json) ? null : JsonSerializer.Deserialize<ConversationContext>(json); } catch { return null; } }
         private static ConversationEventDto ToEventDto(ConversationEventRow row) => new() { Id = row.Id, Type = row.Type ?? string.Empty, At = row.At, ActorName = row.ActorName, FromStatus = string.IsNullOrWhiteSpace(row.FromStatus) ? null : NormalizeStatus(row.FromStatus), ToStatus = string.IsNullOrWhiteSpace(row.ToStatus) ? null : NormalizeStatus(row.ToStatus), Reason = row.Reason, CloseType = row.CloseType, Source = row.Source, ActorUserId = row.ActorUserId, ActorAgentId = row.ActorAgentId, Data = DeserializeEventData(row.DataJson) };
         private static Dictionary<string, object?>? DeserializeEventData(string? json) { try { return string.IsNullOrWhiteSpace(json) ? null : JsonSerializer.Deserialize<Dictionary<string, object?>>(json); } catch { return null; } }
@@ -974,6 +1095,16 @@ VALUES (
             public string? TelefoneCliente { get; set; }
             public string? ClienteNome { get; set; }
             public string? AgenteNome { get; set; }
+        }
+
+        private sealed class ExpiredConversationCandidateRow
+        {
+            public Guid Id { get; set; }
+            public Guid IdConversaGrupo { get; set; }
+            public Guid IdEstabelecimento { get; set; }
+            public string? Estado { get; set; }
+            public string? StatusAtendimento { get; set; }
+            public int? IdAgenteAtribuido { get; set; }
         }
 
         private sealed class MessagePreview

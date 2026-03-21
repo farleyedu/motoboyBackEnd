@@ -12,6 +12,9 @@ namespace APIBack.Automation.Services
 {
     public class ConversationManagementService
     {
+        private const string WhatsAppWindowExpiredCode = "whatsapp_window_expired";
+        private const string WhatsAppWindowExpiredMessage = "A janela de 24 horas do WhatsApp expirou. A Meta nao permite iniciar uma nova conversa por aqui apos esse prazo.";
+
         private static readonly HashSet<string> StatusAbertos = new(StringComparer.OrdinalIgnoreCase)
         {
             "com_bot",
@@ -295,6 +298,11 @@ namespace APIBack.Automation.Services
                 throw new ConversationManagementException(409, "Conversa ja esta aberta.");
             }
 
+            if (string.Equals(controleAtual.SendBlockReasonCode, WhatsAppWindowExpiredCode, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ConversationManagementException(409, WhatsAppWindowExpiredMessage, WhatsAppWindowExpiredCode);
+            }
+
             var updated = await _conversationRepository.ReabrirConversaAsync(requestedConversationId, idEstabelecimento);
             if (!updated)
             {
@@ -347,6 +355,16 @@ namespace APIBack.Automation.Services
             if (!StatusHumanos.Contains(controleAtual.Status))
             {
                 throw new ConversationManagementException(409, "Envio manual so e permitido em atendimento humano aberto.");
+            }
+
+            if (!controleAtual.CanManualReply)
+            {
+                if (string.Equals(controleAtual.SendBlockReasonCode, WhatsAppWindowExpiredCode, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new ConversationManagementException(409, WhatsAppWindowExpiredMessage, WhatsAppWindowExpiredCode);
+                }
+
+                throw new ConversationManagementException(409, "Envio manual indisponivel para esta conversa no momento.");
             }
 
             var conversaOperacional = await _conversationRepository.ObterPorIdAsync(controleAtual.ConversationId);
@@ -448,6 +466,11 @@ namespace APIBack.Automation.Services
             if (StatusAbertos.Contains(controle.Status))
             {
                 return;
+            }
+
+            if (string.Equals(controle.SendBlockReasonCode, WhatsAppWindowExpiredCode, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ConversationManagementException(409, WhatsAppWindowExpiredMessage, WhatsAppWindowExpiredCode);
             }
 
             throw new ConversationManagementException(409, "Conversa encerrada. Reabra antes de continuar.");

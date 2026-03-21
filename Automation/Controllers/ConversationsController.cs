@@ -135,7 +135,7 @@ namespace APIBack.Automation.Controllers
             }
             catch (ConversationManagementException ex)
             {
-                return StatusCode(ex.StatusCode, new { success = false, error = ex.Message });
+                return StatusCode(ex.StatusCode, new { success = false, error = ex.Message, code = ex.Code });
             }
         }
     }

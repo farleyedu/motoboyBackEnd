@@ -14,6 +14,9 @@ namespace APIBack.Automation.Infra
 {
     public class InMemoryConversationRepository : IConversationRepository
     {
+        private const string WindowExpiredReason = "Janela de 24 horas do WhatsApp expirada";
+        private const string WindowExpiredBlockCode = "whatsapp_window_expired";
+
         private readonly ConcurrentDictionary<Guid, Conversation> _conversas = new();
         private readonly ConcurrentDictionary<Guid, ConcurrentQueue<Message>> _mensagens = new();
         private readonly ConcurrentDictionary<Guid, ConcurrentQueue<ConversationEventDto>> _eventos = new();
@@ -33,9 +36,12 @@ namespace APIBack.Automation.Infra
                 return Task.FromResult<Conversation?>(null);
             }
 
+            ExpireConversationGroup(GroupId(conversa), conversa.IdEstabelecimento);
+
             if (!idEstabelecimento.HasValue)
             {
-                return Task.FromResult<Conversation?>(Clone(conversa));
+                conversa = ResolveExact(id);
+                return Task.FromResult<Conversation?>(conversa == null ? null : Clone(conversa));
             }
 
             var alvo = ResolveTarget(id, idEstabelecimento.Value);
@@ -137,10 +143,16 @@ namespace APIBack.Automation.Infra
             => Task.FromResult(_clientes.GetOrAdd((idEstabelecimento, telefoneE164 ?? string.Empty), _ => Guid.NewGuid()));
 
         public Task<Guid> ObterIdConversaPorClienteAsync(Guid idCliente, Guid idEstabelecimento)
-            => Task.FromResult(_conversas.Values.Where(c => c.IdCliente == idCliente && c.IdEstabelecimento == idEstabelecimento && IsOpen(c)).OrderByDescending(ConvDate).Select(c => c.IdConversa).FirstOrDefault());
+        {
+            ExpireConversationsForEstablishment(idEstabelecimento);
+            return Task.FromResult(_conversas.Values.Where(c => c.IdCliente == idCliente && c.IdEstabelecimento == idEstabelecimento && IsOpen(c)).OrderByDescending(ConvDate).Select(c => c.IdConversa).FirstOrDefault());
+        }
 
         public Task<Guid> ObterIdConversaAbertaPorGrupoAsync(Guid idConversaGrupo, Guid idEstabelecimento)
-            => Task.FromResult(_conversas.Values.Where(c => GroupId(c) == idConversaGrupo && c.IdEstabelecimento == idEstabelecimento && !c.EhRaizDoGrupo && IsOpen(c)).OrderByDescending(ConvDate).Select(c => c.IdConversa).FirstOrDefault());
+        {
+            ExpireConversationGroup(idConversaGrupo, idEstabelecimento);
+            return Task.FromResult(_conversas.Values.Where(c => GroupId(c) == idConversaGrupo && c.IdEstabelecimento == idEstabelecimento && !c.EhRaizDoGrupo && IsOpen(c)).OrderByDescending(ConvDate).Select(c => c.IdConversa).FirstOrDefault());
+        }
 
         public Task AtualizarEstadoAsync(Guid idConversa, EstadoConversa novoEstado)
         {
@@ -156,6 +168,8 @@ namespace APIBack.Automation.Infra
 
         public Task<IReadOnlyList<ConversationListItemDto>> ListarConversasAsync(string? estado, int? idAgente, bool incluirArquivadas, Guid? idEstabelecimento = null)
         {
+            ExpireConversationsForEstablishment(idEstabelecimento);
+
             IEnumerable<Conversation> conversas = _conversas.Values;
             if (idEstabelecimento.HasValue)
             {
@@ -388,7 +402,15 @@ namespace APIBack.Automation.Infra
         }
 
         private Conversation? ResolveExact(Guid id)
-            => _conversas.TryGetValue(id, out var conversa) ? conversa : null;
+        {
+            if (!_conversas.TryGetValue(id, out var conversa))
+            {
+                return null;
+            }
+
+            ExpireConversationGroup(GroupId(conversa), conversa.IdEstabelecimento);
+            return _conversas.TryGetValue(id, out conversa) ? conversa : null;
+        }
 
         private Conversation? ResolveTarget(Guid id, Guid? idEstabelecimento)
         {
@@ -544,18 +566,64 @@ namespace APIBack.Automation.Infra
         }
 
         private ConversationControlDto BuildControl(Conversation c, Guid idEstabelecimento)
-            => new()
+        {
+            var status = CanonicalStatus(c);
+            var windowExpired = IsWindowExpired(c.Janela24hExpiraEm);
+            var closed = IsClosedStatus(status);
+            return new ConversationControlDto
             {
                 ConversationId = c.IdConversa,
                 ClientId = c.IdCliente,
                 ConversationGroupId = GroupId(c),
-                Status = CanonicalStatus(c),
-                CanBotReply = CanonicalStatus(c) == "com_bot",
+                Status = status,
+                CanBotReply = status == "com_bot" && !closed && !windowExpired,
+                CanManualReply = IsHumanStatus(status) && !closed && !windowExpired,
+                SendBlockReasonCode = ResolveSendBlockReasonCode(c, status),
                 AssignedAgentId = c.AgenteDesignadoId,
                 LastInteractionAt = c.AtualizadoEm,
                 AutoCloseAt = c.Janela24hExpiraEm,
                 UnreadCount = 0
             };
+        }
+
+        private void ExpireConversationsForEstablishment(Guid? idEstabelecimento)
+            => ExpireConversations(conversa => !idEstabelecimento.HasValue || conversa.IdEstabelecimento == idEstabelecimento.Value);
+
+        private void ExpireConversationGroup(Guid groupId, Guid? idEstabelecimento = null)
+            => ExpireConversations(conversa => GroupId(conversa) == groupId && (!idEstabelecimento.HasValue || conversa.IdEstabelecimento == idEstabelecimento.Value));
+
+        private void ExpireConversations(Func<Conversation, bool> predicate)
+        {
+            var now = DateTime.UtcNow;
+            var expired = _conversas.Values
+                .Where(predicate)
+                .Where(conversa => IsOpen(conversa) && IsWindowExpired(conversa.Janela24hExpiraEm, now))
+                .ToList();
+
+            foreach (var conversa in expired)
+            {
+                var fromStatus = CanonicalStatus(conversa);
+                conversa.Estado = EstadoConversa.FechadoAutomaticamente;
+                conversa.StatusAtendimento = "encerrada_inatividade";
+                conversa.MotivoFechamento = WindowExpiredReason;
+                conversa.FechadoPorId = null;
+                conversa.DataFechamento ??= now;
+                conversa.AtualizadoEm = now;
+
+                _eventos.GetOrAdd(GroupId(conversa), _ => new ConcurrentQueue<ConversationEventDto>())
+                    .Enqueue(new ConversationEventDto
+                    {
+                        Id = Guid.NewGuid(),
+                        Type = "closed",
+                        At = now,
+                        FromStatus = fromStatus,
+                        ToStatus = "encerrada_inatividade",
+                        Reason = WindowExpiredReason,
+                        CloseType = "inatividade",
+                        Source = "system"
+                    });
+            }
+        }
 
         private static ConversationMessageItemDto ToItem(Message m)
             => new()
@@ -613,6 +681,23 @@ namespace APIBack.Automation.Infra
                 "fechado_agente" => "encerrada_manual",
                 _ => (status ?? string.Empty).Trim().ToLowerInvariant()
             };
+
+        private static bool IsHumanStatus(string status)
+            => status == "em_andamento" || status == "aguardando_cliente" || status == "aguardando_interno";
+
+        private static bool IsClosedStatus(string status)
+            => status == "encerrada_manual" || status == "encerrada_inatividade";
+
+        private static bool IsWindowExpired(DateTime? expiresAt)
+            => IsWindowExpired(expiresAt, DateTime.UtcNow);
+
+        private static bool IsWindowExpired(DateTime? expiresAt, DateTime now)
+            => expiresAt.HasValue && expiresAt.Value <= now;
+
+        private static string? ResolveSendBlockReasonCode(Conversation conversa, string status)
+            => status == "encerrada_inatividade" && string.Equals(conversa.MotivoFechamento, WindowExpiredReason, StringComparison.OrdinalIgnoreCase)
+                ? WindowExpiredBlockCode
+                : null;
 
         private static ConversationContext? Deserialize(string? json)
         {
