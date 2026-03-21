@@ -497,8 +497,8 @@ namespace APIBack.Automation.Controllers
             request.Marca = LimparTexto(request.Marca) ?? string.Empty;
             request.Modelo = LimparTexto(request.Modelo) ?? string.Empty;
             request.Cor = LimparTexto(request.Cor) ?? string.Empty;
-            request.Cidade = LimparTexto(request.Cidade) ?? string.Empty;
-            request.Carroceria = LimparTexto(request.Carroceria) ?? string.Empty;
+            request.Cidade = LimparTexto(request.Cidade);
+            request.Carroceria = LimparTexto(request.Carroceria);
             request.Combustivel = LimparTexto(request.Combustivel) ?? string.Empty;
             request.Cambio = LimparTexto(request.Cambio) ?? string.Empty;
             request.Descricao = LimparTexto(request.Descricao) ?? string.Empty;
@@ -527,16 +527,6 @@ namespace APIBack.Automation.Controllers
             if (string.IsNullOrWhiteSpace(request.Cor))
             {
                 missingFields.Add(("cor", "Cor e obrigatoria."));
-            }
-
-            if (string.IsNullOrWhiteSpace(request.Cidade))
-            {
-                missingFields.Add(("cidade", "Cidade e obrigatoria."));
-            }
-
-            if (string.IsNullOrWhiteSpace(request.Carroceria))
-            {
-                missingFields.Add(("carroceria", "Carroceria e obrigatoria."));
             }
 
             if (string.IsNullOrWhiteSpace(request.Categoria))

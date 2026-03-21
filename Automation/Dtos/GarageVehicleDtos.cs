@@ -118,8 +118,8 @@ namespace APIBack.Automation.Dtos
         public int AnoModelo { get; set; }
         public string Cor { get; set; } = string.Empty;
         public string? Placa { get; set; }
-        public string Cidade { get; set; } = string.Empty;
-        public string Carroceria { get; set; } = string.Empty;
+        public string? Cidade { get; set; }
+        public string? Carroceria { get; set; }
         public string Categoria { get; set; } = string.Empty;
         public string TipoVeiculo { get; set; } = string.Empty;
         public string Status { get; set; } = string.Empty;
