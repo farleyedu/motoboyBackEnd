@@ -18,8 +18,7 @@ namespace APIBack.Automation.Models
         public string? HistoricoNautica { get; set; }
         public string? DesafioLoja { get; set; }
         public string? PublicoAlvo { get; set; }
-        public string Status { get; set; } = "em_andamento";
-        public string? MotivoDesqualificacao { get; set; }
+        public string Status { get; set; } = "incompleto";
         public bool ViaNumeroCentral { get; set; }
         public DateTime? DataConclusao { get; set; }
         public DateTime DataCriacao { get; set; }

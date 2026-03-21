@@ -37,7 +37,6 @@ SELECT id,
        desafio_loja         AS DesafioLoja,
        publico_alvo         AS PublicoAlvo,
        status               AS Status,
-       motivo_desqualificacao AS MotivoDesqualificacao,
        via_numero_central   AS ViaNumeroCentral,
        data_conclusao       AS DataConclusao,
        data_criacao         AS DataCriacao,
@@ -45,7 +44,7 @@ SELECT id,
   FROM cliente_nautica
  WHERE id_estabelecimento = @IdEstabelecimento
    AND telefone_e164 = @TelefoneE164
-   AND status = 'em_andamento'
+   AND status = 'incompleto'
  ORDER BY data_criacao DESC
  LIMIT 1;";
 
@@ -75,7 +74,6 @@ SELECT id,
        desafio_loja         AS DesafioLoja,
        publico_alvo         AS PublicoAlvo,
        status               AS Status,
-       motivo_desqualificacao AS MotivoDesqualificacao,
        via_numero_central   AS ViaNumeroCentral,
        data_conclusao       AS DataConclusao,
        data_criacao         AS DataCriacao,
@@ -108,7 +106,6 @@ INSERT INTO cliente_nautica (
     desafio_loja,
     publico_alvo,
     status,
-    motivo_desqualificacao,
     via_numero_central,
     data_conclusao,
     data_criacao,
@@ -129,7 +126,6 @@ INSERT INTO cliente_nautica (
     @DesafioLoja,
     @PublicoAlvo,
     @Status,
-    @MotivoDesqualificacao,
     @ViaNumeroCentral,
     @DataConclusao,
     @DataCriacao,
@@ -171,7 +167,6 @@ UPDATE cliente_nautica
        desafio_loja         = @DesafioLoja,
        publico_alvo         = @PublicoAlvo,
        status               = @Status,
-       motivo_desqualificacao = @MotivoDesqualificacao,
        via_numero_central   = @ViaNumeroCentral,
        data_conclusao       = @DataConclusao,
        data_atualizacao     = @DataAtualizacao
@@ -196,7 +191,7 @@ UPDATE cliente_nautica
        historico_nautica    = @HistoricoNautica,
        desafio_loja         = @DesafioLoja,
        publico_alvo         = @PublicoAlvo,
-       status               = 'concluido',
+       status               = 'lojista_minimo',
        data_conclusao       = NOW(),
        data_atualizacao     = NOW()
  WHERE id = @Id;";
@@ -205,18 +200,17 @@ UPDATE cliente_nautica
             await connection.ExecuteAsync(sql, lead);
         }
 
-        public async Task DesqualificarAsync(NauticaLead lead, string motivo)
+        public async Task DesqualificarAsync(NauticaLead lead, string status)
         {
             const string sql = @"
 UPDATE cliente_nautica
-   SET status                  = 'desqualificado',
-       motivo_desqualificacao  = @Motivo,
-       data_conclusao          = NOW(),
-       data_atualizacao        = NOW()
+   SET status           = @Status,
+       data_conclusao   = NOW(),
+       data_atualizacao = NOW()
  WHERE id = @Id;";
 
             await using var connection = new NpgsqlConnection(_connectionString);
-            await connection.ExecuteAsync(sql, new { lead.Id, Motivo = motivo });
+            await connection.ExecuteAsync(sql, new { lead.Id, Status = status });
         }
     }
 }

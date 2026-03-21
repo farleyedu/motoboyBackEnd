@@ -223,7 +223,7 @@ namespace APIBack.Automation.Services
 
                     if (!temLoja.Value)
                     {
-                        await _nauticaLeadRepository.DesqualificarAsync(lead, "sem_loja_fisica");
+                        await _nauticaLeadRepository.DesqualificarAsync(lead, "consumidor_final");
                         await SalvarContextoDesqualificadoAsync(idConversa, contextoAtual, lead, viaNumeroCentral);
                         return CriarMensagemDesqualificadoLojaFisica();
                     }
@@ -240,7 +240,7 @@ namespace APIBack.Automation.Services
                         var novasTentativas = tentativasCnpj + 1;
                         if (novasTentativas >= MaxTentativasCnpj)
                         {
-                            await _nauticaLeadRepository.DesqualificarAsync(lead, "cnpj_invalido");
+                            // Lead permanece como "incompleto" — nao foi possivel validar o CNPJ
                             await SalvarContextoDesqualificadoAsync(idConversa, contextoAtual, lead, viaNumeroCentral);
                             return CriarMensagemDesqualificadoCnpjInvalido();
                         }
@@ -284,7 +284,7 @@ namespace APIBack.Automation.Services
 
                     if (!consegue.Value)
                     {
-                        await _nauticaLeadRepository.DesqualificarAsync(lead, "sem_pedido_minimo");
+                        await _nauticaLeadRepository.DesqualificarAsync(lead, "lojista");
                         await SalvarContextoDesqualificadoAsync(idConversa, contextoAtual, lead, viaNumeroCentral);
                         return CriarMensagemDesqualificadoPedidoMinimo();
                     }
@@ -398,7 +398,7 @@ namespace APIBack.Automation.Services
                 IdEstabelecimento = idEstabelecimento,
                 TelefoneE164 = telefoneCliente,
                 ViaNumeroCentral = viaNumeroCentral,
-                Status = "em_andamento",
+                Status = "incompleto",
                 DataCriacao = DateTime.UtcNow,
                 DataAtualizacao = DateTime.UtcNow
             };

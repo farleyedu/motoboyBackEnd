@@ -11,7 +11,6 @@ namespace APIBack.Automation.Dtos
         public string? Cnpj { get; set; }
         public string? Segmento { get; set; }
         public string Status { get; set; } = string.Empty;
-        public string? MotivoDesqualificacao { get; set; }
         public DateTime Data { get; set; }
     }
 

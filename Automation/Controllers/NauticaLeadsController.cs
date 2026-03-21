@@ -15,9 +15,10 @@ namespace APIBack.Automation.Controllers
     {
         private static readonly HashSet<string> StatusLeadPermitidos = new(StringComparer.OrdinalIgnoreCase)
         {
-            "em_andamento",
-            "concluido",
-            "desqualificado"
+            "incompleto",
+            "consumidor_final",
+            "lojista",
+            "lojista_minimo"
         };
 
         private readonly INauticaPainelRepository _repository;
@@ -48,9 +49,10 @@ namespace APIBack.Automation.Controllers
             var contagens = await _repository.ContarLeadsPorStatusAsync(estabelecimentoId, busca);
             var totaisPorStatus = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
             {
-                ["em_andamento"] = 0,
-                ["concluido"] = 0,
-                ["desqualificado"] = 0
+                ["incompleto"] = 0,
+                ["consumidor_final"] = 0,
+                ["lojista"] = 0,
+                ["lojista_minimo"] = 0
             };
 
             foreach (var count in contagens)

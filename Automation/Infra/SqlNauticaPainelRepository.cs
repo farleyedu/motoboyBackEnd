@@ -55,7 +55,6 @@ SELECT b.id,
        b.cnpj AS Cnpj,
        b.segmento AS Segmento,
        COALESCE(b.status, '') AS Status,
-       b.motivo_desqualificacao AS MotivoDesqualificacao,
        COALESCE(b.data_conclusao, b.data_atualizacao, b.data_criacao) AS Data,
        (SELECT total FROM tot) AS TotalRegistros
   FROM base b
@@ -81,7 +80,6 @@ SELECT b.id,
                 Cnpj = r.Cnpj,
                 Segmento = r.Segmento,
                 Status = r.Status,
-                MotivoDesqualificacao = r.MotivoDesqualificacao,
                 Data = r.Data
             }).ToList();
 
@@ -133,7 +131,6 @@ SELECT cn.id,
        cn.desafio_loja         AS DesafioLoja,
        cn.publico_alvo         AS PublicoAlvo,
        COALESCE(cn.status, '') AS Status,
-       cn.motivo_desqualificacao AS MotivoDesqualificacao,
        cn.via_numero_central   AS ViaNumeroCentral,
        COALESCE(cn.data_conclusao, cn.data_atualizacao, cn.data_criacao) AS Data,
        cn.data_criacao         AS DataCriacao,
@@ -158,7 +155,7 @@ SELECT cn.id,
 UPDATE cliente_nautica
    SET status = @Status,
        data_conclusao = CASE
-            WHEN @Status IN ('concluido', 'desqualificado') THEN COALESCE(data_conclusao, NOW())
+            WHEN @Status IN ('lojista_minimo', 'consumidor_final', 'lojista') THEN COALESCE(data_conclusao, NOW())
             ELSE NULL
        END,
        data_atualizacao = NOW()
@@ -187,7 +184,6 @@ UPDATE cliente_nautica
             public string? Cnpj { get; set; }
             public string? Segmento { get; set; }
             public string Status { get; set; } = string.Empty;
-            public string? MotivoDesqualificacao { get; set; }
             public DateTime Data { get; set; }
             public int TotalRegistros { get; set; }
         }

@@ -11,6 +11,6 @@ namespace APIBack.Automation.Interfaces
         Task<Guid> CriarAsync(NauticaLead lead);
         Task AtualizarAsync(NauticaLead lead);
         Task ConcluirAsync(NauticaLead lead);
-        Task DesqualificarAsync(NauticaLead lead, string motivo);
+        Task DesqualificarAsync(NauticaLead lead, string status);
     }
 }
