@@ -118,6 +118,8 @@ builder.Services.AddScoped<IClienteRepository, SqlClienteRepository>();
 builder.Services.AddScoped<IGaragemLeadRepository, SqlGaragemLeadRepository>();
 builder.Services.AddScoped<IGaragemPainelRepository, SqlGaragemPainelRepository>();
 builder.Services.AddScoped<IGaragemVeiculoRepository, SqlGaragemVeiculoRepository>();
+builder.Services.AddScoped<INauticaLeadRepository, SqlNauticaLeadRepository>();
+builder.Services.AddScoped<INauticaPainelRepository, SqlNauticaPainelRepository>();
 builder.Services.AddSingleton<IQueueBus, InMemoryQueueBus>();
 builder.Services.AddScoped<IWebhookSignatureValidator, WebhookSignatureValidator>();
 builder.Services.AddScoped<IWhatsappSender, WhatsappSenderStub>();
@@ -129,6 +131,7 @@ builder.Services.AddScoped<AtualizarReservaHandler>();
 builder.Services.AddScoped<ReservaValidator>();
 builder.Services.AddScoped<CentralRoutingService>();
 builder.Services.AddScoped<GarageFlowService>();
+builder.Services.AddScoped<NauticaFlowService>();
 
 
 

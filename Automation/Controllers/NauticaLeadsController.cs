@@ -1,0 +1,157 @@
+using System;
+using System.Collections.Generic;
+using System.Threading.Tasks;
+using APIBack.Attributes;
+using APIBack.Automation.Dtos;
+using APIBack.Automation.Interfaces;
+using APIBack.Extensions;
+using Microsoft.AspNetCore.Mvc;
+
+namespace APIBack.Automation.Controllers
+{
+    [ApiController]
+    [Route("nautica/leads")]
+    public class NauticaLeadsController : ControllerBase
+    {
+        private static readonly HashSet<string> StatusLeadPermitidos = new(StringComparer.OrdinalIgnoreCase)
+        {
+            "em_andamento",
+            "concluido",
+            "desqualificado"
+        };
+
+        private readonly INauticaPainelRepository _repository;
+
+        public NauticaLeadsController(INauticaPainelRepository repository)
+        {
+            _repository = repository;
+        }
+
+        [HttpGet]
+        [RequirePermission("Nautica", "leads_visualizar")]
+        public async Task<IActionResult> Listar(
+            [FromQuery] string? busca,
+            [FromQuery] string? status,
+            [FromQuery] int pagina = 1,
+            [FromQuery] int tamanhoPagina = 20,
+            [FromQuery] Guid? idEstabelecimento = null)
+        {
+            if (!TryResolveEstabelecimento(idEstabelecimento, out var estabelecimentoId, out var error))
+            {
+                return error!;
+            }
+
+            var paginaNormalizada = pagina < 1 ? 1 : pagina;
+            var tamanhoNormalizado = Math.Clamp(tamanhoPagina <= 0 ? 20 : tamanhoPagina, 1, 200);
+
+            var (itens, total) = await _repository.ListarLeadsAsync(estabelecimentoId, busca, status, paginaNormalizada, tamanhoNormalizado);
+            var contagens = await _repository.ContarLeadsPorStatusAsync(estabelecimentoId, busca);
+            var totaisPorStatus = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["em_andamento"] = 0,
+                ["concluido"] = 0,
+                ["desqualificado"] = 0
+            };
+
+            foreach (var count in contagens)
+            {
+                if (!string.IsNullOrWhiteSpace(count.Status))
+                {
+                    totaisPorStatus[count.Status] = count.Total;
+                }
+            }
+
+            return Ok(new NauticaLeadListResponseDto
+            {
+                Pagina = paginaNormalizada,
+                TamanhoPagina = tamanhoNormalizado,
+                Total = total,
+                TotaisPorStatus = totaisPorStatus,
+                Itens = itens
+            });
+        }
+
+        [HttpGet("{idLead:guid}")]
+        [RequirePermission("Nautica", "leads_visualizar")]
+        public async Task<IActionResult> ObterDetalhe(Guid idLead, [FromQuery] Guid? idEstabelecimento = null)
+        {
+            if (!TryResolveEstabelecimento(idEstabelecimento, out var estabelecimentoId, out var error))
+            {
+                return error!;
+            }
+
+            var detalhe = await _repository.ObterLeadDetalheAsync(estabelecimentoId, idLead);
+            return detalhe == null
+                ? NotFound(new { success = false, error = "Lead nao encontrado." })
+                : Ok(detalhe);
+        }
+
+        [HttpPatch("{idLead:guid}/status")]
+        [RequirePermission("Nautica", "leads_mudar_status")]
+        public async Task<IActionResult> AtualizarStatus(Guid idLead, [FromBody] UpdateNauticaLeadStatusRequest request, [FromQuery] Guid? idEstabelecimento = null)
+        {
+            if (!TryResolveEstabelecimento(idEstabelecimento, out var estabelecimentoId, out var error))
+            {
+                return error!;
+            }
+
+            if (request == null || string.IsNullOrWhiteSpace(request.Status))
+            {
+                return BadRequest(new { success = false, error = "Status e obrigatorio." });
+            }
+
+            var statusNormalizado = request.Status.Trim().ToLowerInvariant();
+            if (!StatusLeadPermitidos.Contains(statusNormalizado))
+            {
+                return BadRequest(new { success = false, error = "Status de lead invalido." });
+            }
+
+            var atualizado = await _repository.AtualizarStatusLeadAsync(estabelecimentoId, idLead, statusNormalizado);
+            if (!atualizado)
+            {
+                return NotFound(new { success = false, error = "Lead nao encontrado." });
+            }
+
+            var detalhe = await _repository.ObterLeadDetalheAsync(estabelecimentoId, idLead);
+            return detalhe == null ? Ok() : Ok(detalhe);
+        }
+
+        private bool TryResolveEstabelecimento(Guid? requestedId, out Guid effectiveId, out IActionResult? error)
+        {
+            var contextoId = HttpContext.GetEstabelecimentoId();
+            var isSuperAdmin = HttpContext.IsSuperAdmin();
+
+            if (isSuperAdmin)
+            {
+                if (requestedId.HasValue && requestedId.Value != Guid.Empty)
+                {
+                    effectiveId = requestedId.Value;
+                    error = null;
+                    return true;
+                }
+
+                if (contextoId.HasValue)
+                {
+                    effectiveId = contextoId.Value;
+                    error = null;
+                    return true;
+                }
+
+                effectiveId = Guid.Empty;
+                error = BadRequest(new { success = false, error = "Informe um estabelecimento valido." });
+                return false;
+            }
+
+            if (!contextoId.HasValue)
+            {
+                effectiveId = Guid.Empty;
+                error = BadRequest(new { success = false, error = "Selecione um estabelecimento para continuar." });
+                return false;
+            }
+
+            effectiveId = contextoId.Value;
+            error = null;
+            return true;
+        }
+    }
+}

@@ -32,6 +32,7 @@ namespace APIBack.Automation.Services
         private readonly ToolExecutorService _toolExecutor;
         private readonly CentralRoutingService _centralRouting;
         private readonly GarageFlowService _garageFlow;
+        private readonly NauticaFlowService _nauticaFlow;
 
         public ContextInterceptorService(
             IConversationRepository conversationRepository,
@@ -40,7 +41,8 @@ namespace APIBack.Automation.Services
             ILogger<ContextInterceptorService> logger,
             ToolExecutorService toolExecutor,
             CentralRoutingService centralRouting,
-            GarageFlowService garageFlow)
+            GarageFlowService garageFlow,
+            NauticaFlowService nauticaFlow)
         {
             _conversationRepository = conversationRepository;
             _reservaRepository = reservaRepository;
@@ -49,6 +51,7 @@ namespace APIBack.Automation.Services
             _toolExecutor = toolExecutor;
             _centralRouting = centralRouting;
             _garageFlow = garageFlow;
+            _nauticaFlow = nauticaFlow;
         }
 
         private async Task<List<APIBack.Model.Reserva>> ObterReservasAtivasAsync(
@@ -170,6 +173,17 @@ namespace APIBack.Automation.Services
                 return (true, decisaoGaragem);
             }
 
+            var decisaoNautica = await _nauticaFlow.TryStartAfterCentralSelectionAsync(idConversaAtiva);
+            if (decisaoNautica != null)
+            {
+                await SalvarMensagemRespostaAsync(idConversaAtiva, decisaoNautica.Reply);
+                _logger.LogInformation(
+                    "[Conversa={Conversa}] Estabelecimento nautica escolhido no contexto: {Estabelecimento}",
+                    idConversaAtiva,
+                    escolhido.Id);
+                return (true, decisaoNautica);
+            }
+
             var resposta = $"Perfeito. Vou continuar seu atendimento com {escolhido.Nome}.";
             await SalvarMensagemRespostaAsync(idConversaAtiva, resposta);
             _logger.LogInformation(
@@ -223,6 +237,15 @@ namespace APIBack.Automation.Services
             if (garageIntercepted)
             {
                 return (true, garageDecision);
+            }
+
+            var (nauticaIntercepted, nauticaDecision) = await _nauticaFlow.TryHandleAsync(
+                idConversa,
+                mensagemTexto,
+                phoneNumberDisplay);
+            if (nauticaIntercepted)
+            {
+                return (true, nauticaDecision);
             }
 
             // ------- DETECÇÃO INTELIGENTE DE FILTROS -------

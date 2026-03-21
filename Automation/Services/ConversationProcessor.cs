@@ -215,6 +215,14 @@ namespace APIBack.Automation.Services
                     return null;
                 }
 
+                if (modulosAtivos.Any(modulo => string.Equals(modulo, "NAUTICA", StringComparison.OrdinalIgnoreCase)))
+                {
+                    _logger.LogInformation(
+                        "[Conversa={Conversa}] Estabelecimento nautica detectado; contexto de IA suprimido",
+                        idConversa);
+                    return null;
+                }
+
                 var promptsCacheKey = $"prompts:{idEstabelecimento.Value}:{string.Join(",", modulosAtivos.OrderBy(m => m))}";
                 if (!_cache.TryGetValue(promptsCacheKey, out string? promptMontado))
                 {
