@@ -821,7 +821,7 @@ namespace APIBack.Service
                 TipoEstabelecimentoSlug = row.TipoEstabelecimentoSlug,
                 TipoEstabelecimentoNome = row.TipoEstabelecimentoNome,
                 Slug = row.Slug,
-                ModulosAtivos = MapModulesToUi(row.NomeFantasia, row.ModulosAtivosRaw),
+                ModulosAtivos = EstabelecimentoModuleMapper.ToUiModules(row.NomeFantasia, row.ModulosAtivosRaw),
                 Ativo = row.Ativo,
                 Status = !row.Ativo && (normalizedStatus == "ativo" || normalizedStatus == "trial")
                     ? "inativo"
@@ -829,58 +829,6 @@ namespace APIBack.Service
                 Endereco = BuildAddress(row),
                 WabaPhoneNumberId = wabaPhoneNumberId
             };
-        }
-
-        private static List<string> MapModulesToUi(string establishmentName, string[]? rawModules)
-        {
-            var modules = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var moduleName in rawModules ?? Array.Empty<string>())
-            {
-                switch (NormalizeToken(moduleName))
-                {
-                    case "delivery":
-                        modules.Add("Delivery");
-                        break;
-                    case "whatsapp":
-                        modules.Add("WhatsApp");
-                        break;
-                    case "reserva":
-                        modules.Add("Reservas");
-                        modules.Add("Agendamentos");
-                        break;
-                    case "garagem":
-                        modules.Add("Garagem");
-                        break;
-                    case "barbearia":
-                        modules.Add("Agendamentos");
-                        break;
-                    case "estabelecimento":
-                        modules.Add("Estabelecimentos");
-                        break;
-                    case "usuarios":
-                    case "usuario":
-                        modules.Add("Usuarios");
-                        break;
-                    case "empresas":
-                    case "empresa":
-                        modules.Add("Empresas");
-                        break;
-                    case "configuracoes":
-                    case "configuracao":
-                        modules.Add("Configuracoes");
-                        break;
-                }
-            }
-
-            if (NormalizeToken(establishmentName).Contains("zippygo centro", StringComparison.Ordinal))
-            {
-                modules.Add("Usuarios");
-                modules.Add("Empresas");
-                modules.Add("Estabelecimentos");
-                modules.Add("Configuracoes");
-            }
-
-            return modules.ToList();
         }
 
         private static string? BuildAddress(GestaoEstabelecimentoRow row)

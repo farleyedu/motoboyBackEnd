@@ -302,6 +302,8 @@ SELECT  e.id                    AS Id,
             await using var transaction = await connection.BeginTransactionAsync();
 
             var tipoEstabelecimentoId = await ResolverTipoEstabelecimentoIdAsync(connection, transaction, request, "tipoEstabelecimento");
+            var tipoEstabelecimentoSlug = await ObterTipoEstabelecimentoSlugAsync(connection, transaction, tipoEstabelecimentoId)
+                ?? NormalizeTypeSlug(request.TipoEstabelecimentoSlug, request.TipoEstabelecimentoNome);
             var slugAtual = await connection.ExecuteScalarAsync<string?>(@"
 SELECT slug
   FROM estabelecimentos
@@ -313,7 +315,7 @@ SELECT slug
             }, transaction);
             var slugPreferencial = string.IsNullOrWhiteSpace(request.Slug) ? slugAtual : request.Slug;
             var slug = await GarantirSlugDisponivelAsync(connection, transaction, slugPreferencial, request.NomeFantasia, estabelecimentoId);
-            var modulos = MapModulesToDatabase(request.ModulosAtivos);
+            var modulos = EstabelecimentoModuleMapper.ToDatabaseModules(request.ModulosAtivos, tipoEstabelecimentoSlug);
             var tipoUnidade = NormalizeTipoUnidade(request.TipoUnidade);
 
             const string sql = @"
@@ -895,8 +897,10 @@ RETURNING id;";
             }
 
             var tipoEstabelecimentoId = await ResolverTipoEstabelecimentoIdAsync(connection, transaction, request, tipoEstabelecimentoField);
+            var tipoEstabelecimentoSlug = await ObterTipoEstabelecimentoSlugAsync(connection, transaction, tipoEstabelecimentoId)
+                ?? NormalizeTypeSlug(request.TipoEstabelecimentoSlug, request.TipoEstabelecimentoNome);
             var slug = await GarantirSlugDisponivelAsync(connection, transaction, request.Slug, request.NomeFantasia, null);
-            var modulos = MapModulesToDatabase(request.ModulosAtivos);
+            var modulos = EstabelecimentoModuleMapper.ToDatabaseModules(request.ModulosAtivos, tipoEstabelecimentoSlug);
             var tipoUnidade = NormalizeTipoUnidade(request.TipoUnidade);
 
             const string sql = @"
@@ -1021,6 +1025,18 @@ SELECT id
             return fallback.Value;
         }
 
+        private async Task<string?> ObterTipoEstabelecimentoSlugAsync(
+            NpgsqlConnection connection,
+            NpgsqlTransaction transaction,
+            Guid tipoEstabelecimentoId)
+        {
+            return await connection.ExecuteScalarAsync<string?>(@"
+SELECT slug
+  FROM tipo_estabelecimento
+ WHERE id = @Id
+ LIMIT 1;", new { Id = tipoEstabelecimentoId }, transaction);
+        }
+
         private static RequestValidationException BuildValidationException(string fieldName, string message)
         {
             return new RequestValidationException(
@@ -1064,53 +1080,6 @@ SELECT EXISTS(
                 current = $"{baseSlug}-{counter}";
                 counter++;
             }
-        }
-
-        private static string[] MapModulesToDatabase(IEnumerable<string>? moduleNames)
-        {
-            var modules = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "GERAL" };
-
-            foreach (var moduleName in moduleNames ?? Array.Empty<string>())
-            {
-                switch (NormalizeToken(moduleName))
-                {
-                    case "delivery":
-                        modules.Add("DELIVERY");
-                        break;
-                    case "whatsapp":
-                        modules.Add("WHATSAPP");
-                        break;
-                    case "reservas":
-                    case "agendamentos":
-                    case "reserva":
-                        modules.Add("RESERVA");
-                        break;
-                    case "garagem":
-                        modules.Add("GARAGEM");
-                        break;
-                    case "barbearia":
-                        modules.Add("BARBEARIA");
-                        break;
-                    case "estabelecimentos":
-                    case "estabelecimento":
-                        modules.Add("ESTABELECIMENTO");
-                        break;
-                    case "usuarios":
-                    case "usuario":
-                        modules.Add("USUARIOS");
-                        break;
-                    case "empresas":
-                    case "empresa":
-                        modules.Add("EMPRESAS");
-                        break;
-                    case "configuracoes":
-                    case "configuracao":
-                        modules.Add("CONFIGURACOES");
-                        break;
-                }
-            }
-
-            return modules.ToArray();
         }
 
         private static string NormalizeTipoUnidade(string? tipoUnidade)
