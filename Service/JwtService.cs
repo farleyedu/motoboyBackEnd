@@ -180,6 +180,12 @@ namespace APIBack.Service
                 claims.Add(new Claim("tipo_estabelecimento", payload.TipoEstabelecimento));
             }
 
+            if (payload.EstabelecimentoModulosAtivos != null && payload.EstabelecimentoModulosAtivos.Count > 0)
+            {
+                var json = JsonSerializer.Serialize(payload.EstabelecimentoModulosAtivos);
+                claims.Add(new Claim("estabelecimento_modulos_ativos", json));
+            }
+
             if (!string.IsNullOrWhiteSpace(payload.TipoAcesso))
             {
                 claims.Add(new Claim("tipo_acesso", payload.TipoAcesso));
@@ -257,6 +263,18 @@ namespace APIBack.Service
                         break;
                     case "tipo_estabelecimento":
                         payload.TipoEstabelecimento = claim.Value;
+                        break;
+                    case "estabelecimento_modulos_ativos":
+                        try
+                        {
+                            payload.EstabelecimentoModulosAtivos =
+                                JsonSerializer.Deserialize<List<string>>(claim.Value)
+                                ?? new List<string>();
+                        }
+                        catch
+                        {
+                            payload.EstabelecimentoModulosAtivos = new List<string>();
+                        }
                         break;
                     case "tipo_acesso":
                         payload.TipoAcesso = claim.Value;

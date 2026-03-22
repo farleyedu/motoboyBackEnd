@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace APIBack.Automation.Dtos.Estabelecimentos
 {
@@ -12,5 +13,6 @@ namespace APIBack.Automation.Dtos.Estabelecimentos
         public bool IsAtual { get; set; }
         public bool IsSuperAdminAccess { get; set; }
         public string? TipoAcesso { get; set; }
+        public List<string> ModulosAtivos { get; set; } = new();
     }
 }

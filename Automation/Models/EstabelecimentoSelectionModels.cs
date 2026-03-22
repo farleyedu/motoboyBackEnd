@@ -25,6 +25,7 @@ namespace APIBack.Automation.Models
         public bool? VinculoAtivo { get; set; }
         public string? TipoAcesso { get; set; }
         public string? Plano { get; set; }
+        public string[]? ModulosAtivosRaw { get; set; }
     }
 
     public class EstabelecimentoAtivoResumo
@@ -35,6 +36,7 @@ namespace APIBack.Automation.Models
         public string StatusEstabelecimento { get; set; } = string.Empty;
         public bool? EstabelecimentoAtivo { get; set; }
         public string? Plano { get; set; }
+        public string[]? ModulosAtivosRaw { get; set; }
     }
 
     public class EstabelecimentoDetalhe
@@ -47,6 +49,7 @@ namespace APIBack.Automation.Models
         public string? Plano { get; set; }
         public string Status { get; set; } = string.Empty;
         public bool? Ativo { get; set; }
+        public string[]? ModulosAtivosRaw { get; set; }
     }
 
     public class UsuarioEstabelecimentoAcesso

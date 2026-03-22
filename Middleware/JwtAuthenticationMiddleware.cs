@@ -46,6 +46,7 @@ namespace APIBack.Middleware
                         context.Items["EstabelecimentoId"] = payload.EstabelecimentoId;
                         context.Items["EstabelecimentoNome"] = payload.EstabelecimentoNome;
                         context.Items["TipoEstabelecimento"] = payload.TipoEstabelecimento;
+                        context.Items["EstabelecimentoModulosAtivos"] = payload.EstabelecimentoModulosAtivos;
                         context.Items["TipoAcesso"] = payload.TipoAcesso;
                         context.Items["VinculoId"] = payload.VinculoId;
                         context.Items["Permissoes"] = payload.Permissoes;

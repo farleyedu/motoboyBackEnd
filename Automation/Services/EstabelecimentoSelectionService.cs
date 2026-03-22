@@ -9,6 +9,7 @@ using APIBack.Automation.Repository.Interface;
 using APIBack.Automation.Services.Interface;
 using APIBack.Automation.Validators;
 using APIBack.Model.Auth;
+using APIBack.Model.Gestao;
 using APIBack.Security;
 using APIBack.Service.Interface;
 using Microsoft.Extensions.Configuration;
@@ -106,6 +107,7 @@ namespace APIBack.Automation.Services
                 EstabelecimentoId = estabelecimento.Id,
                 EstabelecimentoNome = estabelecimento.Nome,
                 TipoEstabelecimento = estabelecimento.TipoEstabelecimento,
+                EstabelecimentoModulosAtivos = ResolveUiModules(estabelecimento.Nome, estabelecimento.ModulosAtivosRaw),
                 TipoAcesso = tipoAcesso,
                 VinculoId = vinculo?.Id,
                 Permissoes = permissoes
@@ -129,6 +131,7 @@ namespace APIBack.Automation.Services
                     Id = estabelecimento.Id,
                     Nome = estabelecimento.Nome,
                     TipoEstabelecimento = estabelecimento.TipoEstabelecimento,
+                    ModulosAtivos = ResolveUiModules(estabelecimento.Nome, estabelecimento.ModulosAtivosRaw),
                     Plano = estabelecimento.Plano ?? string.Empty,
                     Status = _validator.NormalizarStatusEstabelecimento(estabelecimento.Status, estabelecimento.Ativo)
                 }
@@ -179,7 +182,8 @@ namespace APIBack.Automation.Services
                 IsAtual = usuario.UltimoEstabelecimentoAcessado.HasValue &&
                           usuario.UltimoEstabelecimentoAcessado.Value == vinculo.EstabelecimentoId,
                 IsSuperAdminAccess = false,
-                TipoAcesso = RoleCatalog.Normalize(vinculo.TipoAcesso)
+                TipoAcesso = RoleCatalog.Normalize(vinculo.TipoAcesso),
+                ModulosAtivos = ResolveUiModules(vinculo.Nome, vinculo.ModulosAtivosRaw)
             };
         }
 
@@ -197,8 +201,14 @@ namespace APIBack.Automation.Services
                 IsAtual = usuario.UltimoEstabelecimentoAcessado.HasValue &&
                           usuario.UltimoEstabelecimentoAcessado.Value == estabelecimento.EstabelecimentoId,
                 IsSuperAdminAccess = true,
-                TipoAcesso = "super_admin"
+                TipoAcesso = "super_admin",
+                ModulosAtivos = ResolveUiModules(estabelecimento.Nome, estabelecimento.ModulosAtivosRaw)
             };
+        }
+
+        private static List<string> ResolveUiModules(string? establishmentName, string[]? rawModules)
+        {
+            return EstabelecimentoModuleMapper.ToUiModules(establishmentName ?? string.Empty, rawModules);
         }
 
         private static void ApplyCustomPermissions(

@@ -50,6 +50,7 @@ namespace APIBack.Tests.Unit
         {
             var usuario = CreateUsuario();
             var estabelecimento = CreateEstabelecimentoDetalhe();
+            JwtPayload? payloadCapturado = null;
             var vinculo = new UsuarioEstabelecimentoAcesso
             {
                 Id = Guid.NewGuid(),
@@ -65,7 +66,10 @@ namespace APIBack.Tests.Unit
             _repositoryMock.Setup(r => r.ObterVinculoAsync(usuario.Id, estabelecimento.Id)).ReturnsAsync(vinculo);
             _repositoryMock.Setup(r => r.ObterPermissoesPorTipoAsync(vinculo.TipoAcesso))
                 .ReturnsAsync(new Dictionary<string, List<string>> { { "reservas", new List<string> { "read" } } });
-            _jwtServiceMock.Setup(j => j.GenerateToken(It.IsAny<JwtPayload>())).Returns("token-value");
+            _jwtServiceMock
+                .Setup(j => j.GenerateToken(It.IsAny<JwtPayload>()))
+                .Callback<JwtPayload>(payload => payloadCapturado = payload)
+                .Returns("token-value");
             _jwtServiceMock.Setup(j => j.GenerateRefreshToken()).Returns("refresh-value");
 
             var response = await _service.DefinirEstabelecimentoAtivoAsync(usuario.Id, estabelecimento.Id);
@@ -73,6 +77,11 @@ namespace APIBack.Tests.Unit
             Assert.Equal("token-value", response.Token);
             Assert.Equal("refresh-value", response.RefreshToken);
             Assert.Equal(estabelecimento.Id, response.EstabelecimentoSelecionado.Id);
+            Assert.Contains("WhatsApp", response.EstabelecimentoSelecionado.ModulosAtivos);
+            Assert.Contains("Nautica", response.EstabelecimentoSelecionado.ModulosAtivos);
+            Assert.NotNull(payloadCapturado);
+            Assert.Contains("WhatsApp", payloadCapturado!.EstabelecimentoModulosAtivos);
+            Assert.Contains("Nautica", payloadCapturado.EstabelecimentoModulosAtivos);
             _repositoryMock.Verify(r => r.AtualizarUltimoEstabelecimentoAsync(usuario.Id, estabelecimento.Id), Times.Once);
         }
 
@@ -81,6 +90,7 @@ namespace APIBack.Tests.Unit
         {
             var usuario = CreateUsuario(isSuperAdmin: true);
             var estabelecimento = CreateEstabelecimentoDetalhe();
+            JwtPayload? payloadCapturado = null;
 
             _repositoryMock.Setup(r => r.ObterUsuarioAsync(usuario.Id)).ReturnsAsync(usuario);
             _repositoryMock.Setup(r => r.ObterEstabelecimentoDetalheAsync(estabelecimento.Id)).ReturnsAsync(estabelecimento);
@@ -88,13 +98,50 @@ namespace APIBack.Tests.Unit
                 .ReturnsAsync((UsuarioEstabelecimentoAcesso?)null);
             _repositoryMock.Setup(r => r.ObterPermissoesPorTipoAsync("super_admin"))
                 .ReturnsAsync(new Dictionary<string, List<string>>());
-            _jwtServiceMock.Setup(j => j.GenerateToken(It.IsAny<JwtPayload>())).Returns("admin-token");
+            _jwtServiceMock
+                .Setup(j => j.GenerateToken(It.IsAny<JwtPayload>()))
+                .Callback<JwtPayload>(payload => payloadCapturado = payload)
+                .Returns("admin-token");
             _jwtServiceMock.Setup(j => j.GenerateRefreshToken()).Returns("admin-refresh");
 
             var response = await _service.DefinirEstabelecimentoAtivoAsync(usuario.Id, estabelecimento.Id);
 
             Assert.Equal("admin-token", response.Token);
             Assert.Equal(estabelecimento.Id, response.EstabelecimentoSelecionado.Id);
+            Assert.NotNull(payloadCapturado);
+            Assert.Contains("Nautica", payloadCapturado!.EstabelecimentoModulosAtivos);
+        }
+
+        [Fact]
+        public async Task ListarEstabelecimentosAsync_DeveRetornarModulosAtivosDoEstabelecimento()
+        {
+            var usuario = CreateUsuario();
+            var estabelecimentoId = Guid.NewGuid();
+
+            _repositoryMock.Setup(r => r.ObterUsuarioAsync(usuario.Id)).ReturnsAsync(usuario);
+            _repositoryMock.Setup(r => r.ListarEstabelecimentosUsuarioAsync(usuario.Id))
+                .ReturnsAsync(new[]
+                {
+                    new UsuarioEstabelecimentoVinculo
+                    {
+                        VinculoId = Guid.NewGuid(),
+                        EstabelecimentoId = estabelecimentoId,
+                        Nome = "Amazon Nautica",
+                        TipoEstabelecimento = "nautica",
+                        StatusVinculo = "ativo",
+                        StatusEstabelecimento = "ativo",
+                        EstabelecimentoAtivo = true,
+                        VinculoAtivo = true,
+                        TipoAcesso = "gerente_estabelecimento",
+                        ModulosAtivosRaw = new[] { "GERAL", "WHATSAPP", "NAUTICA" }
+                    }
+                });
+
+            var response = await _service.ListarEstabelecimentosAsync(usuario.Id);
+
+            var estabelecimento = Assert.Single(response);
+            Assert.Contains("WhatsApp", estabelecimento.ModulosAtivos);
+            Assert.Contains("Nautica", estabelecimento.ModulosAtivos);
         }
 
         [Fact]
@@ -134,11 +181,12 @@ namespace APIBack.Tests.Unit
             return new EstabelecimentoDetalhe
             {
                 Id = Guid.NewGuid(),
-                Nome = "Restaurante XPTO",
-                TipoEstabelecimento = "restaurante",
+                Nome = "Amazon Nautica",
+                TipoEstabelecimento = "nautica",
                 Plano = "premium",
                 Status = "ativo",
-                Ativo = true
+                Ativo = true,
+                ModulosAtivosRaw = new[] { "GERAL", "WHATSAPP", "NAUTICA" }
             };
         }
     }

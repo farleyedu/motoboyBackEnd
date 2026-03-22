@@ -11,6 +11,7 @@ using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using APIBack.DTOs.Auth;
 using APIBack.Model.Auth;
+using APIBack.Model.Gestao;
 using APIBack.Options;
 using APIBack.Security;
 using APIBack.Service.Interface;
@@ -907,6 +908,7 @@ SELECT id_estabelecimento
                     EstabelecimentoId = contexto.EstabelecimentoId,
                     EstabelecimentoNome = contexto.EstabelecimentoNome,
                     TipoEstabelecimento = contexto.TipoEstabelecimento,
+                    EstabelecimentoModulosAtivos = ResolveUiModules(contexto.EstabelecimentoNome, contexto.ModulosAtivosRaw),
                     TipoAcesso = string.IsNullOrWhiteSpace(contexto.TipoAcesso) ? null : contexto.TipoAcesso,
                     VinculoId = contexto.VinculoId,
                     Permissoes = permissoes
@@ -922,6 +924,7 @@ SELECT id_estabelecimento
                     Id = contexto.EstabelecimentoId,
                     Nome = contexto.EstabelecimentoNome ?? string.Empty,
                     Tipo = contexto.TipoEstabelecimento ?? string.Empty,
+                    ModulosAtivos = ResolveUiModules(contexto.EstabelecimentoNome, contexto.ModulosAtivosRaw),
                     TipoAcesso = tipoAcessoTela
                 };
             }
@@ -981,6 +984,7 @@ SELECT  e.id                    AS EstabelecimentoId,
         emp.nome_fantasia       AS EmpresaNome,
         e.nome_fantasia         AS EstabelecimentoNome,
         te.nome                 AS TipoEstabelecimento,
+        e.modulos_ativos::text[] AS ModulosAtivosRaw,
         ue.id                   AS VinculoId,
         ue.tipo_acesso          AS TipoAcesso,
         ue.permissoes_customizadas::text AS PermissoesCustomizadas,
@@ -1045,6 +1049,7 @@ SELECT  e.id                    AS EstabelecimentoId,
         emp.nome_fantasia       AS EmpresaNome,
         e.nome_fantasia         AS EstabelecimentoNome,
         te.nome                 AS TipoEstabelecimento,
+        e.modulos_ativos::text[] AS ModulosAtivosRaw,
         ue.id                   AS VinculoId,
         ue.tipo_acesso          AS TipoAcesso,
         ue.permissoes_customizadas::text AS PermissoesCustomizadas,
@@ -1182,6 +1187,11 @@ UPDATE usuario
  WHERE id = @UserId";
 
             await connection.ExecuteAsync(sql, new { UserId = userId, Senha = senhaHash });
+        }
+
+        private static List<string> ResolveUiModules(string? establishmentName, string[]? rawModules)
+        {
+            return EstabelecimentoModuleMapper.ToUiModules(establishmentName ?? string.Empty, rawModules);
         }
 
         private static void ApplyCustomPermissions(
@@ -1484,6 +1494,7 @@ UPDATE usuario
             public Guid EstabelecimentoId { get; set; }
             public string? EstabelecimentoNome { get; set; }
             public string? TipoEstabelecimento { get; set; }
+            public string[]? ModulosAtivosRaw { get; set; }
             public Guid? VinculoId { get; set; }
             public string? TipoAcesso { get; set; }
             public string? PermissoesCustomizadas { get; set; }

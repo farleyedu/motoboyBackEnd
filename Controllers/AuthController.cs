@@ -180,6 +180,7 @@ namespace APIBack.Controllers
                         Id = payload.EstabelecimentoId.Value,
                         Nome = payload.EstabelecimentoNome ?? string.Empty,
                         Tipo = payload.TipoEstabelecimento ?? string.Empty,
+                        ModulosAtivos = payload.EstabelecimentoModulosAtivos ?? new List<string>(),
                         TipoAcesso = payload.TipoAcesso
                     }
                     : null,

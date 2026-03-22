@@ -121,6 +121,17 @@ namespace APIBack.Extensions
                 : string.Empty;
         }
 
+        public static List<string> GetEstabelecimentoModulosAtivos(this HttpContext context)
+        {
+            if (context.Items.TryGetValue("EstabelecimentoModulosAtivos", out var value) &&
+                value is List<string> modules)
+            {
+                return modules;
+            }
+
+            return new List<string>();
+        }
+
         public static string GetTipoAcesso(this HttpContext context)
         {
             return context.Items.TryGetValue("TipoAcesso", out var value)

@@ -91,7 +91,7 @@ SELECT  emp.id                    AS Id,
             await using var transaction = await connection.BeginTransactionAsync();
 
             var empresaId = await InserirEmpresaAsync(connection, transaction, request);
-            await InserirEstabelecimentoAsync(connection, transaction, estabelecimentoRequest, empresaId, "initialEstablishment.tipoEstabelecimento");
+            await InserirEstabelecimentoAsync(connection, transaction, estabelecimentoRequest, empresaId, "initialEstablishment.tipoEstabelecimentoSlug");
 
             await transaction.CommitAsync();
             return empresaId;
@@ -289,7 +289,7 @@ SELECT  e.id                    AS Id,
             await connection.OpenAsync();
             await using var transaction = await connection.BeginTransactionAsync();
 
-            var id = await InserirEstabelecimentoAsync(connection, transaction, request, empresaIdOverride, "tipoEstabelecimento");
+            var id = await InserirEstabelecimentoAsync(connection, transaction, request, empresaIdOverride, "tipoEstabelecimentoSlug");
 
             await transaction.CommitAsync();
             return id;
@@ -301,7 +301,7 @@ SELECT  e.id                    AS Id,
             await connection.OpenAsync();
             await using var transaction = await connection.BeginTransactionAsync();
 
-            var tipoEstabelecimentoId = await ResolverTipoEstabelecimentoIdAsync(connection, transaction, request, "tipoEstabelecimento");
+            var tipoEstabelecimentoId = await ResolverTipoEstabelecimentoIdAsync(connection, transaction, request, "tipoEstabelecimentoSlug");
             var tipoEstabelecimentoSlug = await ObterTipoEstabelecimentoSlugAsync(connection, transaction, tipoEstabelecimentoId)
                 ?? NormalizeTypeSlug(request.TipoEstabelecimentoSlug, request.TipoEstabelecimentoNome);
             var slugAtual = await connection.ExecuteScalarAsync<string?>(@"
@@ -1008,7 +1008,18 @@ SELECT id
 
             if (requestedType)
             {
-                throw BuildValidationException(fieldName, "Tipo de estabelecimento informado nao existe.");
+                var requestedValue =
+                    !string.IsNullOrWhiteSpace(request.TipoEstabelecimentoSlug)
+                        ? request.TipoEstabelecimentoSlug.Trim()
+                        : !string.IsNullOrWhiteSpace(request.TipoEstabelecimentoNome)
+                            ? request.TipoEstabelecimentoNome.Trim()
+                            : request.TipoEstabelecimentoId?.ToString();
+
+                var message = string.IsNullOrWhiteSpace(requestedValue)
+                    ? "Tipo de estabelecimento informado nao existe."
+                    : $"Tipo de estabelecimento informado nao existe: {requestedValue}.";
+
+                throw BuildValidationException(fieldName, message);
             }
 
             var fallback = await connection.ExecuteScalarAsync<Guid?>(@"

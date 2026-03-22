@@ -39,6 +39,9 @@ namespace APIBack.DTOs.Auth
         [JsonPropertyName("tipo")]
         public string Tipo { get; set; } = string.Empty;
 
+        [JsonPropertyName("modulosAtivos")]
+        public List<string> ModulosAtivos { get; set; } = new();
+
         [JsonPropertyName("tipoAcesso")]
         public string? TipoAcesso { get; set; }
     }
