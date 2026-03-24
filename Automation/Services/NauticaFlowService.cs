@@ -17,22 +17,26 @@ namespace APIBack.Automation.Services
         public const string EstadoQuestionario   = "nautica_questionario";
         public const string EstadoConcluido      = "nautica_lead_concluido";
         public const string EstadoDesqualificado = "nautica_lead_desqualificado";
+        public const string EstadoConsumidorFinal = "nautica_consumidor_final";
 
-        private const string ChaveLeadId            = "nautica_lead_id";
-        private const string ChaveEstabelecimentoId = "nautica_estabelecimento_id";
-        private const string ChaveEtapa             = "nautica_etapa";
-        private const string ChaveViaNumeroCentral  = "nautica_via_numero_central";
-        private const string ChaveCnpjTentativas    = "nautica_cnpj_tentativas";
+        private const string ChaveLeadId             = "nautica_lead_id";
+        private const string ChaveEstabelecimentoId  = "nautica_estabelecimento_id";
+        private const string ChaveEtapa              = "nautica_etapa";
+        private const string ChaveViaNumeroCentral   = "nautica_via_numero_central";
+        private const string ChaveCnpjTentativas     = "nautica_cnpj_tentativas";
+        private const string ChaveConsumidorFinalStep = "nautica_cf_step";
 
-        private const string EtapaLojaFisica       = "loja_fisica";
-        private const string EtapaCnpj             = "cnpj";
-        private const string EtapaSegmento         = "segmento";
-        private const string EtapaPedidoMinimo     = "pedido_minimo";
-        private const string EtapaNomeEmpresa      = "nome_empresa";
-        private const string EtapaCidadeEstado     = "cidade_estado";
-        private const string EtapaHistoricoNautica = "historico_nautica";
-        private const string EtapaDesafioLoja      = "desafio_loja";
-        private const string EtapaPublicoAlvo      = "publico_alvo";
+        private const string EtapaNome          = "nome";
+        private const string EtapaLojaFisica    = "loja_fisica";
+        private const string EtapaNomeEmpresa   = "nome_empresa";
+        private const string EtapaCnpj          = "cnpj";
+        private const string EtapaPedidoMinimo  = "pedido_minimo";
+        private const string EtapaCidadeEstado  = "cidade_estado";
+
+        private static readonly HashSet<string> EtapasValidas = new(StringComparer.Ordinal)
+        {
+            EtapaNome, EtapaLojaFisica, EtapaNomeEmpresa, EtapaCnpj, EtapaPedidoMinimo, EtapaCidadeEstado
+        };
 
         private const int MaxTentativasCnpj = 5;
         private const string DefaultNauticaCatalogUrl = "https://amazonnautica.com.br/catalogo";
@@ -87,7 +91,7 @@ namespace APIBack.Automation.Services
                 viaNumeroCentral: true);
 
             var etapa = DeterminarEtapaAtual(lead);
-            if (string.Equals(etapa, EtapaLojaFisica, StringComparison.Ordinal))
+            if (string.Equals(etapa, EtapaNome, StringComparison.Ordinal))
             {
                 await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, etapa, true, 0);
                 return CriarBoasVindas();
@@ -115,6 +119,11 @@ namespace APIBack.Automation.Services
                 return (true, CriarMensagemPosConclusao());
             }
 
+            if (string.Equals(contextoAtual?.Estado, EstadoConsumidorFinal, StringComparison.OrdinalIgnoreCase))
+            {
+                return (true, await ProcessarConsumidorFinalAsync(idConversa, contextoAtual));
+            }
+
             if (string.Equals(contextoAtual?.Estado, EstadoDesqualificado, StringComparison.OrdinalIgnoreCase))
             {
                 return (true, CriarMensagemPosDesqualificacao());
@@ -138,11 +147,17 @@ namespace APIBack.Automation.Services
                     telefoneCliente,
                     viaNumeroCentral);
 
-                await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaLojaFisica, viaNumeroCentral, 0);
+                await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaNome, viaNumeroCentral, 0);
                 return (true, CriarBoasVindas());
             }
 
             var etapaContexto = ObterEtapaDoContexto(contextoAtual);
+            // Ignorar etapas legadas removidas do novo fluxo
+            if (etapaContexto != null && !EtapasValidas.Contains(etapaContexto))
+            {
+                etapaContexto = null;
+            }
+
             var etapaAtual = etapaContexto ?? DeterminarEtapaAtual(lead);
             var conversaGrupoId = CentralRoutingService.GetGuidValue(
                 contextoAtual?.DadosColetados,
@@ -156,7 +171,7 @@ namespace APIBack.Automation.Services
             if (ehSegmentoCentral &&
                 estadoCentral &&
                 string.IsNullOrWhiteSpace(etapaContexto) &&
-                !string.Equals(etapaAtual, EtapaLojaFisica, StringComparison.Ordinal))
+                !string.Equals(etapaAtual, EtapaNome, StringComparison.Ordinal))
             {
                 _logger.LogInformation(
                     "[Conversa={Conversa}] Restaurando contexto da nautica a partir do lead na etapa {Etapa}",
@@ -173,7 +188,7 @@ namespace APIBack.Automation.Services
             }
 
             if (!string.Equals(contextoAtual?.Estado, EstadoQuestionario, StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(etapaAtual, EtapaLojaFisica, StringComparison.Ordinal))
+                string.Equals(etapaAtual, EtapaNome, StringComparison.Ordinal))
             {
                 await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, etapaAtual, viaNumeroCentral, 0);
                 return (true, CriarBoasVindas());
@@ -209,6 +224,20 @@ namespace APIBack.Automation.Services
         {
             switch (etapaAtual)
             {
+                case EtapaNome:
+                {
+                    if (string.IsNullOrWhiteSpace(mensagemTexto))
+                    {
+                        await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaNome, viaNumeroCentral, tentativasCnpj);
+                        return CriarPergunta(EtapaNome, incluirErro: false);
+                    }
+
+                    lead.NomeCliente = mensagemTexto.Trim();
+                    await _nauticaLeadRepository.AtualizarAsync(lead);
+                    await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaLojaFisica, viaNumeroCentral, tentativasCnpj);
+                    return CriarPergunta(EtapaLojaFisica, incluirErro: false);
+                }
+
                 case EtapaLojaFisica:
                 {
                     var temLoja = ParseSimNao(mensagemTexto);
@@ -224,10 +253,24 @@ namespace APIBack.Automation.Services
                     if (!temLoja.Value)
                     {
                         await _nauticaLeadRepository.DesqualificarAsync(lead, "consumidor_final");
-                        await SalvarContextoDesqualificadoAsync(idConversa, contextoAtual, lead, viaNumeroCentral);
-                        return CriarMensagemDesqualificadoLojaFisica();
+                        await SalvarConsumidorFinalContextoAsync(idConversa, contextoAtual, lead, viaNumeroCentral);
+                        return CriarMensagemInicialAmazonPrime();
                     }
 
+                    await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaNomeEmpresa, viaNumeroCentral, tentativasCnpj);
+                    return CriarPergunta(EtapaNomeEmpresa, incluirErro: false);
+                }
+
+                case EtapaNomeEmpresa:
+                {
+                    if (string.IsNullOrWhiteSpace(mensagemTexto))
+                    {
+                        await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaNomeEmpresa, viaNumeroCentral, tentativasCnpj);
+                        return CriarPergunta(EtapaNomeEmpresa, incluirErro: false);
+                    }
+
+                    lead.NomeEmpresa = mensagemTexto.Trim();
+                    await _nauticaLeadRepository.AtualizarAsync(lead);
                     await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaCnpj, viaNumeroCentral, tentativasCnpj);
                     return CriarPergunta(EtapaCnpj, incluirErro: false);
                 }
@@ -240,7 +283,6 @@ namespace APIBack.Automation.Services
                         var novasTentativas = tentativasCnpj + 1;
                         if (novasTentativas >= MaxTentativasCnpj)
                         {
-                            // Lead permanece como "incompleto" — nao foi possivel validar o CNPJ
                             await SalvarContextoDesqualificadoAsync(idConversa, contextoAtual, lead, viaNumeroCentral);
                             return CriarMensagemDesqualificadoCnpjInvalido();
                         }
@@ -251,22 +293,7 @@ namespace APIBack.Automation.Services
 
                     lead.Cnpj = cnpjDigitos;
                     await _nauticaLeadRepository.AtualizarAsync(lead);
-                    await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaSegmento, viaNumeroCentral, 0);
-                    return CriarPergunta(EtapaSegmento, incluirErro: false);
-                }
-
-                case EtapaSegmento:
-                {
-                    var segmento = ParseSegmento(mensagemTexto);
-                    if (segmento == null)
-                    {
-                        await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaSegmento, viaNumeroCentral, tentativasCnpj);
-                        return CriarPergunta(EtapaSegmento, incluirErro: true);
-                    }
-
-                    lead.Segmento = segmento;
-                    await _nauticaLeadRepository.AtualizarAsync(lead);
-                    await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaPedidoMinimo, viaNumeroCentral, tentativasCnpj);
+                    await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaPedidoMinimo, viaNumeroCentral, 0);
                     return CriarPergunta(EtapaPedidoMinimo, incluirErro: false);
                 }
 
@@ -289,26 +316,20 @@ namespace APIBack.Automation.Services
                         return CriarMensagemDesqualificadoPedidoMinimo();
                     }
 
-                    await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaNomeEmpresa, viaNumeroCentral, tentativasCnpj);
-                    return CriarPergunta(EtapaNomeEmpresa, incluirErro: false);
-                }
-
-                case EtapaNomeEmpresa:
-                {
-                    if (string.IsNullOrWhiteSpace(mensagemTexto))
-                    {
-                        await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaNomeEmpresa, viaNumeroCentral, tentativasCnpj);
-                        return CriarPergunta(EtapaNomeEmpresa, incluirErro: false);
-                    }
-
-                    lead.NomeEmpresa = mensagemTexto.Trim();
-                    await _nauticaLeadRepository.AtualizarAsync(lead);
                     await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaCidadeEstado, viaNumeroCentral, tentativasCnpj);
                     return CriarPergunta(EtapaCidadeEstado, incluirErro: false);
                 }
 
                 case EtapaCidadeEstado:
                 {
+                    // Compatibilidade com lead antigo: se ja tem cidade_estado, concluir imediatamente
+                    if (!string.IsNullOrWhiteSpace(lead.CidadeEstado))
+                    {
+                        await _nauticaLeadRepository.ConcluirAsync(lead);
+                        await SalvarContextoConcluidoAsync(idConversa, contextoAtual, lead, viaNumeroCentral);
+                        return CriarMensagemConclusao();
+                    }
+
                     if (string.IsNullOrWhiteSpace(mensagemTexto))
                     {
                         await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaCidadeEstado, viaNumeroCentral, tentativasCnpj);
@@ -316,60 +337,40 @@ namespace APIBack.Automation.Services
                     }
 
                     lead.CidadeEstado = mensagemTexto.Trim();
-                    await _nauticaLeadRepository.AtualizarAsync(lead);
-                    await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaHistoricoNautica, viaNumeroCentral, tentativasCnpj);
-                    return CriarPergunta(EtapaHistoricoNautica, incluirErro: false);
-                }
-
-                case EtapaHistoricoNautica:
-                {
-                    var historico = ParseHistoricoNautica(mensagemTexto);
-                    if (historico == null)
-                    {
-                        await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaHistoricoNautica, viaNumeroCentral, tentativasCnpj);
-                        return CriarPergunta(EtapaHistoricoNautica, incluirErro: true);
-                    }
-
-                    lead.HistoricoNautica = historico;
-                    await _nauticaLeadRepository.AtualizarAsync(lead);
-                    await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaDesafioLoja, viaNumeroCentral, tentativasCnpj);
-                    return CriarPergunta(EtapaDesafioLoja, incluirErro: false);
-                }
-
-                case EtapaDesafioLoja:
-                {
-                    var desafio = ParseDesafioLoja(mensagemTexto);
-                    if (desafio == null)
-                    {
-                        await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaDesafioLoja, viaNumeroCentral, tentativasCnpj);
-                        return CriarPergunta(EtapaDesafioLoja, incluirErro: true);
-                    }
-
-                    lead.DesafioLoja = desafio;
-                    await _nauticaLeadRepository.AtualizarAsync(lead);
-                    await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaPublicoAlvo, viaNumeroCentral, tentativasCnpj);
-                    return CriarPergunta(EtapaPublicoAlvo, incluirErro: false);
-                }
-
-                case EtapaPublicoAlvo:
-                {
-                    var publico = ParsePublicoAlvo(mensagemTexto);
-                    if (publico == null)
-                    {
-                        await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaPublicoAlvo, viaNumeroCentral, tentativasCnpj);
-                        return CriarPergunta(EtapaPublicoAlvo, incluirErro: true);
-                    }
-
-                    lead.PublicoAlvo = publico;
                     await _nauticaLeadRepository.ConcluirAsync(lead);
                     await SalvarContextoConcluidoAsync(idConversa, contextoAtual, lead, viaNumeroCentral);
                     return CriarMensagemConclusao();
                 }
 
                 default:
-                    await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaLojaFisica, viaNumeroCentral, tentativasCnpj);
+                    await SalvarContextoQuestionarioAsync(idConversa, contextoAtual, lead, EtapaNome, viaNumeroCentral, tentativasCnpj);
                     return CriarBoasVindas();
             }
+        }
+
+        private async Task<AssistantDecision> ProcessarConsumidorFinalAsync(
+            Guid idConversa,
+            ConversationContext? contextoAtual)
+        {
+            var step = ObterConsumidorFinalStepDoContexto(contextoAtual);
+            if (step == 0)
+            {
+                var dados = contextoAtual?.DadosColetados != null
+                    ? new Dictionary<string, object>(contextoAtual.DadosColetados)
+                    : new Dictionary<string, object>();
+                dados[ChaveConsumidorFinalStep] = 1;
+
+                await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
+                {
+                    Estado = EstadoConsumidorFinal,
+                    DadosColetados = dados,
+                    ExpiracaoEstado = null
+                });
+
+                return CriarFichaTecnicaAmazonPrime();
+            }
+
+            return CriarMensagemTerminalConsumidorFinal();
         }
 
         private async Task<NauticaLead> ObterOuCriarLeadAsync(
@@ -447,7 +448,7 @@ namespace APIBack.Automation.Services
             await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
             {
                 Estado = EstadoConcluido,
-                DadosColetados = BuildDadosContexto(contextoAtual, lead, EtapaPublicoAlvo, viaNumeroCentral, 0),
+                DadosColetados = BuildDadosContexto(contextoAtual, lead, EtapaCidadeEstado, viaNumeroCentral, 0),
                 ExpiracaoEstado = null
             });
         }
@@ -462,6 +463,23 @@ namespace APIBack.Automation.Services
             {
                 Estado = EstadoDesqualificado,
                 DadosColetados = BuildDadosContexto(contextoAtual, lead, string.Empty, viaNumeroCentral, 0),
+                ExpiracaoEstado = null
+            });
+        }
+
+        private async Task SalvarConsumidorFinalContextoAsync(
+            Guid idConversa,
+            ConversationContext? contextoAtual,
+            NauticaLead lead,
+            bool viaNumeroCentral)
+        {
+            var dados = BuildDadosContexto(contextoAtual, lead, string.Empty, viaNumeroCentral, 0);
+            dados[ChaveConsumidorFinalStep] = 0;
+
+            await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
+            {
+                Estado = EstadoConsumidorFinal,
+                DadosColetados = dados,
                 ExpiracaoEstado = null
             });
         }
@@ -482,7 +500,6 @@ namespace APIBack.Automation.Services
                 [ChaveCnpjTentativas] = tentativasCnpj
             };
 
-            // Preserve central routing keys if present
             if (contextoAtual?.DadosColetados != null)
             {
                 var centralKeys = new[]
@@ -527,46 +544,61 @@ namespace APIBack.Automation.Services
             return 0;
         }
 
+        private static int ObterConsumidorFinalStepDoContexto(ConversationContext? contexto)
+        {
+            if (contexto?.DadosColetados == null)
+            {
+                return 0;
+            }
+
+            if (contexto.DadosColetados.TryGetValue(ChaveConsumidorFinalStep, out var val))
+            {
+                if (val is int i) return i;
+                if (int.TryParse(val?.ToString(), out var parsed)) return parsed;
+            }
+
+            return 0;
+        }
+
         internal static string DeterminarEtapaAtual(NauticaLead lead)
         {
-            if (lead.TemLojaFisica == null)                              return EtapaLojaFisica;
-            if (string.IsNullOrWhiteSpace(lead.Cnpj))                   return EtapaCnpj;
-            if (string.IsNullOrWhiteSpace(lead.Segmento))               return EtapaSegmento;
-            if (lead.ConsegueMinimo == null)                             return EtapaPedidoMinimo;
-            if (string.IsNullOrWhiteSpace(lead.NomeEmpresa))            return EtapaNomeEmpresa;
-            if (string.IsNullOrWhiteSpace(lead.CidadeEstado))           return EtapaCidadeEstado;
-            if (string.IsNullOrWhiteSpace(lead.HistoricoNautica))       return EtapaHistoricoNautica;
-            if (string.IsNullOrWhiteSpace(lead.DesafioLoja))            return EtapaDesafioLoja;
-            return EtapaPublicoAlvo;
+            if (string.IsNullOrWhiteSpace(lead.NomeCliente))  return EtapaNome;
+            if (lead.TemLojaFisica == null)                   return EtapaLojaFisica;
+            if (string.IsNullOrWhiteSpace(lead.NomeEmpresa))  return EtapaNomeEmpresa;
+            if (string.IsNullOrWhiteSpace(lead.Cnpj))         return EtapaCnpj;
+            if (lead.ConsegueMinimo == null)                   return EtapaPedidoMinimo;
+            return EtapaCidadeEstado;
         }
 
         // ─── Messages ────────────────────────────────────────────────────────────
 
         private static AssistantDecision CriarBoasVindas()
         {
-            var mensagem = "Ola, tudo bem? 👋\n\nAqui e o Claudelino, da Amazon Nautica ⚓🚤\n\nVou fazer algumas perguntas rapidas para entender melhor o seu perfil de lojista e ja te enviar o catalogo certo. Pode ser?\n\nPara comecar: voce possui endereco de loja fisica?";
-            return new AssistantDecision(mensagem, "none", null, false, null, null, BuildSimNaoButtons());
+            var mensagem = "Ola, tudo bem? 👋\n\nAqui e o Claudelino, da Amazon Nautica ⚓🚤\n\nVou fazer algumas perguntas rapidas para entender melhor o seu perfil e ja te enviar as informacoes certas.\n\nPara comecar: qual o seu nome?";
+            return new AssistantDecision(mensagem, "none", null, false, null);
         }
 
         private AssistantDecision CriarPergunta(string etapa, bool incluirErro)
         {
             return etapa switch
             {
+                EtapaNome => new AssistantDecision(
+                    "Qual o seu nome?",
+                    "none", null, false, null),
+
                 EtapaLojaFisica => new AssistantDecision(
                     incluirErro
                         ? "Nao consegui identificar sua resposta. 😊\n\nVoce possui endereco de loja fisica?"
                         : "Voce possui endereco de loja fisica?",
                     "none", null, false, null, null, BuildSimNaoButtons()),
 
+                EtapaNomeEmpresa => new AssistantDecision(
+                    "Otimo! Qual o nome da sua empresa?",
+                    "none", null, false, null),
+
                 EtapaCnpj => new AssistantDecision(
                     "Qual o CNPJ da sua empresa? 📋",
                     "none", null, false, null),
-
-                EtapaSegmento => new AssistantDecision(
-                    incluirErro
-                        ? "Nao consegui identificar essa opcao. 😊\n\nSua loja e de pesca ou nautica?"
-                        : "Sua loja e de pesca ou nautica?",
-                    "none", null, false, null, null, BuildSegmentoButtons()),
 
                 EtapaPedidoMinimo => new AssistantDecision(
                     incluirErro
@@ -574,31 +606,9 @@ namespace APIBack.Automation.Services
                         : "Consegue realizar pedidos minimos de 3 embarcacoes? (Investimento medio de R$ 39.000)",
                     "none", null, false, null, null, BuildSimNaoButtons()),
 
-                EtapaNomeEmpresa => new AssistantDecision(
-                    "Otimo! Qual o nome da sua empresa?",
-                    "none", null, false, null),
-
                 EtapaCidadeEstado => new AssistantDecision(
                     "Em qual cidade e estado fica sua loja?",
                     "none", null, false, null),
-
-                EtapaHistoricoNautica => new AssistantDecision(
-                    incluirErro
-                        ? "Nao consegui identificar essa opcao. 😊\n\nHoje voce ja trabalha com barcos ou seria nova linha?"
-                        : "Hoje voce ja trabalha com barcos ou seria nova linha?",
-                    "none", null, false, null, null, BuildHistoricoNauticaButtons()),
-
-                EtapaDesafioLoja => new AssistantDecision(
-                    incluirErro
-                        ? "Nao consegui identificar essa opcao. 😊\n\nQual o maior desafio ai hoje: giro, margem ou pos-venda?"
-                        : "Qual o maior desafio ai hoje: giro, margem ou pos-venda?",
-                    "none", null, false, null, null, BuildDesafioLojaButtons()),
-
-                EtapaPublicoAlvo => new AssistantDecision(
-                    incluirErro
-                        ? "Nao consegui identificar essa opcao. 😊\n\nSeu publico compra mais barco de entrada ou ja busca algo mais completo/premium?"
-                        : "Seu publico compra mais barco de entrada ou ja busca algo mais completo/premium?",
-                    "none", null, false, null, null, BuildPublicoAlvoButtons()),
 
                 _ => CriarBoasVindas()
             };
@@ -612,10 +622,24 @@ namespace APIBack.Automation.Services
                 "none", null, false, null);
         }
 
-        private static AssistantDecision CriarMensagemDesqualificadoLojaFisica()
+        private static AssistantDecision CriarMensagemInicialAmazonPrime()
         {
             return new AssistantDecision(
-                "Entendido! Por enquanto trabalhamos apenas com lojistas que possuem loja fisica.\n\nCaso isso mude no futuro, sera um prazer ter voce na nossa rede. Obrigado pelo contato! 🙏",
+                "Entendido! Por enquanto nosso programa de parceria e exclusivo para lojistas com loja fisica. 😊\n\nMas temos uma opcao especial para voce: o *Amazon Prime Nautica*! 🚤⚓\n\nE um programa pensado para entusiastas e apaixonados por nautica, com acesso a condicoes especiais e ao nosso catalogo completo.\n\nPosso te enviar a ficha tecnica completa do programa?",
+                "none", null, false, null);
+        }
+
+        private AssistantDecision CriarFichaTecnicaAmazonPrime()
+        {
+            return new AssistantDecision(
+                $"📋 *Amazon Prime Nautica — Ficha Tecnica Completa*\n\n✅ Acesso exclusivo ao catalogo completo de embarcacoes\n✅ Condicoes especiais para compra direta\n✅ Suporte tecnico especializado pos-compra\n✅ Convites para eventos e lancamentos em primeira mao\n✅ Canal direto com a equipe comercial Amazon Nautica\n\n📄 Catalogo completo: {_catalogUrl}\n\nObrigado pelo interesse na Amazon Nautica! Em breve nossa equipe entra em contato. ⚓🚤",
+                "none", null, false, null);
+        }
+
+        private static AssistantDecision CriarMensagemTerminalConsumidorFinal()
+        {
+            return new AssistantDecision(
+                "Seu contato ja foi registrado. Obrigado pelo interesse na Amazon Nautica! 🙏",
                 "none", null, false, null);
         }
 
@@ -665,45 +689,6 @@ namespace APIBack.Automation.Services
             };
         }
 
-        private static IReadOnlyList<WhatsAppReplyButtonOption> BuildSegmentoButtons()
-        {
-            return new[]
-            {
-                new WhatsAppReplyButtonOption("nautica_segmento_pesca", "Pesca 🎣"),
-                new WhatsAppReplyButtonOption("nautica_segmento_nautica", "Nautica ⚓"),
-                new WhatsAppReplyButtonOption("nautica_segmento_ambos", "Ambos")
-            };
-        }
-
-        private static IReadOnlyList<WhatsAppReplyButtonOption> BuildHistoricoNauticaButtons()
-        {
-            return new[]
-            {
-                new WhatsAppReplyButtonOption("nautica_historico_ja_trabalha", "Ja trabalha"),
-                new WhatsAppReplyButtonOption("nautica_historico_nova_linha", "Nova linha")
-            };
-        }
-
-        private static IReadOnlyList<WhatsAppReplyButtonOption> BuildDesafioLojaButtons()
-        {
-            return new[]
-            {
-                new WhatsAppReplyButtonOption("nautica_desafio_giro", "Giro 🔄"),
-                new WhatsAppReplyButtonOption("nautica_desafio_margem", "Margem 💰"),
-                new WhatsAppReplyButtonOption("nautica_desafio_pos_venda", "Pos-venda 🛠")
-            };
-        }
-
-        private static IReadOnlyList<WhatsAppReplyButtonOption> BuildPublicoAlvoButtons()
-        {
-            return new[]
-            {
-                new WhatsAppReplyButtonOption("nautica_publico_entrada", "Entrada"),
-                new WhatsAppReplyButtonOption("nautica_publico_premium", "Premium ✨"),
-                new WhatsAppReplyButtonOption("nautica_publico_ambos", "Ambos")
-            };
-        }
-
         // ─── Parse helpers ───────────────────────────────────────────────────────
 
         private static bool? ParseSimNao(string? texto)
@@ -713,53 +698,6 @@ namespace APIBack.Automation.Services
             {
                 "1" or "sim" or "s" or "nautica_sim" => true,
                 "2" or "nao" or "n" or "nautica_nao" => false,
-                _ => null
-            };
-        }
-
-        private static string? ParseSegmento(string? texto)
-        {
-            var n = NormalizeText(texto);
-            return n switch
-            {
-                "1" or "pesca" or "nautica_segmento_pesca" => "pesca",
-                "2" or "nautica" or "nautica_segmento_nautica" => "nautica",
-                "3" or "ambos" or "nautica_segmento_ambos" => "ambos",
-                _ => null
-            };
-        }
-
-        private static string? ParseHistoricoNautica(string? texto)
-        {
-            var n = NormalizeText(texto);
-            return n switch
-            {
-                "1" or "ja trabalha" or "ja_trabalha" or "nautica_historico_ja_trabalha" or "ja trabalho" or "trabalho" => "ja_trabalha",
-                "2" or "nova linha" or "nova_linha" or "nautica_historico_nova_linha" or "nova" => "nova_linha",
-                _ => null
-            };
-        }
-
-        private static string? ParseDesafioLoja(string? texto)
-        {
-            var n = NormalizeText(texto);
-            return n switch
-            {
-                "1" or "giro" or "nautica_desafio_giro" => "giro",
-                "2" or "margem" or "nautica_desafio_margem" => "margem",
-                "3" or "pos venda" or "pos_venda" or "nautica_desafio_pos_venda" or "posvenda" or "pos-venda" => "pos_venda",
-                _ => null
-            };
-        }
-
-        private static string? ParsePublicoAlvo(string? texto)
-        {
-            var n = NormalizeText(texto);
-            return n switch
-            {
-                "1" or "entrada" or "nautica_publico_entrada" => "entrada",
-                "2" or "premium" or "nautica_publico_premium" => "premium",
-                "3" or "ambos" or "nautica_publico_ambos" => "ambos",
                 _ => null
             };
         }
@@ -784,13 +722,11 @@ namespace APIBack.Automation.Services
                 return false;
             }
 
-            // All same digits (e.g. 00000000000000) are invalid
             if (digits.Distinct().Count() == 1)
             {
                 return false;
             }
 
-            // First check digit: weights 5,4,3,2,9,8,7,6,5,4,3,2
             int[] w1 = { 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2 };
             var sum1 = 0;
             for (var i = 0; i < 12; i++)
@@ -805,7 +741,6 @@ namespace APIBack.Automation.Services
                 return false;
             }
 
-            // Second check digit: weights 6,5,4,3,2,9,8,7,6,5,4,3,2
             int[] w2 = { 6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2 };
             var sum2 = 0;
             for (var i = 0; i < 13; i++)

@@ -32,6 +32,9 @@ namespace APIBack.Automation.Infra
             var tamanhoNormalizado = tamanhoPagina < 1 ? 20 : tamanhoPagina;
             var offset = (paginaNormalizada - 1) * tamanhoNormalizado;
 
+            // Normalizar alias legado de status
+            var statusNormalizado = NormalizarStatus(LimparFiltro(status));
+
             const string sql = @"
 WITH base AS (
     SELECT cn.*
@@ -40,6 +43,7 @@ WITH base AS (
        AND (@Status IS NULL OR cn.status = @Status)
        AND (
             @Busca IS NULL OR @Busca = '' OR
+            COALESCE(cn.nome_cliente, '') ILIKE '%' || @Busca || '%' OR
             COALESCE(cn.nome_empresa, '') ILIKE '%' || @Busca || '%' OR
             COALESCE(cn.telefone_e164, '') ILIKE '%' || @Busca || '%' OR
             COALESCE(cn.cnpj, '') ILIKE '%' || @Busca || '%' OR
@@ -51,9 +55,9 @@ tot AS (
 )
 SELECT b.id,
        COALESCE(b.telefone_e164, '') AS Telefone,
+       b.nome_cliente AS NomeCliente,
        b.nome_empresa AS NomeEmpresa,
        b.cnpj AS Cnpj,
-       b.segmento AS Segmento,
        COALESCE(b.status, '') AS Status,
        COALESCE(b.data_conclusao, b.data_atualizacao, b.data_criacao) AS Data,
        (SELECT total FROM tot) AS TotalRegistros
@@ -66,7 +70,7 @@ SELECT b.id,
             {
                 IdEstabelecimento = idEstabelecimento,
                 Busca = LimparFiltro(busca),
-                Status = LimparFiltro(status),
+                Status = statusNormalizado,
                 Limit = tamanhoNormalizado,
                 Offset = offset
             })).ToList();
@@ -76,9 +80,9 @@ SELECT b.id,
             {
                 Id = r.Id,
                 Telefone = r.Telefone,
+                NomeCliente = r.NomeCliente,
                 NomeEmpresa = r.NomeEmpresa,
                 Cnpj = r.Cnpj,
-                Segmento = r.Segmento,
                 Status = r.Status,
                 Data = r.Data
             }).ToList();
@@ -97,6 +101,7 @@ SELECT COALESCE(cn.status, '') AS Status,
  WHERE cn.id_estabelecimento = @IdEstabelecimento
    AND (
         @Busca IS NULL OR @Busca = '' OR
+        COALESCE(cn.nome_cliente, '') ILIKE '%' || @Busca || '%' OR
         COALESCE(cn.nome_empresa, '') ILIKE '%' || @Busca || '%' OR
         COALESCE(cn.telefone_e164, '') ILIKE '%' || @Busca || '%' OR
         COALESCE(cn.cnpj, '') ILIKE '%' || @Busca || '%' OR
@@ -121,15 +126,12 @@ SELECT cn.id,
        cn.id_conversa          AS IdConversa,
        cn.id_cliente           AS IdCliente,
        COALESCE(cn.telefone_e164, '') AS Telefone,
+       cn.nome_cliente         AS NomeCliente,
        cn.nome_empresa         AS NomeEmpresa,
        cn.cnpj                 AS Cnpj,
-       cn.segmento             AS Segmento,
        cn.tem_loja_fisica      AS TemLojaFisica,
        cn.consegue_minimo      AS ConsegueMinimo,
        cn.cidade_estado        AS CidadeEstado,
-       cn.historico_nautica    AS HistoricoNautica,
-       cn.desafio_loja         AS DesafioLoja,
-       cn.publico_alvo         AS PublicoAlvo,
        COALESCE(cn.status, '') AS Status,
        cn.via_numero_central   AS ViaNumeroCentral,
        COALESCE(cn.data_conclusao, cn.data_atualizacao, cn.data_criacao) AS Data,
@@ -151,11 +153,14 @@ SELECT cn.id,
 
         public async Task<bool> AtualizarStatusLeadAsync(Guid idEstabelecimento, Guid idLead, string status)
         {
+            // Normalizar alias legado antes de persistir
+            var statusFinal = NormalizarStatus(status) ?? status;
+
             const string sql = @"
 UPDATE cliente_nautica
    SET status = @Status,
        data_conclusao = CASE
-            WHEN @Status IN ('lojista_minimo', 'consumidor_final', 'lojista') THEN COALESCE(data_conclusao, NOW())
+            WHEN @Status IN ('lojista_qualificado', 'consumidor_final', 'lojista') THEN COALESCE(data_conclusao, NOW())
             ELSE NULL
        END,
        data_atualizacao = NOW()
@@ -167,7 +172,7 @@ UPDATE cliente_nautica
             {
                 IdEstabelecimento = idEstabelecimento,
                 IdLead = idLead,
-                Status = status
+                Status = statusFinal
             }) > 0;
         }
 
@@ -176,13 +181,22 @@ UPDATE cliente_nautica
             return string.IsNullOrWhiteSpace(valor) ? null : valor.Trim();
         }
 
+        // Aceita lojista_minimo como alias legado, responde sempre com lojista_qualificado
+        private static string? NormalizarStatus(string? status)
+        {
+            if (status == null) return null;
+            return string.Equals(status, "lojista_minimo", StringComparison.OrdinalIgnoreCase)
+                ? "lojista_qualificado"
+                : status;
+        }
+
         private class NauticaLeadListRow
         {
             public Guid Id { get; set; }
             public string Telefone { get; set; } = string.Empty;
+            public string? NomeCliente { get; set; }
             public string? NomeEmpresa { get; set; }
             public string? Cnpj { get; set; }
-            public string? Segmento { get; set; }
             public string Status { get; set; } = string.Empty;
             public DateTime Data { get; set; }
             public int TotalRegistros { get; set; }

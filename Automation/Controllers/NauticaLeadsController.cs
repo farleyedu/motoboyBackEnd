@@ -13,12 +13,14 @@ namespace APIBack.Automation.Controllers
     [Route("nautica/leads")]
     public class NauticaLeadsController : ControllerBase
     {
+        // Status canônicos + lojista_minimo aceito como alias legado temporário
         private static readonly HashSet<string> StatusLeadPermitidos = new(StringComparer.OrdinalIgnoreCase)
         {
             "incompleto",
             "consumidor_final",
             "lojista",
-            "lojista_minimo"
+            "lojista_qualificado",
+            "lojista_minimo" // alias legado — normalizado para lojista_qualificado antes de persistir
         };
 
         private readonly INauticaPainelRepository _repository;
@@ -52,15 +54,20 @@ namespace APIBack.Automation.Controllers
                 ["incompleto"] = 0,
                 ["consumidor_final"] = 0,
                 ["lojista"] = 0,
-                ["lojista_minimo"] = 0
+                ["lojista_qualificado"] = 0
             };
 
             foreach (var count in contagens)
             {
-                if (!string.IsNullOrWhiteSpace(count.Status))
-                {
-                    totaisPorStatus[count.Status] = count.Total;
-                }
+                if (string.IsNullOrWhiteSpace(count.Status)) continue;
+
+                // Agregar lojista_minimo legado em lojista_qualificado
+                var chave = string.Equals(count.Status, "lojista_minimo", StringComparison.OrdinalIgnoreCase)
+                    ? "lojista_qualificado"
+                    : count.Status;
+
+                if (totaisPorStatus.ContainsKey(chave))
+                    totaisPorStatus[chave] += count.Total;
             }
 
             return Ok(new NauticaLeadListResponseDto
