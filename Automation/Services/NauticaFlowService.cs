@@ -625,14 +625,14 @@ namespace APIBack.Automation.Services
         private static AssistantDecision CriarMensagemInicialAmazonPrime()
         {
             return new AssistantDecision(
-                "Entendido! Por enquanto nosso programa de parceria e exclusivo para lojistas com loja fisica. 😊\n\nMas temos uma opcao especial para voce: o *Amazon Prime Nautica*! 🚤⚓\n\nE um programa pensado para entusiastas e apaixonados por nautica, com acesso a condicoes especiais e ao nosso catalogo completo.\n\nPosso te enviar a ficha tecnica completa do programa?",
+                "Para consumidor final, hoje trabalhamos com o *Amazon Prime*, um barco lancamento pensado para quem busca durabilidade, praticidade e baixo custo de manutencao.\n\nEsse modelo oferece:\n✅ Casco 100% soldado\n✅ Zero manutencao\n✅ Piso nautico instalado\n✅ Preparado para motorizacao de ate 50 HP\n\n💰 Valor: R$ 39.990\n\nSe quiser, posso te passar mais informacoes sobre esse barco.",
                 "none", null, false, null);
         }
 
-        private AssistantDecision CriarFichaTecnicaAmazonPrime()
+        private static AssistantDecision CriarFichaTecnicaAmazonPrime()
         {
             return new AssistantDecision(
-                $"📋 *Amazon Prime Nautica — Ficha Tecnica Completa*\n\n✅ Acesso exclusivo ao catalogo completo de embarcacoes\n✅ Condicoes especiais para compra direta\n✅ Suporte tecnico especializado pos-compra\n✅ Convites para eventos e lancamentos em primeira mao\n✅ Canal direto com a equipe comercial Amazon Nautica\n\n📄 Catalogo completo: {_catalogUrl}\n\nObrigado pelo interesse na Amazon Nautica! Em breve nossa equipe entra em contato. ⚓🚤",
+                "📋 *Especificacoes do modelo:*\n\n• Pintura poliester automotiva premium\n• Porta documento na proa\n• Tubulacao 1\" para conducao de fios para porta-documento e motor eletrico\n• 2 caixas secas na proa, caixa de varas e porta-baterias\n• Caixa termica\n• Tomada de engate rapido na proa para motor eletrico\n• 2 bombas de porao\n• Base para motor eletrico de pedal\n• Viveiro com aerador\n• 3 plataformas para pesca esportiva\n• Viveiro com separador de isca viva\n• Porta-tanque com tampa superior\n• Porta-baterias de popa para motor com partida eletrica\n• Bases em inox para cadeira giratoria\n• Piso nautico\n\n📐 *Dados tecnicos:*\n\n• Comprimento: 6M\n• Boca moldada: 1,80 cm\n• Peso maximo de carga: 0,750 t\n• Pontal: 0,65 cm\n• Calado: 0,15 cm\n• Casco: 3,00 mm\n• Peso aproximado: 280 kg\n• Potencia maxima: 50 HP",
                 "none", null, false, null);
         }
 
