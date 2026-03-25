@@ -206,22 +206,17 @@ namespace APIBack.Automation.Services
                     return null;
                 }
 
-                var modulosAtivos = await DeterminarModulosAtivosAsync(idEstabelecimento.Value);
-                if (modulosAtivos.Any(modulo => string.Equals(modulo, "GARAGEM", StringComparison.OrdinalIgnoreCase)))
+                var tipoEstabelecimento = await _estabelecimentoRepo.ObterTipoEstabelecimentoAsync(idEstabelecimento.Value);
+                if (string.Equals(tipoEstabelecimento, "garagem", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(tipoEstabelecimento, "nautica", StringComparison.OrdinalIgnoreCase))
                 {
                     _logger.LogInformation(
-                        "[Conversa={Conversa}] Estabelecimento garagem detectado; contexto de IA suprimido",
-                        idConversa);
+                        "[Conversa={Conversa}] Estabelecimento {Tipo} detectado; contexto de IA suprimido",
+                        idConversa, tipoEstabelecimento);
                     return null;
                 }
 
-                if (modulosAtivos.Any(modulo => string.Equals(modulo, "NAUTICA", StringComparison.OrdinalIgnoreCase)))
-                {
-                    _logger.LogInformation(
-                        "[Conversa={Conversa}] Estabelecimento nautica detectado; contexto de IA suprimido",
-                        idConversa);
-                    return null;
-                }
+                var modulosAtivos = await DeterminarModulosAtivosAsync(idEstabelecimento.Value);
 
                 var promptsCacheKey = $"prompts:{idEstabelecimento.Value}:{string.Join(",", modulosAtivos.OrderBy(m => m))}";
                 if (!_cache.TryGetValue(promptsCacheKey, out string? promptMontado))

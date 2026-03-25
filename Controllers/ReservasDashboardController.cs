@@ -23,7 +23,7 @@ namespace APIBack.Controllers
         }
 
         [HttpGet]
-        [RequirePermission("Reservas", "visualizar")]
+        [RequirePermission("Agendamentos", "visualizar")]
         public IActionResult ListarReservasRestaurante([FromQuery] int month, [FromQuery] int year, [FromQuery] Guid estabelecimentoId)
         {
             if (!MesAnoValidos(month, year) || estabelecimentoId == Guid.Empty)

@@ -139,6 +139,27 @@ SELECT id,
             }
         }
 
+        public async Task<string?> ObterTipoEstabelecimentoAsync(Guid idEstabelecimento)
+        {
+            const string sql = @"
+SELECT te.slug
+  FROM estabelecimentos e
+  JOIN tipo_estabelecimento te ON te.id = e.id_tipo_estabelecimento
+ WHERE e.id = @IdEstabelecimento
+ LIMIT 1;";
+
+            try
+            {
+                await using var connection = new NpgsqlConnection(_connectionString);
+                return await connection.ExecuteScalarAsync<string?>(sql, new { IdEstabelecimento = idEstabelecimento });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao buscar tipo do estabelecimento {IdEstabelecimento}", idEstabelecimento);
+                return null;
+            }
+        }
+
         public async Task<EstabelecimentoPublicoResumo?> ObterResumoPublicoPorSlugAsync(string slug)
         {
             const string sql = @"

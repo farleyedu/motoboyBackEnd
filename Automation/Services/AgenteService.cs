@@ -30,6 +30,9 @@ namespace APIBack.Automation.Services
         public Task<IReadOnlyList<ConversationAgentDto>> ListarAgentesAsync()
             => _repo.ListarAgentesAsync();
 
+        public Task EnsureAgenteAsync(int usuarioId)
+            => _repo.EnsureAgenteAsync(usuarioId);
+
         public async Task<HandoverAgentDto?> ObterAgenteSuporteAsync()
         {
             var agenteSuporte = await _repo.ObterAgenteSuporteAsync();

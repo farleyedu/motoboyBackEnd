@@ -21,12 +21,14 @@ namespace APIBack.Service
         private readonly IGestaoRepository _repository;
         private readonly ILogger<GestaoService> _logger;
         private readonly IWabaPhoneRepository? _wabaPhoneRepository;
+        private readonly IAgenteRepository? _agenteRepository;
 
-        public GestaoService(IGestaoRepository repository, ILogger<GestaoService> logger, IWabaPhoneRepository? wabaPhoneRepository = null)
+        public GestaoService(IGestaoRepository repository, ILogger<GestaoService> logger, IWabaPhoneRepository? wabaPhoneRepository = null, IAgenteRepository? agenteRepository = null)
         {
             _repository = repository;
             _logger = logger;
             _wabaPhoneRepository = wabaPhoneRepository;
+            _agenteRepository = agenteRepository;
         }
 
         public async Task<IReadOnlyCollection<GestaoEmpresaDto>> ListarEmpresasAsync(
@@ -258,6 +260,7 @@ namespace APIBack.Service
 
             var command = await BuildSaveUsuarioCommandAsync(scope, userId, request, null);
             var createdUserId = await _repository.SalvarUsuarioAsync(command);
+            await TryEnsureAgenteAsync(command, createdUserId);
             var created = (await ListarUsuariosInternalAsync(scope, createdUserId)).FirstOrDefault();
             return created ?? throw new InvalidOperationException("Usuario criado mas nao encontrado no retorno.");
         }
@@ -278,6 +281,7 @@ namespace APIBack.Service
 
             var command = await BuildSaveUsuarioCommandAsync(scope, userId, request, targetUserId);
             await _repository.SalvarUsuarioAsync(command);
+            await TryEnsureAgenteAsync(command, targetUserId);
 
             var updated = (await ListarUsuariosInternalAsync(scope, targetUserId)).FirstOrDefault();
             return updated ?? throw new InvalidOperationException("Usuario atualizado mas nao encontrado no retorno.");
@@ -314,6 +318,39 @@ namespace APIBack.Service
             EnsureCanManageUsers(scope);
             await EnsureTargetUserAccessibleAsync(scope, targetUserId, userId, blockSelfMutation: true);
             await _repository.RemoverUsuarioAsync(targetUserId);
+        }
+
+        private async Task TryEnsureAgenteAsync(GestaoPersistenciaUsuarioCommand command, int userId)
+        {
+            if (_agenteRepository == null) return;
+
+            bool customHas = false;
+            if (!string.IsNullOrWhiteSpace(command.PermissoesCustomizadasJson))
+            {
+                try
+                {
+                    var parsed = JsonSerializer.Deserialize<Dictionary<string, List<string>>>(command.PermissoesCustomizadasJson);
+                    customHas = parsed != null
+                        && parsed.TryGetValue("WhatsApp", out var actions)
+                        && actions.Any(a => string.Equals(a, "assumir_conversa", StringComparison.OrdinalIgnoreCase));
+                }
+                catch { /* JSON inválido — ignora */ }
+            }
+
+            bool roleHas = false;
+            if (!string.IsNullOrWhiteSpace(command.EstablishmentRole))
+            {
+                var role = RoleCatalog.Normalize(command.EstablishmentRole);
+                var defaults = await _repository.ListarPermissoesPadraoPorTipoAsync(new[] { role });
+                roleHas = defaults.TryGetValue(role, out var rolePerms)
+                    && rolePerms.TryGetValue("WhatsApp", out var roleActions)
+                    && roleActions.Any(a => string.Equals(a, "assumir_conversa", StringComparison.OrdinalIgnoreCase));
+            }
+
+            if (!customHas && !roleHas) return;
+
+            try { await _agenteRepository.EnsureAgenteAsync(userId); }
+            catch (Exception ex) { _logger.LogWarning(ex, "Falha ao garantir agente para usuario {Id}", userId); }
         }
 
         private async Task<IReadOnlyCollection<GestaoUsuarioDto>> ListarUsuariosInternalAsync(GestaoEmpresaScope scope, int? specificUserId)
@@ -602,9 +639,37 @@ namespace APIBack.Service
                 throw new AdminUsuarioValidationException("Dados invalidos.", errors);
             }
 
-            var permissionsJson = request.Permissoes != null && request.Permissoes.Count > 0
-                ? JsonSerializer.Serialize(request.Permissoes)
-                : null;
+            string? permissionsJson;
+            if (request.Permissoes != null && request.Permissoes.Count > 0)
+            {
+                permissionsJson = JsonSerializer.Serialize(request.Permissoes);
+            }
+            else if (!targetUserId.HasValue && !string.IsNullOrWhiteSpace(establishmentRole))
+            {
+                // Nova criação sem permissões explícitas: usa template do cargo filtrado pelos módulos do estabelecimento
+                var roleNorm = RoleCatalog.Normalize(establishmentRole);
+                var padrao = await _repository.ListarPermissoesPadraoPorTipoAsync(new[] { roleNorm });
+                if (padrao.TryGetValue(roleNorm, out var templatePorModulo) && templatePorModulo.Count > 0)
+                {
+                    var modulosAtivos = selectedEstablishments
+                        .SelectMany(e => EstabelecimentoModuleMapper.ToUiModules(e.Nome, e.ModulosAtivosRaw))
+                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
+                    var permissoesFiltradas = modulosAtivos.Count > 0
+                        ? templatePorModulo
+                            .Where(kvp => modulosAtivos.Contains(kvp.Key))
+                            .ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.OrdinalIgnoreCase)
+                        : templatePorModulo;
+                    permissionsJson = permissoesFiltradas.Count > 0 ? JsonSerializer.Serialize(permissoesFiltradas) : null;
+                }
+                else
+                {
+                    permissionsJson = null;
+                }
+            }
+            else
+            {
+                permissionsJson = null;
+            }
 
             return new GestaoPersistenciaUsuarioCommand
             {

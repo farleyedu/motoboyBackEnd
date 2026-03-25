@@ -13,6 +13,7 @@ namespace APIBack.Automation.Interfaces
         Task<string?> ObterNomeFantasiaAsync(Guid idEstabelecimento);
         Task<EstabelecimentoPublicoResumo?> ObterResumoPublicoAsync(Guid idEstabelecimento);
         Task<EstabelecimentoPublicoResumo?> ObterResumoPublicoPorSlugAsync(string slug);
+        Task<string?> ObterTipoEstabelecimentoAsync(Guid idEstabelecimento);
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================

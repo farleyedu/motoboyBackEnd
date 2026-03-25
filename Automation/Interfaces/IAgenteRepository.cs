@@ -11,6 +11,7 @@ namespace APIBack.Automation.Interfaces
         Task<HandoverAgentDto?> ObterAgenteSuporteAsync();
         Task<HandoverAgentDto?> ObterAgentePorUsuarioIdAsync(int usuarioId);
         Task<IReadOnlyList<ConversationAgentDto>> ListarAgentesAsync();
+        Task EnsureAgenteAsync(int usuarioId);
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================

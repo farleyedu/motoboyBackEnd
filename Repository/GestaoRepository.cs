@@ -262,14 +262,15 @@ SELECT  e.id                      AS Id,
             }
 
             const string sql = @"
-SELECT  e.id                    AS Id,
-        e.id_empresa            AS EmpresaId,
-        emp.nome_fantasia       AS EmpresaNome,
-        e.nome_fantasia         AS Nome,
-        te.nome                 AS TipoEstabelecimentoNome,
-        te.slug                 AS TipoEstabelecimentoSlug,
-        COALESCE(e.ativo, TRUE) AS Ativo,
-        COALESCE(e.status, 'ativo') AS Status
+SELECT  e.id                      AS Id,
+        e.id_empresa              AS EmpresaId,
+        emp.nome_fantasia         AS EmpresaNome,
+        e.nome_fantasia           AS Nome,
+        te.nome                   AS TipoEstabelecimentoNome,
+        te.slug                   AS TipoEstabelecimentoSlug,
+        COALESCE(e.ativo, TRUE)   AS Ativo,
+        COALESCE(e.status, 'ativo') AS Status,
+        e.modulos_ativos::text[]  AS ModulosAtivosRaw
   FROM estabelecimentos e
   JOIN empresas emp ON emp.id = e.id_empresa
   LEFT JOIN tipo_estabelecimento te ON te.id = e.id_tipo_estabelecimento

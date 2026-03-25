@@ -78,6 +78,16 @@ namespace APIBack.Automation.Infra
             var rows = await cx.QueryAsync<ConversationAgentDto>(sql);
             return rows.AsList();
         }
+
+        public async Task EnsureAgenteAsync(int usuarioId)
+        {
+            const string sql = @"
+INSERT INTO agentes (usuarioid, funcao, telegramchatid)
+SELECT @UsuarioId, NULL, NULL
+WHERE NOT EXISTS (SELECT 1 FROM agentes WHERE usuarioid = @UsuarioId);";
+            await using var cx = new NpgsqlConnection(_connectionString);
+            await cx.ExecuteAsync(sql, new { UsuarioId = usuarioId });
+        }
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================

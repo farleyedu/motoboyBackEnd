@@ -209,8 +209,8 @@ namespace APIBack.Automation.Services
 
         public async Task<bool> IsNauticaEstabelecimentoAsync(Guid idEstabelecimento)
         {
-            var modulos = await _estabelecimentoRepository.ObterModulosAtivosAsync(idEstabelecimento);
-            return modulos.Any(modulo => string.Equals(modulo, "NAUTICA", StringComparison.OrdinalIgnoreCase));
+            var tipo = await _estabelecimentoRepository.ObterTipoEstabelecimentoAsync(idEstabelecimento);
+            return string.Equals(tipo, "nautica", StringComparison.OrdinalIgnoreCase);
         }
 
         private async Task<AssistantDecision> ProcessarEtapaAsync(

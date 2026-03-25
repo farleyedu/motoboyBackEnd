@@ -1094,46 +1094,7 @@ SELECT  e.id                    AS EstabelecimentoId,
             string? permissoesCustomizadas,
             Guid estabelecimentoId)
         {
-            var permissoes = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
-
-            foreach (var tipoAcesso in new[]
-                     {
-                         RoleCatalog.Normalize(tipoAcessoEmpresa),
-                         RoleCatalog.Normalize(tipoAcessoEstabelecimento)
-                     }.Where(tipo => !string.IsNullOrWhiteSpace(tipo))
-                     .Distinct(StringComparer.OrdinalIgnoreCase))
-            {
-                const string sqlPadrao = @"
-SELECT  m.nome                  AS Modulo,
-        pp.permissoes::text     AS Permissoes
-  FROM permissoes_padrao pp
-  JOIN modulos_disponiveis m ON m.id = pp.id_modulo
- WHERE pp.tipo_acesso = @TipoAcesso";
-
-                var linhas = await connection.QueryAsync<PermissaoRow>(sqlPadrao, new { TipoAcesso = tipoAcesso });
-
-                foreach (var linha in linhas)
-                {
-                    if (!string.IsNullOrWhiteSpace(linha.Modulo))
-                    {
-                        if (!permissoes.TryGetValue(linha.Modulo, out var existentes))
-                        {
-                            existentes = new List<string>();
-                            permissoes[linha.Modulo] = existentes;
-                        }
-
-                        foreach (var permissao in ParsePermissoes(linha.Permissoes))
-                        {
-                            if (!existentes.Any(item => string.Equals(item, permissao, StringComparison.OrdinalIgnoreCase)))
-                            {
-                                existentes.Add(permissao);
-                            }
-                        }
-                    }
-                }
-            }
-
-            ApplyCustomPermissions(permissoes, permissoesCustomizadas);
+            var permissoes = ParsePermissoesCustomizadas(permissoesCustomizadas);
 
             if (estabelecimentoId != Guid.Empty)
             {
@@ -1144,7 +1105,7 @@ SELECT  m.nome                  AS Modulo,
                         .Where(k => modulosAtivos.Contains(k))
                         .ToList();
 
-                    // Evita fail-closed por divergência de nomenclatura entre módulos salvos e catálogos antigos.
+                    // Safety check: se houver ao menos um módulo em comum, filtrar pelo ativo.
                     if (interseccao.Count > 0)
                     {
                         permissoes = permissoes
@@ -1158,6 +1119,25 @@ SELECT  m.nome                  AS Modulo,
             }
 
             return permissoes;
+        }
+
+        private static Dictionary<string, List<string>> ParsePermissoesCustomizadas(string? raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                return new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            }
+
+            try
+            {
+                var result = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, List<string>>>(raw,
+                    new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                return result ?? new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            }
+            catch
+            {
+                return new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            }
         }
 
         private async Task<HashSet<string>> ObterModulosAtivosAsync(NpgsqlConnection connection, Guid estabelecimentoId)

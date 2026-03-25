@@ -31,7 +31,7 @@ namespace APIBack.Automation.Controllers
         }
 
         [HttpGet]
-        [RequirePermission("Nautica", "leads_visualizar")]
+        [RequirePermission("Leads", "visualizar")]
         public async Task<IActionResult> Listar(
             [FromQuery] string? busca,
             [FromQuery] string? status,
@@ -81,7 +81,7 @@ namespace APIBack.Automation.Controllers
         }
 
         [HttpGet("{idLead:guid}")]
-        [RequirePermission("Nautica", "leads_visualizar")]
+        [RequirePermission("Leads", "visualizar")]
         public async Task<IActionResult> ObterDetalhe(Guid idLead, [FromQuery] Guid? idEstabelecimento = null)
         {
             if (!TryResolveEstabelecimento(idEstabelecimento, out var estabelecimentoId, out var error))
@@ -96,7 +96,7 @@ namespace APIBack.Automation.Controllers
         }
 
         [HttpPatch("{idLead:guid}/status")]
-        [RequirePermission("Nautica", "leads_mudar_status")]
+        [RequirePermission("Leads", "mudar_status")]
         public async Task<IActionResult> AtualizarStatus(Guid idLead, [FromBody] UpdateNauticaLeadStatusRequest request, [FromQuery] Guid? idEstabelecimento = null)
         {
             if (!TryResolveEstabelecimento(idEstabelecimento, out var estabelecimentoId, out var error))

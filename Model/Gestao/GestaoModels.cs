@@ -107,6 +107,7 @@ namespace APIBack.Model.Gestao
         public string TipoEstabelecimentoSlug { get; set; } = string.Empty;
         public bool Ativo { get; set; }
         public string Status { get; set; } = "ativo";
+        public string[]? ModulosAtivosRaw { get; set; }
     }
 
     public class GestaoEmpresaScope

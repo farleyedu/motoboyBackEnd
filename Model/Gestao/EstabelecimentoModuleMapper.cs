@@ -22,18 +22,31 @@ namespace APIBack.Model.Gestao
                         modules.Add("WHATSAPP");
                         break;
                     case "reservas":
-                    case "agendamentos":
                     case "reserva":
-                        modules.Add("RESERVA");
+                    case "agendamentos":
+                    case "agendamento":
+                        modules.Add("AGENDAMENTOS");
                         break;
-                    case "garagem":
-                        modules.Add("GARAGEM");
+                    case "leads":
+                    case "lead":
+                        modules.Add("LEADS");
                         break;
-                    case "nautica":
-                        modules.Add("NAUTICA");
+                    case "estoque":
+                        modules.Add("ESTOQUE");
                         break;
-                    case "barbearia":
-                        modules.Add("BARBEARIA");
+                    case "vitrine":
+                        modules.Add("VITRINE");
+                        break;
+                    case "cardapio":
+                        modules.Add("CARDAPIO");
+                        break;
+                    case "cardapioweb":
+                    case "cardapio_web":
+                        modules.Add("CARDAPIOWEB");
+                        break;
+                    case "relatorios":
+                    case "relatorio":
+                        modules.Add("RELATORIOS");
                         break;
                     case "estabelecimentos":
                     case "estabelecimento":
@@ -54,7 +67,6 @@ namespace APIBack.Model.Gestao
                 }
             }
 
-            ApplyOperationalModulePolicy(modules, establishmentTypeSlug);
             return modules.ToArray();
         }
 
@@ -71,18 +83,32 @@ namespace APIBack.Model.Gestao
                     case "whatsapp":
                         modules.Add("WhatsApp");
                         break;
+                    case "agendamentos":
+                    case "agendamento":
+                    case "reservas":
                     case "reserva":
-                        modules.Add("Reservas");
                         modules.Add("Agendamentos");
                         break;
-                    case "garagem":
-                        modules.Add("Garagem");
+                    case "leads":
+                    case "lead":
+                        modules.Add("Leads");
                         break;
-                    case "nautica":
-                        modules.Add("Nautica");
+                    case "estoque":
+                        modules.Add("Estoque");
                         break;
-                    case "barbearia":
-                        modules.Add("Agendamentos");
+                    case "vitrine":
+                        modules.Add("Vitrine");
+                        break;
+                    case "cardapio":
+                        modules.Add("Cardapio");
+                        break;
+                    case "cardapioweb":
+                    case "cardapio_web":
+                        modules.Add("CardapioWeb");
+                        break;
+                    case "relatorios":
+                    case "relatorio":
+                        modules.Add("Relatorios");
                         break;
                     case "estabelecimento":
                         modules.Add("Estabelecimentos");
@@ -111,17 +137,6 @@ namespace APIBack.Model.Gestao
             }
 
             return modules.ToList();
-        }
-
-        private static void ApplyOperationalModulePolicy(HashSet<string> modules, string? establishmentTypeSlug)
-        {
-            if (string.Equals(NormalizeToken(establishmentTypeSlug), "nautica", StringComparison.Ordinal))
-            {
-                modules.Add("NAUTICA");
-                return;
-            }
-
-            modules.Remove("NAUTICA");
         }
 
         private static string NormalizeToken(string? value)

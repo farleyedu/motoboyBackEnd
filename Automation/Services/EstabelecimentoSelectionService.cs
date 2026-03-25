@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using APIBack.Automation.Dtos.Estabelecimentos;
+using APIBack.Automation.Interfaces;
 using APIBack.Automation.Models;
 using APIBack.Automation.Repository.Interface;
 using APIBack.Automation.Services.Interface;
@@ -24,13 +25,14 @@ namespace APIBack.Automation.Services
         private readonly IJwtService _jwtService;
         private readonly ILogger<EstabelecimentoSelectionService> _logger;
         private readonly int _jwtExpirationSeconds;
+        private readonly IAgenteRepository? _agenteRepository;
 
         public EstabelecimentoSelectionService(
             IEstabelecimentoSelectionRepository repository,
             EstabelecimentoSelectionValidator validator,
             IJwtService jwtService,
             ILogger<EstabelecimentoSelectionService> logger)
-            : this(repository, validator, jwtService, null, logger)
+            : this(repository, validator, jwtService, null, logger, null)
         {
         }
 
@@ -39,7 +41,8 @@ namespace APIBack.Automation.Services
             EstabelecimentoSelectionValidator validator,
             IJwtService jwtService,
             IConfiguration? configuration,
-            ILogger<EstabelecimentoSelectionService> logger)
+            ILogger<EstabelecimentoSelectionService> logger,
+            IAgenteRepository? agenteRepository = null)
         {
             _repository = repository ?? throw new ArgumentNullException(nameof(repository));
             _validator = validator ?? throw new ArgumentNullException(nameof(validator));
@@ -49,6 +52,7 @@ namespace APIBack.Automation.Services
                 : 60;
             _jwtExpirationSeconds = expirationMinutes * 60;
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _agenteRepository = agenteRepository;
         }
 
         public async Task<IReadOnlyCollection<UsuarioEstabelecimentoDto>> ListarEstabelecimentosAsync(int userId)
@@ -90,9 +94,16 @@ namespace APIBack.Automation.Services
                 ? "super_admin"
                 : RoleCatalog.Normalize(vinculoEmpresa?.TipoAcesso);
 
-            var permissoes = await _repository.ObterPermissoesPorTipoAsync(tipoAcessoEmpresa);
-            MergePermissoes(permissoes, await _repository.ObterPermissoesPorTipoAsync(tipoAcesso));
-            ApplyCustomPermissions(permissoes, vinculo?.PermissoesCustomizadas);
+            var permissoes = ParsePermissoesCustomizadas(vinculo?.PermissoesCustomizadas);
+            var modulosUi = ResolveUiModules(estabelecimento.Nome, estabelecimento.ModulosAtivosRaw)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (modulosUi.Count > 0 && permissoes.Keys.Any(k => modulosUi.Contains(k)))
+            {
+                permissoes = permissoes
+                    .Where(kvp => modulosUi.Contains(kvp.Key))
+                    .ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.OrdinalIgnoreCase);
+            }
+            await TryEnsureAgenteSeNecessarioAsync(usuario.Id, permissoes);
 
             var payload = new JwtPayload
             {
@@ -136,6 +147,15 @@ namespace APIBack.Automation.Services
                     Status = _validator.NormalizarStatusEstabelecimento(estabelecimento.Status, estabelecimento.Ativo)
                 }
             };
+        }
+
+        private async Task TryEnsureAgenteSeNecessarioAsync(int userId, Dictionary<string, List<string>> permissoes)
+        {
+            if (_agenteRepository == null) return;
+            if (!permissoes.TryGetValue("WhatsApp", out var actions)) return;
+            if (!actions.Any(a => string.Equals(a, "assumir_conversa", StringComparison.OrdinalIgnoreCase))) return;
+            try { await _agenteRepository.EnsureAgenteAsync(userId); }
+            catch (Exception ex) { _logger.LogWarning(ex, "Falha ao garantir agente no login para usuario {Id}", userId); }
         }
 
         private static void MergePermissoes(
@@ -355,39 +375,23 @@ namespace APIBack.Automation.Services
             return result.Count > 0 ? result : null;
         }
 
-        private static List<string> ReadActions(JsonElement node)
+        private static Dictionary<string, List<string>> ParsePermissoesCustomizadas(string? raw)
         {
-            if (node.ValueKind == JsonValueKind.String)
+            if (string.IsNullOrWhiteSpace(raw))
             {
-                var single = node.GetString();
-                return string.IsNullOrWhiteSpace(single)
-                    ? new List<string>()
-                    : new List<string> { single.Trim() };
+                return new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
             }
 
-            var list = new List<string>();
-            if (node.ValueKind != JsonValueKind.Array)
+            try
             {
-                return list;
+                var result = JsonSerializer.Deserialize<Dictionary<string, List<string>>>(raw,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                return result ?? new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
             }
-
-            foreach (var item in node.EnumerateArray())
+            catch
             {
-                if (item.ValueKind != JsonValueKind.String)
-                {
-                    continue;
-                }
-
-                var action = item.GetString();
-                if (!string.IsNullOrWhiteSpace(action))
-                {
-                    list.Add(action.Trim());
-                }
+                return new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
             }
-
-            return list
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
         }
     }
 }
