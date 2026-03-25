@@ -375,6 +375,41 @@ namespace APIBack.Automation.Services
             return result.Count > 0 ? result : null;
         }
 
+        private static List<string> ReadActions(JsonElement node)
+        {
+            if (node.ValueKind == JsonValueKind.String)
+            {
+                var single = node.GetString();
+                return string.IsNullOrWhiteSpace(single)
+                    ? new List<string>()
+                    : new List<string> { single.Trim() };
+            }
+
+            var list = new List<string>();
+            if (node.ValueKind != JsonValueKind.Array)
+            {
+                return list;
+            }
+
+            foreach (var item in node.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.String)
+                {
+                    continue;
+                }
+
+                var action = item.GetString();
+                if (!string.IsNullOrWhiteSpace(action))
+                {
+                    list.Add(action.Trim());
+                }
+            }
+
+            return list
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
         private static Dictionary<string, List<string>> ParsePermissoesCustomizadas(string? raw)
         {
             if (string.IsNullOrWhiteSpace(raw))
