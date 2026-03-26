@@ -81,6 +81,7 @@ SELECT c.id AS Id,
                 cx.Execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_mensagens_id_provedor ON mensagens (id_provedor);");
                 cx.Execute("CREATE INDEX IF NOT EXISTS ix_conversas_id_conversa_grupo ON conversas (id_conversa_grupo, data_criacao DESC);");
                 cx.Execute("CREATE INDEX IF NOT EXISTS ix_conversa_eventos_group_created ON conversa_eventos (id_conversa_grupo, data_criacao DESC);");
+                cx.Execute("CREATE INDEX IF NOT EXISTS ix_conversas_cliente_estabelecimento ON conversas (id_cliente, id_estabelecimento);");
                 _indexesEnsured = true;
             }
             catch (Exception ex)
@@ -410,13 +411,13 @@ UPDATE conversas
                 return null;
             }
 
-            var count = await cx.ExecuteScalarAsync<int>("SELECT COUNT(1) FROM mensagens WHERE id_conversa = @Id;", new { Id = exact.Id });
+            var count = await cx.ExecuteScalarAsync<int>(@"SELECT COUNT(1) FROM mensagens m JOIN conversas c ON c.id = m.id_conversa WHERE c.id_cliente = @IdCliente AND c.id_estabelecimento = @IdEstabelecimento;", new { IdCliente = exact.IdCliente, IdEstabelecimento = exact.IdEstabelecimento });
             return new ConversationHistoryDto
             {
                 Conversa = Details(exact),
                 Controle = await BuildControlAsync(cx, exact, exact.IdEstabelecimento),
-                Eventos = await ListarEventosInternalAsync(cx, exact.IdConversaGrupo),
-                Mensagens = (await ExactMessagesAsync(cx, exact.Id, page, pageSize)).ToList(),
+                Eventos = await ListarEventosClienteAsync(cx, exact.IdCliente, exact.IdEstabelecimento),
+                Mensagens = (await ClientMessagesAsync(cx, exact.IdCliente, exact.IdEstabelecimento, page, pageSize)).ToList(),
                 Page = page,
                 PageSize = pageSize,
                 Total = count
@@ -967,12 +968,56 @@ VALUES (
         private Task<MessagePreview?> LastMessageAsync(NpgsqlConnection cx, Guid id, bool byGroup) => cx.QueryFirstOrDefaultAsync<MessagePreview>(@"SELECT m.conteudo AS Conteudo, COALESCE(m.data_criacao, m.data_envio) AS DataCriacao, COALESCE(m.criada_por, '') AS CriadaPor FROM mensagens m JOIN conversas c ON c.id = m.id_conversa WHERE " + (byGroup ? "COALESCE(c.id_conversa_grupo, c.id) = @Id" : "m.id_conversa = @Id") + " ORDER BY COALESCE(m.data_criacao, m.data_envio) DESC LIMIT 1;", new { Id = id });
         private Task<IEnumerable<ConversationMessageItemDto>> ExactMessagesAsync(NpgsqlConnection cx, Guid id, int page, int pageSize) => cx.QueryAsync<ConversationMessageItemDto>(@"SELECT m.id AS Id, COALESCE(m.criada_por, '') AS CriadaPor, COALESCE(m.conteudo, '') AS Conteudo, COALESCE(m.tipo::text, 'texto') AS Tipo, COALESCE(m.status::text, '') AS Status, m.data_envio AS DataEnvio, COALESCE(m.data_criacao, m.data_envio, NOW()) AS DataCriacao FROM mensagens m WHERE m.id_conversa = @Id ORDER BY COALESCE(m.data_criacao, m.data_envio) ASC LIMIT @PageSize OFFSET @Offset;", new { Id = id, PageSize = pageSize, Offset = (page - 1) * pageSize });
         private Task<IEnumerable<ConversationMessageItemDto>> GroupMessagesAsync(NpgsqlConnection cx, Guid groupId, int page, int pageSize) => cx.QueryAsync<ConversationMessageItemDto>(@"SELECT m.id AS Id, COALESCE(m.criada_por, '') AS CriadaPor, COALESCE(m.conteudo, '') AS Conteudo, COALESCE(m.tipo::text, 'texto') AS Tipo, COALESCE(m.status::text, '') AS Status, m.data_envio AS DataEnvio, COALESCE(m.data_criacao, m.data_envio, NOW()) AS DataCriacao FROM mensagens m JOIN conversas c ON c.id = m.id_conversa WHERE COALESCE(c.id_conversa_grupo, c.id) = @GroupId ORDER BY COALESCE(m.data_criacao, m.data_envio) ASC LIMIT @PageSize OFFSET @Offset;", new { GroupId = groupId, PageSize = pageSize, Offset = (page - 1) * pageSize });
+        private Task<IEnumerable<ConversationMessageItemDto>> ClientMessagesAsync(NpgsqlConnection cx, Guid idCliente, Guid idEstabelecimento, int page, int pageSize) => cx.QueryAsync<ConversationMessageItemDto>(@"SELECT m.id AS Id, COALESCE(m.criada_por, '') AS CriadaPor, COALESCE(m.conteudo, '') AS Conteudo, COALESCE(m.tipo::text, 'texto') AS Tipo, COALESCE(m.status::text, '') AS Status, m.data_envio AS DataEnvio, COALESCE(m.data_criacao, m.data_envio, NOW()) AS DataCriacao FROM mensagens m JOIN conversas c ON c.id = m.id_conversa WHERE c.id_cliente = @IdCliente AND c.id_estabelecimento = @IdEstabelecimento ORDER BY COALESCE(m.data_criacao, m.data_envio) ASC LIMIT @PageSize OFFSET @Offset;", new { IdCliente = idCliente, IdEstabelecimento = idEstabelecimento, PageSize = pageSize, Offset = (page - 1) * pageSize });
 
         private async Task<IReadOnlyList<ConversationEventDto>> ListarEventosInternalAsync(NpgsqlConnection cx, Guid groupId)
         {
             var persistedRows = (await cx.QueryAsync<ConversationEventRow>(@"SELECT id AS Id, tipo AS Type, data_criacao AS At, ator_nome AS ActorName, status_anterior AS FromStatus, status_novo AS ToStatus, motivo AS Reason, tipo_fechamento AS CloseType, origem AS Source, ator_usuario_id AS ActorUserId, ator_agente_id AS ActorAgentId, dados::text AS DataJson FROM conversa_eventos WHERE id_conversa_grupo = @GroupId ORDER BY data_criacao ASC;", new { GroupId = groupId })).ToList();
             var persisted = persistedRows.Select(ToEventDto).ToList();
             var seeds = (await cx.QueryAsync<BaseEventSeed>(@"SELECT c.id AS Id, COALESCE(c.id_conversa_grupo, c.id) AS IdConversaGrupo, c.data_primeira_mensagem AS DataPrimeiraMensagem, c.data_criacao AS DataCriacao, c.data_fechamento AS DataFechamento, c.motivo_fechamento AS MotivoFechamento, c.estado::text AS Estado, COALESCE(NULLIF(c.status_atendimento, ''), '') AS StatusAtendimento, CASE WHEN c.id_agente_atribuido IS NULL THEN NULL ELSE COALESCE(u.nome, CONCAT('Agente ', c.id_agente_atribuido::text)) END AS AgenteNome FROM conversas c LEFT JOIN agentes a ON a.id = c.id_agente_atribuido LEFT JOIN usuario u ON u.id = a.usuarioid WHERE COALESCE(c.id_conversa_grupo, c.id) = @GroupId ORDER BY c.data_criacao ASC;", new { GroupId = groupId })).ToList();
+
+            var baseEvents = new List<ConversationEventDto>();
+            foreach (var seed in seeds)
+            {
+                var startedAt = seed.DataPrimeiraMensagem ?? seed.DataCriacao;
+                baseEvents.Add(new ConversationEventDto
+                {
+                    Id = DeterministicGuid($"started:{seed.Id}:{startedAt:O}"),
+                    Type = "started",
+                    At = startedAt,
+                    ActorName = seed.AgenteNome,
+                    ToStatus = CanonicalStatus(seed.StatusAtendimento, seed.Estado, seed.AgenteNome != null ? ModoConversa.Humano : ModoConversa.Bot),
+                    Source = "derived"
+                });
+            }
+
+            if (!persisted.Any(e => string.Equals(e.Type, "closed", StringComparison.OrdinalIgnoreCase)))
+            {
+                foreach (var seed in seeds.Where(s => s.DataFechamento.HasValue))
+                {
+                    var status = CanonicalStatus(seed.StatusAtendimento, seed.Estado, seed.AgenteNome != null ? ModoConversa.Humano : ModoConversa.Bot);
+                    baseEvents.Add(new ConversationEventDto
+                    {
+                        Id = DeterministicGuid($"closed:{seed.Id}:{seed.DataFechamento:O}"),
+                        Type = "closed",
+                        At = seed.DataFechamento!.Value,
+                        ActorName = seed.AgenteNome,
+                        ToStatus = status,
+                        Reason = seed.MotivoFechamento,
+                        CloseType = string.Equals(status, "encerrada_inatividade", StringComparison.OrdinalIgnoreCase) ? "inatividade" : "manual",
+                        Source = "derived"
+                    });
+                }
+            }
+
+            return baseEvents.Concat(persisted).OrderBy(e => e.At).ThenBy(e => e.Type).ToList();
+        }
+
+        private async Task<IReadOnlyList<ConversationEventDto>> ListarEventosClienteAsync(NpgsqlConnection cx, Guid idCliente, Guid idEstabelecimento)
+        {
+            var persistedRows = (await cx.QueryAsync<ConversationEventRow>(@"SELECT e.id AS Id, e.tipo AS Type, e.data_criacao AS At, e.ator_nome AS ActorName, e.status_anterior AS FromStatus, e.status_novo AS ToStatus, e.motivo AS Reason, e.tipo_fechamento AS CloseType, e.origem AS Source, e.ator_usuario_id AS ActorUserId, e.ator_agente_id AS ActorAgentId, e.dados::text AS DataJson FROM conversa_eventos e JOIN conversas c ON c.id = e.id_conversa WHERE c.id_cliente = @IdCliente AND c.id_estabelecimento = @IdEstabelecimento ORDER BY e.data_criacao ASC;", new { IdCliente = idCliente, IdEstabelecimento = idEstabelecimento })).ToList();
+            var persisted = persistedRows.Select(ToEventDto).ToList();
+            var seeds = (await cx.QueryAsync<BaseEventSeed>(@"SELECT c.id AS Id, COALESCE(c.id_conversa_grupo, c.id) AS IdConversaGrupo, c.data_primeira_mensagem AS DataPrimeiraMensagem, c.data_criacao AS DataCriacao, c.data_fechamento AS DataFechamento, c.motivo_fechamento AS MotivoFechamento, c.estado::text AS Estado, COALESCE(NULLIF(c.status_atendimento, ''), '') AS StatusAtendimento, CASE WHEN c.id_agente_atribuido IS NULL THEN NULL ELSE COALESCE(u.nome, CONCAT('Agente ', c.id_agente_atribuido::text)) END AS AgenteNome FROM conversas c LEFT JOIN agentes a ON a.id = c.id_agente_atribuido LEFT JOIN usuario u ON u.id = a.usuarioid WHERE c.id_cliente = @IdCliente AND c.id_estabelecimento = @IdEstabelecimento ORDER BY c.data_criacao ASC;", new { IdCliente = idCliente, IdEstabelecimento = idEstabelecimento })).ToList();
 
             var baseEvents = new List<ConversationEventDto>();
             foreach (var seed in seeds)
