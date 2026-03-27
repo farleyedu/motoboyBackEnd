@@ -1,4 +1,5 @@
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 using APIBack.Automation.Interfaces;
 using APIBack.Automation.Models;
@@ -11,6 +12,8 @@ namespace APIBack.Automation.Infra
     public class SqlNauticaLeadRepository : INauticaLeadRepository
     {
         private readonly string _connectionString;
+        private static volatile bool _colunasEnsured;
+        private static readonly SemaphoreSlim ColunasLock = new(1, 1);
 
         public SqlNauticaLeadRepository(IConfiguration configuration)
         {
@@ -19,8 +22,39 @@ namespace APIBack.Automation.Infra
                 ?? throw new InvalidOperationException("Connection string 'DefaultConnection' nao encontrada.");
         }
 
+        private async Task EnsureColunasAsync()
+        {
+            if (_colunasEnsured)
+            {
+                return;
+            }
+
+            await ColunasLock.WaitAsync();
+            try
+            {
+                if (_colunasEnsured)
+                {
+                    return;
+                }
+
+                const string sql = @"
+ALTER TABLE cliente_nautica ADD COLUMN IF NOT EXISTS etapa_atual VARCHAR(120);
+ALTER TABLE cliente_nautica ADD COLUMN IF NOT EXISTS ultima_pergunta TEXT;";
+
+                await using var connection = new NpgsqlConnection(_connectionString);
+                await connection.ExecuteAsync(sql);
+                _colunasEnsured = true;
+            }
+            finally
+            {
+                ColunasLock.Release();
+            }
+        }
+
         public async Task<NauticaLead?> ObterLeadAbertoAsync(Guid idEstabelecimento, string telefoneE164)
         {
+            await EnsureColunasAsync();
+
             const string sql = @"
 SELECT id,
        id_estabelecimento   AS IdEstabelecimento,
@@ -37,6 +71,8 @@ SELECT id,
        historico_nautica    AS HistoricoNautica,
        desafio_loja         AS DesafioLoja,
        publico_alvo         AS PublicoAlvo,
+       etapa_atual          AS EtapaAtual,
+       ultima_pergunta      AS UltimaPergunta,
        status               AS Status,
        via_numero_central   AS ViaNumeroCentral,
        data_conclusao       AS DataConclusao,
@@ -59,6 +95,8 @@ SELECT id,
 
         public async Task<NauticaLead?> ObterPorConversaAsync(Guid idConversa)
         {
+            await EnsureColunasAsync();
+
             const string sql = @"
 SELECT id,
        id_estabelecimento   AS IdEstabelecimento,
@@ -75,6 +113,8 @@ SELECT id,
        historico_nautica    AS HistoricoNautica,
        desafio_loja         AS DesafioLoja,
        publico_alvo         AS PublicoAlvo,
+       etapa_atual          AS EtapaAtual,
+       ultima_pergunta      AS UltimaPergunta,
        status               AS Status,
        via_numero_central   AS ViaNumeroCentral,
        data_conclusao       AS DataConclusao,
@@ -91,6 +131,8 @@ SELECT id,
 
         public async Task<Guid> CriarAsync(NauticaLead lead)
         {
+            await EnsureColunasAsync();
+
             const string sql = @"
 INSERT INTO cliente_nautica (
     id,
@@ -108,6 +150,8 @@ INSERT INTO cliente_nautica (
     historico_nautica,
     desafio_loja,
     publico_alvo,
+    etapa_atual,
+    ultima_pergunta,
     status,
     via_numero_central,
     data_conclusao,
@@ -129,6 +173,8 @@ INSERT INTO cliente_nautica (
     @HistoricoNautica,
     @DesafioLoja,
     @PublicoAlvo,
+    @EtapaAtual,
+    @UltimaPergunta,
     @Status,
     @ViaNumeroCentral,
     @DataConclusao,
@@ -156,6 +202,8 @@ INSERT INTO cliente_nautica (
 
         public async Task AtualizarAsync(NauticaLead lead)
         {
+            await EnsureColunasAsync();
+
             const string sql = @"
 UPDATE cliente_nautica
    SET id_conversa          = @IdConversa,
@@ -171,9 +219,11 @@ UPDATE cliente_nautica
        historico_nautica    = @HistoricoNautica,
        desafio_loja         = @DesafioLoja,
        publico_alvo         = @PublicoAlvo,
+       etapa_atual          = @EtapaAtual,
+       ultima_pergunta      = @UltimaPergunta,
        status               = @Status,
        via_numero_central   = @ViaNumeroCentral,
-       data_conclusao       = @DataConclusao,
+       data_conclusao       = COALESCE(@DataConclusao, data_conclusao),
        data_atualizacao     = @DataAtualizacao
  WHERE id = @Id;";
 
@@ -185,6 +235,8 @@ UPDATE cliente_nautica
 
         public async Task ConcluirAsync(NauticaLead lead)
         {
+            await EnsureColunasAsync();
+
             const string sql = @"
 UPDATE cliente_nautica
    SET nome_cliente         = @NomeCliente,
@@ -197,6 +249,8 @@ UPDATE cliente_nautica
        historico_nautica    = @HistoricoNautica,
        desafio_loja         = @DesafioLoja,
        publico_alvo         = @PublicoAlvo,
+       etapa_atual          = @EtapaAtual,
+       ultima_pergunta      = @UltimaPergunta,
        status               = 'lojista_qualificado',
        data_conclusao       = NOW(),
        data_atualizacao     = NOW()
@@ -208,15 +262,46 @@ UPDATE cliente_nautica
 
         public async Task DesqualificarAsync(NauticaLead lead, string status)
         {
+            await EnsureColunasAsync();
+
             const string sql = @"
 UPDATE cliente_nautica
-   SET status           = @Status,
+   SET etapa_atual      = @EtapaAtual,
+       ultima_pergunta  = @UltimaPergunta,
+       status           = @Status,
        data_conclusao   = NOW(),
        data_atualizacao = NOW()
  WHERE id = @Id;";
 
             await using var connection = new NpgsqlConnection(_connectionString);
-            await connection.ExecuteAsync(sql, new { lead.Id, Status = status });
+            await connection.ExecuteAsync(sql, new
+            {
+                lead.Id,
+                EtapaAtual = lead.EtapaAtual,
+                UltimaPergunta = lead.UltimaPergunta,
+                Status = status
+            });
+        }
+
+        public async Task CancelarLeadAbertoAsync(Guid idEstabelecimento, string telefoneE164)
+        {
+            await EnsureColunasAsync();
+
+            const string sql = @"
+UPDATE cliente_nautica
+   SET status = 'cancelado',
+       data_conclusao = COALESCE(data_conclusao, NOW()),
+       data_atualizacao = NOW()
+ WHERE id_estabelecimento = @IdEstabelecimento
+   AND telefone_e164 = @TelefoneE164
+   AND status = 'incompleto';";
+
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.ExecuteAsync(sql, new
+            {
+                IdEstabelecimento = idEstabelecimento,
+                TelefoneE164 = telefoneE164
+            });
         }
     }
 }

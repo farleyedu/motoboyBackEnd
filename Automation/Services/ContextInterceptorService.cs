@@ -33,6 +33,7 @@ namespace APIBack.Automation.Services
         private readonly CentralRoutingService _centralRouting;
         private readonly GarageFlowService _garageFlow;
         private readonly NauticaFlowService _nauticaFlow;
+        private readonly ConversationResetService _conversationReset;
 
         public ContextInterceptorService(
             IConversationRepository conversationRepository,
@@ -42,7 +43,8 @@ namespace APIBack.Automation.Services
             ToolExecutorService toolExecutor,
             CentralRoutingService centralRouting,
             GarageFlowService garageFlow,
-            NauticaFlowService nauticaFlow)
+            NauticaFlowService nauticaFlow,
+            ConversationResetService conversationReset)
         {
             _conversationRepository = conversationRepository;
             _reservaRepository = reservaRepository;
@@ -52,6 +54,7 @@ namespace APIBack.Automation.Services
             _centralRouting = centralRouting;
             _garageFlow = garageFlow;
             _nauticaFlow = nauticaFlow;
+            _conversationReset = conversationReset;
         }
 
         private async Task<List<APIBack.Model.Reserva>> ObterReservasAtivasAsync(
@@ -87,10 +90,6 @@ namespace APIBack.Automation.Services
             _logger.LogInformation("[Conversa={Conversa}] Numero central detectado", idConversa);
 
             var contexto = await _conversationRepository.ObterContextoAsync(idConversa);
-            if (_centralRouting.IsResetCommand(mensagemTexto))
-            {
-                return await ReenviarMenuCentralAsync(idConversa, reiniciado: true);
-            }
 
             var selecao = await _centralRouting.ObterSelecaoAtualAsync(idConversa, contexto);
             if (selecao.SelectionExpired)
@@ -193,6 +192,20 @@ namespace APIBack.Automation.Services
             return (true, new AssistantDecision(resposta, "none", null, false, null, null));
         }
 
+        public async Task<(bool Intercepted, AssistantDecision? Decision)> TryHandleResetAsync(
+            Guid idConversa,
+            string mensagemTexto,
+            string? phoneNumberDisplay)
+        {
+            if (!_conversationReset.IsResetCommand(mensagemTexto))
+            {
+                return (false, null);
+            }
+
+            var decision = await _conversationReset.ResetAndBuildReplyAsync(idConversa, phoneNumberDisplay);
+            return (true, decision);
+        }
+
         /// <summary>
         /// Verifica se há contexto ativo e intercepta a mensagem se necessário
         /// </summary>
@@ -203,6 +216,15 @@ namespace APIBack.Automation.Services
             DateTime? timestampMensagemUtc = null,
             string? phoneNumberDisplay = null)
         {
+            var (resetIntercepted, resetDecision) = await TryHandleResetAsync(
+                idConversa,
+                mensagemTexto,
+                phoneNumberDisplay);
+            if (resetIntercepted)
+            {
+                return (true, resetDecision);
+            }
+
             DateTime baseReferencia;
             if (timestampMensagemUtc.HasValue)
             {

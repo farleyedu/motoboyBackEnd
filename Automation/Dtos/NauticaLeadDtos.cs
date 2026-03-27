@@ -10,6 +10,8 @@ namespace APIBack.Automation.Dtos
         public string? NomeCliente { get; set; }
         public string? NomeEmpresa { get; set; }
         public string? Cnpj { get; set; }
+        public string? EtapaAtual { get; set; }
+        public string? UltimaPergunta { get; set; }
         public string Status { get; set; } = string.Empty;
         public DateTime Data { get; set; }
     }

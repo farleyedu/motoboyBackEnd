@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using APIBack.Automation.Dtos;
 using APIBack.Automation.Interfaces;
@@ -13,12 +14,43 @@ namespace APIBack.Automation.Infra
     public class SqlNauticaPainelRepository : INauticaPainelRepository
     {
         private readonly string _connectionString;
+        private static volatile bool _colunasEnsured;
+        private static readonly SemaphoreSlim ColunasLock = new(1, 1);
 
         public SqlNauticaPainelRepository(IConfiguration configuration)
         {
             _connectionString = configuration.GetConnectionString("DefaultConnection")
                 ?? configuration["ConnectionStrings:DefaultConnection"]
                 ?? throw new InvalidOperationException("Connection string 'DefaultConnection' nao encontrada.");
+        }
+
+        private async Task EnsureColunasAsync()
+        {
+            if (_colunasEnsured)
+            {
+                return;
+            }
+
+            await ColunasLock.WaitAsync();
+            try
+            {
+                if (_colunasEnsured)
+                {
+                    return;
+                }
+
+                const string sql = @"
+ALTER TABLE cliente_nautica ADD COLUMN IF NOT EXISTS etapa_atual VARCHAR(120);
+ALTER TABLE cliente_nautica ADD COLUMN IF NOT EXISTS ultima_pergunta TEXT;";
+
+                await using var connection = new NpgsqlConnection(_connectionString);
+                await connection.ExecuteAsync(sql);
+                _colunasEnsured = true;
+            }
+            finally
+            {
+                ColunasLock.Release();
+            }
         }
 
         public async Task<(IReadOnlyList<NauticaLeadListItemDto> Itens, int Total)> ListarLeadsAsync(
@@ -28,6 +60,8 @@ namespace APIBack.Automation.Infra
             int pagina,
             int tamanhoPagina)
         {
+            await EnsureColunasAsync();
+
             var paginaNormalizada = pagina < 1 ? 1 : pagina;
             var tamanhoNormalizado = tamanhoPagina < 1 ? 20 : tamanhoPagina;
             var offset = (paginaNormalizada - 1) * tamanhoNormalizado;
@@ -58,6 +92,8 @@ SELECT b.id,
        b.nome_cliente AS NomeCliente,
        b.nome_empresa AS NomeEmpresa,
        b.cnpj AS Cnpj,
+       b.etapa_atual AS EtapaAtual,
+       b.ultima_pergunta AS UltimaPergunta,
        COALESCE(b.status, '') AS Status,
        COALESCE(b.data_conclusao, b.data_atualizacao, b.data_criacao) AS Data,
        (SELECT total FROM tot) AS TotalRegistros
@@ -83,6 +119,8 @@ SELECT b.id,
                 NomeCliente = r.NomeCliente,
                 NomeEmpresa = r.NomeEmpresa,
                 Cnpj = r.Cnpj,
+                EtapaAtual = r.EtapaAtual,
+                UltimaPergunta = r.UltimaPergunta,
                 Status = r.Status,
                 Data = r.Data
             }).ToList();
@@ -94,6 +132,8 @@ SELECT b.id,
             Guid idEstabelecimento,
             string? busca)
         {
+            await EnsureColunasAsync();
+
             const string sql = @"
 SELECT COALESCE(cn.status, '') AS Status,
        COUNT(*)::int AS Total
@@ -121,6 +161,8 @@ SELECT COALESCE(cn.status, '') AS Status,
 
         public async Task<NauticaLeadDetailDto?> ObterLeadDetalheAsync(Guid idEstabelecimento, Guid idLead)
         {
+            await EnsureColunasAsync();
+
             const string sql = @"
 SELECT cn.id,
        cn.id_conversa          AS IdConversa,
@@ -129,6 +171,8 @@ SELECT cn.id,
        cn.nome_cliente         AS NomeCliente,
        cn.nome_empresa         AS NomeEmpresa,
        cn.cnpj                 AS Cnpj,
+       cn.etapa_atual          AS EtapaAtual,
+       cn.ultima_pergunta      AS UltimaPergunta,
        cn.tem_loja_fisica      AS TemLojaFisica,
        cn.consegue_minimo      AS ConsegueMinimo,
        cn.cidade_estado        AS CidadeEstado,
@@ -153,6 +197,8 @@ SELECT cn.id,
 
         public async Task<bool> AtualizarStatusLeadAsync(Guid idEstabelecimento, Guid idLead, string status)
         {
+            await EnsureColunasAsync();
+
             // Normalizar alias legado antes de persistir
             var statusFinal = NormalizarStatus(status) ?? status;
 
@@ -160,7 +206,7 @@ SELECT cn.id,
 UPDATE cliente_nautica
    SET status = @Status,
        data_conclusao = CASE
-            WHEN @Status IN ('lojista_qualificado', 'consumidor_final', 'lojista') THEN COALESCE(data_conclusao, NOW())
+            WHEN @Status IN ('lojista_qualificado', 'consumidor_final', 'lojista', 'cancelado') THEN COALESCE(data_conclusao, NOW())
             ELSE NULL
        END,
        data_atualizacao = NOW()
@@ -197,6 +243,8 @@ UPDATE cliente_nautica
             public string? NomeCliente { get; set; }
             public string? NomeEmpresa { get; set; }
             public string? Cnpj { get; set; }
+            public string? EtapaAtual { get; set; }
+            public string? UltimaPergunta { get; set; }
             public string Status { get; set; } = string.Empty;
             public DateTime Data { get; set; }
             public int TotalRegistros { get; set; }

@@ -12,5 +12,6 @@ namespace APIBack.Automation.Interfaces
         Task AtualizarAsync(NauticaLead lead);
         Task ConcluirAsync(NauticaLead lead);
         Task DesqualificarAsync(NauticaLead lead, string status);
+        Task CancelarLeadAbertoAsync(Guid idEstabelecimento, string telefoneE164);
     }
 }

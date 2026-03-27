@@ -20,6 +20,7 @@ namespace APIBack.Automation.Controllers
             "consumidor_final",
             "lojista",
             "lojista_qualificado",
+            "cancelado",
             "lojista_minimo" // alias legado — normalizado para lojista_qualificado antes de persistir
         };
 
@@ -54,7 +55,8 @@ namespace APIBack.Automation.Controllers
                 ["incompleto"] = 0,
                 ["consumidor_final"] = 0,
                 ["lojista"] = 0,
-                ["lojista_qualificado"] = 0
+                ["lojista_qualificado"] = 0,
+                ["cancelado"] = 0
             };
 
             foreach (var count in contagens)

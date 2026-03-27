@@ -132,6 +132,7 @@ builder.Services.AddScoped<ReservaValidator>();
 builder.Services.AddScoped<CentralRoutingService>();
 builder.Services.AddScoped<GarageFlowService>();
 builder.Services.AddScoped<NauticaFlowService>();
+builder.Services.AddScoped<ConversationResetService>();
 
 
 

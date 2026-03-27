@@ -11,5 +11,6 @@ namespace APIBack.Automation.Interfaces
         Task<Guid> CriarAsync(GarageLead lead);
         Task AtualizarAsync(GarageLead lead);
         Task ConcluirAsync(GarageLead lead);
+        Task CancelarLeadAbertoAsync(Guid idEstabelecimento, string telefoneE164);
     }
 }

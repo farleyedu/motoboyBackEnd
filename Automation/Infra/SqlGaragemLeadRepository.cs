@@ -308,5 +308,26 @@ UPDATE cliente_garagem
             await using var connection = new NpgsqlConnection(_connectionString);
             await connection.ExecuteAsync(sql, lead);
         }
+
+        public async Task CancelarLeadAbertoAsync(Guid idEstabelecimento, string telefoneE164)
+        {
+            await EnsureColunasAsync();
+
+            const string sql = @"
+UPDATE cliente_garagem
+   SET status = 'cancelado',
+       data_conclusao = COALESCE(data_conclusao, NOW()),
+       data_atualizacao = NOW()
+ WHERE id_estabelecimento = @IdEstabelecimento
+   AND telefone_e164 = @TelefoneE164
+   AND status = 'em_andamento';";
+
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.ExecuteAsync(sql, new
+            {
+                IdEstabelecimento = idEstabelecimento,
+                TelefoneE164 = telefoneE164
+            });
+        }
     }
 }

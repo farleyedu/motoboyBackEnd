@@ -32,6 +32,15 @@ namespace APIBack.Automation.Services
         private const string EtapaCnpj          = "cnpj";
         private const string EtapaPedidoMinimo  = "pedido_minimo";
         private const string EtapaCidadeEstado  = "cidade_estado";
+        private const string ConsumidorFinalStepOferta        = "cf_oferta";
+        private const string ConsumidorFinalStepFichaInteresse = "cf_ficha_interesse";
+        private const string ConsumidorFinalStepRetornoInicio = "cf_retorno_inicio";
+        private const string ConsumidorFinalStepConfirmado    = "cf_confirmado";
+        private const string ConsumidorFinalStepEncerrado     = "cf_encerrado";
+        private const string ConsumidorFinalAcaoDetalhes      = "detalhes";
+        private const string ConsumidorFinalAcaoComprar       = "comprar";
+        private const string ConsumidorFinalAcaoVoltar        = "voltar";
+        private const string ConsumidorFinalAcaoEncerrar      = "encerrar";
 
         private static readonly HashSet<string> EtapasValidas = new(StringComparer.Ordinal)
         {
@@ -121,7 +130,8 @@ namespace APIBack.Automation.Services
 
             if (string.Equals(contextoAtual?.Estado, EstadoConsumidorFinal, StringComparison.OrdinalIgnoreCase))
             {
-                return (true, await ProcessarConsumidorFinalAsync(idConversa, contextoAtual));
+                var leadConsumidorFinal = await _nauticaLeadRepository.ObterPorConversaAsync(idConversa);
+                return (true, await ProcessarConsumidorFinalAsync(idConversa, contextoAtual, leadConsumidorFinal, mensagemTexto));
             }
 
             if (string.Equals(contextoAtual?.Estado, EstadoDesqualificado, StringComparison.OrdinalIgnoreCase))
@@ -252,8 +262,17 @@ namespace APIBack.Automation.Services
 
                     if (!temLoja.Value)
                     {
+                        lead.Status = "consumidor_final";
+                        lead.DataConclusao ??= DateTime.UtcNow;
+                        lead.EtapaAtual = ConsumidorFinalStepOferta;
+                        lead.UltimaPergunta = ObterPerguntaPendenteConsumidorFinal(ConsumidorFinalStepOferta);
                         await _nauticaLeadRepository.DesqualificarAsync(lead, "consumidor_final");
-                        await SalvarConsumidorFinalContextoAsync(idConversa, contextoAtual, lead, viaNumeroCentral);
+                        await SalvarConsumidorFinalContextoAsync(
+                            idConversa,
+                            contextoAtual,
+                            lead,
+                            viaNumeroCentral,
+                            ConsumidorFinalStepOferta);
                         return CriarMensagemInicialAmazonPrime();
                     }
 
@@ -283,6 +302,7 @@ namespace APIBack.Automation.Services
                         var novasTentativas = tentativasCnpj + 1;
                         if (novasTentativas >= MaxTentativasCnpj)
                         {
+                            lead.EtapaAtual = EstadoDesqualificado;
                             await SalvarContextoDesqualificadoAsync(idConversa, contextoAtual, lead, viaNumeroCentral);
                             return CriarMensagemDesqualificadoCnpjInvalido();
                         }
@@ -311,6 +331,8 @@ namespace APIBack.Automation.Services
 
                     if (!consegue.Value)
                     {
+                        lead.Status = "lojista";
+                        lead.DataConclusao ??= DateTime.UtcNow;
                         await _nauticaLeadRepository.DesqualificarAsync(lead, "lojista");
                         await SalvarContextoDesqualificadoAsync(idConversa, contextoAtual, lead, viaNumeroCentral);
                         return CriarMensagemDesqualificadoPedidoMinimo();
@@ -325,6 +347,8 @@ namespace APIBack.Automation.Services
                     // Compatibilidade com lead antigo: se ja tem cidade_estado, concluir imediatamente
                     if (!string.IsNullOrWhiteSpace(lead.CidadeEstado))
                     {
+                        lead.Status = "lojista_qualificado";
+                        lead.DataConclusao ??= DateTime.UtcNow;
                         await _nauticaLeadRepository.ConcluirAsync(lead);
                         await SalvarContextoConcluidoAsync(idConversa, contextoAtual, lead, viaNumeroCentral);
                         return CriarMensagemConclusao();
@@ -337,6 +361,8 @@ namespace APIBack.Automation.Services
                     }
 
                     lead.CidadeEstado = mensagemTexto.Trim();
+                    lead.Status = "lojista_qualificado";
+                    lead.DataConclusao ??= DateTime.UtcNow;
                     await _nauticaLeadRepository.ConcluirAsync(lead);
                     await SalvarContextoConcluidoAsync(idConversa, contextoAtual, lead, viaNumeroCentral);
                     return CriarMensagemConclusao();
@@ -350,27 +376,156 @@ namespace APIBack.Automation.Services
 
         private async Task<AssistantDecision> ProcessarConsumidorFinalAsync(
             Guid idConversa,
-            ConversationContext? contextoAtual)
+            ConversationContext? contextoAtual,
+            NauticaLead? lead,
+            string mensagemTexto)
         {
             var step = ObterConsumidorFinalStepDoContexto(contextoAtual);
-            if (step == 0)
+            if (lead == null)
             {
-                var dados = contextoAtual?.DadosColetados != null
-                    ? new Dictionary<string, object>(contextoAtual.DadosColetados)
-                    : new Dictionary<string, object>();
-                dados[ChaveConsumidorFinalStep] = 1;
-
-                await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
-                {
-                    Estado = EstadoConsumidorFinal,
-                    DadosColetados = dados,
-                    ExpiracaoEstado = null
-                });
-
-                return CriarFichaTecnicaAmazonPrime();
+                return CriarMensagemTerminalConsumidorFinal();
             }
 
-            return CriarMensagemTerminalConsumidorFinal();
+            return step switch
+            {
+                ConsumidorFinalStepOferta => await ProcessarConsumidorFinalOfertaAsync(idConversa, contextoAtual, lead, mensagemTexto),
+                ConsumidorFinalStepFichaInteresse => await ProcessarConsumidorFinalFichaInteresseAsync(idConversa, contextoAtual, lead, mensagemTexto),
+                ConsumidorFinalStepRetornoInicio => await ProcessarConsumidorFinalRetornoAsync(idConversa, contextoAtual, lead, mensagemTexto),
+                ConsumidorFinalStepConfirmado => CriarMensagemTerminalConsumidorFinal(),
+                ConsumidorFinalStepEncerrado => CriarMensagemConsumidorFinalEncerrado(),
+                _ => await ReiniciarConsumidorFinalAsync(idConversa, contextoAtual, lead)
+            };
+        }
+
+        private async Task<AssistantDecision> ProcessarConsumidorFinalOfertaAsync(
+            Guid idConversa,
+            ConversationContext? contextoAtual,
+            NauticaLead lead,
+            string mensagemTexto)
+        {
+            var acao = ParseConsumidorFinalOferta(mensagemTexto);
+            if (acao == null)
+            {
+                return CriarMensagemInicialAmazonPrime();
+            }
+
+            if (string.Equals(acao, ConsumidorFinalAcaoComprar, StringComparison.Ordinal))
+            {
+                lead.Status = "consumidor_final";
+                lead.EtapaAtual = ConsumidorFinalStepConfirmado;
+                lead.DataConclusao ??= DateTime.UtcNow;
+                await SalvarConsumidorFinalContextoAsync(
+                    idConversa,
+                    contextoAtual,
+                    lead,
+                    lead.ViaNumeroCentral,
+                    ConsumidorFinalStepConfirmado,
+                    sobrescreverUltimaPergunta: false);
+                return CriarMensagemTerminalConsumidorFinal();
+            }
+
+            lead.Status = "consumidor_final";
+            await SalvarConsumidorFinalContextoAsync(
+                idConversa,
+                contextoAtual,
+                lead,
+                lead.ViaNumeroCentral,
+                ConsumidorFinalStepFichaInteresse);
+            return CriarFichaTecnicaAmazonPrime();
+        }
+
+        private async Task<AssistantDecision> ProcessarConsumidorFinalFichaInteresseAsync(
+            Guid idConversa,
+            ConversationContext? contextoAtual,
+            NauticaLead lead,
+            string mensagemTexto)
+        {
+            var interesse = ParseSimNao(mensagemTexto);
+            if (interesse == null)
+            {
+                await SalvarConsumidorFinalContextoAsync(
+                    idConversa,
+                    contextoAtual,
+                    lead,
+                    lead.ViaNumeroCentral,
+                    ConsumidorFinalStepFichaInteresse);
+                return CriarPerguntaInteresseConsumidorFinal(incluirErro: true);
+            }
+
+            if (interesse.Value)
+            {
+                lead.Status = "consumidor_final";
+                lead.EtapaAtual = ConsumidorFinalStepConfirmado;
+                lead.DataConclusao ??= DateTime.UtcNow;
+                await SalvarConsumidorFinalContextoAsync(
+                    idConversa,
+                    contextoAtual,
+                    lead,
+                    lead.ViaNumeroCentral,
+                    ConsumidorFinalStepConfirmado,
+                    sobrescreverUltimaPergunta: false);
+                return CriarMensagemTerminalConsumidorFinal();
+            }
+
+            lead.Status = "consumidor_final";
+            await SalvarConsumidorFinalContextoAsync(
+                idConversa,
+                contextoAtual,
+                lead,
+                lead.ViaNumeroCentral,
+                ConsumidorFinalStepRetornoInicio);
+            return CriarMensagemRetornoConsumidorFinal();
+        }
+
+        private async Task<AssistantDecision> ProcessarConsumidorFinalRetornoAsync(
+            Guid idConversa,
+            ConversationContext? contextoAtual,
+            NauticaLead lead,
+            string mensagemTexto)
+        {
+            var acao = ParseConsumidorFinalRetorno(mensagemTexto);
+            if (acao == null)
+            {
+                await SalvarConsumidorFinalContextoAsync(
+                    idConversa,
+                    contextoAtual,
+                    lead,
+                    lead.ViaNumeroCentral,
+                    ConsumidorFinalStepRetornoInicio);
+                return CriarMensagemRetornoConsumidorFinal(incluirErro: true);
+            }
+
+            if (string.Equals(acao, ConsumidorFinalAcaoVoltar, StringComparison.Ordinal))
+            {
+                return await ReiniciarConsumidorFinalAsync(idConversa, contextoAtual, lead);
+            }
+
+            lead.Status = "consumidor_final";
+            lead.EtapaAtual = ConsumidorFinalStepEncerrado;
+            lead.DataConclusao ??= DateTime.UtcNow;
+            await SalvarConsumidorFinalContextoAsync(
+                idConversa,
+                contextoAtual,
+                lead,
+                lead.ViaNumeroCentral,
+                ConsumidorFinalStepEncerrado,
+                sobrescreverUltimaPergunta: false);
+            return CriarMensagemConsumidorFinalEncerrado();
+        }
+
+        private async Task<AssistantDecision> ReiniciarConsumidorFinalAsync(
+            Guid idConversa,
+            ConversationContext? contextoAtual,
+            NauticaLead lead)
+        {
+            lead.Status = "consumidor_final";
+            await SalvarConsumidorFinalContextoAsync(
+                idConversa,
+                contextoAtual,
+                lead,
+                lead.ViaNumeroCentral,
+                ConsumidorFinalStepOferta);
+            return CriarMensagemInicialAmazonPrime();
         }
 
         private async Task<NauticaLead> ObterOuCriarLeadAsync(
@@ -431,6 +586,11 @@ namespace APIBack.Automation.Services
             bool viaNumeroCentral,
             int tentativasCnpj)
         {
+            await AtualizarLeadEtapaPerguntaAsync(
+                lead,
+                etapa,
+                ObterPerguntaPendenteQuestionario(etapa));
+
             await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
             {
                 Estado = EstadoQuestionario,
@@ -445,6 +605,10 @@ namespace APIBack.Automation.Services
             NauticaLead lead,
             bool viaNumeroCentral)
         {
+            lead.Status = "lojista_qualificado";
+            lead.DataConclusao ??= DateTime.UtcNow;
+            await AtualizarLeadEtapaPerguntaAsync(lead, EstadoConcluido, sobrescreverUltimaPergunta: false);
+
             await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
             {
                 Estado = EstadoConcluido,
@@ -459,6 +623,8 @@ namespace APIBack.Automation.Services
             NauticaLead lead,
             bool viaNumeroCentral)
         {
+            await AtualizarLeadEtapaPerguntaAsync(lead, EstadoDesqualificado, sobrescreverUltimaPergunta: false);
+
             await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
             {
                 Estado = EstadoDesqualificado,
@@ -471,10 +637,18 @@ namespace APIBack.Automation.Services
             Guid idConversa,
             ConversationContext? contextoAtual,
             NauticaLead lead,
-            bool viaNumeroCentral)
+            bool viaNumeroCentral,
+            string step,
+            bool sobrescreverUltimaPergunta = true)
         {
             var dados = BuildDadosContexto(contextoAtual, lead, string.Empty, viaNumeroCentral, 0);
-            dados[ChaveConsumidorFinalStep] = 0;
+            dados[ChaveConsumidorFinalStep] = step;
+
+            await AtualizarLeadEtapaPerguntaAsync(
+                lead,
+                step,
+                ObterPerguntaPendenteConsumidorFinal(step),
+                sobrescreverUltimaPergunta);
 
             await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
             {
@@ -544,20 +718,63 @@ namespace APIBack.Automation.Services
             return 0;
         }
 
-        private static int ObterConsumidorFinalStepDoContexto(ConversationContext? contexto)
+        private async Task AtualizarLeadEtapaPerguntaAsync(
+            NauticaLead lead,
+            string etapaAtual,
+            string? ultimaPergunta = null,
+            bool sobrescreverUltimaPergunta = true)
+        {
+            lead.EtapaAtual = etapaAtual;
+            if (sobrescreverUltimaPergunta && !string.IsNullOrWhiteSpace(ultimaPergunta))
+            {
+                lead.UltimaPergunta = ultimaPergunta;
+            }
+
+            await _nauticaLeadRepository.AtualizarAsync(lead);
+        }
+
+        private static string? ObterPerguntaPendenteQuestionario(string etapa)
+        {
+            return etapa switch
+            {
+                EtapaNome => "Qual o seu nome?",
+                EtapaLojaFisica => "Voce possui endereco de loja fisica?",
+                EtapaNomeEmpresa => "Qual o nome da sua empresa?",
+                EtapaCnpj => "Qual o CNPJ da sua empresa?",
+                EtapaPedidoMinimo => "Consegue realizar pedidos minimos de 3 embarcacoes? (Investimento medio de R$ 39.000)",
+                EtapaCidadeEstado => "Em qual cidade e estado fica sua loja?",
+                _ => null
+            };
+        }
+
+        private static string? ObterPerguntaPendenteConsumidorFinal(string step)
+        {
+            return step switch
+            {
+                ConsumidorFinalStepOferta => "Como voce quer continuar?",
+                ConsumidorFinalStepFichaInteresse => "Voce tem interesse nesse barco?",
+                ConsumidorFinalStepRetornoInicio => "Deseja voltar ao inicio ou encerrar?",
+                _ => null
+            };
+        }
+
+        private static string ObterConsumidorFinalStepDoContexto(ConversationContext? contexto)
         {
             if (contexto?.DadosColetados == null)
             {
-                return 0;
+                return ConsumidorFinalStepOferta;
             }
 
             if (contexto.DadosColetados.TryGetValue(ChaveConsumidorFinalStep, out var val))
             {
-                if (val is int i) return i;
-                if (int.TryParse(val?.ToString(), out var parsed)) return parsed;
+                var step = val?.ToString();
+                if (!string.IsNullOrWhiteSpace(step))
+                {
+                    return step;
+                }
             }
 
-            return 0;
+            return ConsumidorFinalStepOferta;
         }
 
         internal static string DeterminarEtapaAtual(NauticaLead lead)
@@ -625,21 +842,46 @@ namespace APIBack.Automation.Services
         private static AssistantDecision CriarMensagemInicialAmazonPrime()
         {
             return new AssistantDecision(
-                "Para consumidor final, hoje trabalhamos com o *Amazon Prime*, um barco lancamento pensado para quem busca durabilidade, praticidade e baixo custo de manutencao.\n\nEsse modelo oferece:\n✅ Casco 100% soldado\n✅ Zero manutencao\n✅ Piso nautico instalado\n✅ Preparado para motorizacao de ate 50 HP\n\n💰 Valor: R$ 39.990\n\nSe quiser, posso te passar mais informacoes sobre esse barco.",
-                "none", null, false, null);
+                "Para consumidor final, hoje trabalhamos com o *Amazon Prime*, um barco lancamento pensado para quem busca durabilidade, praticidade e baixo custo de manutencao.\n\nEsse modelo oferece:\n✅ Casco 100% soldado\n✅ Zero manutencao\n✅ Piso nautico instalado\n✅ Preparado para motorizacao de ate 50 HP\n\n💰 Valor: R$ 39.990\n\nComo voce quer continuar?",
+                "none", null, false, null, null, BuildConsumidorFinalOfertaButtons());
         }
 
         private static AssistantDecision CriarFichaTecnicaAmazonPrime()
         {
             return new AssistantDecision(
-                "📋 *Especificacoes do modelo:*\n\n• Pintura poliester automotiva premium\n• Porta documento na proa\n• Tubulacao 1\" para conducao de fios para porta-documento e motor eletrico\n• 2 caixas secas na proa, caixa de varas e porta-baterias\n• Caixa termica\n• Tomada de engate rapido na proa para motor eletrico\n• 2 bombas de porao\n• Base para motor eletrico de pedal\n• Viveiro com aerador\n• 3 plataformas para pesca esportiva\n• Viveiro com separador de isca viva\n• Porta-tanque com tampa superior\n• Porta-baterias de popa para motor com partida eletrica\n• Bases em inox para cadeira giratoria\n• Piso nautico\n\n📐 *Dados tecnicos:*\n\n• Comprimento: 6M\n• Boca moldada: 1,80 cm\n• Peso maximo de carga: 0,750 t\n• Pontal: 0,65 cm\n• Calado: 0,15 cm\n• Casco: 3,00 mm\n• Peso aproximado: 280 kg\n• Potencia maxima: 50 HP",
-                "none", null, false, null);
+                "📋 *Especificacoes do modelo:*\n\n• Pintura poliester automotiva premium\n• Porta documento na proa\n• Tubulacao 1\" para conducao de fios para porta-documento e motor eletrico\n• 2 caixas secas na proa, caixa de varas e porta-baterias\n• Caixa termica\n• Tomada de engate rapido na proa para motor eletrico\n• 2 bombas de porao\n• Base para motor eletrico de pedal\n• Viveiro com aerador\n• 3 plataformas para pesca esportiva\n• Viveiro com separador de isca viva\n• Porta-tanque com tampa superior\n• Porta-baterias de popa para motor com partida eletrica\n• Bases em inox para cadeira giratoria\n• Piso nautico\n\n📐 *Dados tecnicos:*\n\n• Comprimento: 6M\n• Boca moldada: 1,80 cm\n• Peso maximo de carga: 0,750 t\n• Pontal: 0,65 cm\n• Calado: 0,15 cm\n• Casco: 3,00 mm\n• Peso aproximado: 280 kg\n• Potencia maxima: 50 HP\n\nVoce tem interesse nesse barco?",
+                "none", null, false, null, null, BuildSimNaoButtons());
         }
 
         private static AssistantDecision CriarMensagemTerminalConsumidorFinal()
         {
             return new AssistantDecision(
-                "Seu contato ja foi registrado. Obrigado pelo interesse na Amazon Nautica! 🙏",
+                "Perfeito! Seu interesse foi registrado.\n\nLogo voce sera atendido pela nossa equipe.",
+                "none", null, false, null);
+        }
+
+        private static AssistantDecision CriarPerguntaInteresseConsumidorFinal(bool incluirErro)
+        {
+            return new AssistantDecision(
+                incluirErro
+                    ? "Nao consegui identificar sua resposta.\n\nVoce tem interesse nesse barco?"
+                    : "Voce tem interesse nesse barco?",
+                "none", null, false, null, null, BuildSimNaoButtons());
+        }
+
+        private static AssistantDecision CriarMensagemRetornoConsumidorFinal(bool incluirErro = false)
+        {
+            return new AssistantDecision(
+                incluirErro
+                    ? "Nao consegui identificar sua resposta.\n\nDeseja voltar ao inicio ou encerrar?"
+                    : "Sem problemas.\n\nDeseja voltar ao inicio ou encerrar?",
+                "none", null, false, null, null, BuildConsumidorFinalRetornoButtons());
+        }
+
+        private static AssistantDecision CriarMensagemConsumidorFinalEncerrado()
+        {
+            return new AssistantDecision(
+                "Tudo bem.\n\nSe quiser retomar depois, e so me chamar por aqui.",
                 "none", null, false, null);
         }
 
@@ -689,6 +931,24 @@ namespace APIBack.Automation.Services
             };
         }
 
+        private static IReadOnlyList<WhatsAppReplyButtonOption> BuildConsumidorFinalOfertaButtons()
+        {
+            return new[]
+            {
+                new WhatsAppReplyButtonOption("nautica_cf_detalhes", "Mais informacoes"),
+                new WhatsAppReplyButtonOption("nautica_cf_comprar", "Quero comprar")
+            };
+        }
+
+        private static IReadOnlyList<WhatsAppReplyButtonOption> BuildConsumidorFinalRetornoButtons()
+        {
+            return new[]
+            {
+                new WhatsAppReplyButtonOption("nautica_cf_voltar", "Voltar ao inicio"),
+                new WhatsAppReplyButtonOption("nautica_cf_encerrar", "Encerrar")
+            };
+        }
+
         // ─── Parse helpers ───────────────────────────────────────────────────────
 
         private static bool? ParseSimNao(string? texto)
@@ -698,6 +958,28 @@ namespace APIBack.Automation.Services
             {
                 "1" or "sim" or "s" or "nautica_sim" => true,
                 "2" or "nao" or "n" or "nautica_nao" => false,
+                _ => null
+            };
+        }
+
+        private static string? ParseConsumidorFinalOferta(string? texto)
+        {
+            var n = NormalizeText(texto);
+            return n switch
+            {
+                "1" or "mais informacoes" or "maisinformacoes" or "mais detalhes" or "detalhes" or "informacoes" or "informacao" or "quero mais informacoes" or "nautica_cf_detalhes" => ConsumidorFinalAcaoDetalhes,
+                "2" or "quero comprar" or "comprar" or "tenho interesse" or "quero sim" or "nautica_cf_comprar" => ConsumidorFinalAcaoComprar,
+                _ => null
+            };
+        }
+
+        private static string? ParseConsumidorFinalRetorno(string? texto)
+        {
+            var n = NormalizeText(texto);
+            return n switch
+            {
+                "1" or "voltar" or "voltar ao inicio" or "inicio" or "reiniciar" or "nautica_cf_voltar" => ConsumidorFinalAcaoVoltar,
+                "2" or "encerrar" or "encerrar atendimento" or "finalizar" or "nautica_cf_encerrar" => ConsumidorFinalAcaoEncerrar,
                 _ => null
             };
         }

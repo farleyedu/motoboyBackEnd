@@ -401,6 +401,17 @@ namespace APIBack.Automation.Infra
             return Task.CompletedTask;
         }
 
+        public Task LimparContextoCompletoAsync(Guid idConversa)
+        {
+            if (_conversas.TryGetValue(idConversa, out var conversa))
+            {
+                conversa.ContextoEstadoJson = null;
+                conversa.AtualizadoEm = DateTime.UtcNow;
+            }
+
+            return Task.CompletedTask;
+        }
+
         private Conversation? ResolveExact(Guid id)
         {
             if (!_conversas.TryGetValue(id, out var conversa))

@@ -34,6 +34,7 @@ namespace APIBack.Automation.Interfaces
         Task SalvarContextoAsync(Guid idConversa, ConversationContext contexto);
         Task<ConversationContext?> ObterContextoAsync(Guid idConversa);
         Task LimparContextoAsync(Guid idConversa);
+        Task LimparContextoCompletoAsync(Guid idConversa);
     }
 }
 

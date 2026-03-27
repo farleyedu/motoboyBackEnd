@@ -51,6 +51,7 @@ namespace APIBack.Automation.Services
         private readonly IQueueBus _queueBus;
         private readonly WhatsAppSender _whatsAppSender;
         private readonly AgenteService _agenteService;
+        private readonly ConversationResetService _conversationReset;
         private readonly IConfiguration _configuration;
         private readonly ILogger<ConversationManagementService> _logger;
 
@@ -62,6 +63,7 @@ namespace APIBack.Automation.Services
             IQueueBus queueBus,
             WhatsAppSender whatsAppSender,
             AgenteService agenteService,
+            ConversationResetService conversationReset,
             IConfiguration configuration,
             ILogger<ConversationManagementService> logger)
         {
@@ -72,6 +74,7 @@ namespace APIBack.Automation.Services
             _queueBus = queueBus;
             _whatsAppSender = whatsAppSender;
             _agenteService = agenteService;
+            _conversationReset = conversationReset;
             _configuration = configuration;
             _logger = logger;
         }
@@ -281,6 +284,11 @@ namespace APIBack.Automation.Services
                 "api",
                 actorUserId,
                 agenteId);
+
+            if (string.Equals(tipoFechamento, "manual", StringComparison.OrdinalIgnoreCase))
+            {
+                await _conversationReset.ResetAfterManualCloseAsync(requestedConversationId);
+            }
 
             return await BuildResponseAsync(requestedConversationId, idEstabelecimento);
         }
