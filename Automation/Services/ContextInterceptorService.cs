@@ -31,6 +31,7 @@ namespace APIBack.Automation.Services
         private readonly ILogger<ContextInterceptorService> _logger;
         private readonly ToolExecutorService _toolExecutor;
         private readonly CentralRoutingService _centralRouting;
+        private readonly OficinaFlowService _oficinaFlow;
         private readonly GarageFlowService _garageFlow;
         private readonly NauticaFlowService _nauticaFlow;
         private readonly ConversationResetService _conversationReset;
@@ -42,6 +43,7 @@ namespace APIBack.Automation.Services
             ILogger<ContextInterceptorService> logger,
             ToolExecutorService toolExecutor,
             CentralRoutingService centralRouting,
+            OficinaFlowService oficinaFlow,
             GarageFlowService garageFlow,
             NauticaFlowService nauticaFlow,
             ConversationResetService conversationReset)
@@ -52,6 +54,7 @@ namespace APIBack.Automation.Services
             _logger = logger;
             _toolExecutor = toolExecutor;
             _centralRouting = centralRouting;
+            _oficinaFlow = oficinaFlow;
             _garageFlow = garageFlow;
             _nauticaFlow = nauticaFlow;
             _conversationReset = conversationReset;
@@ -250,6 +253,15 @@ namespace APIBack.Automation.Services
             if (centralIntercepted)
             {
                 return (true, centralDecision);
+            }
+
+            var (oficinaIntercepted, oficinaDecision) = await _oficinaFlow.TryHandleAsync(
+                idConversa,
+                mensagemTexto,
+                phoneNumberDisplay);
+            if (oficinaIntercepted)
+            {
+                return (true, oficinaDecision);
             }
 
             var (garageIntercepted, garageDecision) = await _garageFlow.TryHandleAsync(

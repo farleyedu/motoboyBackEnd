@@ -84,6 +84,31 @@ namespace APIBack.Automation.Infra
             await using var cx = new NpgsqlConnection(_connectionString);
             return await cx.QueryFirstOrDefaultAsync<Cliente>(sql, new { IdCliente = idCliente });
         }
+        public async Task<bool> AtualizarNomeAsync(Guid idCliente, Guid idEstabelecimento, string nome)
+        {
+            if (idCliente == Guid.Empty)
+                throw new ArgumentException("idCliente obrigatorio", nameof(idCliente));
+            if (idEstabelecimento == Guid.Empty)
+                throw new ArgumentException("idEstabelecimento obrigatorio", nameof(idEstabelecimento));
+            if (string.IsNullOrWhiteSpace(nome))
+                throw new ArgumentException("nome obrigatorio", nameof(nome));
+
+            const string sql = @"UPDATE clientes
+                                    SET nome = @Nome,
+                                        data_atualizacao = NOW()
+                                  WHERE id = @IdCliente
+                                    AND id_estabelecimento = @IdEstabelecimento;";
+
+            await using var cx = new NpgsqlConnection(_connectionString);
+            var rows = await cx.ExecuteAsync(sql, new
+            {
+                IdCliente = idCliente,
+                IdEstabelecimento = idEstabelecimento,
+                Nome = nome.Trim()
+            });
+
+            return rows > 0;
+        }
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================

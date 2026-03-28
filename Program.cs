@@ -130,6 +130,7 @@ builder.Services.AddScoped<ToolExecutorService>();
 builder.Services.AddScoped<AtualizarReservaHandler>();
 builder.Services.AddScoped<ReservaValidator>();
 builder.Services.AddScoped<CentralRoutingService>();
+builder.Services.AddScoped<OficinaFlowService>();
 builder.Services.AddScoped<GarageFlowService>();
 builder.Services.AddScoped<NauticaFlowService>();
 builder.Services.AddScoped<ConversationResetService>();

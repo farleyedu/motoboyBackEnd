@@ -34,8 +34,8 @@ namespace APIBack.Automation.Infra
 
         public async Task<Guid> CriarAsync(Guid idEstabelecimento, string contexto)
         {
-            const string sql = @"INSERT INTO ia_regras (id_estabelecimento, tipo_prompt, nome_modulo, contexto, ativo, data_criacao, data_atualizacao)
-                                 VALUES (@IdEstabelecimento, 'ESTABELECIMENTO', NULL, @Contexto, TRUE, NOW(), NOW())
+            const string sql = @"INSERT INTO ia_regras (id_estabelecimento, contexto, ativo, data_criacao, data_atualizacao, modulo)
+                                 VALUES (@IdEstabelecimento, @Contexto, TRUE, NOW(), NOW(), 'ESTABELECIMENTO'::modulo_enum)
                                  RETURNING id;";
             await using var cx = new NpgsqlConnection(_connectionString);
             var id = await cx.ExecuteScalarAsync<Guid>(sql, new { IdEstabelecimento = idEstabelecimento, Contexto = contexto });

@@ -36,6 +36,7 @@ namespace APIBack.Security
                 ["garagem"] = new[] { "gerente_estabelecimento", "vendedor", "atendente", "funcionario" },
                 ["nautica"] = new[] { "gerente_estabelecimento", "vendedor", "atendente", "funcionario" },
                 ["hotel"] = new[] { "gerente_estabelecimento", "atendente", "funcionario" },
+                ["oficina"] = new[] { "gerente_estabelecimento", "atendente", "funcionario" },
                 ["restaurante"] = new[] { "gerente_estabelecimento", "atendente", "motoboy", "funcionario" }
             };
 

@@ -9,5 +9,6 @@ namespace APIBack.Automation.Interfaces
         Task<Guid> GarantirClienteAsync(string telefoneE164, Guid idEstabelecimento);
         Task<string?> ObterTelefoneClienteAsync(Guid idCliente, Guid idEstabelecimento);
         Task<Cliente?> ObterPorIdAsync(Guid idCliente);
+        Task<bool> AtualizarNomeAsync(Guid idCliente, Guid idEstabelecimento, string nome);
     }
 }
