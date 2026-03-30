@@ -115,6 +115,7 @@ builder.Services.AddScoped<IIARegraRepository, SqlIARegraRepository>();
 builder.Services.AddScoped<IIARespostaRepository, SqlIARespostaRepository>();
 builder.Services.AddScoped<IEstabelecimentoRepository, SqlEstabelecimentoRepository>();
 builder.Services.AddScoped<IClienteRepository, SqlClienteRepository>();
+builder.Services.AddScoped<IOficinaAtendimentoRepository, SqlOficinaAtendimentoRepository>();
 builder.Services.AddScoped<IGaragemLeadRepository, SqlGaragemLeadRepository>();
 builder.Services.AddScoped<IGaragemPainelRepository, SqlGaragemPainelRepository>();
 builder.Services.AddScoped<IGaragemVeiculoRepository, SqlGaragemVeiculoRepository>();

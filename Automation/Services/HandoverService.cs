@@ -54,6 +54,35 @@ namespace APIBack.Automation.Services
                 await _repositorio.DefinirModoAsync(idConversa, ModoConversa.Humano, agente?.Id);
             }
 
+            await EnviarAlertaTelegramAsync(idConversa, agente, reservaConfirmada, detalhes, telegramChatIdOverride);
+        }
+
+        public async Task SolicitarAtendimentoHumanoAsync(Guid idConversa, HandoverContextDto? detalhes, HandoverAgentDto? agente = null)
+        {
+            long? chatId = agente?.TelegramChatId;
+            if (!chatId.HasValue && agente?.Id > 0)
+            {
+                try
+                {
+                    chatId = await _agentes.ObterTelegramChatIdAsync(agente.Id);
+                }
+                catch
+                {
+                }
+            }
+
+            await _repositorio.AtualizarStatusAtendimentoAsync(
+                idConversa,
+                "aguardando_interno",
+                agente?.Id,
+                agente?.Nome);
+
+            await EnviarAlertaTelegramAsync(idConversa, agente, reservaConfirmada: false, detalhes, chatId);
+        }
+
+        private async Task EnviarAlertaTelegramAsync(Guid idConversa, HandoverAgentDto? agente, bool reservaConfirmada, HandoverContextDto? detalhes, long? telegramChatIdOverride)
+        {
+
             var saudacao = !string.IsNullOrWhiteSpace(agente?.Nome)
                 ? $"Olá, {agente.Nome}!"
                 : "Olá, agente!";

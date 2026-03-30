@@ -16,6 +16,7 @@ namespace APIBack.Automation.Services
         private readonly IMessageService _mensagemService;
         private readonly IQueueBus _fila;
         private readonly WhatsAppSender _whatsAppSender;
+        private readonly HandoverService _handoverService;
         private readonly ILogger<IAResponseHandler> _logger;
 
         public IAResponseHandler(
@@ -23,12 +24,14 @@ namespace APIBack.Automation.Services
             IMessageService mensagemService,
             IQueueBus fila,
             WhatsAppSender whatsAppSender,
+            HandoverService handoverService,
             ILogger<IAResponseHandler> logger)
         {
             _conversationRepository = conversationRepository;
             _mensagemService = mensagemService;
             _fila = fila;
             _whatsAppSender = whatsAppSender;
+            _handoverService = handoverService;
             _logger = logger;
         }
 
@@ -101,6 +104,8 @@ namespace APIBack.Automation.Services
                 phoneNumberId,
                 decision.Reply,
                 decision.ReplyButtons);
+
+            await ExecutarAcoesPosEnvioAsync(idConversa, decision, processamento);
 
             _logger.LogInformation(
                 "[Conversa={Conversa}] Resposta da IA processada com sucesso",
@@ -201,6 +206,17 @@ namespace APIBack.Automation.Services
             }
 
             return texto;
+        }
+
+        private async Task ExecutarAcoesPosEnvioAsync(Guid idConversa, AssistantDecision decision, ConversationProcessingResult processamento)
+        {
+            if (!string.Equals(decision.HandoverAction, "escalar_para_humano", StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            var detalhes = decision.Detalhes ?? processamento.HandoverDetalhes;
+            await _handoverService.SolicitarAtendimentoHumanoAsync(idConversa, detalhes);
         }
     }
 }

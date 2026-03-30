@@ -190,11 +190,11 @@ PARÂMETROS IMPORTANTES:
         {
             if (reservaConfirmada.HasValue)
             {
-                var objComConfirmacao = new { reply, reserva_confirmada = reservaConfirmada.Value };
+                var objComConfirmacao = new { acao = "responder", reply, reserva_confirmada = reservaConfirmada.Value };
                 return JsonSerializer.Serialize(objComConfirmacao, JsonOptions);
             }
 
-            var obj = new { reply };
+            var obj = new { acao = "responder", reply };
             return JsonSerializer.Serialize(obj, JsonOptions);
         }
 
@@ -1042,16 +1042,8 @@ PARÂMETROS IMPORTANTES:
                 return BuildJsonReply("Claro! Antes de chamar o time, pode me contar rapidinho o motivo do atendimento? 😊");
             }
 
-            var contexto = new HandoverContextDto
-            {
-                Historico = new[] { $"Resumo: {args.ResumoConversa}", $"Motivo: {args.Motivo}" }
-            };
-
-            await _conversationRepository.AtualizarEstadoAsync(args.IdConversa, EstadoConversa.EmAtendimento);
-            await _handoverService.ProcessarMensagensTelegramAsync(args.IdConversa, null, false, contexto);
-
             _logger.LogInformation(
-                "[Conversa={Conversa}] Conversa escalada para humano. Motivo: {Motivo}",
+                "[Conversa={Conversa}] Escalonamento para humano solicitado. Motivo: {Motivo}",
                 args.IdConversa,
                 args.Motivo);
 

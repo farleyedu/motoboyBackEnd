@@ -443,8 +443,17 @@ namespace APIBack.Automation.Services
                         var escalarArgsJson = JsonSerializer.Serialize(escalarArgs, JsonOptions);
                         var escalarResultado = await _toolExecutor.ExecuteToolAsync("escalar_para_humano", escalarArgsJson);
                         var (reply2, _) = ExtrairRespostaDaFerramenta(escalarResultado);
+                        var detalhes = new HandoverContextDto
+                        {
+                            Motivo = escalacao.Motivo,
+                            Historico = new[]
+                            {
+                                $"Resumo: {escalacao.ResumoConversa}",
+                                $"Motivo: {escalacao.Motivo}"
+                            }
+                        };
 
-                        return new AssistantDecision(reply2, "escalar_para_humano", null, false, null, iaAction.Media);
+                        return new AssistantDecision(reply2, "escalar_para_humano", null, false, detalhes, iaAction.Media);
                     }
 
                 default:

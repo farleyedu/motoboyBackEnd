@@ -225,6 +225,13 @@ namespace APIBack.Automation.Services
                     promptMontado = _promptAssembler.Assemble(prompts);
                     _cache.Set(promptsCacheKey, promptMontado, PromptsCacheOptions);
                 }
+
+                if (string.Equals(tipoEstabelecimento, "oficina", StringComparison.OrdinalIgnoreCase))
+                {
+                    var nomeEstabelecimento = await _estabelecimentoRepo.ObterNomeFantasiaAsync(idEstabelecimento.Value);
+                    return BuildOficinaPrompt(nomeEstabelecimento, promptMontado);
+                }
+
                 return promptMontado;
             }
             catch (Exception ex)
@@ -232,6 +239,35 @@ namespace APIBack.Automation.Services
                 _logger.LogWarning(ex, "Falha ao carregar contexto para conversa {Conversa}", idConversa);
                 return null;
             }
+        }
+
+        private static string BuildOficinaPrompt(string? nomeEstabelecimento, string? promptMontado)
+        {
+            var nome = string.IsNullOrWhiteSpace(nomeEstabelecimento) ? "Citrocar" : nomeEstabelecimento.Trim();
+            var basePrompt =
+                $"Voce representa a equipe da {nome}.\n\n" +
+                "Objetivo:\n" +
+                "- atender em portugues do Brasil\n" +
+                "- responder de forma curta, cordial e objetiva\n" +
+                "- priorizar FAQ simples da oficina\n\n" +
+                "Formato:\n" +
+                "- prefira responder sempre em JSON valido no formato {\"acao\":\"responder\",\"reply\":\"...\"}\n\n" +
+                "Regras:\n" +
+                "- se o nome do cliente ainda nao estiver conhecido, cumprimente e peca o nome antes de seguir\n" +
+                "- fale em nome da equipe, sem se apresentar como assistente virtual\n" +
+                "- nao faca diagnostico tecnico\n" +
+                "- nao gere orcamento\n" +
+                "- nao confirme preco, prazo ou agendamento automaticamente\n" +
+                "- responda FAQ simples sobre servicos, contato, horario, endereco e como funciona o agendamento\n" +
+                "- quando o assunto exigir equipe humana, avise de forma curta que a equipe vai continuar o atendimento por aqui\n" +
+                "- nao faca questionario tecnico nem peca placa, quilometragem, urgencia, guincho ou dados parecidos por padrao";
+
+            if (string.IsNullOrWhiteSpace(promptMontado))
+            {
+                return basePrompt;
+            }
+
+            return $"{basePrompt}\n\nInformacoes especificas do estabelecimento:\n{promptMontado}";
         }
 
         private async Task<IReadOnlyCollection<string>> DeterminarModulosAtivosAsync(Guid idEstabelecimento)
