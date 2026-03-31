@@ -11,9 +11,9 @@ namespace APIBack.DTOs.Common
         [JsonPropertyName("error")]
         public string Error { get; set; } = string.Empty;
 
-        [JsonPropertyName("errors")]
+        [JsonPropertyName("fieldErrors")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-        public Dictionary<string, List<string>>? Errors { get; set; }
+        public Dictionary<string, List<string>>? FieldErrors { get; set; }
 
         [JsonPropertyName("traceId")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]

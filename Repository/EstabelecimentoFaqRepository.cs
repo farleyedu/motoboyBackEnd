@@ -11,77 +11,75 @@ using Npgsql;
 
 namespace APIBack.Repository
 {
-    public class EstabelecimentoServicoRepository : IEstabelecimentoServicoRepository
+    public class EstabelecimentoFaqRepository : IEstabelecimentoFaqRepository
     {
         private readonly string _connectionString;
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
-        public EstabelecimentoServicoRepository(IConfiguration configuration)
+        public EstabelecimentoFaqRepository(IConfiguration configuration)
         {
             _connectionString = configuration.GetConnectionString("DefaultConnection")
                 ?? throw new InvalidOperationException("Connection string 'DefaultConnection' nao encontrada.");
         }
 
-        public async Task<(IReadOnlyCollection<EstabelecimentoServico> Itens, int Total)> ListarAsync(
+        public async Task<(IReadOnlyCollection<EstabelecimentoFaq> Itens, int Total)> ListarAsync(
             Guid idEstabelecimento,
             string? busca,
             bool? ativo,
-            bool? agendavel,
-            string? tipo,
+            string? categoria,
+            string? acao,
             int page,
             int pageSize)
         {
             const string sqlCount = @"
 SELECT COUNT(1)
-  FROM estabelecimento_servicos
+  FROM estabelecimento_faq
  WHERE id_estabelecimento = @IdEstabelecimento
    AND deleted_at IS NULL
    AND (@Ativo IS NULL OR ativo = @Ativo)
-   AND (@Agendavel IS NULL OR permite_agendamento = @Agendavel)
-   AND (@Tipo IS NULL OR tipo = @Tipo)
+   AND (@Categoria IS NULL OR categoria = @Categoria)
+   AND (@Acao IS NULL OR acao = @Acao)
    AND (
        @Busca IS NULL
-       OR nome ILIKE @BuscaLike
-       OR COALESCE(descricao, '') ILIKE @BuscaLike
-       OR tipo ILIKE @BuscaLike
+       OR pergunta ILIKE @BuscaLike
+       OR resposta ILIKE @BuscaLike
+       OR categoria ILIKE @BuscaLike
    );";
 
             const string sqlItens = @"
 SELECT id,
        id_estabelecimento AS IdEstabelecimento,
-       nome,
-       descricao,
-       tipo,
-       duracao_minutos AS DuracaoMinutos,
-       valor_centavos AS ValorCentavos,
+       pergunta,
+       resposta,
+       categoria,
+       acao AS Acao,
+       ordem AS Ordem,
        ativo,
-       exibir_no_bot AS ExibirNoBot,
-       permite_agendamento AS PermiteAgendamento,
        palavras_chave::text AS PalavrasChaveJson,
        created_at AS CreatedAt,
        updated_at AS UpdatedAt,
        deleted_at AS DeletedAt
-  FROM estabelecimento_servicos
+  FROM estabelecimento_faq
  WHERE id_estabelecimento = @IdEstabelecimento
    AND deleted_at IS NULL
    AND (@Ativo IS NULL OR ativo = @Ativo)
-   AND (@Agendavel IS NULL OR permite_agendamento = @Agendavel)
-   AND (@Tipo IS NULL OR tipo = @Tipo)
+   AND (@Categoria IS NULL OR categoria = @Categoria)
+   AND (@Acao IS NULL OR acao = @Acao)
    AND (
        @Busca IS NULL
-       OR nome ILIKE @BuscaLike
-       OR COALESCE(descricao, '') ILIKE @BuscaLike
-       OR tipo ILIKE @BuscaLike
+       OR pergunta ILIKE @BuscaLike
+       OR resposta ILIKE @BuscaLike
+       OR categoria ILIKE @BuscaLike
    )
- ORDER BY nome ASC
+ ORDER BY categoria ASC, ordem ASC, pergunta ASC
  LIMIT @PageSize OFFSET @Offset;";
 
             var parameters = new
             {
                 IdEstabelecimento = idEstabelecimento,
                 Ativo = ativo,
-                Agendavel = agendavel,
-                Tipo = string.IsNullOrWhiteSpace(tipo) ? null : tipo.Trim(),
+                Categoria = string.IsNullOrWhiteSpace(categoria) ? null : categoria.Trim(),
+                Acao = string.IsNullOrWhiteSpace(acao) ? null : acao.Trim(),
                 Busca = string.IsNullOrWhiteSpace(busca) ? null : busca.Trim(),
                 BuscaLike = string.IsNullOrWhiteSpace(busca) ? null : $"%{busca.Trim()}%",
                 PageSize = pageSize,
@@ -94,24 +92,22 @@ SELECT id,
             return (rows.Select(Map).ToArray(), total);
         }
 
-        public async Task<EstabelecimentoServico?> ObterPorIdAsync(Guid idEstabelecimento, Guid id)
+        public async Task<EstabelecimentoFaq?> ObterPorIdAsync(Guid idEstabelecimento, Guid id)
         {
             const string sql = @"
 SELECT id,
        id_estabelecimento AS IdEstabelecimento,
-       nome,
-       descricao,
-       tipo,
-       duracao_minutos AS DuracaoMinutos,
-       valor_centavos AS ValorCentavos,
+       pergunta,
+       resposta,
+       categoria,
+       acao AS Acao,
+       ordem AS Ordem,
        ativo,
-       exibir_no_bot AS ExibirNoBot,
-       permite_agendamento AS PermiteAgendamento,
        palavras_chave::text AS PalavrasChaveJson,
        created_at AS CreatedAt,
        updated_at AS UpdatedAt,
        deleted_at AS DeletedAt
-  FROM estabelecimento_servicos
+  FROM estabelecimento_faq
  WHERE id_estabelecimento = @IdEstabelecimento
    AND id = @Id
    AND deleted_at IS NULL;";
@@ -126,34 +122,30 @@ SELECT id,
             return row == null ? null : Map(row);
         }
 
-        public async Task<Guid> CriarAsync(EstabelecimentoServico entity)
+        public async Task<Guid> CriarAsync(EstabelecimentoFaq entity)
         {
             const string sql = @"
-INSERT INTO estabelecimento_servicos (
+INSERT INTO estabelecimento_faq (
     id,
     id_estabelecimento,
-    nome,
-    descricao,
-    tipo,
-    duracao_minutos,
-    valor_centavos,
+    pergunta,
+    resposta,
+    categoria,
+    acao,
+    ordem,
     ativo,
-    exibir_no_bot,
-    permite_agendamento,
     palavras_chave,
     created_at,
     updated_at
 ) VALUES (
     @Id,
     @IdEstabelecimento,
-    @Nome,
-    @Descricao,
-    @Tipo,
-    @DuracaoMinutos,
-    @ValorCentavos,
+    @Pergunta,
+    @Resposta,
+    @Categoria,
+    @Acao,
+    @Ordem,
     @Ativo,
-    @ExibirNoBot,
-    @PermiteAgendamento,
     CAST(@PalavrasChave AS jsonb),
     @CreatedAt,
     @UpdatedAt
@@ -173,18 +165,16 @@ INSERT INTO estabelecimento_servicos (
             return entity.Id;
         }
 
-        public async Task<bool> AtualizarAsync(EstabelecimentoServico entity)
+        public async Task<bool> AtualizarAsync(EstabelecimentoFaq entity)
         {
             const string sql = @"
-UPDATE estabelecimento_servicos
-   SET nome = @Nome,
-       descricao = @Descricao,
-       tipo = @Tipo,
-       duracao_minutos = @DuracaoMinutos,
-       valor_centavos = @ValorCentavos,
+UPDATE estabelecimento_faq
+   SET pergunta = @Pergunta,
+       resposta = @Resposta,
+       categoria = @Categoria,
+       acao = @Acao,
+       ordem = @Ordem,
        ativo = @Ativo,
-       exibir_no_bot = @ExibirNoBot,
-       permite_agendamento = @PermiteAgendamento,
        palavras_chave = CAST(@PalavrasChave AS jsonb),
        updated_at = @UpdatedAt
  WHERE id_estabelecimento = @IdEstabelecimento
@@ -201,7 +191,7 @@ UPDATE estabelecimento_servicos
         public async Task<bool> AtualizarStatusAsync(Guid idEstabelecimento, Guid id, bool ativo)
         {
             const string sql = @"
-UPDATE estabelecimento_servicos
+UPDATE estabelecimento_faq
    SET ativo = @Ativo,
        updated_at = NOW()
  WHERE id_estabelecimento = @IdEstabelecimento
@@ -222,7 +212,7 @@ UPDATE estabelecimento_servicos
         public async Task<bool> ExcluirAsync(Guid idEstabelecimento, Guid id)
         {
             const string sql = @"
-UPDATE estabelecimento_servicos
+UPDATE estabelecimento_faq
    SET deleted_at = NOW(),
        updated_at = NOW()
  WHERE id_estabelecimento = @IdEstabelecimento
@@ -234,40 +224,36 @@ UPDATE estabelecimento_servicos
             return affected > 0;
         }
 
-        private static object ToParameters(EstabelecimentoServico entity)
+        private static object ToParameters(EstabelecimentoFaq entity)
         {
             return new
             {
                 entity.Id,
                 entity.IdEstabelecimento,
-                entity.Nome,
-                entity.Descricao,
-                entity.Tipo,
-                entity.DuracaoMinutos,
-                entity.ValorCentavos,
+                entity.Pergunta,
+                entity.Resposta,
+                entity.Categoria,
+                entity.Acao,
+                entity.Ordem,
                 entity.Ativo,
-                entity.ExibirNoBot,
-                entity.PermiteAgendamento,
                 PalavrasChave = JsonSerializer.Serialize(entity.PalavrasChave ?? new List<string>(), JsonOptions),
                 entity.CreatedAt,
                 entity.UpdatedAt
             };
         }
 
-        private static EstabelecimentoServico Map(Row row)
+        private static EstabelecimentoFaq Map(Row row)
         {
-            return new EstabelecimentoServico
+            return new EstabelecimentoFaq
             {
                 Id = row.Id,
                 IdEstabelecimento = row.IdEstabelecimento,
-                Nome = row.Nome ?? string.Empty,
-                Descricao = row.Descricao,
-                Tipo = row.Tipo ?? string.Empty,
-                DuracaoMinutos = row.DuracaoMinutos,
-                ValorCentavos = row.ValorCentavos,
+                Pergunta = row.Pergunta ?? string.Empty,
+                Resposta = row.Resposta ?? string.Empty,
+                Categoria = row.Categoria ?? string.Empty,
+                Acao = row.Acao ?? "responder",
+                Ordem = row.Ordem,
                 Ativo = row.Ativo,
-                ExibirNoBot = row.ExibirNoBot,
-                PermiteAgendamento = row.PermiteAgendamento,
                 PalavrasChave = DeserializeList(row.PalavrasChaveJson),
                 CreatedAt = row.CreatedAt,
                 UpdatedAt = row.UpdatedAt,
@@ -296,14 +282,12 @@ UPDATE estabelecimento_servicos
         {
             public Guid Id { get; set; }
             public Guid IdEstabelecimento { get; set; }
-            public string? Nome { get; set; }
-            public string? Descricao { get; set; }
-            public string? Tipo { get; set; }
-            public int DuracaoMinutos { get; set; }
-            public long? ValorCentavos { get; set; }
+            public string? Pergunta { get; set; }
+            public string? Resposta { get; set; }
+            public string? Categoria { get; set; }
+            public string? Acao { get; set; }
+            public int Ordem { get; set; }
             public bool Ativo { get; set; }
-            public bool ExibirNoBot { get; set; }
-            public bool PermiteAgendamento { get; set; }
             public string? PalavrasChaveJson { get; set; }
             public DateTime CreatedAt { get; set; }
             public DateTime UpdatedAt { get; set; }

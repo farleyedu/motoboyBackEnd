@@ -30,7 +30,7 @@ namespace APIBack.Model
         /// <summary>
         /// ID do servico associado (barbearia).
         /// </summary>
-        public long? IdServico { get; set; }
+        public Guid? IdServico { get; set; }
 
         /// <summary>
         /// Nome completo do cliente que fez a reserva.

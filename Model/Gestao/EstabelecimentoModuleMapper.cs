@@ -64,6 +64,17 @@ namespace APIBack.Model.Gestao
                     case "configuracao":
                         modules.Add("CONFIGURACOES");
                         break;
+                    case "servicos":
+                    case "servico":
+                        modules.Add("SERVICOS");
+                        break;
+                    case "faq":
+                        modules.Add("FAQ");
+                        break;
+                    case "disponibilidade":
+                    case "disponivel":
+                        modules.Add("DISPONIBILIDADE");
+                        break;
                 }
             }
 
@@ -124,6 +135,17 @@ namespace APIBack.Model.Gestao
                     case "configuracoes":
                     case "configuracao":
                         modules.Add("Configuracoes");
+                        break;
+                    case "servicos":
+                    case "servico":
+                        modules.Add("Servicos");
+                        break;
+                    case "faq":
+                        modules.Add("FAQ");
+                        break;
+                    case "disponibilidade":
+                    case "disponivel":
+                        modules.Add("Disponibilidade");
                         break;
                 }
             }

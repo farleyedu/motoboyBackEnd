@@ -13,7 +13,7 @@ namespace APIBack.Controllers
             return UnprocessableEntity(new ApiErrorResponse
             {
                 Error = ex.Message,
-                Errors = ex.Errors,
+                FieldErrors = ex.Errors,
                 TraceId = HttpContext.TraceIdentifier
             });
         }
@@ -23,7 +23,7 @@ namespace APIBack.Controllers
             return BadRequest(new ApiErrorResponse
             {
                 Error = message,
-                Errors = errors,
+                FieldErrors = errors,
                 TraceId = HttpContext.TraceIdentifier
             });
         }
@@ -33,7 +33,7 @@ namespace APIBack.Controllers
             return NotFound(new ApiErrorResponse
             {
                 Error = message,
-                Errors = errors,
+                FieldErrors = errors,
                 TraceId = HttpContext.TraceIdentifier
             });
         }
@@ -43,7 +43,7 @@ namespace APIBack.Controllers
             return StatusCode(StatusCodes.Status409Conflict, new ApiErrorResponse
             {
                 Error = message,
-                Errors = errors,
+                FieldErrors = errors,
                 TraceId = HttpContext.TraceIdentifier
             });
         }

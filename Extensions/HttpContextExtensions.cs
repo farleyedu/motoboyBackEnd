@@ -261,6 +261,7 @@ namespace APIBack.Extensions
             {
                 "cadastrar" => "criar",
                 "cadastro" => "criar",
+                "configurar" => "editar",
                 "excluir" => "deletar",
                 _ => token
             };

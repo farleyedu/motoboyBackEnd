@@ -5,19 +5,19 @@ using APIBack.Model;
 
 namespace APIBack.Repository.Interface
 {
-    public interface IEstabelecimentoServicoRepository
+    public interface IEstabelecimentoFaqRepository
     {
-        Task<(IReadOnlyCollection<EstabelecimentoServico> Itens, int Total)> ListarAsync(
+        Task<(IReadOnlyCollection<EstabelecimentoFaq> Itens, int Total)> ListarAsync(
             Guid idEstabelecimento,
             string? busca,
             bool? ativo,
-            bool? agendavel,
-            string? tipo,
+            string? categoria,
+            string? acao,
             int page,
             int pageSize);
-        Task<EstabelecimentoServico?> ObterPorIdAsync(Guid idEstabelecimento, Guid id);
-        Task<Guid> CriarAsync(EstabelecimentoServico entity);
-        Task<bool> AtualizarAsync(EstabelecimentoServico entity);
+        Task<EstabelecimentoFaq?> ObterPorIdAsync(Guid idEstabelecimento, Guid id);
+        Task<Guid> CriarAsync(EstabelecimentoFaq entity);
+        Task<bool> AtualizarAsync(EstabelecimentoFaq entity);
         Task<bool> AtualizarStatusAsync(Guid idEstabelecimento, Guid id, bool ativo);
         Task<bool> ExcluirAsync(Guid idEstabelecimento, Guid id);
     }
