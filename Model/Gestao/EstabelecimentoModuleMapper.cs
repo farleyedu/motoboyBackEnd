@@ -41,7 +41,6 @@ namespace APIBack.Model.Gestao
                         modules.Add("CARDAPIO");
                         break;
                     case "cardapioweb":
-                    case "cardapio_web":
                         modules.Add("CARDAPIOWEB");
                         break;
                     case "relatorios":
@@ -114,7 +113,6 @@ namespace APIBack.Model.Gestao
                         modules.Add("Cardapio");
                         break;
                     case "cardapioweb":
-                    case "cardapio_web":
                         modules.Add("CardapioWeb");
                         break;
                     case "relatorios":

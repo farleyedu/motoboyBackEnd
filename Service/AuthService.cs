@@ -1095,10 +1095,12 @@ SELECT  e.id                    AS EstabelecimentoId,
             Guid estabelecimentoId)
         {
             var permissoes = ParsePermissoesCustomizadas(permissoesCustomizadas);
+            var modulosUi = new List<string>();
 
             if (estabelecimentoId != Guid.Empty)
             {
                 var modulosAtivos = await ObterModulosAtivosAsync(connection, estabelecimentoId);
+                modulosUi = ResolveUiModules(string.Empty, modulosAtivos.ToArray());
                 if (modulosAtivos.Count > 0)
                 {
                     var interseccao = permissoes.Keys
@@ -1118,7 +1120,7 @@ SELECT  e.id                    AS EstabelecimentoId,
                 }
             }
 
-            return permissoes;
+            return CardapioPermissionBridge.Apply(permissoes, modulosUi);
         }
 
         private static Dictionary<string, List<string>> ParsePermissoesCustomizadas(string? raw)

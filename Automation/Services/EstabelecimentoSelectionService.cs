@@ -12,6 +12,7 @@ using APIBack.Automation.Validators;
 using APIBack.Model.Auth;
 using APIBack.Model.Gestao;
 using APIBack.Security;
+using APIBack.Service;
 using APIBack.Service.Interface;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -94,9 +95,11 @@ namespace APIBack.Automation.Services
                 ? "super_admin"
                 : RoleCatalog.Normalize(vinculoEmpresa?.TipoAcesso);
 
-            var permissoes = ParsePermissoesCustomizadas(vinculo?.PermissoesCustomizadas);
             var modulosUi = ResolveUiModules(estabelecimento.Nome, estabelecimento.ModulosAtivosRaw)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var permissoes = CardapioPermissionBridge.Apply(
+                ParsePermissoesCustomizadas(vinculo?.PermissoesCustomizadas),
+                modulosUi.ToArray());
             if (modulosUi.Count > 0 && permissoes.Keys.Any(k => modulosUi.Contains(k)))
             {
                 permissoes = permissoes

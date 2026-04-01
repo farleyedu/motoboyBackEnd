@@ -639,10 +639,14 @@ namespace APIBack.Service
                 throw new AdminUsuarioValidationException("Dados invalidos.", errors);
             }
 
+            var modulosAtivosSelecionados = selectedEstablishments
+                .SelectMany(e => EstabelecimentoModuleMapper.ToUiModules(e.Nome, e.ModulosAtivosRaw))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
             string? permissionsJson;
             if (request.Permissoes != null && request.Permissoes.Count > 0)
             {
-                permissionsJson = JsonSerializer.Serialize(request.Permissoes);
+                permissionsJson = JsonSerializer.Serialize(CardapioPermissionBridge.Apply(request.Permissoes, modulosAtivosSelecionados.ToArray()));
             }
             else if (!targetUserId.HasValue && !string.IsNullOrWhiteSpace(establishmentRole))
             {
@@ -651,15 +655,13 @@ namespace APIBack.Service
                 var padrao = await _repository.ListarPermissoesPadraoPorTipoAsync(new[] { roleNorm });
                 if (padrao.TryGetValue(roleNorm, out var templatePorModulo) && templatePorModulo.Count > 0)
                 {
-                    var modulosAtivos = selectedEstablishments
-                        .SelectMany(e => EstabelecimentoModuleMapper.ToUiModules(e.Nome, e.ModulosAtivosRaw))
-                        .ToHashSet(StringComparer.OrdinalIgnoreCase);
-                    var permissoesFiltradas = modulosAtivos.Count > 0
+                    var permissoesFiltradas = modulosAtivosSelecionados.Count > 0
                         ? templatePorModulo
-                            .Where(kvp => modulosAtivos.Contains(kvp.Key))
+                            .Where(kvp => modulosAtivosSelecionados.Contains(kvp.Key))
                             .ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.OrdinalIgnoreCase)
                         : templatePorModulo;
-                    permissionsJson = permissoesFiltradas.Count > 0 ? JsonSerializer.Serialize(permissoesFiltradas) : null;
+                    var permissoesAjustadas = CardapioPermissionBridge.Apply(permissoesFiltradas, modulosAtivosSelecionados.ToArray());
+                    permissionsJson = permissoesAjustadas.Count > 0 ? JsonSerializer.Serialize(permissoesAjustadas) : null;
                 }
                 else
                 {
