@@ -126,10 +126,6 @@ namespace APIBack.Service
                 ? await BuildVeiculoConfigsAsync(idEstabelecimento, request.VeiculoConfigs, errors)
                 : new List<EstabelecimentoServicoVeiculoConfig>();
 
-            var marcasPeca = request.DiferePorMarcaPeca
-                ? BuildMarcaPecaNodes(request.MarcasPeca, errors)
-                : new List<EstabelecimentoServicoMarcaPecaNode>();
-
             ValidationUtils.ThrowIfAny(errors);
 
             return new EstabelecimentoServico
@@ -145,9 +141,7 @@ namespace APIBack.Service
                 PermiteAgendamento = request.PermiteAgendamento,
                 PalavrasChave = palavrasChave,
                 DiferePorVeiculo = request.DiferePorVeiculo,
-                VeiculoConfigs = veiculoConfigs,
-                DiferePorMarcaPeca = request.DiferePorMarcaPeca,
-                MarcasPeca = marcasPeca
+                VeiculoConfigs = veiculoConfigs
             };
         }
 
@@ -187,85 +181,57 @@ namespace APIBack.Service
                     continue;
                 }
 
+                var marcasPeca = raw.Compativel
+                    ? BuildMarcasPeca(raw.MarcasPeca, errors, carroId)
+                    : new List<EstabelecimentoServicoMarcaPeca>();
+
                 configuracoes.Add(new EstabelecimentoServicoVeiculoConfig
                 {
                     CarroId = carroId,
                     Compativel = raw.Compativel,
-                    ValorCentavos = raw.Compativel ? raw.ValorCentavos : null
+                    ValorCentavos = raw.Compativel ? raw.ValorCentavos : null,
+                    MarcasPeca = marcasPeca
                 });
             }
 
             return configuracoes;
         }
 
-        private static List<EstabelecimentoServicoMarcaPecaNode> BuildMarcaPecaNodes(
-            IReadOnlyCollection<SalvarMarcaPecaNodeRequest>? requestNodes,
-            Dictionary<string, List<string>> errors)
+        private static List<EstabelecimentoServicoMarcaPeca> BuildMarcasPeca(
+            IReadOnlyCollection<SalvarMarcaPecaRequest>? requestItems,
+            Dictionary<string, List<string>> errors,
+            Guid carroId)
         {
-            var result = new List<EstabelecimentoServicoMarcaPecaNode>();
-            var nomesRaiz = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var result = new List<EstabelecimentoServicoMarcaPeca>();
+            var nomes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            foreach (var rawNode in requestNodes ?? Array.Empty<SalvarMarcaPecaNodeRequest>())
+            foreach (var rawItem in requestItems ?? Array.Empty<SalvarMarcaPecaRequest>())
             {
-                var nome = ValidationUtils.TrimToNull(rawNode.Nome);
+                var nome = ValidationUtils.TrimToNull(rawItem.Nome);
                 if (string.IsNullOrWhiteSpace(nome) || nome.Length > 120)
                 {
-                    ValidationUtils.AddError(errors, "marcasPeca", "Cada marca de peca deve ter nome entre 1 e 120 caracteres.");
+                    ValidationUtils.AddError(errors, "veiculoConfigs", $"Cada marca de peca do carro {carroId} deve ter nome entre 1 e 120 caracteres.");
                     continue;
                 }
 
                 var nomeNormalizado = ValidationUtils.NormalizeToken(nome);
-                if (!nomesRaiz.Add(nomeNormalizado))
+                if (!nomes.Add(nomeNormalizado))
                 {
-                    ValidationUtils.AddError(errors, "marcasPeca", $"Marca de peca duplicada: {nome}.");
+                    ValidationUtils.AddError(errors, "veiculoConfigs", $"Marca de peca duplicada no carro {carroId}: {nome}.");
                     continue;
                 }
 
-                if (rawNode.ValorCentavos.HasValue && rawNode.ValorCentavos.Value < 0)
+                if (rawItem.ValorCentavos.HasValue && rawItem.ValorCentavos.Value < 0)
                 {
-                    ValidationUtils.AddError(errors, "marcasPeca", $"Valor invalido para a marca de peca {nome}.");
+                    ValidationUtils.AddError(errors, "veiculoConfigs", $"Valor invalido para a marca de peca {nome} no carro {carroId}.");
                     continue;
                 }
 
-                var variantes = new List<EstabelecimentoServicoMarcaPecaVariante>();
-                var nomesVariantes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-                foreach (var rawVariante in rawNode.Variantes ?? new List<SalvarMarcaPecaVarianteRequest>())
+                result.Add(new EstabelecimentoServicoMarcaPeca
                 {
-                    var nomeVariante = ValidationUtils.TrimToNull(rawVariante.Nome);
-                    if (string.IsNullOrWhiteSpace(nomeVariante) || nomeVariante.Length > 120)
-                    {
-                        ValidationUtils.AddError(errors, "marcasPeca", $"Cada variante da marca {nome} deve ter nome entre 1 e 120 caracteres.");
-                        continue;
-                    }
-
-                    var varianteNormalizada = ValidationUtils.NormalizeToken(nomeVariante);
-                    if (!nomesVariantes.Add(varianteNormalizada))
-                    {
-                        ValidationUtils.AddError(errors, "marcasPeca", $"Variante duplicada na marca {nome}: {nomeVariante}.");
-                        continue;
-                    }
-
-                    if (rawVariante.ValorCentavos.HasValue && rawVariante.ValorCentavos.Value < 0)
-                    {
-                        ValidationUtils.AddError(errors, "marcasPeca", $"Valor invalido para a variante {nomeVariante}.");
-                        continue;
-                    }
-
-                    variantes.Add(new EstabelecimentoServicoMarcaPecaVariante
-                    {
-                        Id = ParseGuidOrNew(rawVariante.Id),
-                        Nome = nomeVariante,
-                        ValorCentavos = rawVariante.ValorCentavos
-                    });
-                }
-
-                result.Add(new EstabelecimentoServicoMarcaPecaNode
-                {
-                    Id = ParseGuidOrNew(rawNode.Id),
+                    Id = ParseGuidOrNew(rawItem.Id),
                     Nome = nome,
-                    ValorCentavos = rawNode.ValorCentavos,
-                    Variantes = variantes
+                    ValorCentavos = rawItem.ValorCentavos
                 });
             }
 
@@ -275,8 +241,6 @@ namespace APIBack.Service
         private static EstabelecimentoServicoDto Map(EstabelecimentoServico entity)
         {
             var overallRange = ComputeRange(BuildOverallPriceCandidates(entity));
-            var piecePrices = BuildPieceEffectivePrices(entity);
-            var vehiclePrices = BuildVehicleEffectivePrices(entity);
 
             return new EstabelecimentoServicoDto
             {
@@ -293,12 +257,8 @@ namespace APIBack.Service
                 PalavrasChave = entity.PalavrasChave,
                 DiferePorVeiculo = entity.DiferePorVeiculo,
                 VeiculoConfigs = entity.DiferePorVeiculo
-                    ? entity.VeiculoConfigs.Select(config => MapVeiculoConfig(entity, config, piecePrices)).ToList()
+                    ? entity.VeiculoConfigs.Select(config => MapVeiculoConfig(entity, config)).ToList()
                     : new List<ServicoVeiculoConfigDto>(),
-                DiferePorMarcaPeca = entity.DiferePorMarcaPeca,
-                MarcasPeca = entity.DiferePorMarcaPeca
-                    ? entity.MarcasPeca.Select(node => MapMarcaPecaNode(entity, node, vehiclePrices)).ToList()
-                    : new List<MarcaPecaNodeDto>(),
                 ValorMinimoCentavos = overallRange.Min,
                 ValorMaximoCentavos = overallRange.Max,
                 CreatedAt = entity.CreatedAt,
@@ -309,8 +269,7 @@ namespace APIBack.Service
 
         private static ServicoVeiculoConfigDto MapVeiculoConfig(
             EstabelecimentoServico entity,
-            EstabelecimentoServicoVeiculoConfig config,
-            IReadOnlyCollection<long> piecePrices)
+            EstabelecimentoServicoVeiculoConfig config)
         {
             if (!config.Compativel)
             {
@@ -318,16 +277,23 @@ namespace APIBack.Service
                 {
                     CarroId = config.CarroId.ToString(),
                     Compativel = false,
-                    ValorCentavos = null
+                    ValorCentavos = null,
+                    MarcasPeca = new List<MarcaPecaDto>()
                 };
             }
 
-            var candidates = new List<long>(piecePrices);
+            var candidates = new List<long>();
             var resolvedVehiclePrice = ResolveVehiclePrice(entity, config);
             if (resolvedVehiclePrice.HasValue)
             {
                 candidates.Add(resolvedVehiclePrice.Value);
             }
+
+            candidates.AddRange(
+                config.MarcasPeca
+                    .Select(piece => ResolvePiecePrice(entity, config, piece))
+                    .Where(value => value.HasValue)
+                    .Select(value => value!.Value));
 
             var range = ComputeRange(candidates);
 
@@ -336,104 +302,54 @@ namespace APIBack.Service
                 CarroId = config.CarroId.ToString(),
                 Compativel = true,
                 ValorCentavos = config.ValorCentavos,
+                MarcasPeca = config.MarcasPeca.Select(piece => MapMarcaPeca(entity, config, piece)).ToList(),
                 ValorMinimoCentavos = range.Min,
                 ValorMaximoCentavos = range.Max
             };
         }
 
-        private static MarcaPecaNodeDto MapMarcaPecaNode(
+        private static MarcaPecaDto MapMarcaPeca(
             EstabelecimentoServico entity,
-            EstabelecimentoServicoMarcaPecaNode node,
-            IReadOnlyCollection<long> vehiclePrices)
+            EstabelecimentoServicoVeiculoConfig config,
+            EstabelecimentoServicoMarcaPeca piece)
         {
-            var candidates = new List<long>(vehiclePrices);
-            var resolvedNodePrice = ResolveNodePrice(entity, node);
-            if (resolvedNodePrice.HasValue)
+            var resolvedPrice = ResolvePiecePrice(entity, config, piece);
+
+            return new MarcaPecaDto
             {
-                candidates.Add(resolvedNodePrice.Value);
-            }
-
-            var range = ComputeRange(candidates);
-
-            return new MarcaPecaNodeDto
-            {
-                Id = node.Id.ToString(),
-                Nome = node.Nome,
-                ValorCentavos = node.ValorCentavos,
-                Variantes = node.Variantes.Select(variante => MapMarcaPecaVariante(entity, node, variante, vehiclePrices)).ToList(),
-                ValorMinimoCentavos = range.Min,
-                ValorMaximoCentavos = range.Max
-            };
-        }
-
-        private static MarcaPecaVarianteDto MapMarcaPecaVariante(
-            EstabelecimentoServico entity,
-            EstabelecimentoServicoMarcaPecaNode node,
-            EstabelecimentoServicoMarcaPecaVariante variante,
-            IReadOnlyCollection<long> vehiclePrices)
-        {
-            var candidates = new List<long>(vehiclePrices);
-            var resolvedVariantPrice = ResolveVariantPrice(entity, node, variante);
-            if (resolvedVariantPrice.HasValue)
-            {
-                candidates.Add(resolvedVariantPrice.Value);
-            }
-
-            var range = ComputeRange(candidates);
-
-            return new MarcaPecaVarianteDto
-            {
-                Id = variante.Id.ToString(),
-                Nome = variante.Nome,
-                ValorCentavos = variante.ValorCentavos,
-                ValorMinimoCentavos = range.Min,
-                ValorMaximoCentavos = range.Max
+                Id = piece.Id.ToString(),
+                Nome = piece.Nome,
+                ValorCentavos = piece.ValorCentavos,
+                ValorMinimoCentavos = resolvedPrice,
+                ValorMaximoCentavos = resolvedPrice
             };
         }
 
         private static IReadOnlyCollection<long> BuildOverallPriceCandidates(EstabelecimentoServico entity)
         {
-            var values = new List<long>();
-
-            if (entity.ValorCentavos.HasValue)
+            if (!entity.DiferePorVeiculo)
             {
-                values.Add(entity.ValorCentavos.Value);
+                return entity.ValorCentavos.HasValue
+                    ? new[] { entity.ValorCentavos.Value }
+                    : Array.Empty<long>();
             }
 
-            values.AddRange(BuildVehicleEffectivePrices(entity));
-            values.AddRange(BuildPieceEffectivePrices(entity));
-
-            return DistinctAndOrder(values);
-        }
-
-        private static IReadOnlyCollection<long> BuildVehicleEffectivePrices(EstabelecimentoServico entity)
-        {
-            var values = entity.VeiculoConfigs
-                .Select(config => ResolveVehiclePrice(entity, config))
-                .Where(value => value.HasValue)
-                .Select(value => value!.Value);
-
-            return DistinctAndOrder(values);
-        }
-
-        private static IReadOnlyCollection<long> BuildPieceEffectivePrices(EstabelecimentoServico entity)
-        {
             var values = new List<long>();
 
-            foreach (var node in entity.MarcasPeca)
+            foreach (var config in entity.VeiculoConfigs.Where(item => item.Compativel))
             {
-                var nodePrice = ResolveNodePrice(entity, node);
-                if (nodePrice.HasValue)
+                var resolvedVehiclePrice = ResolveVehiclePrice(entity, config);
+                if (resolvedVehiclePrice.HasValue)
                 {
-                    values.Add(nodePrice.Value);
+                    values.Add(resolvedVehiclePrice.Value);
                 }
 
-                foreach (var variante in node.Variantes)
+                foreach (var piece in config.MarcasPeca)
                 {
-                    var variantPrice = ResolveVariantPrice(entity, node, variante);
-                    if (variantPrice.HasValue)
+                    var resolvedPiecePrice = ResolvePiecePrice(entity, config, piece);
+                    if (resolvedPiecePrice.HasValue)
                     {
-                        values.Add(variantPrice.Value);
+                        values.Add(resolvedPiecePrice.Value);
                     }
                 }
             }
@@ -451,14 +367,11 @@ namespace APIBack.Service
             return config.ValorCentavos ?? entity.ValorCentavos;
         }
 
-        private static long? ResolveNodePrice(EstabelecimentoServico entity, EstabelecimentoServicoMarcaPecaNode node)
-            => node.ValorCentavos ?? entity.ValorCentavos;
-
-        private static long? ResolveVariantPrice(
+        private static long? ResolvePiecePrice(
             EstabelecimentoServico entity,
-            EstabelecimentoServicoMarcaPecaNode node,
-            EstabelecimentoServicoMarcaPecaVariante variante)
-            => variante.ValorCentavos ?? node.ValorCentavos ?? entity.ValorCentavos;
+            EstabelecimentoServicoVeiculoConfig config,
+            EstabelecimentoServicoMarcaPeca piece)
+            => piece.ValorCentavos ?? config.ValorCentavos ?? entity.ValorCentavos;
 
         private static (long? Min, long? Max) ComputeRange(IEnumerable<long> values)
         {
