@@ -83,6 +83,39 @@ SELECT id,
             return (rows.Select(Map).ToArray(), total);
         }
 
+        public async Task<IReadOnlyCollection<AgendaDisponibilidade>> ListarTodasAsync(Guid idEstabelecimento)
+        {
+            const string sql = @"
+SELECT id,
+       id_estabelecimento AS IdEstabelecimento,
+       profissional_id AS ProfissionalId,
+       escopo,
+       tipo,
+       COALESCE(dias_semana, ARRAY[]::integer[]) AS DiasSemana,
+       data_inicio AS DataInicio,
+       data_fim AS DataFim,
+       hora_inicio AS HoraInicio,
+       hora_fim AS HoraFim,
+       dia_inteiro AS DiaInteiro,
+       ativo,
+       observacao,
+       created_at AS CreatedAt,
+       updated_at AS UpdatedAt,
+       deleted_at AS DeletedAt
+  FROM agenda_disponibilidade
+ WHERE id_estabelecimento = @IdEstabelecimento
+   AND deleted_at IS NULL
+ ORDER BY tipo ASC, escopo ASC, created_at DESC;";
+
+            await using var connection = new NpgsqlConnection(_connectionString);
+            var rows = await connection.QueryAsync<Row>(sql, new
+            {
+                IdEstabelecimento = idEstabelecimento
+            });
+
+            return rows.Select(Map).ToArray();
+        }
+
         public async Task<AgendaDisponibilidade?> ObterPorIdAsync(Guid idEstabelecimento, Guid id)
         {
             const string sql = @"
@@ -279,6 +312,7 @@ SELECT EXISTS (
       FROM agenda_disponibilidade
      WHERE id_estabelecimento = @IdEstabelecimento
        AND deleted_at IS NULL
+       AND ativo = TRUE
        AND id <> @Id
        AND escopo = @Escopo
        AND tipo = 'disponibilidade_semanal'
@@ -294,6 +328,7 @@ SELECT EXISTS (
       FROM agenda_disponibilidade
      WHERE id_estabelecimento = @IdEstabelecimento
        AND deleted_at IS NULL
+       AND ativo = TRUE
        AND id <> @Id
        AND escopo = @Escopo
        AND tipo = @Tipo

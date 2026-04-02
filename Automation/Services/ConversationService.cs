@@ -56,6 +56,7 @@ namespace APIBack.Automation.Services
         /// <param name="idMensagemWa">ID único da mensagem do WhatsApp</param>
         /// <param name="conteudo">Texto da mensagem</param>
         /// <param name="displayPhoneNumber">Número de telefone visível do estabelecimento (ex: +5534999887766) - USADO PARA BUSCAR ESTABELECIMENTO</param>
+        /// <param name="phoneNumberId">Identificador do número WhatsApp no Meta; usado como fallback para resolver estabelecimento</param>
         /// <param name="dataMensagemUtc">Data/hora UTC da mensagem</param>
         /// <param name="tipoOrigem">Tipo da mensagem (text, image, etc)</param>
         public async Task<Message?> AcrescentarEntradaAsync(
@@ -63,6 +64,7 @@ namespace APIBack.Automation.Services
             string idMensagemWa,
             string conteudo,
             string displayPhoneNumber,
+            string? phoneNumberId = null,
             DateTime? dataMensagemUtc = null,
             string? tipoOrigem = null,
             string? telefoneContato = null)
@@ -95,26 +97,7 @@ namespace APIBack.Automation.Services
 
             // ============== CORREÇÃO: SEMPRE USAR DISPLAY PHONE NUMBER ==============
             // Buscar estabelecimento pelo número visível (display_phone_number)
-            Guid? idEstabelecimento = null;
-            if (!string.IsNullOrWhiteSpace(displayPhoneNumber))
-            {
-                idEstabelecimento = await _wabaPhoneRepository
-                    .ObterIdEstabelecimentoPorDisplayPhoneAsync(displayPhoneNumber);
-
-                if (idEstabelecimento == null || idEstabelecimento == Guid.Empty)
-                {
-                    _logger.LogWarning(
-                        "Estabelecimento não encontrado para display_phone_number={Display}",
-                        displayPhoneNumber);
-                }
-                else
-                {
-                    _logger.LogDebug(
-                        "Estabelecimento {IdEstabelecimento} encontrado para display={Display}",
-                        idEstabelecimento,
-                        displayPhoneNumber);
-                }
-            }
+            var idEstabelecimento = await ResolverEstabelecimentoAsync(displayPhoneNumber, phoneNumberId);
             // =========================================================================
 
             // Fallback para estabelecimento padrão se não encontrar
@@ -122,7 +105,8 @@ namespace APIBack.Automation.Services
             {
                 var fallbackEstabelecimentoId = _configuration.GetValue<string>("WhatsApp:FallbackEstabelecimentoId");
                 if (!string.IsNullOrWhiteSpace(fallbackEstabelecimentoId) &&
-                    Guid.TryParse(fallbackEstabelecimentoId, out var fallbackGuid))
+                    Guid.TryParse(fallbackEstabelecimentoId, out var fallbackGuid) &&
+                    fallbackGuid != Guid.Empty)
                 {
                     idEstabelecimento = fallbackGuid;
                     _logger.LogWarning(
@@ -133,10 +117,11 @@ namespace APIBack.Automation.Services
                 else
                 {
                     _logger.LogError(
-                        "Não foi possível resolver id_estabelecimento para display_phone_number={Display} e não há fallback configurado",
-                        displayPhoneNumber);
+                        "Não foi possível resolver id_estabelecimento para display_phone_number={Display}, phone_number_id={PhoneNumberId}; fallback ausente ou inválido",
+                        displayPhoneNumber,
+                        phoneNumberId ?? "(null)");
                     throw new InvalidOperationException(
-                        $"Não foi possível resolver id_estabelecimento para display_phone_number={displayPhoneNumber}");
+                        $"Não foi possível resolver id_estabelecimento para display_phone_number={displayPhoneNumber}, phone_number_id={phoneNumberId}");
                 }
             }
 
@@ -438,6 +423,46 @@ namespace APIBack.Automation.Services
         {
             return _centralRouting.CentralEstabelecimentoId.HasValue &&
                    _centralRouting.CentralEstabelecimentoId.Value == idEstabelecimento;
+        }
+
+        private async Task<Guid?> ResolverEstabelecimentoAsync(string? displayPhoneNumber, string? phoneNumberId)
+        {
+            if (!string.IsNullOrWhiteSpace(displayPhoneNumber))
+            {
+                var idPorDisplay = await _wabaPhoneRepository.ObterIdEstabelecimentoPorDisplayPhoneAsync(displayPhoneNumber);
+                if (idPorDisplay.HasValue && idPorDisplay.Value != Guid.Empty)
+                {
+                    _logger.LogDebug(
+                        "Estabelecimento {IdEstabelecimento} encontrado para display={Display}",
+                        idPorDisplay.Value,
+                        displayPhoneNumber);
+                    return idPorDisplay.Value;
+                }
+
+                _logger.LogWarning(
+                    "Estabelecimento não encontrado para display_phone_number={Display}",
+                    displayPhoneNumber);
+            }
+
+            if (!string.IsNullOrWhiteSpace(phoneNumberId))
+            {
+                var idPorPhoneNumberId = await _wabaPhoneRepository.ObterIdEstabelecimentoPorPhoneNumberIdAsync(phoneNumberId);
+                if (idPorPhoneNumberId.HasValue && idPorPhoneNumberId.Value != Guid.Empty)
+                {
+                    _logger.LogInformation(
+                        "Estabelecimento {IdEstabelecimento} resolvido via phone_number_id={PhoneNumberId} após falha no display_phone_number={Display}",
+                        idPorPhoneNumberId.Value,
+                        phoneNumberId,
+                        displayPhoneNumber ?? "(null)");
+                    return idPorPhoneNumberId.Value;
+                }
+
+                _logger.LogWarning(
+                    "Estabelecimento não encontrado para phone_number_id={PhoneNumberId}",
+                    phoneNumberId);
+            }
+
+            return null;
         }
     }
 }

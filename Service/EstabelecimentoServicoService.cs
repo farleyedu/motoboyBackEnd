@@ -46,6 +46,12 @@ namespace APIBack.Service
             };
         }
 
+        public async Task<IReadOnlyCollection<EstabelecimentoServicoDto>> ListarTodosAsync(Guid idEstabelecimento)
+        {
+            var itens = await _repository.ListarTodosAsync(idEstabelecimento);
+            return itens.Select(Map).ToArray();
+        }
+
         public async Task<EstabelecimentoServicoDto?> ObterPorIdAsync(Guid idEstabelecimento, Guid id)
         {
             var item = await _repository.ObterPorIdAsync(idEstabelecimento, id);

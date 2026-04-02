@@ -30,8 +30,8 @@ namespace APIBack.Controllers
             if (!TryResolveAndValidate("FAQ", estabelecimentoId, out var effectiveId, out var error))
                 return error!;
 
-            var paged = await _service.ListarAsync(effectiveId, null, null, null, null, 1, 500);
-            return Ok(ApiResponse<IReadOnlyCollection<EstabelecimentoFaqDto>>.Ok(paged.Itens));
+            var itens = await _service.ListarTodosAsync(effectiveId);
+            return Ok(ApiResponse<IReadOnlyCollection<EstabelecimentoFaqDto>>.Ok(itens));
         }
 
         [HttpPost]

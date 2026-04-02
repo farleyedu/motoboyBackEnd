@@ -80,21 +80,34 @@ namespace APIBack.Automation.Infra
 
             try
             {
+                var digitsOnly = new string(displayPhoneNumber.Where(char.IsDigit).ToArray());
                 await using var connection = new NpgsqlConnection(_connectionString);
                 var columns = await ObterColunasAsync(connection);
                 if (!columns.DisplayPhoneNumber)
                 {
                     return null;
                 }
-                const string sql = @"
+
+                var comparisons = new System.Collections.Generic.List<string>
+                {
+                    "display_phone_number = @Raw"
+                };
+
+                if (!string.IsNullOrWhiteSpace(digitsOnly))
+                {
+                    comparisons.Add("regexp_replace(display_phone_number, '[^0-9]', '', 'g') = @Digits");
+                }
+
+                var sql = $@"
 SELECT id_estabelecimento
   FROM waba_phone
- WHERE display_phone_number = @displayPhoneNumber
+ WHERE ({string.Join(" OR ", comparisons)})
    AND ativo = true
+ ORDER BY data_atualizacao DESC
  LIMIT 1;";
                 var idEstabelecimento = await connection.QueryFirstOrDefaultAsync<Guid?>(
                     sql,
-                    new { displayPhoneNumber });
+                    new { Raw = displayPhoneNumber, Digits = digitsOnly });
                 return idEstabelecimento;
             }
             catch (Exception ex)

@@ -15,6 +15,7 @@ namespace APIBack.Repository.Interface
             string? acao,
             int page,
             int pageSize);
+        Task<IReadOnlyCollection<EstabelecimentoFaq>> ListarTodosAsync(Guid idEstabelecimento);
         Task<EstabelecimentoFaq?> ObterPorIdAsync(Guid idEstabelecimento, Guid id);
         Task<Guid> CriarAsync(EstabelecimentoFaq entity);
         Task<bool> AtualizarAsync(EstabelecimentoFaq entity);

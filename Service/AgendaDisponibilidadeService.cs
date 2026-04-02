@@ -60,6 +60,12 @@ namespace APIBack.Service
             };
         }
 
+        public async Task<IReadOnlyCollection<AgendaDisponibilidadeDto>> ListarTodasAsync(Guid idEstabelecimento)
+        {
+            var itens = await _repository.ListarTodasAsync(idEstabelecimento);
+            return itens.Select(Map).ToArray();
+        }
+
         public async Task<AgendaDisponibilidadeDto?> ObterPorIdAsync(Guid idEstabelecimento, Guid id)
         {
             var item = await _repository.ObterPorIdAsync(idEstabelecimento, id);
@@ -69,7 +75,7 @@ namespace APIBack.Service
         public async Task<AgendaDisponibilidadeDto> CriarAsync(Guid idEstabelecimento, SalvarAgendaDisponibilidadeRequest request)
         {
             var entity = await BuildEntityAsync(idEstabelecimento, request);
-            if (await _repository.ExisteConflitoAsync(idEstabelecimento, entity))
+            if (entity.Ativo && await _repository.ExisteConflitoAsync(idEstabelecimento, entity))
             {
                 throw new InvalidOperationException("Ja existe uma regra conflitante para esse periodo.");
             }
@@ -88,7 +94,7 @@ namespace APIBack.Service
             entity.CreatedAt = current.CreatedAt;
             entity.UpdatedAt = current.UpdatedAt;
 
-            if (await _repository.ExisteConflitoAsync(idEstabelecimento, entity))
+            if (entity.Ativo && await _repository.ExisteConflitoAsync(idEstabelecimento, entity))
             {
                 throw new InvalidOperationException("Ja existe uma regra conflitante para esse periodo.");
             }

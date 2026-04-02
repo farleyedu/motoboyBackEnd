@@ -38,7 +38,7 @@ namespace APIBack.Controllers
                 return error!;
 
             var configTask = _configService.ObterAsync(effectiveId);
-            var regrasTask = _disponibilidadeService.ListarAsync(effectiveId, null, null, null, null, 1, 500);
+            var regrasTask = _disponibilidadeService.ListarTodasAsync(effectiveId);
             var profissionaisTask = _disponibilidadeService.ListarProfissionaisAsync(effectiveId);
 
             await Task.WhenAll(configTask, regrasTask, profissionaisTask);
@@ -46,7 +46,7 @@ namespace APIBack.Controllers
             var snapshot = new ConfigDisponibilidadeSnapshotDto
             {
                 Configuracao = configTask.Result,
-                Regras = regrasTask.Result.Itens.ToList(),
+                Regras = regrasTask.Result.ToList(),
                 Profissionais = profissionaisTask.Result.Itens.ToList()
             };
 
@@ -83,8 +83,8 @@ namespace APIBack.Controllers
             if (!TryResolveAndValidate("Disponibilidade", estabelecimentoId, out var effectiveId, out var error))
                 return error!;
 
-            var paged = await _disponibilidadeService.ListarAsync(effectiveId, null, null, null, null, 1, 500);
-            return Ok(ApiResponse<IReadOnlyCollection<AgendaDisponibilidadeDto>>.Ok(paged.Itens));
+            var itens = await _disponibilidadeService.ListarTodasAsync(effectiveId);
+            return Ok(ApiResponse<IReadOnlyCollection<AgendaDisponibilidadeDto>>.Ok(itens));
         }
 
         // POST /api/configuracoes/{estabelecimentoId}/disponibilidade/regras

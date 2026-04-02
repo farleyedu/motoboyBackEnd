@@ -15,6 +15,7 @@ namespace APIBack.Service.Interface
             string? profissionalId,
             int page,
             int pageSize);
+        Task<IReadOnlyCollection<AgendaDisponibilidadeDto>> ListarTodasAsync(Guid idEstabelecimento);
 
         Task<AgendaDisponibilidadeDto?> ObterPorIdAsync(Guid idEstabelecimento, Guid id);
         Task<AgendaDisponibilidadeDto> CriarAsync(Guid idEstabelecimento, SalvarAgendaDisponibilidadeRequest request);

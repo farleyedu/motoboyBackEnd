@@ -15,6 +15,7 @@ namespace APIBack.Repository.Interface
             long? profissionalId,
             int page,
             int pageSize);
+        Task<IReadOnlyCollection<AgendaDisponibilidade>> ListarTodasAsync(Guid idEstabelecimento);
 
         Task<AgendaDisponibilidade?> ObterPorIdAsync(Guid idEstabelecimento, Guid id);
         Task<Guid> CriarAsync(AgendaDisponibilidade entity);

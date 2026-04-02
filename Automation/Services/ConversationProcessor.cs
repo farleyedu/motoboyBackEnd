@@ -91,6 +91,7 @@ namespace APIBack.Automation.Services
                 idMensagemWa: input.Mensagem.Id!,
                 conteudo: input.Texto,
                 displayPhoneNumber: input.PhoneNumberDisplay ?? string.Empty,
+                phoneNumberId: input.PhoneNumberId,
                 dataMensagemUtc: input.DataMensagemUtc,
                 tipoOrigem: input.Mensagem.Tipo,
                 telefoneContato: telefoneNormalizado

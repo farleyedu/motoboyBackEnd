@@ -94,6 +94,37 @@ SELECT id,
             return (rows.Select(Map).ToArray(), total);
         }
 
+        public async Task<IReadOnlyCollection<EstabelecimentoServico>> ListarTodosAsync(Guid idEstabelecimento)
+        {
+            const string sql = @"
+SELECT id,
+       id_estabelecimento AS IdEstabelecimento,
+       nome,
+       descricao,
+       tipo,
+       duracao_minutos AS DuracaoMinutos,
+       valor_centavos AS ValorCentavos,
+       ativo,
+       exibir_no_bot AS ExibirNoBot,
+       permite_agendamento AS PermiteAgendamento,
+       palavras_chave::text AS PalavrasChaveJson,
+       created_at AS CreatedAt,
+       updated_at AS UpdatedAt,
+       deleted_at AS DeletedAt
+  FROM estabelecimento_servicos
+ WHERE id_estabelecimento = @IdEstabelecimento
+   AND deleted_at IS NULL
+ ORDER BY nome ASC;";
+
+            await using var connection = new NpgsqlConnection(_connectionString);
+            var rows = await connection.QueryAsync<Row>(sql, new
+            {
+                IdEstabelecimento = idEstabelecimento
+            });
+
+            return rows.Select(Map).ToArray();
+        }
+
         public async Task<EstabelecimentoServico?> ObterPorIdAsync(Guid idEstabelecimento, Guid id)
         {
             const string sql = @"
