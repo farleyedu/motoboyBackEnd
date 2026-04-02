@@ -94,6 +94,7 @@ builder.Services.AddScoped<IEstabelecimentoFaqRepository, EstabelecimentoFaqRepo
 builder.Services.AddScoped<ICardapioRepository, CardapioRepository>();
 builder.Services.AddScoped<IPedidoRepository, PedidoRepository>();
 builder.Services.AddScoped<IEstabelecimentoServicoRepository, EstabelecimentoServicoRepository>();
+builder.Services.AddScoped<IConfiguracaoCarroRepository, ConfiguracaoCarroRepository>();
 builder.Services.AddScoped<IEstabelecimentoAgendamentoConfigRepository, EstabelecimentoAgendamentoConfigRepository>();
 builder.Services.AddScoped<IAgendaDisponibilidadeRepository, AgendaDisponibilidadeRepository>();
 builder.Services.AddScoped<IPedidoService, PedidoService>();
@@ -108,6 +109,7 @@ builder.Services.AddScoped<ICardapioService, CardapioService>();
 builder.Services.AddScoped<ICardapioPublicService, CardapioPublicService>();
 builder.Services.AddScoped<ICardapioContractService, CardapioContractService>();
 builder.Services.AddScoped<IEstabelecimentoServicoService, EstabelecimentoServicoService>();
+builder.Services.AddScoped<IConfiguracaoCarroService, ConfiguracaoCarroService>();
 builder.Services.AddScoped<IEstabelecimentoAgendamentoConfigService, EstabelecimentoAgendamentoConfigService>();
 builder.Services.AddScoped<IAgendaDisponibilidadeService, AgendaDisponibilidadeService>();
 builder.Services.AddScoped<IAuthService, AuthService>();

@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Data;
+using System.Globalization;
 using System.Linq;
 using System.Threading.Tasks;
 using APIBack.Model;
@@ -386,16 +388,41 @@ SELECT EXISTS (
                 Escopo = row.Escopo ?? "estabelecimento",
                 Tipo = row.Tipo ?? "disponibilidade_semanal",
                 DiasSemana = row.DiasSemana?.ToList() ?? new List<int>(),
-                DataInicio = row.DataInicio,
-                DataFim = row.DataFim,
-                HoraInicio = row.HoraInicio,
-                HoraFim = row.HoraFim,
+                DataInicio = NormalizeDate(row.DataInicio),
+                DataFim = NormalizeDate(row.DataFim),
+                HoraInicio = NormalizeTime(row.HoraInicio),
+                HoraFim = NormalizeTime(row.HoraFim),
                 DiaInteiro = row.DiaInteiro,
                 Ativo = row.Ativo,
                 Observacao = row.Observacao,
                 CreatedAt = row.CreatedAt,
                 UpdatedAt = row.UpdatedAt,
                 DeletedAt = row.DeletedAt
+            };
+        }
+
+        private static DateOnly? NormalizeDate(object? value)
+        {
+            return value switch
+            {
+                null or DBNull => null,
+                DateOnly dateOnly => dateOnly,
+                DateTime dateTime => DateOnly.FromDateTime(dateTime),
+                string text when DateOnly.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed) => parsed,
+                _ => throw new DataException($"Tipo de data nao suportado para agenda_disponibilidade: {value.GetType().FullName}.")
+            };
+        }
+
+        private static TimeOnly? NormalizeTime(object? value)
+        {
+            return value switch
+            {
+                null or DBNull => null,
+                TimeOnly timeOnly => timeOnly,
+                TimeSpan timeSpan => TimeOnly.FromTimeSpan(timeSpan),
+                DateTime dateTime => TimeOnly.FromDateTime(dateTime),
+                string text when TimeOnly.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.None, out var parsed) => parsed,
+                _ => throw new DataException($"Tipo de hora nao suportado para agenda_disponibilidade: {value.GetType().FullName}.")
             };
         }
 
@@ -407,10 +434,10 @@ SELECT EXISTS (
             public string? Escopo { get; set; }
             public string? Tipo { get; set; }
             public int[]? DiasSemana { get; set; }
-            public DateOnly? DataInicio { get; set; }
-            public DateOnly? DataFim { get; set; }
-            public TimeOnly? HoraInicio { get; set; }
-            public TimeOnly? HoraFim { get; set; }
+            public object? DataInicio { get; set; }
+            public object? DataFim { get; set; }
+            public object? HoraInicio { get; set; }
+            public object? HoraFim { get; set; }
             public bool DiaInteiro { get; set; }
             public bool Ativo { get; set; }
             public string? Observacao { get; set; }
