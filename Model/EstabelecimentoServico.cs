@@ -18,8 +18,6 @@ namespace APIBack.Model
         public List<string> PalavrasChave { get; set; } = new();
         public bool DiferePorVeiculo { get; set; }
         public List<EstabelecimentoServicoVeiculoConfig> VeiculoConfigs { get; set; } = new();
-        public bool DiferePorMarcaPeca { get; set; }
-        public List<EstabelecimentoServicoMarcaPecaNode> MarcasPeca { get; set; } = new();
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
         public DateTime? DeletedAt { get; set; }
@@ -30,17 +28,10 @@ namespace APIBack.Model
         public Guid CarroId { get; set; }
         public bool Compativel { get; set; } = true;
         public long? ValorCentavos { get; set; }
+        public List<EstabelecimentoServicoMarcaPeca> MarcasPeca { get; set; } = new();
     }
 
-    public class EstabelecimentoServicoMarcaPecaNode
-    {
-        public Guid Id { get; set; }
-        public string Nome { get; set; } = string.Empty;
-        public long? ValorCentavos { get; set; }
-        public List<EstabelecimentoServicoMarcaPecaVariante> Variantes { get; set; } = new();
-    }
-
-    public class EstabelecimentoServicoMarcaPecaVariante
+    public class EstabelecimentoServicoMarcaPeca
     {
         public Guid Id { get; set; }
         public string Nome { get; set; } = string.Empty;

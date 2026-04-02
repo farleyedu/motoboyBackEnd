@@ -59,7 +59,6 @@ SELECT id,
        permite_agendamento AS PermiteAgendamento,
        palavras_chave::text AS PalavrasChaveJson,
        difere_por_veiculo AS DiferePorVeiculo,
-       difere_por_marca_peca AS DiferePorMarcaPeca,
        created_at AS CreatedAt,
        updated_at AS UpdatedAt,
        deleted_at AS DeletedAt
@@ -113,7 +112,6 @@ SELECT id,
        permite_agendamento AS PermiteAgendamento,
        palavras_chave::text AS PalavrasChaveJson,
        difere_por_veiculo AS DiferePorVeiculo,
-       difere_por_marca_peca AS DiferePorMarcaPeca,
        created_at AS CreatedAt,
        updated_at AS UpdatedAt,
        deleted_at AS DeletedAt
@@ -148,7 +146,6 @@ SELECT id,
        permite_agendamento AS PermiteAgendamento,
        palavras_chave::text AS PalavrasChaveJson,
        difere_por_veiculo AS DiferePorVeiculo,
-       difere_por_marca_peca AS DiferePorMarcaPeca,
        created_at AS CreatedAt,
        updated_at AS UpdatedAt,
        deleted_at AS DeletedAt
@@ -190,7 +187,6 @@ INSERT INTO estabelecimento_servicos (
     permite_agendamento,
     palavras_chave,
     difere_por_veiculo,
-    difere_por_marca_peca,
     created_at,
     updated_at
 ) VALUES (
@@ -206,7 +202,6 @@ INSERT INTO estabelecimento_servicos (
     @PermiteAgendamento,
     CAST(@PalavrasChave AS jsonb),
     @DiferePorVeiculo,
-    @DiferePorMarcaPeca,
     @CreatedAt,
     @UpdatedAt
 );";
@@ -252,7 +247,6 @@ UPDATE estabelecimento_servicos
        permite_agendamento = @PermiteAgendamento,
        palavras_chave = CAST(@PalavrasChave AS jsonb),
        difere_por_veiculo = @DiferePorVeiculo,
-       difere_por_marca_peca = @DiferePorMarcaPeca,
        updated_at = @UpdatedAt
  WHERE id_estabelecimento = @IdEstabelecimento
    AND id = @Id
@@ -361,7 +355,6 @@ UPDATE estabelecimento_servicos
                 entity.PermiteAgendamento,
                 PalavrasChave = JsonSerializer.Serialize(entity.PalavrasChave ?? new List<string>(), JsonOptions),
                 entity.DiferePorVeiculo,
-                entity.DiferePorMarcaPeca,
                 entity.CreatedAt,
                 entity.UpdatedAt
             };
@@ -386,18 +379,33 @@ SELECT servico_id AS ServicoId,
             const string sqlPecas = @"
 SELECT id,
        servico_id AS ServicoId,
-       parent_id AS ParentId,
+       modelo_id AS CarroId,
        nome,
        valor_centavos AS ValorCentavos,
        ordem,
        created_at AS CreatedAt
-  FROM estabelecimento_servico_marcas_peca
+  FROM estabelecimento_servico_veiculo_marcas_peca
  WHERE servico_id = ANY(@ServicoIds)
- ORDER BY servico_id ASC, parent_id NULLS FIRST, ordem ASC, created_at ASC;";
+ ORDER BY servico_id ASC, modelo_id ASC, ordem ASC, created_at ASC;";
 
             var servicoIds = itens.Select(item => item.Id).Distinct().ToArray();
             var vehicleRows = (await connection.QueryAsync<VehicleConfigRow>(sqlVeiculos, new { ServicoIds = servicoIds })).ToArray();
             var pieceRows = (await connection.QueryAsync<PieceRow>(sqlPecas, new { ServicoIds = servicoIds })).ToArray();
+
+            var piecesByVehicle = pieceRows
+                .GroupBy(row => (row.ServicoId, row.CarroId))
+                .ToDictionary(
+                    group => group.Key,
+                    group => (IReadOnlyCollection<EstabelecimentoServicoMarcaPeca>)group
+                        .OrderBy(row => row.Ordem)
+                        .ThenBy(row => row.CreatedAt)
+                        .Select(row => new EstabelecimentoServicoMarcaPeca
+                        {
+                            Id = row.Id,
+                            Nome = row.Nome ?? string.Empty,
+                            ValorCentavos = row.ValorCentavos
+                        })
+                        .ToArray());
 
             var vehiclesByService = vehicleRows
                 .GroupBy(row => row.ServicoId)
@@ -408,55 +416,19 @@ SELECT id,
                         {
                             CarroId = row.CarroId,
                             Compativel = row.Compativel,
-                            ValorCentavos = row.ValorCentavos
+                            ValorCentavos = row.ValorCentavos,
+                            MarcasPeca = piecesByVehicle.TryGetValue((row.ServicoId, row.CarroId), out var marcas)
+                                ? marcas.ToList()
+                                : new List<EstabelecimentoServicoMarcaPeca>()
                         })
                         .ToArray());
-
-            var piecesByService = pieceRows
-                .GroupBy(row => row.ServicoId)
-                .ToDictionary(
-                    group => group.Key,
-                    group => (IReadOnlyCollection<EstabelecimentoServicoMarcaPecaNode>)BuildPieceNodes(group));
 
             foreach (var item in itens)
             {
                 item.VeiculoConfigs = vehiclesByService.TryGetValue(item.Id, out var veiculos)
                     ? veiculos.ToList()
                     : new List<EstabelecimentoServicoVeiculoConfig>();
-
-                item.MarcasPeca = piecesByService.TryGetValue(item.Id, out var pecas)
-                    ? pecas.ToList()
-                    : new List<EstabelecimentoServicoMarcaPecaNode>();
             }
-        }
-
-        private static IReadOnlyCollection<EstabelecimentoServicoMarcaPecaNode> BuildPieceNodes(IEnumerable<PieceRow> rows)
-        {
-            var orderedRows = rows.ToArray();
-            var roots = orderedRows
-                .Where(row => !row.ParentId.HasValue)
-                .OrderBy(row => row.Ordem)
-                .ThenBy(row => row.CreatedAt)
-                .Select(root => new EstabelecimentoServicoMarcaPecaNode
-                {
-                    Id = root.Id,
-                    Nome = root.Nome ?? string.Empty,
-                    ValorCentavos = root.ValorCentavos,
-                    Variantes = orderedRows
-                        .Where(row => row.ParentId == root.Id)
-                        .OrderBy(row => row.Ordem)
-                        .ThenBy(row => row.CreatedAt)
-                        .Select(child => new EstabelecimentoServicoMarcaPecaVariante
-                        {
-                            Id = child.Id,
-                            Nome = child.Nome ?? string.Empty,
-                            ValorCentavos = child.ValorCentavos
-                        })
-                        .ToList()
-                })
-                .ToArray();
-
-            return roots;
         }
 
         private async Task InsertChildrenAsync(
@@ -466,7 +438,7 @@ SELECT id,
             DateTime timestamp)
         {
             await InsertVehicleConfigsAsync(connection, transaction, entity, timestamp);
-            await InsertMarcaPecaAsync(connection, transaction, entity, timestamp);
+            await InsertMarcasPecaAsync(connection, transaction, entity, timestamp);
         }
 
         private static async Task DeleteChildrenAsync(
@@ -475,7 +447,7 @@ SELECT id,
             Guid servicoId)
         {
             const string sqlDeletePecas = @"
-DELETE FROM estabelecimento_servico_marcas_peca
+DELETE FROM estabelecimento_servico_veiculo_marcas_peca
  WHERE servico_id = @ServicoId;";
 
             const string sqlDeleteVeiculos = @"
@@ -527,22 +499,22 @@ INSERT INTO estabelecimento_servico_veiculos (
             await connection.ExecuteAsync(sql, rows, transaction);
         }
 
-        private static async Task InsertMarcaPecaAsync(
+        private static async Task InsertMarcasPecaAsync(
             NpgsqlConnection connection,
             NpgsqlTransaction transaction,
             EstabelecimentoServico entity,
             DateTime timestamp)
         {
-            if (!entity.DiferePorMarcaPeca || entity.MarcasPeca.Count == 0)
+            if (!entity.DiferePorVeiculo || entity.VeiculoConfigs.Count == 0)
             {
                 return;
             }
 
             const string sql = @"
-INSERT INTO estabelecimento_servico_marcas_peca (
+INSERT INTO estabelecimento_servico_veiculo_marcas_peca (
     id,
     servico_id,
-    parent_id,
+    modelo_id,
     nome,
     valor_centavos,
     ordem,
@@ -551,7 +523,7 @@ INSERT INTO estabelecimento_servico_marcas_peca (
 ) VALUES (
     @Id,
     @ServicoId,
-    @ParentId,
+    @ModeloId,
     @Nome,
     @ValorCentavos,
     @Ordem,
@@ -561,46 +533,38 @@ INSERT INTO estabelecimento_servico_marcas_peca (
 
             var rows = new List<object>();
 
-            for (var i = 0; i < entity.MarcasPeca.Count; i++)
+            foreach (var config in entity.VeiculoConfigs)
             {
-                var marca = entity.MarcasPeca[i];
-                if (marca.Id == Guid.Empty)
+                if (config.MarcasPeca.Count == 0)
                 {
-                    marca.Id = Guid.NewGuid();
+                    continue;
                 }
 
-                rows.Add(new
+                for (var i = 0; i < config.MarcasPeca.Count; i++)
                 {
-                    marca.Id,
-                    ServicoId = entity.Id,
-                    ParentId = (Guid?)null,
-                    marca.Nome,
-                    marca.ValorCentavos,
-                    Ordem = i + 1,
-                    CreatedAt = timestamp,
-                    UpdatedAt = timestamp
-                });
-
-                for (var j = 0; j < marca.Variantes.Count; j++)
-                {
-                    var variante = marca.Variantes[j];
-                    if (variante.Id == Guid.Empty)
+                    var marca = config.MarcasPeca[i];
+                    if (marca.Id == Guid.Empty)
                     {
-                        variante.Id = Guid.NewGuid();
+                        marca.Id = Guid.NewGuid();
                     }
 
                     rows.Add(new
                     {
-                        variante.Id,
+                        marca.Id,
                         ServicoId = entity.Id,
-                        ParentId = (Guid?)marca.Id,
-                        variante.Nome,
-                        variante.ValorCentavos,
-                        Ordem = j + 1,
+                        ModeloId = config.CarroId,
+                        marca.Nome,
+                        marca.ValorCentavos,
+                        Ordem = i + 1,
                         CreatedAt = timestamp,
                         UpdatedAt = timestamp
                     });
                 }
+            }
+
+            if (rows.Count == 0)
+            {
+                return;
             }
 
             await connection.ExecuteAsync(sql, rows, transaction);
@@ -622,7 +586,6 @@ INSERT INTO estabelecimento_servico_marcas_peca (
                 PermiteAgendamento = row.PermiteAgendamento,
                 PalavrasChave = DeserializeList(row.PalavrasChaveJson),
                 DiferePorVeiculo = row.DiferePorVeiculo,
-                DiferePorMarcaPeca = row.DiferePorMarcaPeca,
                 CreatedAt = row.CreatedAt,
                 UpdatedAt = row.UpdatedAt,
                 DeletedAt = row.DeletedAt
@@ -660,7 +623,6 @@ INSERT INTO estabelecimento_servico_marcas_peca (
             public bool PermiteAgendamento { get; set; }
             public string? PalavrasChaveJson { get; set; }
             public bool DiferePorVeiculo { get; set; }
-            public bool DiferePorMarcaPeca { get; set; }
             public DateTime CreatedAt { get; set; }
             public DateTime UpdatedAt { get; set; }
             public DateTime? DeletedAt { get; set; }
@@ -678,7 +640,7 @@ INSERT INTO estabelecimento_servico_marcas_peca (
         {
             public Guid Id { get; set; }
             public Guid ServicoId { get; set; }
-            public Guid? ParentId { get; set; }
+            public Guid CarroId { get; set; }
             public string? Nome { get; set; }
             public long? ValorCentavos { get; set; }
             public int Ordem { get; set; }

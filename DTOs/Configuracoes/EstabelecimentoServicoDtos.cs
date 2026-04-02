@@ -18,8 +18,6 @@ namespace APIBack.DTOs.Configuracoes
         public List<string> PalavrasChave { get; set; } = new();
         public bool DiferePorVeiculo { get; set; }
         public List<ServicoVeiculoConfigDto> VeiculoConfigs { get; set; } = new();
-        public bool DiferePorMarcaPeca { get; set; }
-        public List<MarcaPecaNodeDto> MarcasPeca { get; set; } = new();
         public long? ValorMinimoCentavos { get; set; }
         public long? ValorMaximoCentavos { get; set; }
         public DateTime CreatedAt { get; set; }
@@ -40,8 +38,6 @@ namespace APIBack.DTOs.Configuracoes
         public List<string>? PalavrasChave { get; set; }
         public bool DiferePorVeiculo { get; set; }
         public List<SalvarServicoVeiculoConfigRequest>? VeiculoConfigs { get; set; }
-        public bool DiferePorMarcaPeca { get; set; }
-        public List<SalvarMarcaPecaNodeRequest>? MarcasPeca { get; set; }
     }
 
     public class AtualizarStatusRequest
@@ -54,25 +50,16 @@ namespace APIBack.DTOs.Configuracoes
         public string CarroId { get; set; } = string.Empty;
         public bool Compativel { get; set; }
         public long? ValorCentavos { get; set; }
+        public List<MarcaPecaDto> MarcasPeca { get; set; } = new();
         public long? ValorMinimoCentavos { get; set; }
         public long? ValorMaximoCentavos { get; set; }
     }
 
-    public class MarcaPecaVarianteDto
+    public class MarcaPecaDto
     {
         public string Id { get; set; } = string.Empty;
         public string Nome { get; set; } = string.Empty;
         public long? ValorCentavos { get; set; }
-        public long? ValorMinimoCentavos { get; set; }
-        public long? ValorMaximoCentavos { get; set; }
-    }
-
-    public class MarcaPecaNodeDto
-    {
-        public string Id { get; set; } = string.Empty;
-        public string Nome { get; set; } = string.Empty;
-        public long? ValorCentavos { get; set; }
-        public List<MarcaPecaVarianteDto> Variantes { get; set; } = new();
         public long? ValorMinimoCentavos { get; set; }
         public long? ValorMaximoCentavos { get; set; }
     }
@@ -82,20 +69,13 @@ namespace APIBack.DTOs.Configuracoes
         public string CarroId { get; set; } = string.Empty;
         public bool Compativel { get; set; } = true;
         public long? ValorCentavos { get; set; }
+        public List<SalvarMarcaPecaRequest>? MarcasPeca { get; set; }
     }
 
-    public class SalvarMarcaPecaVarianteRequest
+    public class SalvarMarcaPecaRequest
     {
         public string? Id { get; set; }
         public string Nome { get; set; } = string.Empty;
         public long? ValorCentavos { get; set; }
-    }
-
-    public class SalvarMarcaPecaNodeRequest
-    {
-        public string? Id { get; set; }
-        public string Nome { get; set; } = string.Empty;
-        public long? ValorCentavos { get; set; }
-        public List<SalvarMarcaPecaVarianteRequest>? Variantes { get; set; }
     }
 }
