@@ -33,6 +33,7 @@ namespace APIBack.Automation.Services
         private readonly IMessageRepository _mensagemRepository;
         private readonly PromptAssembler _promptAssembler;
         private readonly CentralRoutingService _centralRouting;
+        private readonly ServicoCatalogProvider _servicoCatalogProvider;
         private readonly IMemoryCache _cache;
         private readonly ILogger<ConversationProcessor> _logger;
 
@@ -57,6 +58,7 @@ namespace APIBack.Automation.Services
             IMessageRepository mensagemRepository,
             PromptAssembler promptAssembler,
             CentralRoutingService centralRouting,
+            ServicoCatalogProvider servicoCatalogProvider,
             IMemoryCache cache,
             ILogger<ConversationProcessor> logger)
         {
@@ -68,6 +70,7 @@ namespace APIBack.Automation.Services
             _mensagemRepository = mensagemRepository;
             _promptAssembler = promptAssembler;
             _centralRouting = centralRouting;
+            _servicoCatalogProvider = servicoCatalogProvider;
             _cache = cache;
             _logger = logger;
         }
@@ -225,6 +228,17 @@ namespace APIBack.Automation.Services
                     var prompts = await _regrasRepo.ObterPromptsCompostosAsync(idEstabelecimento.Value, modulosAtivos);
                     promptMontado = _promptAssembler.Assemble(prompts);
                     _cache.Set(promptsCacheKey, promptMontado, PromptsCacheOptions);
+                }
+
+                if (modulosAtivos.Any(item => string.Equals(item, "Servicos", StringComparison.OrdinalIgnoreCase)))
+                {
+                    var resumoServicos = await _servicoCatalogProvider.BuildCompactPromptAsync(idEstabelecimento.Value);
+                    if (!string.IsNullOrWhiteSpace(resumoServicos))
+                    {
+                        promptMontado = string.IsNullOrWhiteSpace(promptMontado)
+                            ? resumoServicos
+                            : $"{promptMontado}\n\n{resumoServicos}";
+                    }
                 }
 
                 if (string.Equals(tipoEstabelecimento, "oficina", StringComparison.OrdinalIgnoreCase))

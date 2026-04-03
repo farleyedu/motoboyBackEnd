@@ -13,6 +13,7 @@ namespace APIBack.Automation.Services
         private readonly IConversationRepository _conversationRepository;
         private readonly IClienteRepository _clienteRepository;
         private readonly IEstabelecimentoRepository _estabelecimentoRepository;
+        private readonly IServicoAtendimentoRepository _servicoAtendimentoRepository;
         private readonly IGaragemLeadRepository _garagemLeadRepository;
         private readonly INauticaLeadRepository _nauticaLeadRepository;
         private readonly CentralRoutingService _centralRouting;
@@ -24,6 +25,7 @@ namespace APIBack.Automation.Services
             IConversationRepository conversationRepository,
             IClienteRepository clienteRepository,
             IEstabelecimentoRepository estabelecimentoRepository,
+            IServicoAtendimentoRepository servicoAtendimentoRepository,
             IGaragemLeadRepository garagemLeadRepository,
             INauticaLeadRepository nauticaLeadRepository,
             CentralRoutingService centralRouting,
@@ -34,6 +36,7 @@ namespace APIBack.Automation.Services
             _conversationRepository = conversationRepository;
             _clienteRepository = clienteRepository;
             _estabelecimentoRepository = estabelecimentoRepository;
+            _servicoAtendimentoRepository = servicoAtendimentoRepository;
             _garagemLeadRepository = garagemLeadRepository;
             _nauticaLeadRepository = nauticaLeadRepository;
             _centralRouting = centralRouting;
@@ -121,6 +124,16 @@ namespace APIBack.Automation.Services
             if (!string.IsNullOrWhiteSpace(telefoneCliente))
             {
                 await CancelarLeadAbertoAsync(conversaOperacional.IdEstabelecimento, telefoneCliente!);
+            }
+
+            var atendimentoServico = await _servicoAtendimentoRepository.ObterPorConversaAsync(conversaOperacional.IdConversa);
+            if (atendimentoServico != null &&
+                (string.Equals(atendimentoServico.Status, "em_triagem", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(atendimentoServico.Status, "aguardando_cliente", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(atendimentoServico.Status, "aguardando_interno", StringComparison.OrdinalIgnoreCase) ||
+                 string.Equals(atendimentoServico.Status, "em_andamento", StringComparison.OrdinalIgnoreCase)))
+            {
+                await _servicoAtendimentoRepository.AtualizarStatusAsync(atendimentoServico.Id, "cancelado");
             }
 
             foreach (var conversationId in idsParaLimpar)

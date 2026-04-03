@@ -130,6 +130,7 @@ builder.Services.AddScoped<IIARespostaRepository, SqlIARespostaRepository>();
 builder.Services.AddScoped<IEstabelecimentoRepository, SqlEstabelecimentoRepository>();
 builder.Services.AddScoped<IClienteRepository, SqlClienteRepository>();
 builder.Services.AddScoped<IOficinaAtendimentoRepository, SqlOficinaAtendimentoRepository>();
+builder.Services.AddScoped<IServicoAtendimentoRepository, SqlServicoAtendimentoRepository>();
 builder.Services.AddScoped<IGaragemLeadRepository, SqlGaragemLeadRepository>();
 builder.Services.AddScoped<IGaragemPainelRepository, SqlGaragemPainelRepository>();
 builder.Services.AddScoped<IGaragemVeiculoRepository, SqlGaragemVeiculoRepository>();
@@ -148,6 +149,9 @@ builder.Services.AddScoped<CentralRoutingService>();
 builder.Services.AddScoped<OficinaFlowService>();
 builder.Services.AddScoped<GarageFlowService>();
 builder.Services.AddScoped<NauticaFlowService>();
+builder.Services.AddScoped<ServicoCatalogProvider>();
+builder.Services.AddScoped<ServicoReplyComposer>();
+builder.Services.AddScoped<ServicosFlowService>();
 builder.Services.AddScoped<ConversationResetService>();
 
 

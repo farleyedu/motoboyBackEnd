@@ -49,6 +49,7 @@ namespace APIBack.Automation.Services
         private readonly IClienteRepository _clienteRepository;
         private readonly IWabaPhoneRepository _wabaPhoneRepository;
         private readonly IQueueBus _queueBus;
+        private readonly IServicoAtendimentoRepository _servicoAtendimentoRepository;
         private readonly WhatsAppSender _whatsAppSender;
         private readonly AgenteService _agenteService;
         private readonly ConversationResetService _conversationReset;
@@ -61,6 +62,7 @@ namespace APIBack.Automation.Services
             IClienteRepository clienteRepository,
             IWabaPhoneRepository wabaPhoneRepository,
             IQueueBus queueBus,
+            IServicoAtendimentoRepository servicoAtendimentoRepository,
             WhatsAppSender whatsAppSender,
             AgenteService agenteService,
             ConversationResetService conversationReset,
@@ -72,6 +74,7 @@ namespace APIBack.Automation.Services
             _clienteRepository = clienteRepository;
             _wabaPhoneRepository = wabaPhoneRepository;
             _queueBus = queueBus;
+            _servicoAtendimentoRepository = servicoAtendimentoRepository;
             _whatsAppSender = whatsAppSender;
             _agenteService = agenteService;
             _conversationReset = conversationReset;
@@ -128,6 +131,8 @@ namespace APIBack.Automation.Services
                     ["assignedAgentName"] = agente.Nome
                 });
 
+            await SyncServicoAtendimentoStatusAsync(requestedConversationId, "em_andamento");
+
             return await BuildResponseAsync(requestedConversationId, idEstabelecimento);
         }
 
@@ -158,6 +163,8 @@ namespace APIBack.Automation.Services
                 "api",
                 actorUserId,
                 null);
+
+            await SyncServicoAtendimentoStatusAsync(requestedConversationId, "com_bot");
 
             return await BuildResponseAsync(requestedConversationId, idEstabelecimento);
         }
@@ -231,6 +238,8 @@ namespace APIBack.Automation.Services
                 actorUserId,
                 null);
 
+            await SyncServicoAtendimentoStatusAsync(requestedConversationId, status);
+
             return await BuildResponseAsync(requestedConversationId, idEstabelecimento);
         }
 
@@ -284,6 +293,8 @@ namespace APIBack.Automation.Services
                 "api",
                 actorUserId,
                 agenteId);
+
+            await SyncServicoAtendimentoStatusAsync(requestedConversationId, novoStatus, tipoFechamento);
 
             if (string.Equals(tipoFechamento, "manual", StringComparison.OrdinalIgnoreCase))
             {
@@ -562,5 +573,41 @@ namespace APIBack.Automation.Services
 
         private static string NormalizeCloseType(string? tipo)
             => string.IsNullOrWhiteSpace(tipo) ? "manual" : tipo.Trim().ToLowerInvariant();
+
+        private async Task SyncServicoAtendimentoStatusAsync(Guid conversationId, string conversationStatus, string? closeType = null)
+        {
+            var atendimento = await _servicoAtendimentoRepository.ObterPorConversaAsync(conversationId);
+            if (atendimento == null)
+            {
+                return;
+            }
+
+            string? novoStatus = null;
+            if (!string.IsNullOrWhiteSpace(closeType))
+            {
+                novoStatus = string.Equals(closeType, "inatividade", StringComparison.OrdinalIgnoreCase)
+                    ? "cancelado"
+                    : "concluido";
+            }
+            else
+            {
+                novoStatus = NormalizeStatus(conversationStatus) switch
+                {
+                    "em_andamento" => "em_andamento",
+                    "aguardando_interno" => "aguardando_interno",
+                    "aguardando_cliente" => "aguardando_cliente",
+                    "com_bot" => "aguardando_cliente",
+                    _ => null
+                };
+            }
+
+            if (string.IsNullOrWhiteSpace(novoStatus) ||
+                string.Equals(atendimento.Status, novoStatus, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            await _servicoAtendimentoRepository.AtualizarStatusAsync(atendimento.Id, novoStatus);
+        }
     }
 }

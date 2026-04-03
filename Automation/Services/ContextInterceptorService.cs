@@ -34,6 +34,7 @@ namespace APIBack.Automation.Services
         private readonly OficinaFlowService _oficinaFlow;
         private readonly GarageFlowService _garageFlow;
         private readonly NauticaFlowService _nauticaFlow;
+        private readonly ServicosFlowService _servicosFlow;
         private readonly ConversationResetService _conversationReset;
 
         public ContextInterceptorService(
@@ -46,6 +47,7 @@ namespace APIBack.Automation.Services
             OficinaFlowService oficinaFlow,
             GarageFlowService garageFlow,
             NauticaFlowService nauticaFlow,
+            ServicosFlowService servicosFlow,
             ConversationResetService conversationReset)
         {
             _conversationRepository = conversationRepository;
@@ -57,6 +59,7 @@ namespace APIBack.Automation.Services
             _oficinaFlow = oficinaFlow;
             _garageFlow = garageFlow;
             _nauticaFlow = nauticaFlow;
+            _servicosFlow = servicosFlow;
             _conversationReset = conversationReset;
         }
 
@@ -255,15 +258,6 @@ namespace APIBack.Automation.Services
                 return (true, centralDecision);
             }
 
-            var (oficinaIntercepted, oficinaDecision) = await _oficinaFlow.TryHandleAsync(
-                idConversa,
-                mensagemTexto,
-                phoneNumberDisplay);
-            if (oficinaIntercepted)
-            {
-                return (true, oficinaDecision);
-            }
-
             var (garageIntercepted, garageDecision) = await _garageFlow.TryHandleAsync(
                 idConversa,
                 mensagemTexto,
@@ -280,6 +274,24 @@ namespace APIBack.Automation.Services
             if (nauticaIntercepted)
             {
                 return (true, nauticaDecision);
+            }
+
+            var (servicosIntercepted, servicosDecision) = await _servicosFlow.TryHandleAsync(
+                idConversa,
+                mensagemTexto,
+                phoneNumberDisplay);
+            if (servicosIntercepted)
+            {
+                return (true, servicosDecision);
+            }
+
+            var (oficinaIntercepted, oficinaDecision) = await _oficinaFlow.TryHandleAsync(
+                idConversa,
+                mensagemTexto,
+                phoneNumberDisplay);
+            if (oficinaIntercepted)
+            {
+                return (true, oficinaDecision);
             }
 
             // ------- DETECÇÃO INTELIGENTE DE FILTROS -------
