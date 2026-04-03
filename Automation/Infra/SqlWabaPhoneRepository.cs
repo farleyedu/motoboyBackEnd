@@ -122,7 +122,7 @@ SELECT id_estabelecimento
 
         public async Task<bool> InserirOuAtualizarAsync(WabaPhone wabaPhone)
         {
-            if (wabaPhone == null || string.IsNullOrWhiteSpace(wabaPhone.PhoneNumberId))
+            if (wabaPhone == null)
                 return false;
 
             var criado = wabaPhone.DataCriacao != default ? DateTime.SpecifyKind(wabaPhone.DataCriacao, DateTimeKind.Utc) : DateTime.UtcNow;
@@ -137,18 +137,66 @@ SELECT id_estabelecimento
                     return false;
                 }
 
-                var targetColumn = columns.PhoneNumberId ? "phone_number_id" : "display_phone_number";
-                var sql = $@"INSERT INTO waba_phone ({targetColumn}, id_estabelecimento, ativo, descricao, data_criacao, data_atualizacao)
-                             VALUES (@PhoneNumberId, @IdEstabelecimento, @Ativo, @Descricao, @DataCriacao, @DataAtualizacao)
+                var targetColumn =
+                    columns.PhoneNumberId && !string.IsNullOrWhiteSpace(wabaPhone.PhoneNumberId) ? "phone_number_id" :
+                    columns.DisplayPhoneNumber && !string.IsNullOrWhiteSpace(wabaPhone.DisplayPhoneNumber) ? "display_phone_number" :
+                    null;
+
+                if (string.IsNullOrWhiteSpace(targetColumn))
+                {
+                    return false;
+                }
+
+                var insertColumns = new System.Collections.Generic.List<string>();
+                var insertValues = new System.Collections.Generic.List<string>();
+                var updateSet = new System.Collections.Generic.List<string>();
+
+                if (columns.PhoneNumberId && !string.IsNullOrWhiteSpace(wabaPhone.PhoneNumberId))
+                {
+                    insertColumns.Add("phone_number_id");
+                    insertValues.Add("@PhoneNumberId");
+                    if (!string.Equals(targetColumn, "phone_number_id", StringComparison.Ordinal))
+                    {
+                        updateSet.Add("phone_number_id = COALESCE(EXCLUDED.phone_number_id, waba_phone.phone_number_id)");
+                    }
+                }
+
+                if (columns.DisplayPhoneNumber && !string.IsNullOrWhiteSpace(wabaPhone.DisplayPhoneNumber))
+                {
+                    insertColumns.Add("display_phone_number");
+                    insertValues.Add("@DisplayPhoneNumber");
+                    if (!string.Equals(targetColumn, "display_phone_number", StringComparison.Ordinal))
+                    {
+                        updateSet.Add("display_phone_number = COALESCE(EXCLUDED.display_phone_number, waba_phone.display_phone_number)");
+                    }
+                }
+
+                insertColumns.Add("id_estabelecimento");
+                insertColumns.Add("ativo");
+                insertColumns.Add("descricao");
+                insertColumns.Add("data_criacao");
+                insertColumns.Add("data_atualizacao");
+
+                insertValues.Add("@IdEstabelecimento");
+                insertValues.Add("@Ativo");
+                insertValues.Add("@Descricao");
+                insertValues.Add("@DataCriacao");
+                insertValues.Add("@DataAtualizacao");
+
+                updateSet.Add("id_estabelecimento = EXCLUDED.id_estabelecimento");
+                updateSet.Add("ativo = EXCLUDED.ativo");
+                updateSet.Add("descricao = EXCLUDED.descricao");
+                updateSet.Add("data_atualizacao = EXCLUDED.data_atualizacao");
+
+                var sql = $@"INSERT INTO waba_phone ({string.Join(", ", insertColumns)})
+                             VALUES ({string.Join(", ", insertValues)})
                              ON CONFLICT ({targetColumn})
                              DO UPDATE SET
-                               id_estabelecimento = EXCLUDED.id_estabelecimento,
-                               ativo              = EXCLUDED.ativo,
-                               descricao          = EXCLUDED.descricao,
-                               data_atualizacao   = EXCLUDED.data_atualizacao;";
+                               {string.Join(", ", updateSet)};";
                 var rows = await connection.ExecuteAsync(sql, new
                 {
                     PhoneNumberId = wabaPhone.PhoneNumberId,
+                    DisplayPhoneNumber = wabaPhone.DisplayPhoneNumber,
                     IdEstabelecimento = wabaPhone.IdEstabelecimento,
                     Ativo = wabaPhone.Ativo,
                     Descricao = (object?)wabaPhone.Descricao,

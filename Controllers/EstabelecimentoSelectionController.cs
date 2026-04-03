@@ -29,7 +29,6 @@ namespace APIBack.Controllers
 
         [HttpGet("me/estabelecimentos")]
         [Authorize]
-        [RequirePermission("Configuracoes", "visualizar")]
         [ProducesResponseType(typeof(ApiResponse<IReadOnlyCollection<UsuarioEstabelecimentoDto>>), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status401Unauthorized)]
         [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status403Forbidden)]
@@ -60,7 +59,6 @@ namespace APIBack.Controllers
 
         [HttpPost("auth/definir-estabelecimento")]
         [Authorize]
-        [RequirePermission("Configuracoes", "visualizar")]
         [ProducesResponseType(typeof(ApiResponse<DefinirEstabelecimentoAtivoResponse>), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
         [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status401Unauthorized)]

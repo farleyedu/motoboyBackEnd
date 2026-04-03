@@ -103,6 +103,7 @@ namespace APIBack.Tests.Unit
             {
                 Id = id,
                 PhoneNumberId = phoneNumberId,
+                DisplayPhoneNumber = "5534999999999",
                 IdEstabelecimento = idEstabelecimento,
                 Ativo = true,
                 Descricao = descricao,
@@ -112,6 +113,7 @@ namespace APIBack.Tests.Unit
 
             Assert.Equal(id, wabaPhone.Id);
             Assert.Equal(phoneNumberId, wabaPhone.PhoneNumberId);
+            Assert.Equal("5534999999999", wabaPhone.DisplayPhoneNumber);
             Assert.Equal(idEstabelecimento, wabaPhone.IdEstabelecimento);
             Assert.True(wabaPhone.Ativo);
             Assert.Equal(descricao, wabaPhone.Descricao);
@@ -126,6 +128,7 @@ namespace APIBack.Tests.Unit
 
             Assert.Equal(Guid.Empty, wabaPhone.Id);
             Assert.Equal(string.Empty, wabaPhone.PhoneNumberId);
+            Assert.Null(wabaPhone.DisplayPhoneNumber);
             Assert.Equal(Guid.Empty, wabaPhone.IdEstabelecimento);
             Assert.True(wabaPhone.Ativo);
             Assert.Null(wabaPhone.Descricao);

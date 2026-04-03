@@ -109,7 +109,7 @@ namespace APIBack.Automation.Services
             criada.CriadaPor ??= "cliente";
             await _fila.PublicarEntradaAsync(criada);
 
-            var tarefaContexto = ObterContextoAsync(criada.IdConversa, input.PhoneNumberDisplay);
+            var tarefaContexto = ObterContextoAsync(criada.IdConversa, input.PhoneNumberDisplay, input.PhoneNumberId);
             var tarefaHistorico = ObterHistoricoAsync(criada.IdConversa);
             await Task.WhenAll(tarefaContexto, tarefaHistorico);
             var contexto = tarefaContexto.Result;
@@ -182,7 +182,7 @@ namespace APIBack.Automation.Services
             return builder.ToString();
         }
 
-        private async Task<string?> ObterContextoAsync(Guid idConversa, string? phoneNumberDisplay)
+        private async Task<string?> ObterContextoAsync(Guid idConversa, string? phoneNumberDisplay, string? phoneNumberId)
         {
             try
             {
@@ -202,7 +202,7 @@ namespace APIBack.Automation.Services
                 }
                 else
                 {
-                    idEstabelecimento = await ResolverEstabelecimentoAsync(phoneNumberDisplay);
+                    idEstabelecimento = await ResolverEstabelecimentoAsync(phoneNumberDisplay, phoneNumberId);
                 }
 
                 if (!idEstabelecimento.HasValue)
@@ -317,27 +317,27 @@ namespace APIBack.Automation.Services
             }
         }
 
-        private async Task<Guid?> ResolverEstabelecimentoAsync(string? phoneNumberDisplay)
+        private async Task<Guid?> ResolverEstabelecimentoAsync(string? phoneNumberDisplay, string? phoneNumberId)
         {
-            if (string.IsNullOrWhiteSpace(phoneNumberDisplay))
+            if (!string.IsNullOrWhiteSpace(phoneNumberDisplay))
             {
-                return null;
+                var idPorDisplay = await _wabaRepo.ObterIdEstabelecimentoPorDisplayPhoneAsync(phoneNumberDisplay);
+                if (idPorDisplay.HasValue && idPorDisplay.Value != Guid.Empty)
+                {
+                    return idPorDisplay.Value;
+                }
             }
 
-            var sanitized = SanitizarNumero(phoneNumberDisplay);
-            Guid? idEstabelecimento = null;
-
-            if (!string.IsNullOrWhiteSpace(sanitized))
+            if (!string.IsNullOrWhiteSpace(phoneNumberId))
             {
-                idEstabelecimento = await _wabaRepo.ObterIdEstabelecimentoPorPhoneNumberIdAsync(sanitized);
+                var idPorPhoneNumberId = await _wabaRepo.ObterIdEstabelecimentoPorPhoneNumberIdAsync(phoneNumberId);
+                if (idPorPhoneNumberId.HasValue && idPorPhoneNumberId.Value != Guid.Empty)
+                {
+                    return idPorPhoneNumberId.Value;
+                }
             }
 
-            if (!idEstabelecimento.HasValue || idEstabelecimento == Guid.Empty)
-            {
-                idEstabelecimento = await _wabaRepo.ObterIdEstabelecimentoPorPhoneNumberIdAsync(phoneNumberDisplay);
-            }
-
-            return (idEstabelecimento.HasValue && idEstabelecimento != Guid.Empty) ? idEstabelecimento : null;
+            return null;
         }
 
         private async Task<IReadOnlyList<AssistantChatTurn>> ObterHistoricoAsync(Guid idConversa)

@@ -20,6 +20,10 @@ namespace APIBack.Automation.Models
         [MaxLength(255)]
         public string PhoneNumberId { get; set; } = string.Empty;
 
+        [Column("display_phone_number")]
+        [MaxLength(255)]
+        public string? DisplayPhoneNumber { get; set; }
+
         [Required]
         [Column("id_estabelecimento")]
         public Guid IdEstabelecimento { get; set; }

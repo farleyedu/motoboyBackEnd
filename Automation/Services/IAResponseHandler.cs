@@ -13,6 +13,7 @@ namespace APIBack.Automation.Services
     public class IAResponseHandler
     {
         private readonly IConversationRepository _conversationRepository;
+        private readonly IWabaPhoneRepository _wabaPhoneRepository;
         private readonly IMessageService _mensagemService;
         private readonly IQueueBus _fila;
         private readonly WhatsAppSender _whatsAppSender;
@@ -21,6 +22,7 @@ namespace APIBack.Automation.Services
 
         public IAResponseHandler(
             IConversationRepository conversationRepository,
+            IWabaPhoneRepository wabaPhoneRepository,
             IMessageService mensagemService,
             IQueueBus fila,
             WhatsAppSender whatsAppSender,
@@ -28,6 +30,7 @@ namespace APIBack.Automation.Services
             ILogger<IAResponseHandler> logger)
         {
             _conversationRepository = conversationRepository;
+            _wabaPhoneRepository = wabaPhoneRepository;
             _mensagemService = mensagemService;
             _fila = fila;
             _whatsAppSender = whatsAppSender;
@@ -67,10 +70,34 @@ namespace APIBack.Automation.Services
             var phoneNumberDisplay = processamento.NumeroTelefoneExibicao;
             var phoneNumberId = processamento.NumeroWhatsappId;
 
-            if (string.IsNullOrWhiteSpace(phoneNumberDisplay) || string.IsNullOrWhiteSpace(numeroDestino) || string.IsNullOrWhiteSpace(phoneNumberId))
+            if (string.IsNullOrWhiteSpace(numeroDestino) ||
+                string.IsNullOrWhiteSpace(phoneNumberDisplay) ||
+                string.IsNullOrWhiteSpace(phoneNumberId))
+            {
+                var conversa = await _conversationRepository.ObterPorIdAsync(idConversa);
+                if (conversa != null && conversa.IdEstabelecimento != Guid.Empty)
+                {
+                    if (string.IsNullOrWhiteSpace(numeroDestino) && !string.IsNullOrWhiteSpace(conversa.TelefoneCliente))
+                    {
+                        numeroDestino = conversa.TelefoneCliente;
+                    }
+
+                    if (string.IsNullOrWhiteSpace(phoneNumberDisplay))
+                    {
+                        phoneNumberDisplay = await _wabaPhoneRepository.ObterDisplayPhonePorEstabelecimentoAsync(conversa.IdEstabelecimento);
+                    }
+
+                    if (string.IsNullOrWhiteSpace(phoneNumberId))
+                    {
+                        phoneNumberId = await _wabaPhoneRepository.ObterPhoneNumberIdPorEstabelecimentoAsync(conversa.IdEstabelecimento);
+                    }
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(numeroDestino) || string.IsNullOrWhiteSpace(phoneNumberId))
             {
                 _logger.LogWarning(
-                    "[Conversa={Conversa}] Nao foi possivel enviar resposta: informacoes de telefone ausentes",
+                    "[Conversa={Conversa}] Nao foi possivel enviar resposta: numero destino ou phone_number_id ausentes",
                     idConversa);
                 return;
             }
@@ -99,7 +126,7 @@ namespace APIBack.Automation.Services
 
             await EnviarMensagemAoClienteAsync(
                 idConversa,
-                phoneNumberDisplay,
+                phoneNumberDisplay ?? string.Empty,
                 numeroDestino,
                 phoneNumberId,
                 decision.Reply,

@@ -125,6 +125,18 @@ namespace APIBack.Automation.Services
                 }
             }
 
+            if (!string.IsNullOrWhiteSpace(displayPhoneNumber) || !string.IsNullOrWhiteSpace(phoneNumberId))
+            {
+                await _wabaPhoneRepository.InserirOuAtualizarAsync(new WabaPhone
+                {
+                    PhoneNumberId = phoneNumberId ?? string.Empty,
+                    DisplayPhoneNumber = string.IsNullOrWhiteSpace(displayPhoneNumber) ? null : displayPhoneNumber,
+                    IdEstabelecimento = idEstabelecimento.Value,
+                    Ativo = true,
+                    Descricao = string.IsNullOrWhiteSpace(displayPhoneNumber) ? null : displayPhoneNumber
+                });
+            }
+
             // Garantir cliente existe
             var telefonePreferencialBruto = !string.IsNullOrWhiteSpace(telefoneContato) ? telefoneContato : idWa;
             string telefoneE164;
