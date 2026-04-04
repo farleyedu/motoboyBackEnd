@@ -83,6 +83,12 @@ namespace APIBack.Automation.Services
                     mensagemTexto));
             }
 
+            if (string.IsNullOrWhiteSpace(cliente?.Nome) && EhSaudacaoInicial(mensagemTexto))
+            {
+                return (true, CriarRespostaJsonDecision(
+                    $"Ola! Voce esta falando com a equipe da {nomeEstabelecimento}. Como posso te ajudar hoje?"));
+            }
+
             if (string.IsNullOrWhiteSpace(cliente?.Nome))
             {
                 await SalvarContextoAsync(idConversa, EstadoAguardandoNome, viaNumeroCentral, null);
@@ -889,6 +895,18 @@ namespace APIBack.Automation.Services
         private static bool ContemAlgum(string texto, params string[] termos)
         {
             return termos.Any(termo => texto.Contains(NormalizeText(termo), StringComparison.Ordinal));
+        }
+
+        private static bool EhSaudacaoInicial(string? texto)
+        {
+            var normalizado = NormalizeText(texto);
+            if (string.IsNullOrWhiteSpace(normalizado))
+            {
+                return false;
+            }
+
+            return normalizado is "oi" or "ola" or "ola!" or "bom dia" or "boa tarde" or "boa noite" ||
+                   ContemAlgum(normalizado, "ola tudo bem", "oi tudo bem", "ola, tudo bem", "oi, tudo bem");
         }
 
         private sealed record ClassificacaoMensagem(

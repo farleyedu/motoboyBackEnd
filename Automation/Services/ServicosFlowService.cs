@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using APIBack.Automation.Dtos;
 using APIBack.Automation.Interfaces;
 using APIBack.Automation.Models;
+using APIBack.Model;
 using Microsoft.Extensions.Logging;
 
 namespace APIBack.Automation.Services
@@ -32,6 +33,8 @@ namespace APIBack.Automation.Services
         private const string ChaveVehicleOptions = "servicos_vehicle_options";
         private const string ChaveVehicleId = "servicos_vehicle_id";
         private const string ChaveVehicleNome = "servicos_vehicle_nome";
+        private const string ChaveMarcaPecaId = "servicos_marca_peca_id";
+        private const string ChaveMarcaPecaNome = "servicos_marca_peca_nome";
 
         private static readonly Regex EspacosRegex = new(@"\s+", RegexOptions.Compiled);
         private static readonly Regex TokenRegex = new(@"[a-z0-9]+", RegexOptions.Compiled | RegexOptions.CultureInvariant);
@@ -102,12 +105,6 @@ namespace APIBack.Automation.Services
             }
 
             var cliente = await _clienteRepository.ObterPorIdAsync(scope.IdCliente);
-            if (string.Equals(tipoEstabelecimento, "oficina", StringComparison.OrdinalIgnoreCase) &&
-                string.IsNullOrWhiteSpace(cliente?.Nome) &&
-                !IsServiceState(contextoAtual?.Estado))
-            {
-                return (false, null);
-            }
 
             var catalogo = await _catalogProvider.ObterCatalogoVisivelAsync(scope.IdEstabelecimento);
             if (catalogo.Count == 0)
@@ -508,7 +505,11 @@ namespace APIBack.Automation.Services
                     "Perdi o contexto do servico.");
             }
 
-            var vehicle = ResolverVeiculoSelecionado(mensagemTexto, servico, contextoAtual);
+            var vehicle = await ResolverVeiculoSelecionadoAsync(
+                scope.IdEstabelecimento,
+                mensagemTexto,
+                servico,
+                contextoAtual);
             if (vehicle == null)
             {
                 return await TratarSemMatchAsync(
@@ -620,7 +621,7 @@ namespace APIBack.Automation.Services
                     [ChaveUltimaSolicitacaoHumano] = ObterTexto(contextoAtual.DadosColetados, ChaveUltimaSolicitacaoHumano) ?? mensagemTexto
                 });
 
-            return new AssistantDecision(reply, "none", null, false, null, null, BuildSimNaoButtons());
+            return new AssistantDecision(reply, "none", null, false, null);
         }
 
         private async Task<AssistantDecision> ResponderServicoSelecionadoAsync(
@@ -636,9 +637,20 @@ namespace APIBack.Automation.Services
             ServicoCatalogVehicleItem? vehicle,
             bool viaNumeroCentral)
         {
-            if (servico.DiferePorVeiculo && vehicle == null)
+            var pricePending = priceAsked || UsuarioPerguntouPreco(mensagemTexto) || ObterBool(atendimentoAtual?.DadosExtras, ChaveUsuarioPerguntouPreco);
+            var durationPending = durationAsked || UsuarioPerguntouDuracao(mensagemTexto) || ObterBool(atendimentoAtual?.DadosExtras, ChaveUsuarioPerguntouDuracao);
+            var brandAsked = UsuarioPerguntouMarcasPeca(mensagemTexto);
+            var detailsAsked = UsuarioPerguntouDetalhesServico(mensagemTexto);
+
+            vehicle ??= ObterVeiculoAtual(atendimentoAtual, servico);
+
+            if (servico.DiferePorVeiculo)
             {
-                vehicle = ObterVeiculoAtual(atendimentoAtual, servico);
+                vehicle ??= await ResolverVeiculoSelecionadoAsync(
+                    scope.IdEstabelecimento,
+                    mensagemTexto,
+                    servico,
+                    contextoAtual);
             }
 
             if (servico.DiferePorVeiculo && vehicle == null)
@@ -650,14 +662,15 @@ namespace APIBack.Automation.Services
                     atendimentoAtual,
                     contextoAtual,
                     servico,
-                    priceAsked,
-                    durationAsked,
-                    viaNumeroCentral);
+                    pricePending,
+                    durationPending,
+                    viaNumeroCentral,
+                    prefixo: BuildResumoDoQueJaSei(cliente, atendimentoAtual, servico, null, null));
             }
 
             if (vehicle != null && !vehicle.Compativel)
             {
-                var replyIncompativel = $"Nao encontrei compatibilidade segura de {servico.Nome} para {vehicle.NomeExibicao}. Se quiser, eu passo para a equipe confirmar isso com voce.";
+                var incompatibilidade = $"Ja entendi que voce quer {servico.Nome}, mas ainda nao encontrei compatibilidade confirmada para {vehicle.NomeExibicao}. Se quiser, eu passo isso para a equipe conferir com voce.";
                 return await PerguntarConfirmacaoHumanoAsync(
                     idConversa,
                     scope,
@@ -665,76 +678,19 @@ namespace APIBack.Automation.Services
                     atendimentoAtual,
                     contextoAtual,
                     servico,
-                    replyIncompativel,
+                    incompatibilidade,
                     mensagemTexto,
                     viaNumeroCentral);
             }
 
-            var summary = BuildServiceSummary(servico);
-            var detalhes = new List<string>();
-
-            if (priceAsked)
-            {
-                var textoPreco = BuildPriceText(servico, vehicle);
-                if (textoPreco == null)
-                {
-                    var semPreco = $"Eu nao tenho o valor configurado de {servico.Nome} no catalogo agora. Se quiser, eu passo isso para a equipe.";
-                    return await PerguntarConfirmacaoHumanoAsync(
-                        idConversa,
-                        scope,
-                        cliente,
-                        atendimentoAtual,
-                        contextoAtual,
-                        servico,
-                        semPreco,
-                        mensagemTexto,
-                        viaNumeroCentral);
-                }
-
-                detalhes.Add(textoPreco);
-            }
-
-            if (durationAsked)
-            {
-                detalhes.Add($"Tempo estimado: {FormatDuration(servico.DuracaoMinutos)}.");
-            }
-
-            string fallbackReply;
-            string factsPrompt;
-            string statusFinal;
-            string? proximaPergunta = null;
-            string etapaAtual;
-
-            if (!priceAsked && !durationAsked)
-            {
-                if (servico.DiferePorVeiculo && vehicle != null)
-                {
-                    detalhes.Add($"Para {vehicle.NomeExibicao}, eu consigo te orientar melhor sobre valor e compatibilidade.");
-                }
-
-                proximaPergunta = servico.PermiteAgendamento
-                    ? "Se quiser, eu posso te explicar valor, tempo ou como esse servico costuma funcionar."
-                    : "Se quiser, eu posso te explicar valor, tempo ou mais detalhes desse servico.";
-
-                fallbackReply = $"{summary} {proximaPergunta}".Trim();
-                factsPrompt = BuildFactsPrompt(summary, detalhes, proximaPergunta);
-                statusFinal = "aguardando_cliente";
-                etapaAtual = "aguardando_cliente";
-            }
-            else
-            {
-                fallbackReply = $"{summary} {string.Join(" ", detalhes)}".Trim();
-                factsPrompt = BuildFactsPrompt(summary, detalhes, null);
-                statusFinal = "concluido";
-                etapaAtual = "respondido";
-            }
-
-            var reply = await _replyComposer.ComposeAsync(idConversa, factsPrompt, fallbackReply);
+            var marcaSelecionada = vehicle == null
+                ? null
+                : ResolverMarcaPecaSelecionada(mensagemTexto, vehicle, atendimentoAtual);
 
             var extras = new Dictionary<string, object?>
             {
-                [ChaveUsuarioPerguntouPreco] = priceAsked,
-                [ChaveUsuarioPerguntouDuracao] = durationAsked
+                [ChaveUsuarioPerguntouPreco] = pricePending,
+                [ChaveUsuarioPerguntouDuracao] = durationPending
             };
 
             if (vehicle != null)
@@ -743,27 +699,121 @@ namespace APIBack.Automation.Services
                 extras[ChaveVehicleNome] = vehicle.NomeExibicao;
             }
 
-            var atendimento = await ObterOuCriarAtendimentoAsync(
+            if (marcaSelecionada != null)
+            {
+                extras[ChaveMarcaPecaId] = marcaSelecionada.Id;
+                extras[ChaveMarcaPecaNome] = marcaSelecionada.Nome;
+            }
+
+            string reply;
+            string? proximaPergunta = null;
+            var intencaoPrincipal = "duvida_servicos";
+            var etapaAtual = "servico_identificado";
+
+            if (brandAsked)
+            {
+                reply = BuildBrandsReply(servico, vehicle, marcaSelecionada);
+                proximaPergunta = marcaSelecionada == null
+                    ? "Se quiser, depois eu te passo o valor da marca que fizer mais sentido."
+                    : "Se quiser, eu tambem posso te passar o valor dessa opcao.";
+                etapaAtual = marcaSelecionada == null ? "aguardando_cliente" : "marca_identificada";
+            }
+            else if (pricePending || durationPending || detailsAsked || marcaSelecionada != null)
+            {
+                var partes = new List<string>();
+
+                if (detailsAsked)
+                {
+                    partes.Add(BuildServiceDetailsText(servico, vehicle));
+                }
+
+                if (marcaSelecionada != null && pricePending)
+                {
+                    var textoMarca = BuildPiecePriceText(servico, vehicle, marcaSelecionada);
+                    if (textoMarca != null)
+                    {
+                        partes.Add(textoMarca);
+                    }
+                }
+                else if (pricePending)
+                {
+                    var textoPreco = BuildPriceText(servico, vehicle);
+                    if (textoPreco == null)
+                    {
+                        var semPreco = $"Eu ainda nao tenho o valor configurado para {servico.Nome} no catalogo. Se quiser, eu passo isso para a equipe.";
+                        return await PerguntarConfirmacaoHumanoAsync(
+                            idConversa,
+                            scope,
+                            cliente,
+                            atendimentoAtual,
+                            contextoAtual,
+                            servico,
+                            semPreco,
+                            mensagemTexto,
+                            viaNumeroCentral);
+                    }
+
+                    partes.Add(textoPreco);
+                    intencaoPrincipal = "preco_servico";
+                }
+                else if (marcaSelecionada != null)
+                {
+                    partes.Add($"Perfeito. Para {vehicle!.NomeExibicao}, eu anotei a marca {marcaSelecionada.Nome}.");
+                }
+
+                if (durationPending)
+                {
+                    partes.Add(servico.DuracaoMinutos > 0
+                        ? $"O tempo medio desse servico e {FormatDuration(servico.DuracaoMinutos)}."
+                        : "Ainda nao tenho o tempo configurado no catalogo.");
+                    intencaoPrincipal = durationPending && !pricePending ? "duracao_servico" : intencaoPrincipal;
+                }
+
+                if (partes.Count == 0)
+                {
+                    partes.Add(BuildServiceReadyReply(servico, vehicle));
+                }
+
+                proximaPergunta = BuildFollowUpPrompt(servico, vehicle, pricePending, durationPending);
+                if (!string.IsNullOrWhiteSpace(proximaPergunta))
+                {
+                    partes.Add(proximaPergunta);
+                }
+
+                reply = string.Join(" ", partes.Where(item => !string.IsNullOrWhiteSpace(item))).Trim();
+                etapaAtual = marcaSelecionada != null
+                    ? "marca_identificada"
+                    : vehicle != null
+                        ? "veiculo_identificado"
+                        : "servico_identificado";
+            }
+            else
+            {
+                reply = BuildServiceReadyReply(servico, vehicle);
+                proximaPergunta = BuildFollowUpPrompt(servico, vehicle, false, false);
+                if (!string.IsNullOrWhiteSpace(proximaPergunta))
+                {
+                    reply = $"{reply} {proximaPergunta}".Trim();
+                }
+
+                etapaAtual = vehicle != null ? "veiculo_identificado" : "servico_identificado";
+            }
+
+            await ObterOuCriarAtendimentoAsync(
                 idConversa,
                 scope,
                 cliente,
                 atendimentoAtual,
-                intencaoPrincipal: priceAsked ? "preco_servico" : durationAsked ? "duracao_servico" : "duvida_servicos",
-                intencaoDetalhe: servico.Tipo,
+                intencaoPrincipal,
+                servico.Tipo,
                 servico,
-                status: statusFinal,
+                status: "aguardando_cliente",
                 etapaAtual,
                 ultimaPergunta: proximaPergunta,
                 viaNumeroCentral,
                 CriarExtras(extras));
 
             await LimparContextoPreservandoSelecaoAsync(idConversa);
-
-            if (atendimento != null && string.Equals(statusFinal, "concluido", StringComparison.OrdinalIgnoreCase))
-            {
-                await _servicoAtendimentoRepository.ConcluirAsync(atendimento.Id, "concluido");
-            }
-
             return new AssistantDecision(reply, "none", null, false, null);
         }
 
@@ -791,12 +841,9 @@ namespace APIBack.Automation.Services
                 categorias = catalogo.Select(item => item.Nome).Take(3).ToArray();
             }
 
-            var pergunta = categorias.Length switch
-            {
-                1 => $"Hoje eu consigo te ajudar com {categorias[0]}. Quer seguir por esse caminho?",
-                2 => $"Para eu te orientar melhor, qual categoria faz mais sentido agora: {categorias[0]} ou {categorias[1]}?",
-                _ => $"Para eu te orientar melhor, voce quer olhar {categorias[0]}, {categorias[1]} ou {categorias[2]}?"
-            };
+            var pergunta = categorias.Length == 1
+                ? $"Hoje eu consigo te ajudar com {categorias[0]}. Se for isso, me responde com o nome do servico ou me diz que quer seguir por essa categoria."
+                : $"Para eu te orientar melhor, me diz qual dessas categorias faz mais sentido agora:\n{FormatarOpcoesEnumeradas(categorias)}";
 
             var atendimento = await ObterOuCriarAtendimentoAsync(
                 idConversa,
@@ -826,7 +873,7 @@ namespace APIBack.Automation.Services
                     [ChaveTentativaSemMatch] = 0
                 });
 
-            return new AssistantDecision(pergunta, "none", null, false, null, null, BuildIndexedButtons("servicos_cat_", categorias));
+            return new AssistantDecision(pergunta, "none", null, false, null);
         }
 
         private async Task<AssistantDecision> PerguntarEscolhaServicoAsync(
@@ -842,12 +889,9 @@ namespace APIBack.Automation.Services
             bool viaNumeroCentral)
         {
             var nomes = candidatos.Select(item => item.Nome).ToArray();
-            var pergunta = nomes.Length switch
-            {
-                1 => $"Voce esta falando de {nomes[0]}?",
-                2 => $"Entendi. Voce quer {nomes[0]} ou {nomes[1]}?",
-                _ => $"Entendi. Qual desses servicos faz mais sentido: {nomes[0]}, {nomes[1]} ou {nomes[2]}?"
-            };
+            var pergunta = nomes.Length == 1
+                ? $"Voce esta falando de {nomes[0]}?"
+                : $"Achei estes servicos parecidos. Me responde com o numero ou com o nome:\n{FormatarOpcoesEnumeradas(nomes)}";
 
             var atendimento = await ObterOuCriarAtendimentoAsync(
                 idConversa,
@@ -881,7 +925,7 @@ namespace APIBack.Automation.Services
                     [ChaveTentativaSemMatch] = 0
                 });
 
-            return new AssistantDecision(pergunta, "none", null, false, null, null, BuildIndexedButtons("servicos_sel_", nomes));
+            return new AssistantDecision(pergunta, "none", null, false, null);
         }
 
         private async Task<AssistantDecision> PerguntarVeiculoAsync(
@@ -893,21 +937,23 @@ namespace APIBack.Automation.Services
             ServicoCatalogItem servico,
             bool priceAsked,
             bool durationAsked,
-            bool viaNumeroCentral)
+            bool viaNumeroCentral,
+            string? prefixo = null)
         {
             var options = servico.Veiculos
                 .Where(item => !string.IsNullOrWhiteSpace(item.NomeExibicao))
                 .Select(item => item.NomeExibicao)
                 .Distinct(StringComparer.OrdinalIgnoreCase)
-                .Take(3)
+                .Take(2)
                 .ToArray();
 
-            var pergunta = options.Length switch
-            {
-                0 => $"Para eu te orientar melhor sobre {servico.Nome}, me fala a marca e o modelo do veiculo.",
-                1 => $"Para eu te orientar melhor sobre {servico.Nome}, seu veiculo e {options[0]}?",
-                _ => $"Para eu te orientar melhor sobre {servico.Nome}, qual e o veiculo? Posso conferir por aqui, por exemplo: {string.Join(", ", options)}."
-            };
+            var perguntaBase = options.Length == 0
+                ? $"Agora me fala a marca e o modelo do veiculo para eu conferir {servico.Nome}."
+                : $"Agora me fala a marca e o modelo do veiculo para eu conferir {servico.Nome}. Exemplo: {string.Join(" ou ", options)}.";
+
+            var pergunta = string.IsNullOrWhiteSpace(prefixo)
+                ? perguntaBase
+                : $"{prefixo} {perguntaBase}".Trim();
 
             var atendimento = await ObterOuCriarAtendimentoAsync(
                 idConversa,
@@ -942,11 +988,7 @@ namespace APIBack.Automation.Services
                     [ChaveVehicleOptions] = options
                 });
 
-            var buttons = options.Length is > 1 and <= 3
-                ? BuildIndexedButtons("servicos_veh_", options)
-                : null;
-
-            return new AssistantDecision(pergunta, "none", null, false, null, null, buttons);
+            return new AssistantDecision(pergunta, "none", null, false, null);
         }
 
         private async Task<AssistantDecision> PerguntarConfirmacaoHumanoAsync(
@@ -960,7 +1002,7 @@ namespace APIBack.Automation.Services
             string mensagemOrigem,
             bool viaNumeroCentral)
         {
-            var reply = $"{mensagemBase} Quer que eu passe isso para a equipe?";
+            var reply = $"{mensagemBase} Se quiser, eu passo isso para a equipe. Me responde com sim ou nao.";
             var atendimento = await ObterOuCriarAtendimentoAsync(
                 idConversa,
                 scope,
@@ -989,7 +1031,7 @@ namespace APIBack.Automation.Services
                     [ChaveUltimaSolicitacaoHumano] = mensagemOrigem
                 });
 
-            return new AssistantDecision(reply, "none", null, false, null, null, BuildSimNaoButtons());
+            return new AssistantDecision(reply, "none", null, false, null);
         }
 
         private async Task<AssistantDecision> TratarSemMatchAsync(
@@ -1003,12 +1045,31 @@ namespace APIBack.Automation.Services
             bool viaNumeroCentral,
             string? prefixo = null)
         {
+            var servicoAtual = ResolverServicoDoContextoOuAtendimento(contextoAtual, atendimentoAtual, catalogo);
+            if (servicoAtual != null && servicoAtual.DiferePorVeiculo)
+            {
+                return await PerguntarVeiculoAsync(
+                    idConversa,
+                    scope,
+                    cliente,
+                    atendimentoAtual,
+                    contextoAtual,
+                    servicoAtual,
+                    ObterBool(contextoAtual?.DadosColetados, ChaveUsuarioPerguntouPreco) || ObterBool(atendimentoAtual?.DadosExtras, ChaveUsuarioPerguntouPreco),
+                    ObterBool(contextoAtual?.DadosColetados, ChaveUsuarioPerguntouDuracao) || ObterBool(atendimentoAtual?.DadosExtras, ChaveUsuarioPerguntouDuracao),
+                    viaNumeroCentral,
+                    prefixo: BuildResumoDoQueJaSei(cliente, atendimentoAtual, servicoAtual, null, null, mencionarPendenciaVeiculo: true));
+            }
+
             var tentativaAtual = ObterInt(contextoAtual?.DadosColetados, ChaveTentativaSemMatch);
             if (tentativaAtual <= 0)
             {
-                var pergunta = string.IsNullOrWhiteSpace(prefixo)
-                    ? "Nao consegui identificar o servico ainda. Me fala o nome do servico ou a categoria principal."
-                    : $"{prefixo} Me fala o nome do servico ou a categoria principal.";
+                var veiculoAtual = servicoAtual == null ? null : ObterVeiculoAtual(atendimentoAtual, servicoAtual);
+                var resumo = BuildResumoDoQueJaSei(cliente, atendimentoAtual, servicoAtual, veiculoAtual, null);
+                var basePergunta = "Ainda nao consegui identificar o servico. Me fala o nome do servico ou a categoria principal.";
+                var pergunta = string.Join(" ",
+                    new[] { prefixo, resumo, basePergunta }
+                        .Where(item => !string.IsNullOrWhiteSpace(item)));
 
                 var atendimento = await ObterOuCriarAtendimentoAsync(
                     idConversa,
@@ -1047,11 +1108,7 @@ namespace APIBack.Automation.Services
                         [ChaveTentativaSemMatch] = 1
                     });
 
-                var buttons = categorias.Length is > 1 and <= 3
-                    ? BuildIndexedButtons("servicos_cat_", categorias)
-                    : null;
-
-                return new AssistantDecision(pergunta, "none", null, false, null, null, buttons);
+                return new AssistantDecision(pergunta, "none", null, false, null);
             }
 
             return await PerguntarConfirmacaoHumanoAsync(
@@ -1338,19 +1395,28 @@ namespace APIBack.Automation.Services
 
             if (UsuarioPerguntouPreco(mensagemTexto) ||
                 UsuarioPerguntouDuracao(mensagemTexto) ||
+                UsuarioPerguntouMarcasPeca(mensagemTexto) ||
+                UsuarioPerguntouDetalhesServico(mensagemTexto) ||
                 EhMensagemEncerramento(mensagemTexto) ||
                 FoiPedidoHumano(mensagemTexto))
             {
                 return true;
             }
 
-            if (ObterBool(atendimentoAtual.DadosExtras, ChaveUsuarioPerguntouPreco) ||
-                ObterBool(atendimentoAtual.DadosExtras, ChaveUsuarioPerguntouDuracao))
+            if (string.IsNullOrWhiteSpace(ObterTexto(atendimentoAtual.DadosExtras, ChaveVehicleNome)))
             {
-                return mensagemTexto.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length <= 8;
+                return true;
             }
 
-            return ContemAlgum(mensagemTexto, "como funciona", "me explica", "detalhes", "serve para", "esse servico", "esse serviço");
+            if (ObterBool(atendimentoAtual.DadosExtras, ChaveUsuarioPerguntouPreco) ||
+                ObterBool(atendimentoAtual.DadosExtras, ChaveUsuarioPerguntouDuracao) ||
+                !string.IsNullOrWhiteSpace(ObterTexto(atendimentoAtual.DadosExtras, ChaveMarcaPecaNome)))
+            {
+                return mensagemTexto.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length <= 10;
+            }
+
+            return mensagemTexto.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length <= 10 ||
+                   ContemAlgum(mensagemTexto, "como funciona", "me explica", "detalhes", "serve para", "esse servico", "esse serviço");
         }
 
         private static string BuildResumoAtendimento(
@@ -1366,6 +1432,164 @@ namespace APIBack.Automation.Services
             }
 
             return $"{nome} falou sobre {servico.Nome}. Intencao={intencaoPrincipal}. Status={status}.";
+        }
+
+        private static string BuildResumoDoQueJaSei(
+            Cliente? cliente,
+            ServicoAtendimento? atendimentoAtual,
+            ServicoCatalogItem? servico,
+            ServicoCatalogVehicleItem? vehicle,
+            ServicoCatalogPieceItem? marcaPeca,
+            bool mencionarPendenciaVeiculo = false)
+        {
+            var partes = new List<string>();
+            var primeiroNome = ObterPrimeiroNome(cliente?.Nome ?? atendimentoAtual?.NomeCliente);
+            if (!string.IsNullOrWhiteSpace(primeiroNome))
+            {
+                partes.Add($"seu nome e {primeiroNome}");
+            }
+
+            if (servico != null)
+            {
+                partes.Add($"voce quer {servico.Nome}");
+            }
+
+            if (vehicle != null && !string.IsNullOrWhiteSpace(vehicle.NomeExibicao))
+            {
+                partes.Add($"o veiculo informado e {vehicle.NomeExibicao}");
+            }
+
+            if (marcaPeca != null && !string.IsNullOrWhiteSpace(marcaPeca.Nome))
+            {
+                partes.Add($"a marca anotada e {marcaPeca.Nome}");
+            }
+
+            if (partes.Count == 0)
+            {
+                return mencionarPendenciaVeiculo
+                    ? "Ainda nao identifiquei o modelo do veiculo."
+                    : string.Empty;
+            }
+
+            var resumo = partes.Count switch
+            {
+                1 => $"Ja sei que {partes[0]}",
+                2 => $"Ja sei que {partes[0]} e que {partes[1]}",
+                _ => $"Ja sei que {string.Join(", ", partes.Take(partes.Count - 1))} e que {partes[^1]}"
+            };
+
+            if (mencionarPendenciaVeiculo)
+            {
+                resumo = $"{resumo}, mas ainda nao identifiquei o modelo do veiculo";
+            }
+
+            return $"{resumo}.";
+        }
+
+        private static string BuildServiceReadyReply(ServicoCatalogItem servico, ServicoCatalogVehicleItem? vehicle)
+        {
+            return vehicle == null
+                ? $"Entendi. Fazemos {servico.Nome}."
+                : $"Entendi. Para {vehicle.NomeExibicao}, fazemos {servico.Nome}.";
+        }
+
+        private static string BuildServiceDetailsText(ServicoCatalogItem servico, ServicoCatalogVehicleItem? vehicle)
+        {
+            if (string.IsNullOrWhiteSpace(servico.Descricao))
+            {
+                return BuildServiceReadyReply(servico, vehicle);
+            }
+
+            var descricao = GarantirPontoFinal(TrimSentence(servico.Descricao!, 180));
+            return vehicle == null
+                ? $"Sobre {servico.Nome}: {descricao}"
+                : $"Sobre {servico.Nome} para {vehicle.NomeExibicao}: {descricao}";
+        }
+
+        private static string? BuildFollowUpPrompt(
+            ServicoCatalogItem servico,
+            ServicoCatalogVehicleItem? vehicle,
+            bool priceHandled,
+            bool durationHandled)
+        {
+            var opcoes = new List<string>();
+            if (!priceHandled)
+            {
+                opcoes.Add("valor");
+            }
+
+            if (!durationHandled)
+            {
+                opcoes.Add("tempo");
+            }
+
+            if (vehicle != null && vehicle.MarcasPeca.Count > 0)
+            {
+                opcoes.Add("marcas disponiveis");
+            }
+
+            if (opcoes.Count == 0)
+            {
+                return servico.PermiteAgendamento
+                    ? "Quando fecharmos essa parte, eu sigo com voce para o proximo passo."
+                    : null;
+            }
+
+            return $"Se quiser, eu tambem posso te passar {FormatarListaCurta(opcoes)}.";
+        }
+
+        private static string BuildBrandsReply(
+            ServicoCatalogItem servico,
+            ServicoCatalogVehicleItem? vehicle,
+            ServicoCatalogPieceItem? marcaSelecionada)
+        {
+            if (vehicle == null)
+            {
+                return $"Ja entendi que voce quer {servico.Nome}. Agora eu so preciso do modelo do veiculo para te dizer as marcas disponiveis.";
+            }
+
+            if (vehicle.MarcasPeca.Count == 0)
+            {
+                return $"Para {servico.Nome} no {vehicle.NomeExibicao}, eu ainda nao tenho marcas de peca cadastradas no catalogo.";
+            }
+
+            if (marcaSelecionada != null)
+            {
+                return $"Perfeito. Para {servico.Nome} no {vehicle.NomeExibicao}, eu anotei a marca {marcaSelecionada.Nome}.";
+            }
+
+            var marcas = vehicle.MarcasPeca
+                .Select(item => item.Nome)
+                .Where(item => !string.IsNullOrWhiteSpace(item))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Take(5)
+                .ToArray();
+
+            return $"Para {servico.Nome} no {vehicle.NomeExibicao}, hoje eu tenho estas marcas:\n{FormatarOpcoesEnumeradas(marcas)}";
+        }
+
+        private static string? BuildPiecePriceText(
+            ServicoCatalogItem servico,
+            ServicoCatalogVehicleItem? vehicle,
+            ServicoCatalogPieceItem marcaPeca)
+        {
+            if (vehicle == null)
+            {
+                return null;
+            }
+
+            var faixa = ObterFaixaPrecoMarcaPeca(marcaPeca);
+            if (!faixa.Min.HasValue || !faixa.Max.HasValue)
+            {
+                return null;
+            }
+
+            if (faixa.Min.Value == faixa.Max.Value)
+            {
+                return $"Para {servico.Nome} no {vehicle.NomeExibicao}, com a marca {marcaPeca.Nome}, fica em {FormatCurrency(faixa.Min.Value)}.";
+            }
+
+            return $"Para {servico.Nome} no {vehicle.NomeExibicao}, com a marca {marcaPeca.Nome}, eu tenho uma faixa de {FormatCurrency(faixa.Min.Value)} a {FormatCurrency(faixa.Max.Value)}.";
         }
 
         private static string BuildFactsPrompt(string summary, IReadOnlyCollection<string> detalhes, string? proximaPergunta)
@@ -1403,7 +1627,7 @@ namespace APIBack.Automation.Services
             {
                 var valor = servico.ValorCentavos ?? servico.ValorMinimoCentavos ?? servico.ValorMaximoCentavos;
                 return valor.HasValue
-                    ? $"Hoje esse servico esta em {FormatCurrency(valor.Value)}."
+                    ? $"Hoje esse servico fica em {FormatCurrency(valor.Value)}."
                     : null;
             }
 
@@ -1424,6 +1648,21 @@ namespace APIBack.Automation.Services
             }
 
             return $"Para {vehicle.NomeExibicao}, hoje eu tenho uma faixa de {FormatCurrency(faixa.Min.Value)} a {FormatCurrency(faixa.Max.Value)}. Esse valor varia conforme a marca da peca.";
+        }
+
+        private static (long? Min, long? Max) ObterFaixaPrecoMarcaPeca(ServicoCatalogPieceItem marcaPeca)
+        {
+            var candidatos = new[] { marcaPeca.ValorCentavos, marcaPeca.ValorMinimoCentavos, marcaPeca.ValorMaximoCentavos }
+                .Where(item => item.HasValue)
+                .Select(item => item!.Value)
+                .ToArray();
+
+            if (candidatos.Length == 0)
+            {
+                return (null, null);
+            }
+
+            return (candidatos.Min(), candidatos.Max());
         }
 
         private static (long? Min, long? Max) ObterFaixaPrecoVeiculo(ServicoCatalogVehicleItem vehicle)
@@ -1506,6 +1745,130 @@ namespace APIBack.Automation.Services
             }
 
             return $"{limpo[..Math.Max(0, maxLength - 3)].Trim()}...";
+        }
+
+        private static string GarantirPontoFinal(string texto)
+        {
+            if (string.IsNullOrWhiteSpace(texto))
+            {
+                return string.Empty;
+            }
+
+            var ultimo = texto[^1];
+            return ultimo is '.' or '!' or '?'
+                ? texto
+                : $"{texto}.";
+        }
+
+        private static string ObterPrimeiroNome(string? nomeCompleto)
+        {
+            if (string.IsNullOrWhiteSpace(nomeCompleto))
+            {
+                return string.Empty;
+            }
+
+            return nomeCompleto
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries)
+                .FirstOrDefault()
+                ?.Trim() ?? string.Empty;
+        }
+
+        private static string FormatarOpcoesEnumeradas(IReadOnlyList<string> opcoes)
+        {
+            return string.Join("\n", opcoes
+                .Where(item => !string.IsNullOrWhiteSpace(item))
+                .Take(5)
+                .Select((item, index) => $"{index + 1}. {item.Trim()}"));
+        }
+
+        private static string FormatarListaCurta(IReadOnlyList<string> itens)
+        {
+            var valores = itens.Where(item => !string.IsNullOrWhiteSpace(item)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            return valores.Length switch
+            {
+                0 => string.Empty,
+                1 => valores[0],
+                2 => $"{valores[0]} e {valores[1]}",
+                _ => $"{string.Join(", ", valores.Take(valores.Length - 1))} e {valores[^1]}"
+            };
+        }
+
+        private static ServicoCatalogPieceItem? ResolverMarcaPecaSelecionada(
+            string mensagemTexto,
+            ServicoCatalogVehicleItem vehicle,
+            ServicoAtendimento? atendimentoAtual)
+        {
+            if (vehicle.MarcasPeca.Count == 0)
+            {
+                return null;
+            }
+
+            var nomes = vehicle.MarcasPeca
+                .Select(item => item.Nome)
+                .Where(item => !string.IsNullOrWhiteSpace(item))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+
+            var escolhido = ResolverOpcaoPorTextoOuIndice(mensagemTexto, nomes, string.Empty);
+            if (!string.IsNullOrWhiteSpace(escolhido))
+            {
+                return vehicle.MarcasPeca.FirstOrDefault(item => string.Equals(item.Nome, escolhido, StringComparison.OrdinalIgnoreCase));
+            }
+
+            var marcaPersistida = ObterTexto(atendimentoAtual?.DadosExtras, ChaveMarcaPecaNome);
+            return string.IsNullOrWhiteSpace(marcaPersistida)
+                ? null
+                : vehicle.MarcasPeca.FirstOrDefault(item => string.Equals(item.Nome, marcaPersistida, StringComparison.OrdinalIgnoreCase));
+        }
+
+        private static EstabelecimentoCarro? ResolverVeiculoCatalogo(
+            string mensagemTexto,
+            IReadOnlyList<EstabelecimentoCarro> veiculos)
+        {
+            if (string.IsNullOrWhiteSpace(mensagemTexto) || veiculos.Count == 0)
+            {
+                return null;
+            }
+
+            var normalizado = NormalizeText(mensagemTexto);
+            var tokensMensagem = Tokenize(normalizado);
+
+            var candidatos = veiculos
+                .Select(item =>
+                {
+                    var nomeCompleto = NormalizeText($"{item.Marca} {item.Modelo}");
+                    var modelo = NormalizeText(item.Modelo);
+                    var score = 0;
+
+                    if (normalizado == nomeCompleto || normalizado == modelo)
+                    {
+                        score += 200;
+                    }
+
+                    if (nomeCompleto.Contains(normalizado, StringComparison.Ordinal) ||
+                        modelo.Contains(normalizado, StringComparison.Ordinal) ||
+                        normalizado.Contains(nomeCompleto, StringComparison.Ordinal))
+                    {
+                        score += 120;
+                    }
+
+                    var overlap = Tokenize(nomeCompleto).Count(token => tokensMensagem.Contains(token));
+                    score += overlap * 25;
+
+                    return new { Veiculo = item, Score = score };
+                })
+                .Where(item => item.Score > 0)
+                .OrderByDescending(item => item.Score)
+                .ThenBy(item => item.Veiculo.Marca)
+                .ThenBy(item => item.Veiculo.Modelo)
+                .ToArray();
+
+            if (candidatos.Length == 0 || candidatos[0].Score < 45)
+            {
+                return null;
+            }
+
+            return candidatos[0].Veiculo;
         }
 
         private static IReadOnlyList<ServicoMatch> MatchServices(string mensagemTexto, IReadOnlyList<ServicoCatalogItem> catalogo)
@@ -1611,25 +1974,52 @@ namespace APIBack.Automation.Services
                 normalizado.Contains(NormalizeText(item.Nome), StringComparison.Ordinal));
         }
 
-        private static ServicoCatalogVehicleItem? ResolverVeiculoSelecionado(
+        private async Task<ServicoCatalogVehicleItem?> ResolverVeiculoSelecionadoAsync(
+            Guid idEstabelecimento,
             string mensagemTexto,
             ServicoCatalogItem servico,
-            ConversationContext contextoAtual)
+            ConversationContext? contextoAtual)
         {
-            var options = ObterListaTexto(contextoAtual.DadosColetados, ChaveVehicleOptions);
+            var options = ObterListaTexto(contextoAtual?.DadosColetados, ChaveVehicleOptions);
             var escolhido = ResolverOpcaoPorTextoOuIndice(mensagemTexto, options, "servicos_veh_");
             if (!string.IsNullOrWhiteSpace(escolhido))
             {
                 return servico.Veiculos.FirstOrDefault(item => string.Equals(item.NomeExibicao, escolhido, StringComparison.OrdinalIgnoreCase));
             }
 
-            var normalizado = NormalizeText(mensagemTexto);
-            var match = servico.Veiculos
+            var veiculoDireto = servico.Veiculos
                 .Where(item => !string.IsNullOrWhiteSpace(item.NomeExibicao))
                 .Select(item => new { Vehicle = item, Nome = NormalizeText(item.NomeExibicao) })
-                .FirstOrDefault(item => normalizado.Contains(item.Nome, StringComparison.Ordinal) || item.Nome.Contains(normalizado, StringComparison.Ordinal));
+                .FirstOrDefault(item =>
+                {
+                    var normalizado = NormalizeText(mensagemTexto);
+                    return normalizado.Contains(item.Nome, StringComparison.Ordinal) || item.Nome.Contains(normalizado, StringComparison.Ordinal);
+                });
 
-            return match?.Vehicle;
+            if (veiculoDireto != null)
+            {
+                return veiculoDireto.Vehicle;
+            }
+
+            var veiculosEstabelecimento = await _catalogProvider.ObterVeiculosAtivosAsync(idEstabelecimento);
+            var veiculoCatalogo = ResolverVeiculoCatalogo(mensagemTexto, veiculosEstabelecimento);
+            if (veiculoCatalogo == null)
+            {
+                return null;
+            }
+
+            var configurado = servico.Veiculos.FirstOrDefault(item => item.CarroId == veiculoCatalogo.Id);
+            if (configurado != null)
+            {
+                return configurado;
+            }
+
+            return new ServicoCatalogVehicleItem
+            {
+                CarroId = veiculoCatalogo.Id,
+                NomeExibicao = $"{veiculoCatalogo.Marca} {veiculoCatalogo.Modelo}".Trim(),
+                Compativel = false
+            };
         }
 
         private static ServicoCatalogItem? ResolverServicoDoContextoOuAtendimento(
@@ -1650,13 +2040,30 @@ namespace APIBack.Automation.Services
             var vehicleId = ObterGuid(atendimentoAtual?.DadosExtras, ChaveVehicleId);
             if (vehicleId.HasValue)
             {
-                return servico.Veiculos.FirstOrDefault(item => item.CarroId == vehicleId.Value);
+                var configurado = servico.Veiculos.FirstOrDefault(item => item.CarroId == vehicleId.Value);
+                if (configurado != null)
+                {
+                    return configurado;
+                }
+
+                var nomePersistido = ObterTexto(atendimentoAtual?.DadosExtras, ChaveVehicleNome);
+                return new ServicoCatalogVehicleItem
+                {
+                    CarroId = vehicleId.Value,
+                    NomeExibicao = string.IsNullOrWhiteSpace(nomePersistido) ? "veiculo informado" : nomePersistido!,
+                    Compativel = false
+                };
             }
 
             var vehicleNome = ObterTexto(atendimentoAtual?.DadosExtras, ChaveVehicleNome);
             return string.IsNullOrWhiteSpace(vehicleNome)
                 ? null
-                : servico.Veiculos.FirstOrDefault(item => string.Equals(item.NomeExibicao, vehicleNome, StringComparison.OrdinalIgnoreCase));
+                : servico.Veiculos.FirstOrDefault(item => string.Equals(item.NomeExibicao, vehicleNome, StringComparison.OrdinalIgnoreCase))
+                  ?? new ServicoCatalogVehicleItem
+                  {
+                      NomeExibicao = vehicleNome!,
+                      Compativel = false
+                  };
         }
 
         private static bool TryObterServicoPorId(IReadOnlyList<ServicoCatalogItem> catalogo, Guid idServico, out ServicoCatalogItem servico)
@@ -1787,6 +2194,33 @@ namespace APIBack.Automation.Services
                 "duracao",
                 "duração",
                 "tempo estimado");
+        }
+
+        private static bool UsuarioPerguntouMarcasPeca(string texto)
+        {
+            return ContemAlgum(
+                texto,
+                "quais marcas",
+                "qual marca",
+                "marcas disponiveis",
+                "marca da peca",
+                "marca da peça",
+                "quais marcas voces trabalham",
+                "quais marcas vcs trabalham",
+                "trabalham com qual marca");
+        }
+
+        private static bool UsuarioPerguntouDetalhesServico(string texto)
+        {
+            return ContemAlgum(
+                texto,
+                "como funciona",
+                "me explica",
+                "mais detalhes",
+                "detalhes",
+                "o que inclui",
+                "como e feito",
+                "como é feito");
         }
 
         private static bool FoiPedidoHumano(string texto)

@@ -22,6 +22,7 @@ namespace APIBack.Automation.Infra
     {
         private const string WindowExpiredReason = "Janela de 24 horas do WhatsApp expirada";
         private const string WindowExpiredBlockCode = "whatsapp_window_expired";
+        private static (bool PhoneNumberId, bool DisplayPhoneNumber)? _cachedWabaPhoneColumns;
 
         private const string SelectConversation = @"
 SELECT c.id AS Id,
@@ -223,7 +224,46 @@ UPDATE conversas
             var exists = await cx.ExecuteScalarAsync<int?>("SELECT 1 FROM conversas WHERE id = @Id LIMIT 1;", new { Id = mensagem.IdConversa }, tx);
             if (!exists.HasValue)
             {
-                var idEstab = await cx.ExecuteScalarAsync<Guid?>("SELECT id_estabelecimento FROM waba_phone WHERE display_phone_number = @Display LIMIT 1;", new { Display = phoneNumberId }, tx);
+                var digitsOnly = string.IsNullOrWhiteSpace(phoneNumberId)
+                    ? string.Empty
+                    : new string(phoneNumberId.Where(char.IsDigit).ToArray());
+                var columns = await ObterColunasWabaPhoneAsync(cx, tx);
+                var comparisons = new List<string>();
+
+                if (columns.PhoneNumberId)
+                {
+                    comparisons.Add("phone_number_id = @Raw");
+                    if (!string.IsNullOrWhiteSpace(digitsOnly))
+                    {
+                        comparisons.Add("regexp_replace(phone_number_id, '[^0-9]', '', 'g') = @Digits");
+                    }
+                }
+
+                if (columns.DisplayPhoneNumber)
+                {
+                    comparisons.Add("display_phone_number = @Raw");
+                    if (!string.IsNullOrWhiteSpace(digitsOnly))
+                    {
+                        comparisons.Add("regexp_replace(display_phone_number, '[^0-9]', '', 'g') = @Digits");
+                    }
+                }
+
+                if (comparisons.Count == 0)
+                {
+                    throw new InvalidOperationException("Tabela waba_phone sem colunas de roteamento configuradas");
+                }
+
+                var sqlWaba = $@"
+SELECT id_estabelecimento
+  FROM waba_phone
+ WHERE ativo = TRUE
+   AND ({string.Join(" OR ", comparisons)})
+ ORDER BY data_atualizacao DESC
+ LIMIT 1;";
+                var idEstab = await cx.ExecuteScalarAsync<Guid?>(
+                    sqlWaba,
+                    new { Raw = phoneNumberId, Digits = digitsOnly },
+                    tx);
                 if (!idEstab.HasValue || idEstab.Value == Guid.Empty)
                 {
                     throw new InvalidOperationException("Estabelecimento nao encontrado para este WABA");
@@ -293,6 +333,28 @@ UPDATE conversas
                 tx);
 
             await tx.CommitAsync();
+        }
+
+        private static async Task<(bool PhoneNumberId, bool DisplayPhoneNumber)> ObterColunasWabaPhoneAsync(
+            NpgsqlConnection connection,
+            NpgsqlTransaction transaction)
+        {
+            if (_cachedWabaPhoneColumns.HasValue)
+            {
+                return _cachedWabaPhoneColumns.Value;
+            }
+
+            var rows = await connection.QueryAsync<string>(
+                @"SELECT column_name
+                    FROM information_schema.columns
+                   WHERE table_name = 'waba_phone';",
+                transaction: transaction);
+
+            var hash = rows.Select(r => r.Trim().ToLowerInvariant()).ToHashSet();
+            _cachedWabaPhoneColumns = (
+                hash.Contains("phone_number_id"),
+                hash.Contains("display_phone_number"));
+            return _cachedWabaPhoneColumns.Value;
         }
 
         public async Task<bool> ExisteIdMensagemPorProvedorWaAsync(string idMensagemWa)

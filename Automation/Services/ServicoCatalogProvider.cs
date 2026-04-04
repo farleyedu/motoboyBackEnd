@@ -55,6 +55,25 @@ namespace APIBack.Automation.Services
             return catalogo;
         }
 
+        public async Task<IReadOnlyList<EstabelecimentoCarro>> ObterVeiculosAtivosAsync(Guid idEstabelecimento)
+        {
+            var cacheKey = $"servicos:veiculos:{idEstabelecimento}";
+            if (_cache.TryGetValue(cacheKey, out IReadOnlyList<EstabelecimentoCarro>? cached) && cached != null)
+            {
+                return cached;
+            }
+
+            var carros = await _carroRepository.ListarPorEstabelecimentoAsync(idEstabelecimento);
+            var ativos = carros
+                .Where(item => item.Ativo)
+                .OrderBy(item => item.Marca)
+                .ThenBy(item => item.Modelo)
+                .ToArray();
+
+            _cache.Set(cacheKey, ativos, CacheOptions);
+            return ativos;
+        }
+
         public async Task<string?> BuildCompactPromptAsync(Guid idEstabelecimento)
         {
             var catalogo = await ObterCatalogoVisivelAsync(idEstabelecimento);
