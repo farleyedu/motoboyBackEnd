@@ -34,6 +34,7 @@ namespace APIBack.Automation.Services
         private readonly OficinaFlowService _oficinaFlow;
         private readonly GarageFlowService _garageFlow;
         private readonly NauticaFlowService _nauticaFlow;
+        private readonly TopicOrchestratorService _topicOrchestrator;
         private readonly ServicosFlowService _servicosFlow;
         private readonly ConversationResetService _conversationReset;
 
@@ -47,6 +48,7 @@ namespace APIBack.Automation.Services
             OficinaFlowService oficinaFlow,
             GarageFlowService garageFlow,
             NauticaFlowService nauticaFlow,
+            TopicOrchestratorService topicOrchestrator,
             ServicosFlowService servicosFlow,
             ConversationResetService conversationReset)
         {
@@ -59,6 +61,7 @@ namespace APIBack.Automation.Services
             _oficinaFlow = oficinaFlow;
             _garageFlow = garageFlow;
             _nauticaFlow = nauticaFlow;
+            _topicOrchestrator = topicOrchestrator;
             _servicosFlow = servicosFlow;
             _conversationReset = conversationReset;
         }
@@ -274,6 +277,15 @@ namespace APIBack.Automation.Services
             if (nauticaIntercepted)
             {
                 return (true, nauticaDecision);
+            }
+
+            var (topicIntercepted, topicDecision) = await _topicOrchestrator.TryHandleAsync(
+                idConversa,
+                mensagemTexto,
+                phoneNumberDisplay);
+            if (topicIntercepted)
+            {
+                return (true, topicDecision);
             }
 
             var (servicosIntercepted, servicosDecision) = await _servicosFlow.TryHandleAsync(

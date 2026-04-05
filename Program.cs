@@ -150,8 +150,10 @@ builder.Services.AddScoped<OficinaFlowService>();
 builder.Services.AddScoped<GarageFlowService>();
 builder.Services.AddScoped<NauticaFlowService>();
 builder.Services.AddScoped<ServicoCatalogProvider>();
+builder.Services.AddScoped<FaqCatalogProvider>();
 builder.Services.AddScoped<ServicoReplyComposer>();
 builder.Services.AddScoped<ServicosFlowService>();
+builder.Services.AddScoped<TopicOrchestratorService>();
 builder.Services.AddScoped<ConversationResetService>();
 
 

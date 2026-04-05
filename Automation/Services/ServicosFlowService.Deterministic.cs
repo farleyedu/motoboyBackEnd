@@ -698,7 +698,7 @@ namespace APIBack.Automation.Services
 
             if (EhConfirmacaoFeliz(mensagemTexto))
             {
-                var replyFinal = $"{MontarResumoFinal(cliente, servico, veiculo, marca)} No proximo passo eu sigo com voce para o agendamento.";
+                const string replyFinal = "Perfeito. Confirmei essas informacoes e no proximo passo eu sigo com voce para o agendamento.";
                 await PersistirEstadoDeterministicoAsync(
                     idConversa,
                     scope,
@@ -1265,10 +1265,16 @@ namespace APIBack.Automation.Services
             string? prefixo = null)
         {
             var dados = ObterDadosServico(contextoAtual, atendimentoAtual);
+            var valorLinha = marca != null && veiculo != null
+                ? BuildPiecePriceLine(marca)
+                : veiculo != null
+                    ? BuildServicePriceLine(servico, veiculo)
+                    : BuildServicePriceLine(servico, null);
             var extras = CriarSnapshotExtras(dados, new Dictionary<string, object?>
             {
                 [ChaveMarcaPecaId] = marca?.Id,
                 [ChaveMarcaPecaNome] = marca?.Nome,
+                [ChaveValorLinha] = valorLinha,
                 [ChavePerguntaPendente] = PerguntaConfirmacaoFinal,
                 [ChaveVehicleOptions] = null,
                 [ChaveVehiclePromptReason] = null,
@@ -1277,8 +1283,8 @@ namespace APIBack.Automation.Services
                 [ChaveTrocaPendenteLabel] = null
             });
 
-            var resumo = MontarResumoFinal(cliente, servico, veiculo, marca);
-            var reply = string.Join(" ", new[] { prefixo, $"{resumo} Se estiver certo, me responde com sim que eu sigo para o agendamento." }.Where(item => !string.IsNullOrWhiteSpace(item)));
+            var resumo = MontarResumoFinal(cliente, servico.Nome, veiculo?.NomeExibicao, marca?.Nome, valorLinha);
+            var reply = string.Join("\n\n", new[] { prefixo, resumo }.Where(item => !string.IsNullOrWhiteSpace(item)));
             await PersistirEstadoDeterministicoAsync(
                 idConversa, scope, cliente, contextoAtual, atendimentoAtual, servico,
                 EstadoAguardandoConfirmacaoFinal, "aguardando_cliente", reply, viaNumeroCentral, extras, "confirmacao_final");
@@ -1457,36 +1463,87 @@ namespace APIBack.Automation.Services
 
         private static string MontarResumoFinal(Cliente? cliente, ServicoCatalogItem servico, ServicoCatalogVehicleItem? veiculo, ServicoCatalogPieceItem? marca)
         {
-            var primeiroNome = ObterPrimeiroNome(cliente?.Nome);
-            var cabecalho = string.IsNullOrWhiteSpace(primeiroNome)
-                ? "Ficou assim"
-                : $"Ficou assim, {primeiroNome}";
+            var valorLinha = marca != null && veiculo != null
+                ? BuildPiecePriceLine(marca)
+                : veiculo != null
+                    ? BuildServicePriceLine(servico, veiculo)
+                    : BuildServicePriceLine(servico, null);
 
-            var partes = new List<string>
+            return MontarResumoFinal(cliente, servico.Nome, veiculo?.NomeExibicao, marca?.Nome, valorLinha);
+        }
+
+        private static string MontarResumoFinal(
+            Cliente? cliente,
+            string servicoNome,
+            string? veiculoNome,
+            string? marcaNome,
+            string? valorTexto)
+        {
+            var primeiroNome = ObterPrimeiroNome(cliente?.Nome);
+            var linhas = new List<string>
             {
-                servico.Nome
+                string.IsNullOrWhiteSpace(primeiroNome)
+                    ? "Antes de seguir para o agendamento, confirma se esta tudo certo:"
+                    : $"Perfeito, {primeiroNome}. Antes de seguir para o agendamento, confirma se esta tudo certo:",
+                $"Servico: {servicoNome}"
             };
 
-            if (veiculo != null && !string.IsNullOrWhiteSpace(veiculo.NomeExibicao))
+            if (!string.IsNullOrWhiteSpace(veiculoNome))
             {
-                partes.Add($"para {veiculo.NomeExibicao}");
+                linhas.Add($"Veiculo: {veiculoNome}");
             }
 
-            if (marca != null && !string.IsNullOrWhiteSpace(marca.Nome))
+            if (!string.IsNullOrWhiteSpace(marcaNome))
             {
-                partes.Add($"com a marca {marca.Nome}");
+                linhas.Add($"Marca: {marcaNome}");
             }
 
-            var resumo = $"{cabecalho}: {string.Join(", ", partes)}";
-            var textoPreco = marca != null && veiculo != null
-                ? BuildPiecePriceText(servico, veiculo, marca)
-                : veiculo != null
-                    ? BuildPriceText(servico, veiculo)
-                    : BuildPriceText(servico, null);
+            if (!string.IsNullOrWhiteSpace(valorTexto))
+            {
+                linhas.Add($"Valor: {valorTexto}");
+            }
 
-            return string.IsNullOrWhiteSpace(textoPreco)
-                ? $"{resumo}."
-                : $"{resumo}. {textoPreco}";
+            linhas.Add("Se estiver certo, me responde com sim.");
+            return string.Join("\n", linhas);
+        }
+
+        private static string? BuildServicePriceLine(ServicoCatalogItem servico, ServicoCatalogVehicleItem? veiculo)
+        {
+            var valorCentavos = veiculo?.ValorCentavos ?? servico.ValorCentavos;
+            if (valorCentavos.HasValue && valorCentavos.Value > 0)
+            {
+                return FormatCurrency(valorCentavos.Value);
+            }
+
+            var valorMinimo = veiculo?.ValorMinimoCentavos ?? servico.ValorMinimoCentavos;
+            var valorMaximo = veiculo?.ValorMaximoCentavos ?? servico.ValorMaximoCentavos;
+            if (valorMinimo.HasValue && valorMaximo.HasValue && valorMinimo.Value > 0 && valorMaximo.Value > 0)
+            {
+                return $"{FormatCurrency(valorMinimo.Value)} a {FormatCurrency(valorMaximo.Value)}";
+            }
+
+            return null;
+        }
+
+        private static string? BuildPiecePriceLine(ServicoCatalogPieceItem? marca)
+        {
+            if (marca == null)
+            {
+                return null;
+            }
+
+            if (marca.ValorCentavos.HasValue && marca.ValorCentavos.Value > 0)
+            {
+                return FormatCurrency(marca.ValorCentavos.Value);
+            }
+
+            if (marca.ValorMinimoCentavos.HasValue && marca.ValorMaximoCentavos.HasValue &&
+                marca.ValorMinimoCentavos.Value > 0 && marca.ValorMaximoCentavos.Value > 0)
+            {
+                return $"{FormatCurrency(marca.ValorMinimoCentavos.Value)} a {FormatCurrency(marca.ValorMaximoCentavos.Value)}";
+            }
+
+            return null;
         }
 
         private static string MontarPromptDetalhesRestantes(

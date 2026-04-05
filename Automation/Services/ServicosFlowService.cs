@@ -50,6 +50,7 @@ namespace APIBack.Automation.Services
         private const string ChaveVehiclePromptReason = "servicos_vehicle_prompt_reason";
         private const string ChaveMarcaPecaId = "servicos_marca_travada";
         private const string ChaveMarcaPecaNome = "servicos_marca_nome";
+        private const string ChaveValorLinha = "servicos_valor_linha";
         private const string PerguntaNome = "informar_nome";
         private const string PerguntaServico = "informar_servico";
         private const string PerguntaVeiculo = "informar_veiculo";
@@ -1362,6 +1363,19 @@ namespace APIBack.Automation.Services
                 }
             }
 
+            var contextoServico = new ConversationContext
+            {
+                Estado = estado,
+                DadosColetados = dados
+            };
+            var topicAtivo = BuildActiveServiceTopic(contextoServico, null);
+            if (topicAtivo != null)
+            {
+                dados[ConversationTopicContextKeys.Active] = JsonSerializer.Serialize(topicAtivo);
+                dados.Remove(ConversationTopicContextKeys.Candidate);
+                dados.Remove(ConversationTopicContextKeys.SwitchPrompt);
+            }
+
             var novoContexto = new ConversationContext
             {
                 Estado = estado,
@@ -1376,14 +1390,19 @@ namespace APIBack.Automation.Services
         private async Task LimparContextoPreservandoSelecaoAsync(Guid idConversa)
         {
             var contextoAtual = await _conversationRepository.ObterContextoAsync(idConversa);
-            var preservado = CentralRoutingService.BuildPreservedSelectionContext(contextoAtual);
-            if (preservado != null)
+            var dados = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+            if (contextoAtual?.DadosColetados != null &&
+                contextoAtual.DadosColetados.TryGetValue(ConversationTopicContextKeys.Queue, out var fila) &&
+                fila != null)
             {
-                await _conversationRepository.SalvarContextoAsync(idConversa, preservado);
-                return;
+                dados[ConversationTopicContextKeys.Queue] = fila;
             }
 
-            await _conversationRepository.LimparContextoAsync(idConversa);
+            await _conversationRepository.SalvarContextoAsync(idConversa, new ConversationContext
+            {
+                Estado = null,
+                DadosColetados = dados.Count == 0 ? null : dados
+            });
         }
 
         private static bool DeveInterceptarNovaMensagem(string mensagemTexto, IReadOnlyList<ServicoCatalogItem> catalogo)
@@ -1419,7 +1438,9 @@ namespace APIBack.Automation.Services
 
             return estado.StartsWith("oficina_", StringComparison.OrdinalIgnoreCase) ||
                    estado.StartsWith("garagem_", StringComparison.OrdinalIgnoreCase) ||
-                   estado.StartsWith("nautica_", StringComparison.OrdinalIgnoreCase);
+                   estado.StartsWith("nautica_", StringComparison.OrdinalIgnoreCase) ||
+                   estado.StartsWith("faq_", StringComparison.OrdinalIgnoreCase) ||
+                   estado.StartsWith("topic_", StringComparison.OrdinalIgnoreCase);
         }
 
         private static bool IsServiceState(string? estado)
