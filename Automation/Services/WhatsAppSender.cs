@@ -19,17 +19,20 @@ namespace APIBack.Automation.Services
     {
         private readonly IHttpClientFactory _httpFactory;
         private readonly IWhatsAppTokenProvider _tokenProvider;
+        private readonly IWabaPhoneRepository _wabaPhoneRepository;
         private readonly IConfiguration _configuration;
         private readonly ILogger<WhatsAppSender> _logger;
 
         public WhatsAppSender(
             IHttpClientFactory httpFactory,
             IWhatsAppTokenProvider tokenProvider,
+            IWabaPhoneRepository wabaPhoneRepository,
             IConfiguration configuration,
             ILogger<WhatsAppSender> logger)
         {
             _httpFactory = httpFactory;
             _tokenProvider = tokenProvider;
+            _wabaPhoneRepository = wabaPhoneRepository;
             _configuration = configuration;
             _logger = logger;
         }
@@ -135,7 +138,8 @@ namespace APIBack.Automation.Services
 
         private async Task SendPayloadAsync(Guid idConversa, string phoneNumberId, object payload, string payloadType)
         {
-            var token = _tokenProvider.GetAccessToken();
+            var perNumberToken = await _wabaPhoneRepository.ObterAccessTokenPorPhoneNumberIdAsync(phoneNumberId);
+            var token = !string.IsNullOrWhiteSpace(perNumberToken) ? perNumberToken : _tokenProvider.GetAccessToken();
             if (string.IsNullOrWhiteSpace(token))
             {
                 _logger.LogWarning("[Conversa={Conversa}] Token do WhatsApp nao configurado", idConversa);

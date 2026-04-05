@@ -15,7 +15,7 @@ namespace APIBack.Automation.Infra
     {
         private readonly string _connectionString;
         private readonly ILogger<SqlWabaPhoneRepository>? _logger;
-        private static (bool PhoneNumberId, bool DisplayPhoneNumber)? _cachedColumns;
+        private static (bool PhoneNumberId, bool DisplayPhoneNumber, bool AccessToken)? _cachedColumns;
 
         public SqlWabaPhoneRepository(IConfiguration configuration)
         {
@@ -319,7 +319,52 @@ SELECT id_estabelecimento
             }
         }
 
-        private async Task<(bool PhoneNumberId, bool DisplayPhoneNumber)> ObterColunasAsync(NpgsqlConnection connection)
+        public async Task<string?> ObterAccessTokenPorPhoneNumberIdAsync(string phoneNumberId)
+        {
+            if (string.IsNullOrWhiteSpace(phoneNumberId))
+                return null;
+
+            var digitsOnly = new string(phoneNumberId.Where(char.IsDigit).ToArray());
+
+            try
+            {
+                await using var connection = new NpgsqlConnection(_connectionString);
+                var columns = await ObterColunasAsync(connection);
+                if (!columns.AccessToken)
+                    return null;
+
+                var comparisons = new System.Collections.Generic.List<string>();
+                if (columns.PhoneNumberId)
+                {
+                    comparisons.Add("phone_number_id = @Raw");
+                    comparisons.Add("regexp_replace(phone_number_id, '[^0-9]', '', 'g') = @Digits");
+                }
+                if (columns.DisplayPhoneNumber)
+                {
+                    comparisons.Add("display_phone_number = @Raw");
+                    comparisons.Add("regexp_replace(display_phone_number, '[^0-9]', '', 'g') = @Digits");
+                }
+
+                if (comparisons.Count == 0)
+                    return null;
+
+                var sql = $@"SELECT access_token
+                               FROM waba_phone
+                              WHERE ativo = TRUE
+                                AND ({string.Join(" OR ", comparisons)})
+                           ORDER BY data_atualizacao DESC
+                              LIMIT 1;";
+
+                return await connection.ExecuteScalarAsync<string?>(sql, new { Raw = phoneNumberId, Digits = digitsOnly });
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError(ex, "Erro ao buscar access_token por phone_number_id {PhoneNumberId}", phoneNumberId);
+                return null;
+            }
+        }
+
+        private async Task<(bool PhoneNumberId, bool DisplayPhoneNumber, bool AccessToken)> ObterColunasAsync(NpgsqlConnection connection)
         {
             if (_cachedColumns.HasValue)
             {
@@ -334,7 +379,8 @@ SELECT id_estabelecimento
             var hash = rows.Select(r => r.Trim().ToLowerInvariant()).ToHashSet();
             _cachedColumns = (
                 hash.Contains("phone_number_id"),
-                hash.Contains("display_phone_number"));
+                hash.Contains("display_phone_number"),
+                hash.Contains("access_token"));
             return _cachedColumns.Value;
         }
     }

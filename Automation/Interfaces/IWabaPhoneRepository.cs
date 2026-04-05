@@ -16,6 +16,7 @@ namespace APIBack.Automation.Interfaces
         Task<bool> ExisteAtivoAsync(string phoneNumberId);
         Task<string?> ObterPhoneNumberIdPorEstabelecimentoAsync(Guid idEstabelecimento);
         Task<string?> ObterDisplayPhonePorEstabelecimentoAsync(Guid idEstabelecimento);
+        Task<string?> ObterAccessTokenPorPhoneNumberIdAsync(string phoneNumberId);
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================

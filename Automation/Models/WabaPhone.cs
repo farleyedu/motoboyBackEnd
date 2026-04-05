@@ -35,6 +35,9 @@ namespace APIBack.Automation.Models
         [MaxLength(500)]
         public string? Descricao { get; set; }
 
+        [Column("access_token")]
+        public string? AccessToken { get; set; }
+
         [Column("data_criacao")]
         public DateTime DataCriacao { get; set; } = DateTime.UtcNow;
 
