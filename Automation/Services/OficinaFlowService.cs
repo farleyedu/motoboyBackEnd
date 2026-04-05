@@ -83,10 +83,11 @@ namespace APIBack.Automation.Services
                     mensagemTexto));
             }
 
-            if (string.IsNullOrWhiteSpace(cliente?.Nome) && EhSaudacaoInicial(mensagemTexto))
+            if (EhSaudacaoInicial(mensagemTexto))
             {
+                await SalvarContextoAsync(idConversa, EstadoAguardandoNome, viaNumeroCentral, null);
                 return (true, CriarRespostaJsonDecision(
-                    $"Ola! Voce esta falando com a equipe da {nomeEstabelecimento}. Como posso te ajudar hoje?"));
+                    $"Ola! Voce esta falando com a equipe da {nomeEstabelecimento}. Antes de continuarmos, me fala seu nome, por favor."));
             }
 
             if (string.IsNullOrWhiteSpace(cliente?.Nome))

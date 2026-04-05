@@ -14,30 +14,56 @@ using Microsoft.Extensions.Logging;
 
 namespace APIBack.Automation.Services
 {
-    public class ServicosFlowService
+    public partial class ServicosFlowService
     {
-        public const string EstadoAguardandoCategoria = "servicos_aguardando_categoria";
-        public const string EstadoAguardandoEscolha = "servicos_aguardando_escolha";
+        private const string EstadoAguardandoCategoria = "servicos_aguardando_categoria";
+        private const string EstadoAguardandoEscolha = "servicos_aguardando_escolha";
+        public const string EstadoAguardandoNome = "servicos_aguardando_nome";
+        public const string EstadoAguardandoServico = "servicos_aguardando_servico";
         public const string EstadoAguardandoVeiculo = "servicos_aguardando_veiculo";
+        public const string EstadoOfertaDetalhes = "servicos_oferta_detalhes";
+        public const string EstadoAguardandoMarca = "servicos_aguardando_marca";
+        public const string EstadoAguardandoConfirmacaoFinal = "servicos_aguardando_confirmacao_final";
+        public const string EstadoProntoAgendamento = "servicos_pronto_agendamento";
         public const string EstadoAguardandoConfirmacaoHumano = "servicos_aguardando_confirmacao_humano";
 
         private const string ChaveAtendimentoId = "servicos_atendimento_id";
-        private const string ChaveCategoriaOpcoes = "servicos_categoria_opcoes";
+        private const string ChavePerguntaPendente = "servicos_pergunta_pendente";
+        private const string ChaveMensagemPendente = "servicos_mensagem_pendente";
         private const string ChaveCandidatosIds = "servicos_candidatos_ids";
-        private const string ChaveServicoId = "servicos_servico_id";
+        private const string ChaveCategoriaOpcoes = "servicos_categoria_opcoes";
+        private const string ChaveServicoId = "servicos_servico_travado";
+        private const string ChaveServicoNome = "servicos_servico_nome";
+        private const string ChaveItensDisponiveis = "servicos_itens_disponiveis";
+        private const string ChaveItensEntregues = "servicos_itens_entregues";
         private const string ChaveTentativaSemMatch = "servicos_tentativa_sem_match";
+        private const string ChaveTrocaPendenteCampo = "servicos_troca_pendente_campo";
+        private const string ChaveTrocaPendenteValor = "servicos_troca_pendente_valor";
+        private const string ChaveTrocaPendenteLabel = "servicos_troca_pendente_label";
+        private const string ChaveUltimaSolicitacaoHumano = "servicos_ultima_solicitacao_humano";
+        private const string ChaveTentativas = "servicos_tentativas";
         private const string ChaveUsuarioPerguntouPreco = "servicos_usuario_perguntou_preco";
         private const string ChaveUsuarioPerguntouDuracao = "servicos_usuario_perguntou_duracao";
-        private const string ChaveVehiclePromptReason = "servicos_vehicle_prompt_reason";
-        private const string ChaveUltimaSolicitacaoHumano = "servicos_ultima_solicitacao_humano";
+        private const string ChaveVehicleId = "servicos_veiculo_travado";
+        private const string ChaveVehicleNome = "servicos_veiculo_nome";
         private const string ChaveVehicleOptions = "servicos_vehicle_options";
-        private const string ChaveVehicleId = "servicos_vehicle_id";
-        private const string ChaveVehicleNome = "servicos_vehicle_nome";
-        private const string ChaveMarcaPecaId = "servicos_marca_peca_id";
-        private const string ChaveMarcaPecaNome = "servicos_marca_peca_nome";
+        private const string ChaveVehiclePromptReason = "servicos_vehicle_prompt_reason";
+        private const string ChaveMarcaPecaId = "servicos_marca_travada";
+        private const string ChaveMarcaPecaNome = "servicos_marca_nome";
+        private const string PerguntaNome = "informar_nome";
+        private const string PerguntaServico = "informar_servico";
+        private const string PerguntaVeiculo = "informar_veiculo";
+        private const string PerguntaDetalhes = "oferta_detalhes";
+        private const string PerguntaMarca = "selecionar_marca";
+        private const string PerguntaConfirmacaoFinal = "confirmacao_final";
+        private const string PerguntaConfirmacaoTroca = "confirmacao_troca";
+        private const string PerguntaConfirmacaoHumano = "confirmacao_humano";
 
         private static readonly Regex EspacosRegex = new(@"\s+", RegexOptions.Compiled);
         private static readonly Regex TokenRegex = new(@"[a-z0-9]+", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+        private static readonly Regex PrefixoNomeRegex = new(
+            @"^(meu nome e|me chamo|pode me chamar de|sou o|sou a|sou)\s+",
+            RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
         private static readonly HashSet<string> StopWords = new(StringComparer.Ordinal)
         {
             "a", "ao", "aos", "as", "com", "da", "das", "de", "do", "dos", "e", "em", "na", "nas",
@@ -115,22 +141,32 @@ namespace APIBack.Automation.Services
             var atendimentoAtual = await ObterAtendimentoAtualAsync(idConversa, scope);
             var texto = mensagemTexto?.Trim() ?? string.Empty;
             var viaNumeroCentral = _centralRouting.IsCentralDisplayPhone(phoneNumberDisplay);
+            var estadoDeterministico = ResolveDeterministicState(contextoAtual?.Estado, atendimentoAtual?.EtapaAtual);
 
-            if (IsServiceState(contextoAtual?.Estado))
+            if (!string.IsNullOrWhiteSpace(estadoDeterministico))
             {
-                if (atendimentoAtual != null && IsOpenStatus(atendimentoAtual.Status))
+                if (atendimentoAtual != null &&
+                    IsOpenStatus(atendimentoAtual.Status) &&
+                    !string.Equals(atendimentoAtual.Status, "aguardando_interno", StringComparison.OrdinalIgnoreCase) &&
+                    !string.Equals(atendimentoAtual.Status, "em_andamento", StringComparison.OrdinalIgnoreCase))
                 {
                     atendimentoAtual.Status = "em_triagem";
-                    atendimentoAtual.EtapaAtual = "triagem";
+                    atendimentoAtual.EtapaAtual = estadoDeterministico;
                     await _servicoAtendimentoRepository.AtualizarAsync(atendimentoAtual);
                 }
 
-                var decisaoEstado = await ProcessarEstadoAsync(
+                var contextoFluxo = contextoAtual ?? new ConversationContext
+                {
+                    Estado = estadoDeterministico,
+                    DadosColetados = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase)
+                };
+
+                var decisaoEstado = await ProcessarFluxoDeterministicoAsync(
                     idConversa,
                     scope,
                     cliente,
                     catalogo,
-                    contextoAtual!,
+                    contextoFluxo,
                     atendimentoAtual,
                     texto,
                     viaNumeroCentral);
@@ -170,12 +206,12 @@ namespace APIBack.Automation.Services
                 return (true, new AssistantDecision("Perfeito. Se precisar de mais algum servico, me chama por aqui.", "none", null, false, null));
             }
 
-            if (!DeveInterceptarNovaMensagem(texto, catalogo))
+            if (!DeveInterceptarFluxoDeterministico(texto, catalogo, atendimentoAtual))
             {
                 return (false, null);
             }
 
-            var decisao = await ProcessarNovaMensagemAsync(
+            var decisao = await IniciarFluxoDeterministicoAsync(
                 idConversa,
                 scope,
                 cliente,
@@ -1297,6 +1333,18 @@ namespace APIBack.Automation.Services
             IReadOnlyDictionary<string, object?> extras)
         {
             var dados = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
+
+            if (contextoAtual?.DadosColetados != null)
+            {
+                foreach (var item in contextoAtual.DadosColetados)
+                {
+                    if (item.Value != null)
+                    {
+                        dados[item.Key] = item.Value;
+                    }
+                }
+            }
+
             if (atendimentoId.HasValue && atendimentoId.Value != Guid.Empty)
             {
                 dados[ChaveAtendimentoId] = atendimentoId.Value.ToString();
@@ -1304,7 +1352,11 @@ namespace APIBack.Automation.Services
 
             foreach (var extra in extras)
             {
-                if (extra.Value != null)
+                if (extra.Value == null)
+                {
+                    dados.Remove(extra.Key);
+                }
+                else
                 {
                     dados[extra.Key] = extra.Value;
                 }
@@ -1374,7 +1426,13 @@ namespace APIBack.Automation.Services
         {
             return string.Equals(estado, EstadoAguardandoCategoria, StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(estado, EstadoAguardandoEscolha, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(estado, EstadoAguardandoNome, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(estado, EstadoAguardandoServico, StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(estado, EstadoAguardandoVeiculo, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(estado, EstadoOfertaDetalhes, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(estado, EstadoAguardandoMarca, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(estado, EstadoAguardandoConfirmacaoFinal, StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(estado, EstadoProntoAgendamento, StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(estado, EstadoAguardandoConfirmacaoHumano, StringComparison.OrdinalIgnoreCase);
         }
 
