@@ -37,7 +37,7 @@ namespace APIBack.Automation.Services
             _logger = logger;
         }
 
-        public Task SendTextAsync(Guid idConversa, string phoneNumberId, string numeroDestino, string texto)
+        public Task SendTextAsync(Guid idConversa, string phoneNumberId, string numeroDestino, string texto, string? displayPhone = null)
         {
             if (string.IsNullOrWhiteSpace(texto))
             {
@@ -52,10 +52,10 @@ namespace APIBack.Automation.Services
                 text = new { body = texto }
             };
 
-            return SendPayloadAsync(idConversa, phoneNumberId, payload, "text");
+            return SendPayloadAsync(idConversa, phoneNumberId, payload, "text", displayPhone);
         }
 
-        public Task SendImageAsync(Guid idConversa, string phoneNumberId, string numeroDestino, string imageUrl)
+        public Task SendImageAsync(Guid idConversa, string phoneNumberId, string numeroDestino, string imageUrl, string? displayPhone = null)
         {
             var payload = new
             {
@@ -65,10 +65,10 @@ namespace APIBack.Automation.Services
                 image = new { link = imageUrl }
             };
 
-            return SendPayloadAsync(idConversa, phoneNumberId, payload, "image");
+            return SendPayloadAsync(idConversa, phoneNumberId, payload, "image", displayPhone);
         }
 
-        public Task SendDocumentAsync(Guid idConversa, string phoneNumberId, string numeroDestino, string documentUrl, string? filename)
+        public Task SendDocumentAsync(Guid idConversa, string phoneNumberId, string numeroDestino, string documentUrl, string? filename, string? displayPhone = null)
         {
             var payload = new
             {
@@ -78,7 +78,7 @@ namespace APIBack.Automation.Services
                 document = new { link = documentUrl, filename = string.IsNullOrWhiteSpace(filename) ? null : filename }
             };
 
-            return SendPayloadAsync(idConversa, phoneNumberId, payload, "document");
+            return SendPayloadAsync(idConversa, phoneNumberId, payload, "document", displayPhone);
         }
 
         public Task SendReplyButtonsAsync(
@@ -86,7 +86,8 @@ namespace APIBack.Automation.Services
             string phoneNumberId,
             string numeroDestino,
             string bodyText,
-            IReadOnlyCollection<WhatsAppReplyButtonOption> options)
+            IReadOnlyCollection<WhatsAppReplyButtonOption> options,
+            string? displayPhone = null)
         {
             if (string.IsNullOrWhiteSpace(bodyText))
             {
@@ -111,7 +112,7 @@ namespace APIBack.Automation.Services
 
             if (buttons.Length == 0)
             {
-                return SendTextAsync(idConversa, phoneNumberId, numeroDestino, bodyText);
+                return SendTextAsync(idConversa, phoneNumberId, numeroDestino, bodyText, displayPhone);
             }
 
             var payload = new
@@ -133,12 +134,13 @@ namespace APIBack.Automation.Services
                 }
             };
 
-            return SendPayloadAsync(idConversa, phoneNumberId, payload, "interactive");
+            return SendPayloadAsync(idConversa, phoneNumberId, payload, "interactive", displayPhone);
         }
 
-        private async Task SendPayloadAsync(Guid idConversa, string phoneNumberId, object payload, string payloadType)
+        private async Task SendPayloadAsync(Guid idConversa, string phoneNumberId, object payload, string payloadType, string? displayPhone = null)
         {
-            var perNumberToken = await _wabaPhoneRepository.ObterAccessTokenPorPhoneNumberIdAsync(phoneNumberId);
+            var lookupKey = !string.IsNullOrWhiteSpace(displayPhone) ? displayPhone : phoneNumberId;
+            var perNumberToken = await _wabaPhoneRepository.ObterAccessTokenPorPhoneNumberIdAsync(lookupKey);
             var token = !string.IsNullOrWhiteSpace(perNumberToken) ? perNumberToken : _tokenProvider.GetAccessToken();
             if (string.IsNullOrWhiteSpace(token))
             {

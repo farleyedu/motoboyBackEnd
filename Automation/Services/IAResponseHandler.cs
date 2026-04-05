@@ -104,7 +104,7 @@ namespace APIBack.Automation.Services
 
             if (decision.Media != null)
             {
-                var mediaEnviada = await TentarEnviarMediaAsync(idConversa, phoneNumberId, numeroDestino, decision.Media);
+                var mediaEnviada = await TentarEnviarMediaAsync(idConversa, phoneNumberId, numeroDestino, decision.Media, phoneNumberDisplay);
                 if (!mediaEnviada)
                 {
                     _logger.LogInformation(
@@ -139,7 +139,7 @@ namespace APIBack.Automation.Services
                 idConversa);
         }
 
-        private async Task<bool> TentarEnviarMediaAsync(Guid idConversa, string phoneNumberId, string numeroDestino, AssistantMedia media)
+        private async Task<bool> TentarEnviarMediaAsync(Guid idConversa, string phoneNumberId, string numeroDestino, AssistantMedia media, string? displayPhone = null)
         {
             try
             {
@@ -147,15 +147,15 @@ namespace APIBack.Automation.Services
                 {
                     case "imagem":
                     case "image":
-                        await _whatsAppSender.SendImageAsync(idConversa, phoneNumberId, numeroDestino, media.Url);
+                        await _whatsAppSender.SendImageAsync(idConversa, phoneNumberId, numeroDestino, media.Url, displayPhone);
                         return true;
 
                     case "pdf":
-                        await _whatsAppSender.SendDocumentAsync(idConversa, phoneNumberId, numeroDestino, media.Url, "reserva.pdf");
+                        await _whatsAppSender.SendDocumentAsync(idConversa, phoneNumberId, numeroDestino, media.Url, "reserva.pdf", displayPhone);
                         return true;
 
                     case "link":
-                        await _whatsAppSender.SendTextAsync(idConversa, phoneNumberId, numeroDestino, media.Url);
+                        await _whatsAppSender.SendTextAsync(idConversa, phoneNumberId, numeroDestino, media.Url, displayPhone);
                         return true;
 
                     default:
@@ -200,11 +200,12 @@ namespace APIBack.Automation.Services
                         phoneNumberId,
                         numeroDestino,
                         textoFinalParaUsuario,
-                        replyButtons!);
+                        replyButtons!,
+                        phoneNumberDisplay);
                 }
                 else
                 {
-                    await _whatsAppSender.SendTextAsync(idConversa, phoneNumberId, numeroDestino, textoFinalParaUsuario);
+                    await _whatsAppSender.SendTextAsync(idConversa, phoneNumberId, numeroDestino, textoFinalParaUsuario, phoneNumberDisplay);
                 }
             }
             catch (Exception ex)

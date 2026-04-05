@@ -442,7 +442,7 @@ namespace APIBack.Automation.Services
 
             try
             {
-                await _whatsAppSender.SendTextAsync(mensagem.IdConversa, phoneNumberId, numeroDestino, texto);
+                await _whatsAppSender.SendTextAsync(mensagem.IdConversa, phoneNumberId, numeroDestino, texto, displayPhone);
                 await _messageService.AtualizarStatusAsync(mensagem.Id, MessageStatusMapper.Enviada);
                 mensagem.Status = MessageStatusMapper.Enviada;
             }
