@@ -1617,13 +1617,30 @@ namespace APIBack.Automation.Services
             }
 
             var marcas = vehicle.MarcasPeca
-                .Select(item => item.Nome)
-                .Where(item => !string.IsNullOrWhiteSpace(item))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Where(item => !string.IsNullOrWhiteSpace(item.Nome))
+                .GroupBy(item => item.Nome.Trim(), StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.First())
                 .Take(5)
+                .Select(BuildBrandOptionLine)
                 .ToArray();
 
             return $"Para {servico.Nome} no {vehicle.NomeExibicao}, hoje eu tenho estas marcas:\n{FormatarOpcoesEnumeradas(marcas)}";
+        }
+
+        private static string BuildBrandOptionLine(ServicoCatalogPieceItem marcaPeca)
+        {
+            var faixa = ObterFaixaPrecoMarcaPeca(marcaPeca);
+            if (!faixa.Min.HasValue || !faixa.Max.HasValue)
+            {
+                return marcaPeca.Nome;
+            }
+
+            if (faixa.Min.Value == faixa.Max.Value)
+            {
+                return $"{marcaPeca.Nome} - {FormatCurrency(faixa.Min.Value)}";
+            }
+
+            return $"{marcaPeca.Nome} - {FormatCurrency(faixa.Min.Value)} a {FormatCurrency(faixa.Max.Value)}";
         }
 
         private static string? BuildPiecePriceText(

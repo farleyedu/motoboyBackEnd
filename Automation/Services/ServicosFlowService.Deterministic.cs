@@ -593,13 +593,6 @@ namespace APIBack.Automation.Services
                 return await VoltarParaVeiculoAsync(idConversa, scope, cliente, contextoAtual, atendimentoAtual, servico, viaNumeroCentral);
             }
 
-            var propostaTroca = await TentarCriarTrocaPendenteAsync(
-                idConversa, scope, cliente, catalogo, contextoAtual, atendimentoAtual, mensagemTexto, viaNumeroCentral, EstadoAguardandoMarca);
-            if (propostaTroca != null)
-            {
-                return propostaTroca;
-            }
-
             if (UsuarioPerguntouPreco(mensagemTexto))
             {
                 return await EntregarDetalheIndividualAsync(
@@ -638,7 +631,14 @@ namespace APIBack.Automation.Services
             var marca = ResolverMarcaPecaSelecionada(mensagemTexto, veiculo, atendimentoAtual);
             if (marca == null)
             {
-                var replyFalha = $"Nao consegui identificar a marca. Me responde com o numero ou com o nome:\n{FormatarOpcoesEnumeradas(veiculo.MarcasPeca.Select(item => item.Nome).Where(item => !string.IsNullOrWhiteSpace(item)).Take(5).ToArray())}";
+                var propostaTroca = await TentarCriarTrocaPendenteAsync(
+                    idConversa, scope, cliente, catalogo, contextoAtual, atendimentoAtual, mensagemTexto, viaNumeroCentral, EstadoAguardandoMarca);
+                if (propostaTroca != null)
+                {
+                    return propostaTroca;
+                }
+
+                var replyFalha = $"{BuildBrandsReply(servico, veiculo, null)}\nMe responde com o numero ou com o nome da marca.";
                 await PersistirEstadoDeterministicoAsync(
                     idConversa,
                     scope,
@@ -1048,6 +1048,8 @@ namespace APIBack.Automation.Services
                 [ChaveMarcaPecaNome] = null,
                 [ChaveItensDisponiveis] = null,
                 [ChaveItensEntregues] = null,
+                [ChaveVehicleOptions] = null,
+                [ChaveVehiclePromptReason] = null,
                 [ChaveTrocaPendenteCampo] = null,
                 [ChaveTrocaPendenteValor] = null,
                 [ChaveTrocaPendenteLabel] = null
@@ -1097,6 +1099,8 @@ namespace APIBack.Automation.Services
                 [ChaveItensEntregues] = Array.Empty<string>(),
                 [ChavePerguntaPendente] = PerguntaDetalhes,
                 [ChaveTentativas] = 0,
+                [ChaveVehicleOptions] = null,
+                [ChaveVehiclePromptReason] = null,
                 [ChaveTrocaPendenteCampo] = null,
                 [ChaveTrocaPendenteValor] = null,
                 [ChaveTrocaPendenteLabel] = null
@@ -1266,13 +1270,15 @@ namespace APIBack.Automation.Services
                 [ChaveMarcaPecaId] = marca?.Id,
                 [ChaveMarcaPecaNome] = marca?.Nome,
                 [ChavePerguntaPendente] = PerguntaConfirmacaoFinal,
+                [ChaveVehicleOptions] = null,
+                [ChaveVehiclePromptReason] = null,
                 [ChaveTrocaPendenteCampo] = null,
                 [ChaveTrocaPendenteValor] = null,
                 [ChaveTrocaPendenteLabel] = null
             });
 
             var resumo = MontarResumoFinal(cliente, servico, veiculo, marca);
-            var reply = string.Join(" ", new[] { prefixo, $"{resumo} Se estiver certo, me responde com sim." }.Where(item => !string.IsNullOrWhiteSpace(item)));
+            var reply = string.Join(" ", new[] { prefixo, $"{resumo} Se estiver certo, me responde com sim que eu sigo para o agendamento." }.Where(item => !string.IsNullOrWhiteSpace(item)));
             await PersistirEstadoDeterministicoAsync(
                 idConversa, scope, cliente, contextoAtual, atendimentoAtual, servico,
                 EstadoAguardandoConfirmacaoFinal, "aguardando_cliente", reply, viaNumeroCentral, extras, "confirmacao_final");
@@ -1451,26 +1457,27 @@ namespace APIBack.Automation.Services
 
         private static string MontarResumoFinal(Cliente? cliente, ServicoCatalogItem servico, ServicoCatalogVehicleItem? veiculo, ServicoCatalogPieceItem? marca)
         {
-            var partes = new List<string>();
             var primeiroNome = ObterPrimeiroNome(cliente?.Nome);
-            if (!string.IsNullOrWhiteSpace(primeiroNome))
-            {
-                partes.Add(primeiroNome);
-            }
+            var cabecalho = string.IsNullOrWhiteSpace(primeiroNome)
+                ? "Ficou assim"
+                : $"Ficou assim, {primeiroNome}";
 
-            partes.Add(servico.Nome);
+            var partes = new List<string>
+            {
+                servico.Nome
+            };
 
             if (veiculo != null && !string.IsNullOrWhiteSpace(veiculo.NomeExibicao))
             {
-                partes.Add(veiculo.NomeExibicao);
+                partes.Add($"para {veiculo.NomeExibicao}");
             }
 
             if (marca != null && !string.IsNullOrWhiteSpace(marca.Nome))
             {
-                partes.Add(marca.Nome);
+                partes.Add($"com a marca {marca.Nome}");
             }
 
-            var resumo = $"Ficou assim: {string.Join(", ", partes)}";
+            var resumo = $"{cabecalho}: {string.Join(", ", partes)}";
             var textoPreco = marca != null && veiculo != null
                 ? BuildPiecePriceText(servico, veiculo, marca)
                 : veiculo != null
