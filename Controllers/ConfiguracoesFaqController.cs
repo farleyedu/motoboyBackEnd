@@ -27,7 +27,6 @@ namespace APIBack.Controllers
             [FromQuery] string? busca = null,
             [FromQuery] bool? ativo = null,
             [FromQuery] string? categoria = null,
-            [FromQuery] string? acao = null,
             [FromQuery] int page = 1,
             [FromQuery] int pageSize = 20)
         {
@@ -36,7 +35,7 @@ namespace APIBack.Controllers
                 return error!;
             }
 
-            var response = await _service.ListarAsync(estabelecimentoId, busca, ativo, categoria, acao, page, pageSize);
+            var response = await _service.ListarAsync(estabelecimentoId, busca, ativo, categoria, page, pageSize);
             return Ok(ApiResponse<PagedResultDto<EstabelecimentoFaqDto>>.Ok(response));
         }
 

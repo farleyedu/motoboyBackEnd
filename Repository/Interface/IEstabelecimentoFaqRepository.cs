@@ -12,7 +12,6 @@ namespace APIBack.Repository.Interface
             string? busca,
             bool? ativo,
             string? categoria,
-            string? acao,
             int page,
             int pageSize);
         Task<IReadOnlyCollection<EstabelecimentoFaq>> ListarTodosAsync(Guid idEstabelecimento);

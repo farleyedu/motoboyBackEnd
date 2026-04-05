@@ -97,7 +97,6 @@ namespace APIBack.Automation.Services
             {
                 var decision = await HandleSwitchPromptAsync(
                     idConversa,
-                    scope,
                     contextoAtual,
                     activeTopic,
                     queue,
@@ -155,7 +154,6 @@ namespace APIBack.Automation.Services
                 {
                     var decision = await ExecuteTopicAsync(
                         idConversa,
-                        scope,
                         contextoAtual,
                         null,
                         queue,
@@ -171,7 +169,6 @@ namespace APIBack.Automation.Services
 
         private async Task<AssistantDecision> HandleSwitchPromptAsync(
             Guid idConversa,
-            EffectiveConversationScope scope,
             ConversationContext? contextoAtual,
             ConversationTopicState? activeTopic,
             List<ConversationTopicState> queue,
@@ -217,7 +214,6 @@ namespace APIBack.Automation.Services
 
                     return await ExecuteTopicAsync(
                         idConversa,
-                        scope,
                         contextoAtual,
                         null,
                         filaAtualizada,
@@ -235,7 +231,6 @@ namespace APIBack.Automation.Services
 
                     return await ExecuteTopicAsync(
                         idConversa,
-                        scope,
                         contextoAtual,
                         null,
                         queue,
@@ -251,7 +246,6 @@ namespace APIBack.Automation.Services
 
                     return await ExecuteTopicAsync(
                         idConversa,
-                        scope,
                         contextoAtual,
                         null,
                         new List<ConversationTopicState>(),
@@ -302,7 +296,6 @@ namespace APIBack.Automation.Services
 
         private async Task<AssistantDecision> ExecuteTopicAsync(
             Guid idConversa,
-            EffectiveConversationScope scope,
             ConversationContext? contextoAtual,
             ConversationTopicState? activeTopic,
             IReadOnlyList<ConversationTopicState> queue,
@@ -336,101 +329,20 @@ namespace APIBack.Automation.Services
 
             return await ExecuteFaqAsync(
                 idConversa,
-                scope,
                 contextoAtual,
                 queue,
-                candidateTopic,
-                phoneNumberDisplay);
+                candidateTopic);
         }
 
         private async Task<AssistantDecision> ExecuteFaqAsync(
             Guid idConversa,
-            EffectiveConversationScope scope,
             ConversationContext? contextoAtual,
             IReadOnlyList<ConversationTopicState> queue,
-            ConversationTopicState candidateTopic,
-            string? phoneNumberDisplay)
+            ConversationTopicState candidateTopic)
         {
             if (!TryDeserializeFaq(candidateTopic.SnapshotJson, out var faq))
             {
                 return new AssistantDecision("Nao consegui recuperar esse FAQ. Me fala de outro jeito que eu continuo por aqui.", "none", null, false, null);
-            }
-
-            if (string.Equals(faq.Acao, "encaminhar_humano", StringComparison.OrdinalIgnoreCase))
-            {
-                var cliente = await _clienteRepository.ObterPorIdAsync(scope.IdCliente);
-                var telefone = !string.IsNullOrWhiteSpace(scope.TelefoneCliente)
-                    ? scope.TelefoneCliente
-                    : await _clienteRepository.ObterTelefoneClienteAsync(scope.IdCliente, scope.IdEstabelecimento);
-
-                var activeFaq = new ConversationTopicState
-                {
-                    TopicId = candidateTopic.TopicId,
-                    Module = ConversationTopicModules.Faq,
-                    Label = candidateTopic.Label,
-                    RuntimeStatus = ConversationTopicRuntimeStatus.AguardandoInterno,
-                    Summary = candidateTopic.Summary,
-                    SnapshotJson = candidateTopic.SnapshotJson,
-                    CreatedAt = candidateTopic.CreatedAt,
-                    UpdatedAt = DateTime.UtcNow
-                };
-
-                await SaveContextAsync(
-                    idConversa,
-                    contextoAtual,
-                    "faq_aguardando_interno",
-                    activeFaq,
-                    queue,
-                    null,
-                    null);
-
-                var replyFaq = string.IsNullOrWhiteSpace(faq.Resposta)
-                    ? "Perfeito. Nossa equipe vai continuar esse atendimento por aqui."
-                    : $"{faq.Resposta.Trim()}\n\nNossa equipe vai continuar esse atendimento por aqui.";
-
-                return new AssistantDecision(
-                    replyFaq,
-                    "escalar_para_humano",
-                    null,
-                    false,
-                    new HandoverContextDto
-                    {
-                        ClienteNome = cliente?.Nome,
-                        Telefone = telefone,
-                        Motivo = faq.Pergunta,
-                        QueixaPrincipal = faq.MensagemOrigem,
-                        Contexto = $"fluxo=faq; categoria={faq.Categoria}",
-                        Historico = new[]
-                        {
-                            $"FAQ: {faq.Pergunta}",
-                            $"Categoria: {faq.Categoria}",
-                            $"Acao: {faq.Acao}"
-                        }
-                    });
-            }
-
-            if (string.Equals(faq.Acao, "abrir_triagem", StringComparison.OrdinalIgnoreCase))
-            {
-                await SaveContextAsync(
-                    idConversa,
-                    contextoAtual,
-                    null,
-                    null,
-                    queue,
-                    null,
-                    null,
-                    limparActiveTopic: true);
-
-                var decision = await _servicosFlow.TryHandleAsync(idConversa, faq.MensagemOrigem, phoneNumberDisplay);
-                if (decision.Intercepted && decision.Decision != null)
-                {
-                    return decision.Decision;
-                }
-
-                var fallbackTriagem = string.IsNullOrWhiteSpace(faq.Resposta)
-                    ? "Me fala qual servico voce quer ver que eu continuo por aqui."
-                    : faq.Resposta.Trim();
-                return new AssistantDecision(fallbackTriagem, "none", null, false, null);
             }
 
             var reply = faq.Resposta.Trim();

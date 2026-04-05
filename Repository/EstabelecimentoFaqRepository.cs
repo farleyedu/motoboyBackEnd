@@ -27,7 +27,6 @@ namespace APIBack.Repository
             string? busca,
             bool? ativo,
             string? categoria,
-            string? acao,
             int page,
             int pageSize)
         {
@@ -38,7 +37,6 @@ SELECT COUNT(1)
    AND deleted_at IS NULL
    AND (@Ativo IS NULL OR ativo = @Ativo)
    AND (@Categoria IS NULL OR categoria = @Categoria)
-   AND (@Acao IS NULL OR acao = @Acao)
    AND (
        @Busca IS NULL
        OR pergunta ILIKE @BuscaLike
@@ -52,7 +50,6 @@ SELECT id,
        pergunta,
        resposta,
        categoria,
-       acao AS Acao,
        ordem AS Ordem,
        ativo,
        palavras_chave::text AS PalavrasChaveJson,
@@ -64,7 +61,6 @@ SELECT id,
    AND deleted_at IS NULL
    AND (@Ativo IS NULL OR ativo = @Ativo)
    AND (@Categoria IS NULL OR categoria = @Categoria)
-   AND (@Acao IS NULL OR acao = @Acao)
    AND (
        @Busca IS NULL
        OR pergunta ILIKE @BuscaLike
@@ -79,7 +75,6 @@ SELECT id,
                 IdEstabelecimento = idEstabelecimento,
                 Ativo = ativo,
                 Categoria = string.IsNullOrWhiteSpace(categoria) ? null : categoria.Trim(),
-                Acao = string.IsNullOrWhiteSpace(acao) ? null : acao.Trim(),
                 Busca = string.IsNullOrWhiteSpace(busca) ? null : busca.Trim(),
                 BuscaLike = string.IsNullOrWhiteSpace(busca) ? null : $"%{busca.Trim()}%",
                 PageSize = pageSize,
@@ -100,7 +95,6 @@ SELECT id,
        pergunta,
        resposta,
        categoria,
-       acao AS Acao,
        ordem AS Ordem,
        ativo,
        palavras_chave::text AS PalavrasChaveJson,
@@ -129,7 +123,6 @@ SELECT id,
        pergunta,
        resposta,
        categoria,
-       acao AS Acao,
        ordem AS Ordem,
        ativo,
        palavras_chave::text AS PalavrasChaveJson,
@@ -160,7 +153,6 @@ INSERT INTO estabelecimento_faq (
     pergunta,
     resposta,
     categoria,
-    acao,
     ordem,
     ativo,
     palavras_chave,
@@ -172,7 +164,6 @@ INSERT INTO estabelecimento_faq (
     @Pergunta,
     @Resposta,
     @Categoria,
-    @Acao,
     @Ordem,
     @Ativo,
     CAST(@PalavrasChave AS jsonb),
@@ -201,7 +192,6 @@ UPDATE estabelecimento_faq
    SET pergunta = @Pergunta,
        resposta = @Resposta,
        categoria = @Categoria,
-       acao = @Acao,
        ordem = @Ordem,
        ativo = @Ativo,
        palavras_chave = CAST(@PalavrasChave AS jsonb),
@@ -262,7 +252,6 @@ UPDATE estabelecimento_faq
                 entity.Pergunta,
                 entity.Resposta,
                 entity.Categoria,
-                entity.Acao,
                 entity.Ordem,
                 entity.Ativo,
                 PalavrasChave = JsonSerializer.Serialize(entity.PalavrasChave ?? new List<string>(), JsonOptions),
@@ -280,7 +269,6 @@ UPDATE estabelecimento_faq
                 Pergunta = row.Pergunta ?? string.Empty,
                 Resposta = row.Resposta ?? string.Empty,
                 Categoria = row.Categoria ?? string.Empty,
-                Acao = row.Acao ?? "responder",
                 Ordem = row.Ordem,
                 Ativo = row.Ativo,
                 PalavrasChave = DeserializeList(row.PalavrasChaveJson),
@@ -314,7 +302,6 @@ UPDATE estabelecimento_faq
             public string? Pergunta { get; set; }
             public string? Resposta { get; set; }
             public string? Categoria { get; set; }
-            public string? Acao { get; set; }
             public int Ordem { get; set; }
             public bool Ativo { get; set; }
             public string? PalavrasChaveJson { get; set; }

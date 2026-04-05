@@ -10,7 +10,6 @@ namespace APIBack.Model
         public string Pergunta { get; set; } = string.Empty;
         public string Resposta { get; set; } = string.Empty;
         public string Categoria { get; set; } = string.Empty;
-        public string Acao { get; set; } = "responder";
         public int Ordem { get; set; }
         public bool Ativo { get; set; } = true;
         public List<string> PalavrasChave { get; set; } = new();

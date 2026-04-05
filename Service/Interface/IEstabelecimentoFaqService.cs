@@ -12,7 +12,6 @@ namespace APIBack.Service.Interface
             string? busca,
             bool? ativo,
             string? categoria,
-            string? acao,
             int page,
             int pageSize);
         Task<IReadOnlyCollection<EstabelecimentoFaqDto>> ListarTodosAsync(Guid idEstabelecimento);

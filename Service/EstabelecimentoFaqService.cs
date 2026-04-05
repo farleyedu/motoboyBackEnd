@@ -12,13 +12,6 @@ namespace APIBack.Service
 {
     public class EstabelecimentoFaqService : IEstabelecimentoFaqService
     {
-        private static readonly HashSet<string> AcoesPermitidas = new(StringComparer.OrdinalIgnoreCase)
-        {
-            "responder",
-            "encaminhar_humano",
-            "abrir_triagem"
-        };
-
         private readonly IEstabelecimentoFaqRepository _repository;
 
         public EstabelecimentoFaqService(IEstabelecimentoFaqRepository repository)
@@ -31,7 +24,6 @@ namespace APIBack.Service
             string? busca,
             bool? ativo,
             string? categoria,
-            string? acao,
             int page,
             int pageSize)
         {
@@ -42,7 +34,6 @@ namespace APIBack.Service
                 ValidationUtils.TrimToNull(busca),
                 ativo,
                 ValidationUtils.TrimToNull(categoria),
-                ValidationUtils.TrimToNull(acao),
                 normalizedPage,
                 normalizedPageSize);
 
@@ -103,7 +94,6 @@ namespace APIBack.Service
             var pergunta = ValidationUtils.TrimToNull(request.Pergunta);
             var resposta = ValidationUtils.TrimToNull(request.Resposta);
             var categoria = ValidationUtils.TrimToNull(request.Categoria);
-            var acao = ValidationUtils.NormalizeToken(request.Acao);
             var palavrasChave = ValidationUtils.NormalizeStringList(request.PalavrasChave);
 
             if (string.IsNullOrWhiteSpace(pergunta) || pergunta.Length < 4 || pergunta.Length > 200)
@@ -126,11 +116,6 @@ namespace APIBack.Service
                 ValidationUtils.AddError(errors, "ordem", "Ordem deve ser maior ou igual a 1.");
             }
 
-            if (!AcoesPermitidas.Contains(acao))
-            {
-                ValidationUtils.AddError(errors, "acao", "Acao invalida.");
-            }
-
             ValidationUtils.ThrowIfAny(errors);
 
             return new EstabelecimentoFaq
@@ -139,7 +124,6 @@ namespace APIBack.Service
                 Pergunta = pergunta!,
                 Resposta = resposta!,
                 Categoria = categoria!,
-                Acao = acao,
                 Ordem = request.Ordem,
                 Ativo = request.Ativo,
                 PalavrasChave = palavrasChave
@@ -155,7 +139,6 @@ namespace APIBack.Service
                 Pergunta = entity.Pergunta,
                 Resposta = entity.Resposta,
                 Categoria = entity.Categoria,
-                Acao = entity.Acao,
                 Ordem = entity.Ordem,
                 Ativo = entity.Ativo,
                 PalavrasChave = entity.PalavrasChave,

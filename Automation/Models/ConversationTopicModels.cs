@@ -60,7 +60,6 @@ namespace APIBack.Automation.Models
         public string Pergunta { get; set; } = string.Empty;
         public string Resposta { get; set; } = string.Empty;
         public string Categoria { get; set; } = string.Empty;
-        public string Acao { get; set; } = "responder";
         public string MensagemOrigem { get; set; } = string.Empty;
     }
 }
