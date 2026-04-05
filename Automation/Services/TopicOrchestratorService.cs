@@ -6,8 +6,6 @@ using System.Threading.Tasks;
 using APIBack.Automation.Dtos;
 using APIBack.Automation.Interfaces;
 using APIBack.Automation.Models;
-using APIBack.Model;
-using Microsoft.Extensions.Logging;
 
 namespace APIBack.Automation.Services
 {
@@ -17,32 +15,26 @@ namespace APIBack.Automation.Services
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
 
         private readonly IConversationRepository _conversationRepository;
-        private readonly IClienteRepository _clienteRepository;
         private readonly IEstabelecimentoRepository _estabelecimentoRepository;
         private readonly IServicoAtendimentoRepository _servicoAtendimentoRepository;
         private readonly CentralRoutingService _centralRouting;
         private readonly ServicosFlowService _servicosFlow;
         private readonly FaqCatalogProvider _faqCatalogProvider;
-        private readonly ILogger<TopicOrchestratorService> _logger;
 
         public TopicOrchestratorService(
             IConversationRepository conversationRepository,
-            IClienteRepository clienteRepository,
             IEstabelecimentoRepository estabelecimentoRepository,
             IServicoAtendimentoRepository servicoAtendimentoRepository,
             CentralRoutingService centralRouting,
             ServicosFlowService servicosFlow,
-            FaqCatalogProvider faqCatalogProvider,
-            ILogger<TopicOrchestratorService> logger)
+            FaqCatalogProvider faqCatalogProvider)
         {
             _conversationRepository = conversationRepository;
-            _clienteRepository = clienteRepository;
             _estabelecimentoRepository = estabelecimentoRepository;
             _servicoAtendimentoRepository = servicoAtendimentoRepository;
             _centralRouting = centralRouting;
             _servicosFlow = servicosFlow;
             _faqCatalogProvider = faqCatalogProvider;
-            _logger = logger;
         }
 
         public async Task<(bool Intercepted, AssistantDecision? Decision)> TryHandleAsync(
@@ -398,7 +390,6 @@ namespace APIBack.Automation.Services
                 Pergunta = match.Item.Pergunta,
                 Resposta = match.Item.Resposta,
                 Categoria = match.Item.Categoria,
-                Acao = match.Item.Acao,
                 MensagemOrigem = mensagemTexto.Trim()
             };
 
@@ -515,10 +506,10 @@ namespace APIBack.Automation.Services
                 "2" => 2,
                 "3" => 3,
                 "4" => 4,
-                _ when texto.Contains("continuar") => 1,
-                _ when texto.Contains("depois voltar") || texto.Contains("voltar depois") => 2,
-                _ when texto.Contains("trocar") => 3,
-                _ when texto.Contains("reset") || texto.Contains("comecar do zero") || texto.Contains("comecar do zero") => 4,
+                _ when texto == "continuar" || texto == "continuar aqui" || texto == "continuar no assunto" => 1,
+                _ when texto == "depois voltar" || texto == "voltar depois" || texto == "ir e voltar" => 2,
+                _ when texto == "trocar" || texto == "trocar assunto" => 3,
+                _ when texto == "reset" || texto == "resetar" || texto == "comecar do zero" => 4,
                 _ => 0
             };
         }

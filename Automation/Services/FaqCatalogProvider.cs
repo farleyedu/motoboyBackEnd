@@ -22,7 +22,8 @@ namespace APIBack.Automation.Services
         {
             "a", "ao", "aos", "as", "com", "da", "das", "de", "do", "dos", "e", "em", "na", "nas",
             "no", "nos", "o", "os", "ou", "para", "pra", "por", "qual", "que", "quero", "saber",
-            "se", "sobre", "tem", "vcs", "voce", "voces"
+            "se", "sobre", "tem", "vcs", "voce", "voces",
+            "servico", "servicos", "servico", "servicos"
         };
 
         private readonly IEstabelecimentoFaqService _faqService;
@@ -56,7 +57,6 @@ namespace APIBack.Automation.Services
                     Pergunta = item.Pergunta,
                     Resposta = item.Resposta,
                     Categoria = item.Categoria,
-                    Acao = item.Acao,
                     PalavrasChave = item.PalavrasChave
                 })
                 .ToArray();
@@ -85,7 +85,7 @@ namespace APIBack.Automation.Services
             foreach (var item in faq)
             {
                 var score = CalcularScore(item, normalizado, tokensMensagem);
-                if (score < 6)
+                if (score < 10)
                 {
                     continue;
                 }
