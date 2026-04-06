@@ -35,6 +35,7 @@ namespace APIBack.Automation.Interfaces
         Task<ConversationContext?> ObterContextoAsync(Guid idConversa);
         Task LimparContextoAsync(Guid idConversa);
         Task LimparContextoCompletoAsync(Guid idConversa);
+        Task LimparContextoGrupoCompletoAsync(Guid groupId);
     }
 }
 

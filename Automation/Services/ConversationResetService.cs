@@ -104,8 +104,6 @@ namespace APIBack.Automation.Services
             }
 
             var rootConversationId = ObterRootConversationId(atual);
-            var idsParaLimpar = new HashSet<Guid> { atual.IdConversa, rootConversationId };
-
             var contextoAtual = await _conversationRepository.ObterContextoAsync(atual.IdConversa);
             var contextoRoot = atual.IdConversa == rootConversationId
                 ? contextoAtual
@@ -114,10 +112,6 @@ namespace APIBack.Automation.Services
             var snapshotAtual = CentralRoutingService.BuildSnapshot(contextoAtual);
             var snapshotRoot = CentralRoutingService.BuildSnapshot(contextoRoot);
             var segmentoAtivoId = snapshotAtual.ConversaSegmentoAtivaId ?? snapshotRoot.ConversaSegmentoAtivaId;
-            if (segmentoAtivoId.HasValue && segmentoAtivoId.Value != Guid.Empty)
-            {
-                idsParaLimpar.Add(segmentoAtivoId.Value);
-            }
 
             var conversaOperacional = await ResolverConversaOperacionalAsync(atual, segmentoAtivoId);
             var telefoneCliente = await ResolverTelefoneClienteAsync(conversaOperacional, atual);
@@ -136,10 +130,7 @@ namespace APIBack.Automation.Services
                 await _servicoAtendimentoRepository.AtualizarStatusAsync(atendimentoServico.Id, "cancelado");
             }
 
-            foreach (var conversationId in idsParaLimpar)
-            {
-                await _conversationRepository.LimparContextoCompletoAsync(conversationId);
-            }
+            await _conversationRepository.LimparContextoGrupoCompletoAsync(rootConversationId);
 
             _logger.LogInformation(
                 "[Conversa={Conversa}] Reset completo aplicado. Root={Root} Operacional={Operacional}",

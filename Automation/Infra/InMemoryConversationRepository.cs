@@ -412,6 +412,21 @@ namespace APIBack.Automation.Infra
             return Task.CompletedTask;
         }
 
+        public Task LimparContextoGrupoCompletoAsync(Guid groupId)
+        {
+            foreach (var conversa in _conversas.Values)
+            {
+                var grupoId = conversa.IdConversaGrupo == Guid.Empty ? conversa.IdConversa : conversa.IdConversaGrupo;
+                if (grupoId == groupId)
+                {
+                    conversa.ContextoEstadoJson = null;
+                    conversa.AtualizadoEm = DateTime.UtcNow;
+                }
+            }
+
+            return Task.CompletedTask;
+        }
+
         private Conversation? ResolveExact(Guid id)
         {
             if (!_conversas.TryGetValue(id, out var conversa))

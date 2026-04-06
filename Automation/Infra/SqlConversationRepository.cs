@@ -772,6 +772,14 @@ VALUES (
             await cx.ExecuteAsync("UPDATE conversas SET contexto_estado = NULL, data_atualizacao = NOW() WHERE id = @Id;", new { Id = idConversa });
         }
 
+        public async Task LimparContextoGrupoCompletoAsync(Guid groupId)
+        {
+            await using var cx = new NpgsqlConnection(_connectionString);
+            await cx.ExecuteAsync(
+                "UPDATE conversas SET contexto_estado = NULL, data_atualizacao = NOW() WHERE COALESCE(id_conversa_grupo, id) = @GroupId;",
+                new { GroupId = groupId });
+        }
+
         private async Task<ConversationRow?> ResolveForEstablishmentAsync(NpgsqlConnection cx, Guid id, Guid idEstabelecimento)
         {
             var exact = await ExactSyncedAsync(cx, id);
