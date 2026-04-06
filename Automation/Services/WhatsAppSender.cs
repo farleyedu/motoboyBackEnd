@@ -157,6 +157,8 @@ namespace APIBack.Automation.Services
             _logger.LogDebug("[Conversa={Conversa}] Payload WhatsApp ({Tipo}): {Json}", idConversa, payloadType, json);
 
             var delays = new[] { TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(5) };
+            string? lastErrorBody = null;
+            int? lastStatusCode = null;
 
             for (var tentativa = 0; tentativa < delays.Length; tentativa++)
             {
@@ -173,16 +175,19 @@ namespace APIBack.Automation.Services
                         return;
                     }
 
+                    lastStatusCode = (int)resposta.StatusCode;
+                    lastErrorBody = body;
                     _logger.LogWarning(
                         "[Conversa={Conversa}] Falha ao enviar WhatsApp ({Tipo}, tentativa {Tentativa}): {Status} - {Body}",
                         idConversa,
                         payloadType,
                         tentativa + 1,
-                        (int)resposta.StatusCode,
+                        lastStatusCode,
                         body);
                 }
                 catch (Exception ex)
                 {
+                    lastErrorBody = ex.Message;
                     _logger.LogWarning(ex, "[Conversa={Conversa}] Erro ao enviar WhatsApp ({Tipo}, tentativa {Tentativa})", idConversa, payloadType, tentativa + 1);
                 }
 
@@ -192,7 +197,10 @@ namespace APIBack.Automation.Services
                 }
             }
 
-            _logger.LogError("[Conversa={Conversa}] Todas as tentativas de envio ({Tipo}) falharam", idConversa, payloadType);
+            _logger.LogError("[Conversa={Conversa}] Todas as tentativas de envio ({Tipo}) falharam. Ultimo status: {Status} - {Body}",
+                idConversa, payloadType, lastStatusCode, lastErrorBody);
+            throw new HttpRequestException(
+                $"WhatsApp API retornou erro {lastStatusCode}: {lastErrorBody}");
         }
     }
 }
