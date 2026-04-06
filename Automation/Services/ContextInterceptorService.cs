@@ -279,23 +279,8 @@ namespace APIBack.Automation.Services
                 return (true, nauticaDecision);
             }
 
-            var (topicIntercepted, topicDecision) = await _topicOrchestrator.TryHandleAsync(
-                idConversa,
-                mensagemTexto,
-                phoneNumberDisplay);
-            if (topicIntercepted)
-            {
-                return (true, topicDecision);
-            }
-
-            var (servicosIntercepted, servicosDecision) = await _servicosFlow.TryHandleAsync(
-                idConversa,
-                mensagemTexto,
-                phoneNumberDisplay);
-            if (servicosIntercepted)
-            {
-                return (true, servicosDecision);
-            }
+            // TopicOrchestratorService e ServicosFlowService removidos do pipeline:
+            // o módulo Servicos agora é tratado via AI + tools (GetDeclaredToolsAsync).
 
             var (oficinaIntercepted, oficinaDecision) = await _oficinaFlow.TryHandleAsync(
                 idConversa,

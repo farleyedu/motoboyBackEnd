@@ -179,7 +179,7 @@ Regras gerais:
 
             messages.Add(new { role = "user", content = textoUsuario });
 
-            var tools = _toolExecutor.GetDeclaredTools(idConversa);
+            var tools = await _toolExecutor.GetDeclaredToolsAsync(idConversa);
             _logger.LogInformation("[Conversa={Conversa}] Enviando {Count} tools para OpenAI", idConversa, tools.Length);
 
             // ===== BUG 2 FIX: Garantir ResponseFormat estruturado =====

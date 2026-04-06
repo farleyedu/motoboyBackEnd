@@ -50,6 +50,27 @@ namespace APIBack.Automation.Services
         public bool? EhMudancaRelativa { get; set; }
     }
 
+    public class ListarServicosArgs
+    {
+        public Guid IdConversa { get; set; }
+        public string? Filtro { get; set; }
+    }
+
+    public class ConsultarServicoArgs
+    {
+        public Guid IdConversa { get; set; }
+        public string NomeServico { get; set; } = string.Empty;
+    }
+
+    public class RegistrarInteresseServicoArgs
+    {
+        public Guid IdConversa { get; set; }
+        public string NomeCliente { get; set; } = string.Empty;
+        public string NomeServico { get; set; } = string.Empty;
+        public string? Veiculo { get; set; }
+        public string? Observacoes { get; set; }
+    }
+
     public class ToolExecutorService
     {
         private const string MissingReservationDataMessage = "Para organizar a sua reserva, preciso de algumas informações:\n\n📋 Nome completo\n👥 Número de pessoas\n📅 Data\n⏰ Horário\n\nPode me passar esses dados? 😊";
@@ -63,6 +84,9 @@ namespace APIBack.Automation.Services
         private readonly ReservaValidator _reservaValidator;
         private readonly IClienteRepository _clienteRepository;
         private readonly CentralRoutingService _centralRouting;
+        private readonly ServicoCatalogProvider _catalogProvider;
+        private readonly IServicoAtendimentoRepository _servicoAtendimentoRepository;
+        private readonly IEstabelecimentoRepository _estabelecimentoRepository;
 
         public ToolExecutorService(
             ILogger<ToolExecutorService> logger,
@@ -71,7 +95,10 @@ namespace APIBack.Automation.Services
             IReservaRepository reservaRepository,
             ReservaValidator reservaValidator,
             IClienteRepository clienteRepository,
-            CentralRoutingService centralRouting)
+            CentralRoutingService centralRouting,
+            ServicoCatalogProvider catalogProvider,
+            IServicoAtendimentoRepository servicoAtendimentoRepository,
+            IEstabelecimentoRepository estabelecimentoRepository)
         {
             _logger = logger;
             _conversationRepository = conversationRepository;
@@ -80,6 +107,9 @@ namespace APIBack.Automation.Services
             _reservaValidator = reservaValidator;
             _clienteRepository = clienteRepository;
             _centralRouting = centralRouting;
+            _catalogProvider = catalogProvider;
+            _servicoAtendimentoRepository = servicoAtendimentoRepository;
+            _estabelecimentoRepository = estabelecimentoRepository;
         }
 
         public object[] GetDeclaredTools(Guid idConversa)
@@ -186,6 +216,111 @@ PARÂMETROS IMPORTANTES:
             };
         }
 
+        public async Task<object[]> GetDeclaredToolsAsync(Guid idConversa)
+        {
+            var scope = await _centralRouting.ResolveEffectiveScopeAsync(idConversa);
+            if (scope == null || scope.IdEstabelecimento == Guid.Empty)
+                return GetDeclaredTools(idConversa);
+
+            var modulos = await _estabelecimentoRepository.ObterModulosAtivosAsync(scope.IdEstabelecimento);
+            var temServicos = modulos.Any(m => string.Equals(m, "Servicos", StringComparison.OrdinalIgnoreCase));
+            var temReserva = modulos.Any(m => string.Equals(m, "Reserva", StringComparison.OrdinalIgnoreCase));
+
+            var tools = new List<object>();
+
+            if (temServicos)
+                tools.AddRange(BuildServicosTools(idConversa.ToString()));
+
+            if (temReserva)
+                tools.AddRange(GetDeclaredTools(idConversa));
+
+            // escalar_para_humano sempre presente
+            if (!tools.Any())
+                tools.AddRange(GetDeclaredTools(idConversa));
+
+            return tools.ToArray();
+        }
+
+        private static object[] BuildServicosTools(string idConversaString) => new object[]
+        {
+            new {
+                type = "function",
+                name = "listar_servicos",
+                description = @"Lista os serviços que o estabelecimento realiza.
+
+QUANDO USAR:
+- Cliente perguntar quais serviços são feitos
+- Cliente perguntar o que o estabelecimento oferece
+- Cliente quiser ver o catálogo completo
+
+Parâmetro filtro é opcional — use quando cliente mencionou um tipo (ex: 'suspensão', 'elétrico').",
+                parameters = new {
+                    type = "object",
+                    properties = new {
+                        idConversa = new { type = "string", description = "ID único da conversa atual", @enum = new[] { idConversaString } },
+                        filtro = new { type = "string", description = "Palavra-chave opcional para filtrar (ex: 'suspensão', 'freio')" }
+                    },
+                    required = new[] { "idConversa" }
+                }
+            },
+            new {
+                type = "function",
+                name = "consultar_servico",
+                description = @"Retorna detalhes de um serviço específico: preço, tempo, variação por veículo, marcas de peça disponíveis.
+
+QUANDO USAR:
+- Cliente perguntar preço de um serviço específico
+- Cliente perguntar tempo de execução
+- Cliente perguntar sobre marcas de peça
+- Cliente quiser saber mais sobre um serviço pelo nome",
+                parameters = new {
+                    type = "object",
+                    properties = new {
+                        idConversa = new { type = "string", description = "ID único da conversa atual", @enum = new[] { idConversaString } },
+                        nomeServico = new { type = "string", description = "Nome do serviço como o cliente mencionou" }
+                    },
+                    required = new[] { "idConversa", "nomeServico" }
+                }
+            },
+            new {
+                type = "function",
+                name = "registrar_interesse_servico",
+                description = @"Registra o interesse do cliente em um serviço e aciona a equipe.
+
+QUANDO USAR:
+- Cliente quiser agendar um serviço
+- Cliente quiser orçamento formal
+- Cliente confirmar interesse explícito
+
+SEMPRE colete antes: nome do cliente, nome do serviço, veículo (se o serviço variar por veículo).",
+                parameters = new {
+                    type = "object",
+                    properties = new {
+                        idConversa = new { type = "string", description = "ID único da conversa atual", @enum = new[] { idConversaString } },
+                        nomeCliente = new { type = "string", description = "Nome completo do cliente" },
+                        nomeServico = new { type = "string", description = "Nome do serviço de interesse" },
+                        veiculo = new { type = "string", description = "Marca e modelo do veículo (se o serviço variar por veículo)" },
+                        observacoes = new { type = "string", description = "Outras informações relevantes do cliente" }
+                    },
+                    required = new[] { "idConversa", "nomeCliente", "nomeServico" }
+                }
+            },
+            new {
+                type = "function",
+                name = "escalar_para_humano",
+                description = "Transfere a conversa para um atendente humano. Só executar após confirmação EXPLÍCITA do cliente.",
+                parameters = new {
+                    type = "object",
+                    properties = new {
+                        idConversa = new { type = "string", description = "ID único da conversa atual", @enum = new[] { idConversaString } },
+                        motivo = new { type = "string", description = "Breve explicação do motivo do escalonamento" },
+                        resumoConversa = new { type = "string", description = "Resumo do que foi discutido" }
+                    },
+                    required = new[] { "idConversa", "motivo", "resumoConversa" }
+                }
+            }
+        };
+
         private string BuildJsonReply(string reply, bool? reservaConfirmada = null)
         {
             if (reservaConfirmada.HasValue)
@@ -248,6 +383,24 @@ PARÂMETROS IMPORTANTES:
                             return BuildJsonReply("Argumentos inválidos para escalar ao atendimento.");
                         }
                         return await HandleEscalarParaHumano(escalarArgs);
+
+                    case "listar_servicos":
+                        var listarSvArgs = JsonSerializer.Deserialize<ListarServicosArgs>(argsJson, JsonOptions);
+                        if (listarSvArgs == null)
+                            return BuildJsonReply("Argumentos inválidos.");
+                        return await HandleListarServicos(listarSvArgs);
+
+                    case "consultar_servico":
+                        var consultarSvArgs = JsonSerializer.Deserialize<ConsultarServicoArgs>(argsJson, JsonOptions);
+                        if (consultarSvArgs == null)
+                            return BuildJsonReply("Argumentos inválidos.");
+                        return await HandleConsultarServico(consultarSvArgs);
+
+                    case "registrar_interesse_servico":
+                        var registrarSvArgs = JsonSerializer.Deserialize<RegistrarInteresseServicoArgs>(argsJson, JsonOptions);
+                        if (registrarSvArgs == null)
+                            return BuildJsonReply("Argumentos inválidos.");
+                        return await HandleRegistrarInteresseServico(registrarSvArgs);
 
                     default:
                         _logger.LogWarning("Ferramenta desconhecida: {Tool}", toolName);
@@ -1053,6 +1206,153 @@ PARÂMETROS IMPORTANTES:
             msg.Append("Em instantes alguém irá atendê-lo! 😊");
 
             return BuildJsonReply(msg.ToString());
+        }
+
+        private async Task<string> HandleListarServicos(ListarServicosArgs args)
+        {
+            var scope = await _centralRouting.ResolveEffectiveScopeAsync(args.IdConversa);
+            if (scope == null)
+                return BuildJsonReply("Não consegui identificar o estabelecimento.");
+
+            var catalogo = await _catalogProvider.ObterCatalogoVisivelAsync(scope.IdEstabelecimento);
+            if (catalogo.Count == 0)
+                return BuildJsonReply("Não encontrei serviços cadastrados no momento.");
+
+            IEnumerable<ServicoCatalogItem> lista = catalogo;
+            if (!string.IsNullOrWhiteSpace(args.Filtro))
+            {
+                lista = catalogo.Where(s =>
+                    s.Nome.Contains(args.Filtro!, StringComparison.OrdinalIgnoreCase) ||
+                    s.PalavrasChave.Any(k => k.Contains(args.Filtro!, StringComparison.OrdinalIgnoreCase)) ||
+                    (s.Tipo ?? string.Empty).Contains(args.Filtro!, StringComparison.OrdinalIgnoreCase));
+            }
+
+            var itens = lista.ToList();
+            if (itens.Count == 0)
+                return BuildJsonReply($"Não encontrei serviços relacionados a \"{args.Filtro}\".");
+
+            var sb = new StringBuilder();
+            sb.AppendLine(string.IsNullOrWhiteSpace(args.Filtro)
+                ? "📋 Serviços disponíveis:\n"
+                : $"📋 Serviços disponíveis ({args.Filtro}):\n");
+
+            foreach (var s in itens)
+            {
+                sb.Append($"• {s.Nome}");
+                if (s.ValorCentavos.HasValue)
+                    sb.Append($" — R$ {s.ValorCentavos.Value / 100m:N2}");
+                else if (s.ValorMinimoCentavos.HasValue && s.ValorMaximoCentavos.HasValue)
+                    sb.Append($" — R$ {s.ValorMinimoCentavos.Value / 100m:N2} a R$ {s.ValorMaximoCentavos.Value / 100m:N2}");
+                if (s.DiferePorVeiculo)
+                    sb.Append(" *(varia por veículo)*");
+                sb.AppendLine();
+            }
+
+            sb.AppendLine("\nQuer saber mais sobre algum desses serviços?");
+            return BuildJsonReply(sb.ToString());
+        }
+
+        private async Task<string> HandleConsultarServico(ConsultarServicoArgs args)
+        {
+            var scope = await _centralRouting.ResolveEffectiveScopeAsync(args.IdConversa);
+            if (scope == null)
+                return BuildJsonReply("Não consegui identificar o estabelecimento.");
+
+            var catalogo = await _catalogProvider.ObterCatalogoVisivelAsync(scope.IdEstabelecimento);
+            var nomeNorm = args.NomeServico.Trim().ToLowerInvariant();
+
+            var servico = catalogo.FirstOrDefault(s =>
+                s.Nome.ToLowerInvariant().Contains(nomeNorm) ||
+                s.PalavrasChave.Any(k =>
+                    k.ToLowerInvariant().Contains(nomeNorm) ||
+                    nomeNorm.Contains(k.ToLowerInvariant())));
+
+            if (servico == null)
+                return BuildJsonReply($"Não encontrei o serviço \"{args.NomeServico}\". Quer ver a lista completa?");
+
+            var sb = new StringBuilder();
+            sb.AppendLine($"🔧 *{servico.Nome}*");
+
+            if (!string.IsNullOrWhiteSpace(servico.Descricao))
+                sb.AppendLine(servico.Descricao);
+
+            if (servico.DiferePorVeiculo && servico.Veiculos.Count > 0)
+            {
+                sb.AppendLine("\nValores por veículo:");
+                foreach (var v in servico.Veiculos.Where(v => v.Compativel))
+                {
+                    sb.Append($"  • {v.NomeExibicao}");
+                    if (v.ValorCentavos.HasValue)
+                        sb.Append($": R$ {v.ValorCentavos.Value / 100m:N2}");
+                    else if (v.ValorMinimoCentavos.HasValue)
+                        sb.Append($": a partir de R$ {v.ValorMinimoCentavos.Value / 100m:N2}");
+                    sb.AppendLine();
+                }
+            }
+            else if (servico.ValorCentavos.HasValue)
+            {
+                sb.AppendLine($"\n💰 Valor: R$ {servico.ValorCentavos.Value / 100m:N2}");
+            }
+            else if (servico.ValorMinimoCentavos.HasValue)
+            {
+                sb.AppendLine($"\n💰 Valor: a partir de R$ {servico.ValorMinimoCentavos.Value / 100m:N2}");
+            }
+
+            if (servico.DuracaoMinutos > 0)
+                sb.AppendLine($"⏱ Tempo médio: {servico.DuracaoMinutos} min");
+
+            if (servico.PermiteAgendamento)
+                sb.AppendLine("\nPosso registrar seu interesse para que a equipe entre em contato. Quer agendar?");
+
+            return BuildJsonReply(sb.ToString());
+        }
+
+        private async Task<string> HandleRegistrarInteresseServico(RegistrarInteresseServicoArgs args)
+        {
+            var scope = await _centralRouting.ResolveEffectiveScopeAsync(args.IdConversa);
+            if (scope == null)
+                return BuildJsonReply("Não consegui identificar o estabelecimento.");
+
+            var atendimento = new ServicoAtendimento
+            {
+                Id = Guid.NewGuid(),
+                IdEstabelecimento = scope.IdEstabelecimento,
+                IdConversa = args.IdConversa,
+                IdCliente = scope.IdCliente,
+                TelefoneE164 = scope.TelefoneCliente ?? string.Empty,
+                NomeCliente = args.NomeCliente.Trim(),
+                NomeServico = args.NomeServico.Trim(),
+                IntencaoPrincipal = "agendamento",
+                Status = "aguardando_interno",
+                DadosExtras = new Dictionary<string, object?>
+                {
+                    ["veiculo"] = args.Veiculo,
+                    ["observacoes"] = args.Observacoes
+                },
+                DataCriacao = DateTime.UtcNow,
+                DataAtualizacao = DateTime.UtcNow,
+                DataHandover = DateTime.UtcNow
+            };
+
+            await _servicoAtendimentoRepository.CriarAsync(atendimento);
+
+            var contextoResumo = $"Interesse em: {args.NomeServico}" +
+                                  (string.IsNullOrWhiteSpace(args.Veiculo) ? string.Empty : $" | Veículo: {args.Veiculo}") +
+                                  (string.IsNullOrWhiteSpace(args.Observacoes) ? string.Empty : $" | Obs: {args.Observacoes}");
+
+            var detalhes = new HandoverContextDto
+            {
+                ClienteNome = args.NomeCliente.Trim(),
+                Motivo = "Interesse em serviço",
+                Contexto = contextoResumo
+            };
+
+            await _handoverService.ProcessarMensagensTelegramAsync(args.IdConversa, null, false, detalhes);
+
+            var primeiroNome = args.NomeCliente.Trim().Split(' ')[0];
+            return BuildJsonReply(
+                $"✅ Perfeito, {primeiroNome}! Registrei seu interesse em *{args.NomeServico}*.\n\n" +
+                "Nossa equipe vai entrar em contato em breve para confirmar os detalhes. 😊");
         }
     }
 }
