@@ -402,8 +402,29 @@ namespace APIBack.Automation.Services
             }
 
             var displayPhone = await _wabaPhoneRepository.ObterDisplayPhonePorEstabelecimentoAsync(conversaOperacional.IdEstabelecimento);
-            var phoneNumberId = await _wabaPhoneRepository.ObterPhoneNumberIdPorEstabelecimentoAsync(conversaOperacional.IdEstabelecimento)
-                ?? _configuration["Automation:Meta:PhoneNumberId"];
+            var phoneNumberId = await _wabaPhoneRepository.ObterPhoneNumberIdPorEstabelecimentoAsync(conversaOperacional.IdEstabelecimento);
+
+            // Heranca de configuracao WABA para roteamento central (Samurai)
+            if ((string.IsNullOrWhiteSpace(displayPhone) || string.IsNullOrWhiteSpace(phoneNumberId))
+                && conversaOperacional.IdConversaGrupo != Guid.Empty
+                && conversaOperacional.IdConversaGrupo != conversaOperacional.IdConversa)
+            {
+                var conversaRaiz = await _conversationRepository.ObterPorIdAsync(conversaOperacional.IdConversaGrupo);
+                if (conversaRaiz != null && conversaRaiz.IdEstabelecimento != Guid.Empty)
+                {
+                    if (string.IsNullOrWhiteSpace(displayPhone))
+                    {
+                        displayPhone = await _wabaPhoneRepository.ObterDisplayPhonePorEstabelecimentoAsync(conversaRaiz.IdEstabelecimento);
+                    }
+
+                    if (string.IsNullOrWhiteSpace(phoneNumberId))
+                    {
+                        phoneNumberId = await _wabaPhoneRepository.ObterPhoneNumberIdPorEstabelecimentoAsync(conversaRaiz.IdEstabelecimento);
+                    }
+                }
+            }
+
+            phoneNumberId ??= _configuration["Automation:Meta:PhoneNumberId"];
 
             var criadoPor = !string.IsNullOrWhiteSpace(actorName)
                 ? actorName!.Trim()
