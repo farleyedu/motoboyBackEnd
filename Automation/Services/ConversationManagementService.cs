@@ -487,7 +487,7 @@ namespace APIBack.Automation.Services
                 _logger.LogWarning(ex, "Falha ao enviar mensagem manual da conversa {Conversa}", mensagem.IdConversa);
                 await _messageService.AtualizarStatusAsync(mensagem.Id, "falhou", "send_failed", ex.Message);
                 mensagem.Status = "falhou";
-                throw new ConversationManagementException(422, "Falha ao enviar mensagem pelo WhatsApp.");
+                throw new ConversationManagementException(422, $"Falha ao enviar mensagem pelo WhatsApp: {ex.Message}");
             }
 
             return await BuildResponseAsync(
