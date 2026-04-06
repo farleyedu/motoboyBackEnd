@@ -364,6 +364,37 @@ SELECT id_estabelecimento
             }
         }
 
+        public async Task<string?> ObterPhoneNumberIdPorDisplayPhoneAsync(string displayPhoneNumber)
+        {
+            if (string.IsNullOrWhiteSpace(displayPhoneNumber))
+                return null;
+
+            var digitsOnly = new string(displayPhoneNumber.Where(char.IsDigit).ToArray());
+
+            try
+            {
+                await using var connection = new NpgsqlConnection(_connectionString);
+                var columns = await ObterColunasAsync(connection);
+                if (!columns.PhoneNumberId || !columns.DisplayPhoneNumber)
+                    return null;
+
+                // Busca o phone_number_id (Meta UID) filtrando pelo display_phone_number informado
+                var sql = @"SELECT phone_number_id
+                               FROM waba_phone
+                              WHERE ativo = TRUE
+                                AND (display_phone_number = @Raw OR regexp_replace(display_phone_number, '[^0-9]', '', 'g') = @Digits)
+                           ORDER BY data_atualizacao DESC
+                              LIMIT 1;";
+
+                return await connection.ExecuteScalarAsync<string?>(sql, new { Raw = displayPhoneNumber, Digits = digitsOnly });
+            }
+            catch (Exception ex)
+            {
+                _logger?.LogError(ex, "Erro ao buscar phone_number_id por displayPhoneNumber {DisplayPhone}", displayPhoneNumber);
+                return null;
+            }
+        }
+
         private async Task<(bool PhoneNumberId, bool DisplayPhoneNumber, bool AccessToken)> ObterColunasAsync(NpgsqlConnection connection)
         {
             if (_cachedColumns.HasValue)

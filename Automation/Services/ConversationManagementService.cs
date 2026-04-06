@@ -424,6 +424,21 @@ namespace APIBack.Automation.Services
                 }
             }
 
+            // FALLBACK FINAL: Se ainda nao encontrou, usa o CentralDisplayPhone configurado
+            if (string.IsNullOrWhiteSpace(displayPhone) || string.IsNullOrWhiteSpace(phoneNumberId))
+            {
+                var centralDisplayConfig = _configuration["WhatsApp:CentralDisplayPhone"];
+                if (!string.IsNullOrWhiteSpace(centralDisplayConfig))
+                {
+                    var idWabaCentral = await _wabaPhoneRepository.ObterPhoneNumberIdPorDisplayPhoneAsync(centralDisplayConfig);
+                    if (!string.IsNullOrWhiteSpace(idWabaCentral))
+                    {
+                        displayPhone = centralDisplayConfig;
+                        phoneNumberId = idWabaCentral;
+                    }
+                }
+            }
+
             phoneNumberId ??= _configuration["Automation:Meta:PhoneNumberId"];
 
             var criadoPor = !string.IsNullOrWhiteSpace(actorName)
