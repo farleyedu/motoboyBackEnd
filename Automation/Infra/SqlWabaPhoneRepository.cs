@@ -16,6 +16,8 @@ namespace APIBack.Automation.Infra
         private readonly string _connectionString;
         private readonly ILogger<SqlWabaPhoneRepository>? _logger;
         private static (bool PhoneNumberId, bool DisplayPhoneNumber, bool AccessToken)? _cachedColumns;
+        private static DateTime _cachedColumnsAt = DateTime.MinValue;
+        private static readonly TimeSpan _columnsCacheTtl = TimeSpan.FromMinutes(5);
 
         public SqlWabaPhoneRepository(IConfiguration configuration)
         {
@@ -397,7 +399,7 @@ SELECT id_estabelecimento
 
         private async Task<(bool PhoneNumberId, bool DisplayPhoneNumber, bool AccessToken)> ObterColunasAsync(NpgsqlConnection connection)
         {
-            if (_cachedColumns.HasValue)
+            if (_cachedColumns.HasValue && DateTime.UtcNow - _cachedColumnsAt < _columnsCacheTtl)
             {
                 return _cachedColumns.Value;
             }
@@ -412,6 +414,7 @@ SELECT id_estabelecimento
                 hash.Contains("phone_number_id"),
                 hash.Contains("display_phone_number"),
                 hash.Contains("access_token"));
+            _cachedColumnsAt = DateTime.UtcNow;
             return _cachedColumns.Value;
         }
     }
