@@ -401,27 +401,26 @@ namespace APIBack.Automation.Services
                 throw new ConversationManagementException(422, "Telefone do cliente nao encontrado para envio.");
             }
 
-            var displayPhone = await _wabaPhoneRepository.ObterDisplayPhonePorEstabelecimentoAsync(conversaOperacional.IdEstabelecimento);
-            var phoneNumberId = await _wabaPhoneRepository.ObterPhoneNumberIdPorEstabelecimentoAsync(conversaOperacional.IdEstabelecimento);
+            string? displayPhone = null;
+            string? phoneNumberId = null;
 
-            // Heranca de configuracao WABA para roteamento central (Samurai)
-            if ((string.IsNullOrWhiteSpace(displayPhone) || string.IsNullOrWhiteSpace(phoneNumberId))
-                && conversaOperacional.IdConversaGrupo != Guid.Empty
+            // Para conversas roteadas via numero central, a raiz tem o WABA correto (igual ao bot que le do webhook)
+            if (conversaOperacional.IdConversaGrupo != Guid.Empty
                 && conversaOperacional.IdConversaGrupo != conversaOperacional.IdConversa)
             {
                 var conversaRaiz = await _conversationRepository.ObterPorIdAsync(conversaOperacional.IdConversaGrupo);
                 if (conversaRaiz != null && conversaRaiz.IdEstabelecimento != Guid.Empty)
                 {
-                    if (string.IsNullOrWhiteSpace(displayPhone))
-                    {
-                        displayPhone = await _wabaPhoneRepository.ObterDisplayPhonePorEstabelecimentoAsync(conversaRaiz.IdEstabelecimento);
-                    }
-
-                    if (string.IsNullOrWhiteSpace(phoneNumberId))
-                    {
-                        phoneNumberId = await _wabaPhoneRepository.ObterPhoneNumberIdPorEstabelecimentoAsync(conversaRaiz.IdEstabelecimento);
-                    }
+                    displayPhone = await _wabaPhoneRepository.ObterDisplayPhonePorEstabelecimentoAsync(conversaRaiz.IdEstabelecimento);
+                    phoneNumberId = await _wabaPhoneRepository.ObterPhoneNumberIdPorEstabelecimentoAsync(conversaRaiz.IdEstabelecimento);
                 }
+            }
+
+            // Fallback: usa o proprio estabelecimento da conversa
+            if (string.IsNullOrWhiteSpace(displayPhone) || string.IsNullOrWhiteSpace(phoneNumberId))
+            {
+                displayPhone = await _wabaPhoneRepository.ObterDisplayPhonePorEstabelecimentoAsync(conversaOperacional.IdEstabelecimento);
+                phoneNumberId = await _wabaPhoneRepository.ObterPhoneNumberIdPorEstabelecimentoAsync(conversaOperacional.IdEstabelecimento);
             }
 
             // FALLBACK FINAL: Se ainda nao encontrou, usa o CentralDisplayPhone configurado
