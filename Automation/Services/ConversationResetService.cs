@@ -10,6 +10,7 @@ namespace APIBack.Automation.Services
 {
     public class ConversationResetService
     {
+        private const string HardResetReason = "Reset por comando do cliente (*3275)";
         private readonly IConversationRepository _conversationRepository;
         private readonly IClienteRepository _clienteRepository;
         private readonly IEstabelecimentoRepository _estabelecimentoRepository;
@@ -48,40 +49,44 @@ namespace APIBack.Automation.Services
         public bool IsResetCommand(string? mensagemTexto)
             => _centralRouting.IsResetCommand(mensagemTexto);
 
-        public async Task<AssistantDecision> ResetAndBuildReplyAsync(Guid idConversa, string? phoneNumberDisplay)
+        public sealed record ResetReply(Guid TargetConversationId, AssistantDecision Decision);
+
+        public async Task<ResetReply> ResetAndBuildReplyAsync(Guid idConversa, string? phoneNumberDisplay)
         {
             await GarantirBotAtivoAsync(idConversa);
-            var contexto = await ResetarEstadoInternoAsync(idConversa);
+            var ehNumeroCentral = _centralRouting.IsCentralDisplayPhone(phoneNumberDisplay);
+            var contexto = await ResetarEstadoInternoAsync(idConversa, ehNumeroCentral);
 
-            if (_centralRouting.IsCentralDisplayPhone(phoneNumberDisplay))
+            if (ehNumeroCentral)
             {
-                return await CriarMenuCentralAsync(contexto.RootConversationId);
+                var decisionCentral = await CriarMenuCentralAsync(contexto.NewConversationId);
+                return new ResetReply(contexto.NewConversationId, decisionCentral);
             }
 
             var (garageIntercepted, garageDecision) = await _garageFlow.TryHandleAsync(
-                contexto.CurrentConversationId,
+                contexto.NewConversationId,
                 string.Empty,
                 phoneNumberDisplay);
             if (garageIntercepted && garageDecision != null)
             {
-                return garageDecision;
+                return new ResetReply(contexto.NewConversationId, garageDecision);
             }
 
             var (nauticaIntercepted, nauticaDecision) = await _nauticaFlow.TryHandleAsync(
-                contexto.CurrentConversationId,
+                contexto.NewConversationId,
                 string.Empty,
                 phoneNumberDisplay);
             if (nauticaIntercepted && nauticaDecision != null)
             {
-                return nauticaDecision;
+                return new ResetReply(contexto.NewConversationId, nauticaDecision);
             }
 
-            return CriarMensagemGenericaReset();
+            return new ResetReply(contexto.NewConversationId, CriarMensagemGenericaReset());
         }
 
         public async Task ResetAfterManualCloseAsync(Guid idConversa)
         {
-            await ResetarEstadoInternoAsync(idConversa);
+            await ResetarEstadoInternoAsync(idConversa, ehNumeroCentral: false, criarNovaConversa: false);
         }
 
         private async Task GarantirBotAtivoAsync(Guid idConversa)
@@ -95,15 +100,18 @@ namespace APIBack.Automation.Services
             await _conversationRepository.VoltarParaBotAsync(idConversa);
         }
 
-        private async Task<ResetContext> ResetarEstadoInternoAsync(Guid idConversa)
+        private async Task<ResetContext> ResetarEstadoInternoAsync(Guid idConversa, bool ehNumeroCentral, bool criarNovaConversa = true)
         {
             var atual = await _conversationRepository.ObterPorIdAsync(idConversa);
             if (atual == null)
             {
-                return new ResetContext(idConversa, idConversa);
+                return new ResetContext(idConversa, idConversa, idConversa);
             }
 
             var rootConversationId = ObterRootConversationId(atual);
+            var conversaRaiz = atual.IdConversa == rootConversationId
+                ? atual
+                : await _conversationRepository.ObterPorIdAsync(rootConversationId) ?? atual;
             var contextoAtual = await _conversationRepository.ObterContextoAsync(atual.IdConversa);
             var contextoRoot = atual.IdConversa == rootConversationId
                 ? contextoAtual
@@ -131,14 +139,37 @@ namespace APIBack.Automation.Services
             }
 
             await _conversationRepository.LimparContextoGrupoCompletoAsync(rootConversationId);
+            if (!criarNovaConversa)
+            {
+                _logger.LogInformation(
+                    "[Conversa={Conversa}] Limpeza de contexto aplicada apos fechamento manual. RootAntiga={RootAntiga} OperacionalAntiga={OperacionalAntiga}",
+                    idConversa,
+                    rootConversationId,
+                    conversaOperacional.IdConversa);
+
+                return new ResetContext(conversaOperacional.IdConversa, rootConversationId, Guid.Empty);
+            }
+
+            await _conversationRepository.FecharGrupoConversaAsync(
+                rootConversationId,
+                idAgente: null,
+                motivo: HardResetReason,
+                tipoFechamento: "manual");
+
+            var novaConversa = await CriarNovaConversaAsync(
+                conversaRaiz,
+                conversaOperacional,
+                telefoneCliente,
+                ehNumeroCentral);
 
             _logger.LogInformation(
-                "[Conversa={Conversa}] Reset completo aplicado. Root={Root} Operacional={Operacional}",
+                "[Conversa={Conversa}] Hard reset aplicado. RootAntiga={RootAntiga} OperacionalAntiga={OperacionalAntiga} NovaConversa={NovaConversa}",
                 idConversa,
                 rootConversationId,
-                conversaOperacional.IdConversa);
+                conversaOperacional.IdConversa,
+                novaConversa.IdConversa);
 
-            return new ResetContext(conversaOperacional.IdConversa, rootConversationId);
+            return new ResetContext(conversaOperacional.IdConversa, rootConversationId, novaConversa.IdConversa);
         }
 
         private async Task<Conversation> ResolverConversaOperacionalAsync(Conversation atual, Guid? segmentoAtivoId)
@@ -199,6 +230,49 @@ namespace APIBack.Automation.Services
             }
         }
 
+        private async Task<Conversation> CriarNovaConversaAsync(
+            Conversation conversaRaizAnterior,
+            Conversation conversaOperacionalAnterior,
+            string? telefoneCliente,
+            bool ehNumeroCentral)
+        {
+            var baseConversa = ehNumeroCentral ? conversaRaizAnterior : conversaOperacionalAnterior;
+            var idEstabelecimento = baseConversa.IdEstabelecimento;
+            if (idEstabelecimento == Guid.Empty)
+            {
+                idEstabelecimento = conversaOperacionalAnterior.IdEstabelecimento;
+            }
+
+            var idCliente = baseConversa.IdCliente;
+            if (idCliente == Guid.Empty && !string.IsNullOrWhiteSpace(telefoneCliente) && idEstabelecimento != Guid.Empty)
+            {
+                idCliente = await _clienteRepository.GarantirClienteAsync(telefoneCliente!, idEstabelecimento);
+            }
+
+            var agora = DateTime.UtcNow;
+            var novaConversa = new Conversation
+            {
+                IdConversa = Guid.NewGuid(),
+                IdConversaGrupo = Guid.Empty,
+                IdEstabelecimento = idEstabelecimento,
+                IdCliente = idCliente,
+                TelefoneCliente = !string.IsNullOrWhiteSpace(telefoneCliente)
+                    ? telefoneCliente
+                    : baseConversa.TelefoneCliente ?? conversaOperacionalAnterior.TelefoneCliente,
+                IdWa = !string.IsNullOrWhiteSpace(baseConversa.IdWa)
+                    ? baseConversa.IdWa
+                    : conversaOperacionalAnterior.IdWa,
+                Modo = ModoConversa.Bot,
+                Estado = EstadoConversa.Aberto,
+                StatusAtendimento = "com_bot",
+                CriadoEm = agora,
+                AtualizadoEm = agora
+            };
+
+            await _conversationRepository.InserirOuAtualizarAsync(novaConversa);
+            return novaConversa;
+        }
+
         private async Task<AssistantDecision> CriarMenuCentralAsync(Guid rootConversationId)
         {
             var estabelecimentos = await _centralRouting.ListarEstabelecimentosElegiveisAsync();
@@ -224,6 +298,6 @@ namespace APIBack.Automation.Services
                 : conversa.IdConversaGrupo;
         }
 
-        private sealed record ResetContext(Guid CurrentConversationId, Guid RootConversationId);
+        private sealed record ResetContext(Guid OldOperationalConversationId, Guid OldRootConversationId, Guid NewConversationId);
     }
 }

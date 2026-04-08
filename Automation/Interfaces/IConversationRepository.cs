@@ -21,6 +21,7 @@ namespace APIBack.Automation.Interfaces
         Task<ConversationHistoryDto?> ObterHistoricoConversaAsync(Guid idConversa, int page, int pageSize, Guid? idEstabelecimento = null);
         Task<bool> AtribuirConversaAsync(Guid idConversa, int idAgente, Guid? idEstabelecimento = null);
         Task<bool> FecharConversaAsync(Guid idConversa, int? idAgente, string? motivo, Guid? idEstabelecimento = null, string? tipoFechamento = null);
+        Task<bool> FecharGrupoConversaAsync(Guid idConversaGrupo, int? idAgente, string? motivo, string? tipoFechamento = null);
         Task<ConversationDetailsDto?> ArquivarConversaAsync(Guid idConversa, Guid? idEstabelecimento = null);
         Task<ConversationDetailsDto?> ObterDetalhesConversaAsync(Guid idConversa, Guid? idEstabelecimento = null);
         Task<bool> AtualizarStatusAtendimentoAsync(Guid idConversa, string status, int? idAgente, string? agenteNome, Guid? idEstabelecimento = null);
@@ -38,5 +39,4 @@ namespace APIBack.Automation.Interfaces
         Task LimparContextoGrupoCompletoAsync(Guid groupId);
     }
 }
-
 

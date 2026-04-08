@@ -533,6 +533,38 @@ UPDATE conversas
                 new { Id = alvo.Id, Estado = legacyState, StatusAtendimento = canonicalStatus, Motivo = string.IsNullOrWhiteSpace(motivo) ? null : motivo.Trim(), FechadoPorId = idAgente }) > 0;
         }
 
+        public async Task<bool> FecharGrupoConversaAsync(Guid idConversaGrupo, int? idAgente, string? motivo, string? tipoFechamento = null)
+        {
+            if (idConversaGrupo == Guid.Empty)
+            {
+                return false;
+            }
+
+            var closeType = NormalizeCloseType(tipoFechamento);
+            var legacyState = string.Equals(closeType, "inatividade", StringComparison.OrdinalIgnoreCase) ? "fechado_automaticamente" : "fechado_agente";
+            var canonicalStatus = string.Equals(closeType, "inatividade", StringComparison.OrdinalIgnoreCase) ? "encerrada_inatividade" : "encerrada_manual";
+
+            await using var cx = new NpgsqlConnection(_connectionString);
+            return await cx.ExecuteAsync(@"
+UPDATE conversas
+   SET estado = @Estado::estado_conversa_enum,
+       status_atendimento = @StatusAtendimento,
+       motivo_fechamento = @Motivo,
+       fechado_por_id = @FechadoPorId,
+       data_fechamento = COALESCE(data_fechamento, NOW()),
+       data_atualizacao = NOW()
+ WHERE COALESCE(id_conversa_grupo, id) = @GroupId
+   AND estado NOT IN ('fechado_automaticamente'::estado_conversa_enum, 'fechado_agente'::estado_conversa_enum, 'arquivada'::estado_conversa_enum);",
+                new
+                {
+                    GroupId = idConversaGrupo,
+                    Estado = legacyState,
+                    StatusAtendimento = canonicalStatus,
+                    Motivo = string.IsNullOrWhiteSpace(motivo) ? null : motivo.Trim(),
+                    FechadoPorId = idAgente
+                }) > 0;
+        }
+
         public async Task<ConversationDetailsDto?> ArquivarConversaAsync(Guid idConversa, Guid? idEstabelecimento = null)
         {
             var alvo = await ResolveOperationTargetAsync(idConversa, idEstabelecimento);

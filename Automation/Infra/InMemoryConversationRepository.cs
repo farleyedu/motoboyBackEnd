@@ -263,6 +263,25 @@ namespace APIBack.Automation.Infra
             return Task.FromResult(true);
         }
 
+        public Task<bool> FecharGrupoConversaAsync(Guid idConversaGrupo, int? idAgente, string? motivo, string? tipoFechamento = null)
+        {
+            var closeType = string.Equals(tipoFechamento, "inatividade", StringComparison.OrdinalIgnoreCase) ? "inatividade" : "manual";
+            var atualizados = 0;
+
+            foreach (var conversa in _conversas.Values.Where(c => GroupId(c) == idConversaGrupo && IsOpen(c)))
+            {
+                conversa.Estado = closeType == "inatividade" ? EstadoConversa.FechadoAutomaticamente : EstadoConversa.FechadoAgente;
+                conversa.StatusAtendimento = closeType == "inatividade" ? "encerrada_inatividade" : "encerrada_manual";
+                conversa.MotivoFechamento = string.IsNullOrWhiteSpace(motivo) ? null : motivo.Trim();
+                conversa.FechadoPorId = idAgente;
+                conversa.DataFechamento = DateTime.UtcNow;
+                conversa.AtualizadoEm = DateTime.UtcNow;
+                atualizados++;
+            }
+
+            return Task.FromResult(atualizados > 0);
+        }
+
         public Task<ConversationDetailsDto?> ArquivarConversaAsync(Guid idConversa, Guid? idEstabelecimento = null)
         {
             var alvo = ResolveTarget(idConversa, idEstabelecimento);

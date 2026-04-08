@@ -201,18 +201,18 @@ namespace APIBack.Automation.Services
             return (true, new AssistantDecision(resposta, "none", null, false, null, null));
         }
 
-        public async Task<(bool Intercepted, AssistantDecision? Decision)> TryHandleResetAsync(
+        public async Task<(bool Intercepted, AssistantDecision? Decision, Guid? TargetConversationId)> TryHandleResetAsync(
             Guid idConversa,
             string mensagemTexto,
             string? phoneNumberDisplay)
         {
             if (!_conversationReset.IsResetCommand(mensagemTexto))
             {
-                return (false, null);
+                return (false, null, null);
             }
 
-            var decision = await _conversationReset.ResetAndBuildReplyAsync(idConversa, phoneNumberDisplay);
-            return (true, decision);
+            var resetReply = await _conversationReset.ResetAndBuildReplyAsync(idConversa, phoneNumberDisplay);
+            return (true, resetReply.Decision, resetReply.TargetConversationId);
         }
 
         /// <summary>
@@ -225,7 +225,7 @@ namespace APIBack.Automation.Services
             DateTime? timestampMensagemUtc = null,
             string? phoneNumberDisplay = null)
         {
-            var (resetIntercepted, resetDecision) = await TryHandleResetAsync(
+            var (resetIntercepted, resetDecision, _) = await TryHandleResetAsync(
                 idConversa,
                 mensagemTexto,
                 phoneNumberDisplay);

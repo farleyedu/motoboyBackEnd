@@ -48,12 +48,20 @@ namespace APIBack.Automation.Services
                     }
 
                     var idConversa = processamento.IdConversa ?? Guid.Empty;
-                    var (resetIntercepted, resetDecision) = await contextInterceptor.TryHandleResetAsync(
+                    var (resetIntercepted, resetDecision, resetConversationId) = await contextInterceptor.TryHandleResetAsync(
                         idConversa,
                         processamento.TextoUsuario,
                         processamento.NumeroTelefoneExibicao);
                     if (resetIntercepted && resetDecision != null)
                     {
+                        if (resetConversationId.HasValue && resetConversationId.Value != Guid.Empty)
+                        {
+                            processamento = processamento with
+                            {
+                                IdConversa = resetConversationId.Value
+                            };
+                        }
+
                         _logger.LogInformation("[Conversa={Conversa}] Mensagem de reset interceptada antes da validacao de controle", idConversa);
                         await iaResponseHandler.HandleAsync(resetDecision, processamento);
                         continue;
