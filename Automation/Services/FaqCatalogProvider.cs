@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using APIBack.Automation.Models;
@@ -97,6 +98,41 @@ namespace APIBack.Automation.Services
             }
 
             return melhor;
+        }
+
+        public async Task<string?> BuildCompactPromptAsync(Guid idEstabelecimento)
+        {
+            var faq = await ObterFaqAtivaAsync(idEstabelecimento);
+            if (faq.Count == 0)
+            {
+                return null;
+            }
+
+            var builder = new StringBuilder();
+            builder.AppendLine("FAQ disponivel no bot:");
+
+            foreach (var item in faq.Take(20))
+            {
+                var palavras = item.PalavrasChave
+                    .Where(keyword => !string.IsNullOrWhiteSpace(keyword))
+                    .Take(4)
+                    .ToArray();
+
+                builder.Append("- categoria=");
+                builder.Append(string.IsNullOrWhiteSpace(item.Categoria) ? "geral" : item.Categoria.Trim());
+                builder.Append(" | pergunta=");
+                builder.Append(item.Pergunta.Trim());
+
+                if (palavras.Length > 0)
+                {
+                    builder.Append(" | palavras-chave=");
+                    builder.Append(string.Join(", ", palavras));
+                }
+
+                builder.AppendLine();
+            }
+
+            return builder.ToString().TrimEnd();
         }
 
         private static int CalcularScore(FaqCatalogItem item, string mensagemNormalizada, HashSet<string> tokensMensagem)

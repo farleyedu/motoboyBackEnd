@@ -60,6 +60,10 @@ namespace APIBack.Automation.Services
     {
         public Guid IdConversa { get; set; }
         public string NomeServico { get; set; } = string.Empty;
+        public string? Veiculo { get; set; }
+        public string? VeiculoMarca { get; set; }
+        public string? VeiculoModelo { get; set; }
+        public string? MarcaPeca { get; set; }
     }
 
     public class RegistrarInteresseServicoArgs
@@ -68,6 +72,9 @@ namespace APIBack.Automation.Services
         public string NomeCliente { get; set; } = string.Empty;
         public string NomeServico { get; set; } = string.Empty;
         public string? Veiculo { get; set; }
+        public string? VeiculoMarca { get; set; }
+        public string? VeiculoModelo { get; set; }
+        public string? MarcaPeca { get; set; }
         public string? Observacoes { get; set; }
     }
 
@@ -224,7 +231,9 @@ PARÂMETROS IMPORTANTES:
 
             var modulos = await _estabelecimentoRepository.ObterModulosAtivosAsync(scope.IdEstabelecimento);
             var temServicos = modulos.Any(m => string.Equals(m, "Servicos", StringComparison.OrdinalIgnoreCase));
-            var temReserva = modulos.Any(m => string.Equals(m, "Reserva", StringComparison.OrdinalIgnoreCase));
+            var temReserva = modulos.Any(m =>
+                string.Equals(m, "Reserva", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(m, "Agendamentos", StringComparison.OrdinalIgnoreCase));
 
             var tools = new List<object>();
 
@@ -277,7 +286,11 @@ QUANDO USAR:
                     type = "object",
                     properties = new {
                         idConversa = new { type = "string", description = "ID único da conversa atual", @enum = new[] { idConversaString } },
-                        nomeServico = new { type = "string", description = "Nome do serviço como o cliente mencionou" }
+                        nomeServico = new { type = "string", description = "Nome do serviço como o cliente mencionou" },
+                        veiculo = new { type = "string", description = "Texto completo do veículo, se o cliente já informou" },
+                        veiculoMarca = new { type = "string", description = "Marca do veículo, se já conhecida" },
+                        veiculoModelo = new { type = "string", description = "Modelo do veículo, se já conhecido" },
+                        marcaPeca = new { type = "string", description = "Marca da peça escolhida ou mencionada pelo cliente" }
                     },
                     required = new[] { "idConversa", "nomeServico" }
                 }
@@ -300,6 +313,9 @@ SEMPRE colete antes: nome do cliente, nome do serviço, veículo (se o serviço 
                         nomeCliente = new { type = "string", description = "Nome completo do cliente" },
                         nomeServico = new { type = "string", description = "Nome do serviço de interesse" },
                         veiculo = new { type = "string", description = "Marca e modelo do veículo (se o serviço variar por veículo)" },
+                        veiculoMarca = new { type = "string", description = "Marca do veículo quando coletada separadamente" },
+                        veiculoModelo = new { type = "string", description = "Modelo do veículo quando coletado separadamente" },
+                        marcaPeca = new { type = "string", description = "Marca da peça confirmada pelo cliente, quando aplicável" },
                         observacoes = new { type = "string", description = "Outras informações relevantes do cliente" }
                     },
                     required = new[] { "idConversa", "nomeCliente", "nomeServico" }
@@ -331,6 +347,30 @@ SEMPRE colete antes: nome do cliente, nome do serviço, veículo (se o serviço 
 
             var obj = new { acao = "responder", reply };
             return JsonSerializer.Serialize(obj, JsonOptions);
+        }
+
+        private string BuildToolDataReply(
+            string tool,
+            string status,
+            string reply,
+            object? data = null,
+            ConversationFichaAtual? fichaAtualSugerida = null,
+            bool? reservaConfirmada = null)
+        {
+            var payload = new
+            {
+                acao = "responder",
+                reply,
+                reserva_confirmada = reservaConfirmada,
+                tool,
+                status,
+                data,
+                ficha_atual_sugerida = fichaAtualSugerida == null || !ConversationFichaAtualStore.HasMeaningfulData(fichaAtualSugerida)
+                    ? null
+                    : ConversationFichaAtualStore.Normalize(fichaAtualSugerida)
+            };
+
+            return JsonSerializer.Serialize(payload, JsonOptions);
         }
 
         public async Task<string> ExecuteToolAsync(string toolName, string argsJson)
@@ -1057,131 +1097,181 @@ SEMPRE colete antes: nome do cliente, nome do serviço, veículo (se o serviço 
             }
         }
 
-        public Task<object[]> GetToolsForOpenAI(Guid idConversa)
+        public async Task<object[]> GetToolsForOpenAI(Guid idConversa)
         {
             var idConversaString = idConversa.ToString();
-
-            var tools = new object[]
+            var scope = await _centralRouting.ResolveEffectiveScopeAsync(idConversa);
+            if (scope == null || scope.IdEstabelecimento == Guid.Empty)
             {
-                new {
-                    type = "function",
-                    function = new {
-                        name = "listar_reservas",
-                        description = "Lista todas as reservas ativas do cliente vinculadas ao seu telefone. Use quando cliente pedir para alterar/cancelar/ver reservas sem especificar qual.",
-                        parameters = new {
-                            type = "object",
-                            properties = new {
-                                idConversa = new {
-                                    type = "string",
-                                    description = "ID único da conversa atual",
-                                    @enum = new[] { idConversaString }
-                                }
-                            },
-                            required = new[] { "idConversa" }
+                return Array.Empty<object>();
+            }
+
+            var modulos = await _estabelecimentoRepository.ObterModulosAtivosAsync(scope.IdEstabelecimento);
+            var temServicos = modulos.Any(m => string.Equals(m, "Servicos", StringComparison.OrdinalIgnoreCase));
+            var temAgendamento = modulos.Any(m =>
+                string.Equals(m, "Reserva", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(m, "Agendamentos", StringComparison.OrdinalIgnoreCase));
+
+            var tools = new List<object>();
+
+            if (temServicos)
+            {
+                tools.AddRange(new object[]
+                {
+                    new {
+                        type = "function",
+                        function = new {
+                            name = "listar_servicos",
+                            description = "Lista os serviços do catálogo do estabelecimento.",
+                            parameters = new {
+                                type = "object",
+                                properties = new {
+                                    idConversa = new { type = "string", description = "ID único da conversa atual", @enum = new[] { idConversaString } },
+                                    filtro = new { type = "string", description = "Filtro opcional por palavra-chave, como 'freio' ou 'revisão'" }
+                                },
+                                required = new[] { "idConversa" }
+                            }
+                        }
+                    },
+                    new {
+                        type = "function",
+                        function = new {
+                            name = "consultar_servico",
+                            description = "Consulta detalhes comerciais de um serviço, incluindo preço, tempo, veículo compatível e marcas de peça.",
+                            parameters = new {
+                                type = "object",
+                                properties = new {
+                                    idConversa = new { type = "string", description = "ID único da conversa atual", @enum = new[] { idConversaString } },
+                                    nomeServico = new { type = "string", description = "Nome do serviço solicitado" },
+                                    veiculo = new { type = "string", description = "Texto completo do veículo, quando disponível" },
+                                    veiculoMarca = new { type = "string", description = "Marca do veículo" },
+                                    veiculoModelo = new { type = "string", description = "Modelo do veículo" },
+                                    marcaPeca = new { type = "string", description = "Marca da peça mencionada ou escolhida" }
+                                },
+                                required = new[] { "idConversa", "nomeServico" }
+                            }
+                        }
+                    },
+                    new {
+                        type = "function",
+                        function = new {
+                            name = "registrar_interesse_servico",
+                            description = "Registra o interesse do cliente em um serviço quando as opções relevantes já estiverem definidas.",
+                            parameters = new {
+                                type = "object",
+                                properties = new {
+                                    idConversa = new { type = "string", description = "ID único da conversa atual", @enum = new[] { idConversaString } },
+                                    nomeCliente = new { type = "string", description = "Nome do cliente" },
+                                    nomeServico = new { type = "string", description = "Nome do serviço" },
+                                    veiculo = new { type = "string", description = "Texto completo do veículo" },
+                                    veiculoMarca = new { type = "string", description = "Marca do veículo" },
+                                    veiculoModelo = new { type = "string", description = "Modelo do veículo" },
+                                    marcaPeca = new { type = "string", description = "Marca da peça escolhida, quando aplicável" },
+                                    observacoes = new { type = "string", description = "Informações adicionais" }
+                                },
+                                required = new[] { "idConversa", "nomeCliente", "nomeServico" }
+                            }
                         }
                     }
-                },
-                new {
-                    type = "function",
-                    function = new {
-                        name = "atualizar_reserva",
-                        description = "Atualiza reserva existente. IMPORTANTE: Se cliente informou filtro (código/#123 OU data) E mudança (horário/quantidade) no MESMO texto, passe TODOS os parâmetros juntos. Detecte e extraia: filtros, mudanças absolutas ('8 pessoas') e relativas ('adicionar 3', 'tirar 2').",
-                        parameters = new {
-                            type = "object",
-                            properties = new {
-                                idConversa = new {
-                                    type = "string",
-                                    description = "ID único da conversa atual",
-                                    @enum = new[] { idConversaString }
+                });
+            }
+
+            if (temAgendamento)
+            {
+                tools.AddRange(new object[]
+                {
+                    new {
+                        type = "function",
+                        function = new {
+                            name = "listar_reservas",
+                            description = "Lista todas as reservas ativas do cliente vinculadas ao seu telefone.",
+                            parameters = new {
+                                type = "object",
+                                properties = new {
+                                    idConversa = new { type = "string", description = "ID único da conversa atual", @enum = new[] { idConversaString } }
                                 },
-                                codigoReserva = new {
-                                    type = "integer",
-                                    description = "Código da reserva. SEMPRE extraia se cliente mencionar número após pergunta sobre 'qual reserva'. Exemplos de input: '#25', 'código 25', 'reserva 25', 'é a 25', 'a 25', '25' (número solto), 'o 25', 'número 25'. CRÍTICO: Se cliente responde pergunta com número, SEMPRE envie aqui."
+                                required = new[] { "idConversa" }
+                            }
+                        }
+                    },
+                    new {
+                        type = "function",
+                        function = new {
+                            name = "atualizar_reserva",
+                            description = "Atualiza uma reserva existente.",
+                            parameters = new {
+                                type = "object",
+                                properties = new {
+                                    idConversa = new { type = "string", description = "ID único da conversa atual", @enum = new[] { idConversaString } },
+                                    codigoReserva = new { type = "integer", description = "Código da reserva" },
+                                    filtroData = new { type = "string", description = "Filtro textual usado para identificar a reserva" },
+                                    novoHorario = new { type = "string", description = "Novo horário no formato HH:mm" },
+                                    novaQtdPessoas = new { type = "integer", description = "Nova quantidade de pessoas" },
+                                    ehMudancaRelativa = new { type = "boolean", description = "Indica se a mudança de pessoas foi relativa" }
                                 },
-                                filtroData = new {
-                                    type = "string",
-                                    description = "Data/período mencionado pelo cliente para identificar reserva. Exemplos: 'dia 11', '15/10', 'sexta-feira', 'amanhã', 'outubro'"
+                                required = new[] { "idConversa" }
+                            }
+                        }
+                    },
+                    new {
+                        type = "function",
+                        function = new {
+                            name = "confirmar_reserva",
+                            description = "Cria uma nova reserva quando o cliente confirmar explicitamente.",
+                            parameters = new {
+                                type = "object",
+                                properties = new {
+                                    idConversa = new { type = "string", description = "ID único da conversa atual", @enum = new[] { idConversaString } },
+                                    nomeCompleto = new { type = "string", description = "Nome completo do cliente" },
+                                    qtdPessoas = new { type = "integer", description = "Quantidade de pessoas" },
+                                    data = new { type = "string", description = "Data conforme informada pelo cliente" },
+                                    hora = new { type = "string", description = "Horário no formato HH:mm" }
                                 },
-                                novoHorario = new {
-                                    type = "string",
-                                    description = "Novo horário no formato HH:mm se cliente mencionar mudança de horário. Exemplos: '20h' → '20:00', '19:30' → '19:30'"
+                                required = new[] { "idConversa", "nomeCompleto", "qtdPessoas", "data", "hora" }
+                            }
+                        }
+                    },
+                    new {
+                        type = "function",
+                        function = new {
+                            name = "cancelar_reserva",
+                            description = "Cancela uma reserva existente.",
+                            parameters = new {
+                                type = "object",
+                                properties = new {
+                                    idConversa = new { type = "string", description = "ID único da conversa atual", @enum = new[] { idConversaString } },
+                                    codigoReserva = new { type = "integer", description = "Código da reserva" },
+                                    motivoCliente = new { type = "string", description = "Motivo informado pelo cliente" }
                                 },
-                                novaQtdPessoas = new {
-                                    type = "integer",
-                                    description = "Quantidade de pessoas. Para mudança RELATIVA (adicionar/tirar): envie o número com sinal (+3 ou -2). Para mudança ABSOLUTA: envie o número final (8)"
-                                },
-                                ehMudancaRelativa = new {
-                                    type = "boolean",
-                                    description = "true se cliente usou 'adicionar/tirar/mais/menos' (relativa). false se disse número direto '8 pessoas' (absoluta)"
-                                }
-                            },
-                            required = new[] { "idConversa" }
+                                required = new[] { "idConversa" }
+                            }
                         }
                     }
-                },
-                new {
-                    type = "function",
-                    function = new {
-                        name = "confirmar_reserva",
-                        description = "Cria UMA NOVA reserva. NÃO use para atualizar reserva existente. Use apenas quando cliente confirmar criação de nova reserva.",
-                        parameters = new {
-                            type = "object",
-                            properties = new {
-                                idConversa = new {
-                                    type = "string",
-                                    description = "ID único da conversa atual",
-                                    @enum = new[] { idConversaString }
-                                },
-                                nomeCompleto = new {
-                                    type = "string",
-                                    description = "Nome completo do cliente (mínimo 2 palavras)"
-                                },
-                                qtdPessoas = new {
-                                    type = "integer",
-                                    description = "Quantidade de pessoas (1-100)"
-                                },
-                                data = new {
-                                    type = "string",
-                                    description = "Data no formato que cliente informou (dd/MM/yyyy, dd/MM, ou texto como 'amanhã')"
-                                },
-                                hora = new {
-                                    type = "string",
-                                    description = "Horário no formato HH:mm (ex: 19:00)"
-                                }
-                            },
-                            required = new[] { "idConversa", "nomeCompleto", "qtdPessoas", "data", "hora" }
-                        }
-                    }
-                },
-                new {
-                    type = "function",
-                    function = new {
-                        name = "cancelar_reserva",
-                        description = "Cancela uma reserva. IMPORTANTE: Se cliente mencionar código (#23) ou número, SEMPRE envie em codigoReserva. Se tiver múltiplas reservas sem código, liste primeiro.",
-                        parameters = new {
-                            type = "object",
-                            properties = new {
-                                idConversa = new {
-                                    type = "string",
-                                    description = "ID único da conversa atual",
-                                    @enum = new[] { idConversaString }
-                                },
-                                codigoReserva = new {
-                                    type = "integer",
-                                    description = "Código da reserva. Extraia de: '#25', 'código 25', 'reserva 25', 'é a 25', 'a 25', '25' (número solto após pergunta), 'o 25', 'número 25'. Se cliente responde com número após você perguntar 'qual reserva', SEMPRE envie aqui."
-                                },
-                                motivoCliente = new {
-                                    type = "string",
-                                    description = "Breve motivo do cancelamento"
-                                }
-                            },
-                            required = new[] { "idConversa" }
-                        }
+                });
+            }
+
+            tools.Add(new
+            {
+                type = "function",
+                function = new
+                {
+                    name = "escalar_para_humano",
+                    description = "Transfere a conversa para um atendente humano. Só executar após confirmação explícita do cliente.",
+                    parameters = new
+                    {
+                        type = "object",
+                        properties = new
+                        {
+                            idConversa = new { type = "string", description = "ID único da conversa atual", @enum = new[] { idConversaString } },
+                            motivo = new { type = "string", description = "Breve explicação do motivo do escalonamento" },
+                            resumoConversa = new { type = "string", description = "Resumo do que foi discutido" }
+                        },
+                        required = new[] { "idConversa", "motivo", "resumoConversa" }
                     }
                 }
-            };
+            });
 
-            return Task.FromResult(tools);
+            return tools.ToArray();
         }
 
         private async Task<string> HandleEscalarParaHumano(EscalarParaHumanoArgs args)
@@ -1212,11 +1302,11 @@ SEMPRE colete antes: nome do cliente, nome do serviço, veículo (se o serviço 
         {
             var scope = await _centralRouting.ResolveEffectiveScopeAsync(args.IdConversa);
             if (scope == null)
-                return BuildJsonReply("Não consegui identificar o estabelecimento.");
+                return BuildToolDataReply("listar_servicos", "error", "Não consegui identificar o estabelecimento.");
 
             var catalogo = await _catalogProvider.ObterCatalogoVisivelAsync(scope.IdEstabelecimento);
             if (catalogo.Count == 0)
-                return BuildJsonReply("Não encontrei serviços cadastrados no momento.");
+                return BuildToolDataReply("listar_servicos", "empty", "Não encontrei serviços cadastrados no momento.");
 
             IEnumerable<ServicoCatalogItem> lista = catalogo;
             if (!string.IsNullOrWhiteSpace(args.Filtro))
@@ -1229,7 +1319,7 @@ SEMPRE colete antes: nome do cliente, nome do serviço, veículo (se o serviço 
 
             var itens = lista.ToList();
             if (itens.Count == 0)
-                return BuildJsonReply($"Não encontrei serviços relacionados a \"{args.Filtro}\".");
+                return BuildToolDataReply("listar_servicos", "not_found", $"Não encontrei serviços relacionados a \"{args.Filtro}\".");
 
             var sb = new StringBuilder();
             sb.AppendLine(string.IsNullOrWhiteSpace(args.Filtro)
@@ -1249,14 +1339,36 @@ SEMPRE colete antes: nome do cliente, nome do serviço, veículo (se o serviço 
             }
 
             sb.AppendLine("\nQuer saber mais sobre algum desses serviços?");
-            return BuildJsonReply(sb.ToString());
+            return BuildToolDataReply(
+                "listar_servicos",
+                "ok",
+                sb.ToString(),
+                data: new
+                {
+                    filtro = args.Filtro,
+                    servicos = itens.Select(s => new
+                    {
+                        s.Id,
+                        s.Nome,
+                        s.Tipo,
+                        s.DiferePorVeiculo,
+                        s.PermiteAgendamento,
+                        valor_centavos = s.ValorCentavos,
+                        valor_minimo_centavos = s.ValorMinimoCentavos,
+                        valor_maximo_centavos = s.ValorMaximoCentavos
+                    }).ToArray()
+                },
+                fichaAtualSugerida: new ConversationFichaAtual
+                {
+                    ModuloEmFoco = "servicos"
+                });
         }
 
         private async Task<string> HandleConsultarServico(ConsultarServicoArgs args)
         {
             var scope = await _centralRouting.ResolveEffectiveScopeAsync(args.IdConversa);
             if (scope == null)
-                return BuildJsonReply("Não consegui identificar o estabelecimento.");
+                return BuildToolDataReply("consultar_servico", "error", "Não consegui identificar o estabelecimento.");
 
             var catalogo = await _catalogProvider.ObterCatalogoVisivelAsync(scope.IdEstabelecimento);
             var nomeNorm = args.NomeServico.Trim().ToLowerInvariant();
@@ -1268,7 +1380,115 @@ SEMPRE colete antes: nome do cliente, nome do serviço, veículo (se o serviço 
                     nomeNorm.Contains(k.ToLowerInvariant())));
 
             if (servico == null)
-                return BuildJsonReply($"Não encontrei o serviço \"{args.NomeServico}\". Quer ver a lista completa?");
+                return BuildToolDataReply("consultar_servico", "not_found", $"Não encontrei o serviço \"{args.NomeServico}\". Quer ver a lista completa?");
+
+            var contexto = await _conversationRepository.ObterContextoAsync(args.IdConversa);
+            var fichaPersistida = ConversationFichaAtualStore.Read(contexto);
+            var atendimentoAtual = await _servicoAtendimentoRepository.ObterPorConversaAsync(args.IdConversa);
+
+            var veiculoMarca = PrimeiroTextoNaoVazio(
+                args.VeiculoMarca,
+                fichaPersistida?.VeiculoMarca,
+                ObterTexto(atendimentoAtual?.DadosExtras, "veiculo_marca", "marca_veiculo"));
+            var veiculoModelo = PrimeiroTextoNaoVazio(
+                args.VeiculoModelo,
+                fichaPersistida?.VeiculoModelo,
+                ObterTexto(atendimentoAtual?.DadosExtras, "veiculo_modelo", "modelo_veiculo"));
+            var veiculoTexto = PrimeiroTextoNaoVazio(
+                args.Veiculo,
+                ObterTexto(atendimentoAtual?.DadosExtras, "veiculo", "servicos_veiculo_nome"),
+                MontarVeiculo(veiculoMarca, veiculoModelo));
+            var marcaPeca = PrimeiroTextoNaoVazio(
+                args.MarcaPeca,
+                fichaPersistida?.MarcaPeca,
+                ObterTexto(atendimentoAtual?.DadosExtras, "marca_peca", "marcaPeca", "servicos_marca_nome"));
+
+            if ((string.IsNullOrWhiteSpace(veiculoMarca) || string.IsNullOrWhiteSpace(veiculoModelo)) &&
+                !string.IsNullOrWhiteSpace(veiculoTexto))
+            {
+                DecomporVeiculo(veiculoTexto, out var marcaInferida, out var modeloInferido);
+                veiculoMarca ??= marcaInferida;
+                veiculoModelo ??= modeloInferido;
+            }
+
+            var fichaBase = new ConversationFichaAtual
+            {
+                ModuloEmFoco = "servicos",
+                Servico = servico.Nome,
+                VeiculoMarca = veiculoMarca,
+                VeiculoModelo = veiculoModelo,
+                MarcaPeca = marcaPeca,
+                ProntoParaAgendamento = false
+            };
+
+            if (servico.DiferePorVeiculo &&
+                (string.IsNullOrWhiteSpace(veiculoMarca) || string.IsNullOrWhiteSpace(veiculoModelo)))
+            {
+                fichaBase.Pendencias = new List<string> { "veiculo_marca", "veiculo_modelo" };
+                return BuildToolDataReply(
+                    "consultar_servico",
+                    "needs_vehicle",
+                    $"Já localizei o serviço {servico.Nome}, mas para continuar eu preciso da marca e do modelo do veículo.",
+                    data: new
+                    {
+                        servico = new
+                        {
+                            servico.Id,
+                            servico.Nome,
+                            servico.Tipo,
+                            servico.DiferePorVeiculo,
+                            servico.PermiteAgendamento,
+                            duracao_minutos = servico.DuracaoMinutos
+                        }
+                    },
+                    fichaAtualSugerida: fichaBase);
+            }
+
+            var veiculoSelecionado = servico.DiferePorVeiculo
+                ? ResolverVeiculo(servico, veiculoMarca, veiculoModelo, veiculoTexto)
+                : null;
+
+            if (servico.DiferePorVeiculo && veiculoSelecionado == null)
+            {
+                fichaBase.Pendencias = new List<string> { "veiculo_marca", "veiculo_modelo" };
+                return BuildToolDataReply(
+                    "consultar_servico",
+                    "vehicle_not_found",
+                    $"Encontrei o serviço {servico.Nome}, mas não achei esse veículo no catálogo. Pode me confirmar a marca e o modelo exatamente como estão no carro?",
+                    data: new
+                    {
+                        servico = new
+                        {
+                            servico.Id,
+                            servico.Nome,
+                            servico.Tipo,
+                            servico.DiferePorVeiculo,
+                            servico.PermiteAgendamento
+                        },
+                        veiculo_informado = MontarVeiculo(veiculoMarca, veiculoModelo) ?? veiculoTexto
+                    },
+                    fichaAtualSugerida: fichaBase);
+            }
+
+            var marcaSelecionada = veiculoSelecionado == null ? null : ResolverMarcaPeca(veiculoSelecionado, marcaPeca);
+            var pendencias = new List<string>();
+            if (veiculoSelecionado != null &&
+                veiculoSelecionado.MarcasPeca.Count > 0 &&
+                marcaSelecionada == null &&
+                string.IsNullOrWhiteSpace(marcaPeca))
+            {
+                pendencias.Add("marca_peca");
+            }
+
+            var valorCentavos = marcaSelecionada?.ValorCentavos
+                ?? veiculoSelecionado?.ValorCentavos
+                ?? servico.ValorCentavos;
+            var valorMinimoCentavos = marcaSelecionada?.ValorMinimoCentavos
+                ?? veiculoSelecionado?.ValorMinimoCentavos
+                ?? servico.ValorMinimoCentavos;
+            var valorMaximoCentavos = marcaSelecionada?.ValorMaximoCentavos
+                ?? veiculoSelecionado?.ValorMaximoCentavos
+                ?? servico.ValorMaximoCentavos;
 
             var sb = new StringBuilder();
             sb.AppendLine($"🔧 *{servico.Nome}*");
@@ -1276,42 +1496,111 @@ SEMPRE colete antes: nome do cliente, nome do serviço, veículo (se o serviço 
             if (!string.IsNullOrWhiteSpace(servico.Descricao))
                 sb.AppendLine(servico.Descricao);
 
-            if (servico.DiferePorVeiculo && servico.Veiculos.Count > 0)
+            if (veiculoSelecionado != null)
             {
-                sb.AppendLine("\nValores por veículo:");
-                foreach (var v in servico.Veiculos.Where(v => v.Compativel))
-                {
-                    sb.Append($"  • {v.NomeExibicao}");
-                    if (v.ValorCentavos.HasValue)
-                        sb.Append($": R$ {v.ValorCentavos.Value / 100m:N2}");
-                    else if (v.ValorMinimoCentavos.HasValue)
-                        sb.Append($": a partir de R$ {v.ValorMinimoCentavos.Value / 100m:N2}");
-                    sb.AppendLine();
-                }
+                sb.AppendLine($"\n🚗 Veículo: {veiculoSelecionado.NomeExibicao}");
             }
-            else if (servico.ValorCentavos.HasValue)
+
+            if (valorCentavos.HasValue)
             {
-                sb.AppendLine($"\n💰 Valor: R$ {servico.ValorCentavos.Value / 100m:N2}");
+                sb.AppendLine($"\n💰 Valor: R$ {valorCentavos.Value / 100m:N2}");
             }
-            else if (servico.ValorMinimoCentavos.HasValue)
+            else if (valorMinimoCentavos.HasValue && valorMaximoCentavos.HasValue)
             {
-                sb.AppendLine($"\n💰 Valor: a partir de R$ {servico.ValorMinimoCentavos.Value / 100m:N2}");
+                sb.AppendLine($"\n💰 Valor: R$ {valorMinimoCentavos.Value / 100m:N2} a R$ {valorMaximoCentavos.Value / 100m:N2}");
+            }
+            else if (valorMinimoCentavos.HasValue)
+            {
+                sb.AppendLine($"\n💰 Valor: a partir de R$ {valorMinimoCentavos.Value / 100m:N2}");
+            }
+            else
+            {
+                sb.AppendLine("\n💰 O catálogo não tem valor cadastrado para esse cenário.");
             }
 
             if (servico.DuracaoMinutos > 0)
                 sb.AppendLine($"⏱ Tempo médio: {servico.DuracaoMinutos} min");
 
-            if (servico.PermiteAgendamento)
-                sb.AppendLine("\nPosso registrar seu interesse para que a equipe entre em contato. Quer agendar?");
+            if (veiculoSelecionado != null && veiculoSelecionado.MarcasPeca.Count > 0)
+            {
+                sb.AppendLine($"\n🧩 Marcas disponíveis: {string.Join(", ", veiculoSelecionado.MarcasPeca.Select(item => item.Nome))}");
+                if (marcaSelecionada != null)
+                {
+                    sb.AppendLine($"Marca selecionada: {marcaSelecionada.Nome}");
+                }
+            }
 
-            return BuildJsonReply(sb.ToString());
+            if (pendencias.Contains("marca_peca"))
+            {
+                sb.AppendLine("\nSe quiser seguir, me diga qual marca você prefere.");
+            }
+            else if (servico.PermiteAgendamento && (!servico.DiferePorVeiculo || veiculoSelecionado != null))
+            {
+                sb.AppendLine("\nSe estiver tudo certo, eu posso deixar seu atendimento pronto para seguir para agendamento.");
+            }
+
+            fichaBase.MarcaPeca = marcaSelecionada?.Nome ?? marcaPeca;
+            fichaBase.Pendencias = pendencias;
+            fichaBase.ProntoParaAgendamento = servico.PermiteAgendamento &&
+                                              !pendencias.Any() &&
+                                              (!servico.DiferePorVeiculo || veiculoSelecionado != null);
+
+            return BuildToolDataReply(
+                "consultar_servico",
+                "ok",
+                sb.ToString(),
+                data: new
+                {
+                    servico = new
+                    {
+                        servico.Id,
+                        servico.Nome,
+                        servico.Tipo,
+                        servico.Descricao,
+                        duracao_minutos = servico.DuracaoMinutos,
+                        servico.PermiteAgendamento,
+                        servico.DiferePorVeiculo
+                    },
+                    veiculo = veiculoSelecionado == null ? null : new
+                    {
+                        nome = veiculoSelecionado.NomeExibicao,
+                        valor_centavos = veiculoSelecionado.ValorCentavos,
+                        valor_minimo_centavos = veiculoSelecionado.ValorMinimoCentavos,
+                        valor_maximo_centavos = veiculoSelecionado.ValorMaximoCentavos
+                    },
+                    marca_peca = marcaSelecionada == null ? null : new
+                    {
+                        marcaSelecionada.Id,
+                        marcaSelecionada.Nome,
+                        valor_centavos = marcaSelecionada.ValorCentavos,
+                        valor_minimo_centavos = marcaSelecionada.ValorMinimoCentavos,
+                        valor_maximo_centavos = marcaSelecionada.ValorMaximoCentavos
+                    },
+                    marcas_disponiveis = veiculoSelecionado == null
+                        ? null
+                        : veiculoSelecionado.MarcasPeca.Select(item => new
+                        {
+                            item.Id,
+                            item.Nome,
+                            valor_centavos = item.ValorCentavos,
+                            valor_minimo_centavos = item.ValorMinimoCentavos,
+                            valor_maximo_centavos = item.ValorMaximoCentavos
+                        }).ToArray(),
+                    valor_centavos = valorCentavos,
+                    valor_minimo_centavos = valorMinimoCentavos,
+                    valor_maximo_centavos = valorMaximoCentavos
+                },
+                fichaAtualSugerida: fichaBase);
         }
 
         private async Task<string> HandleRegistrarInteresseServico(RegistrarInteresseServicoArgs args)
         {
             var scope = await _centralRouting.ResolveEffectiveScopeAsync(args.IdConversa);
             if (scope == null)
-                return BuildJsonReply("Não consegui identificar o estabelecimento.");
+                return BuildToolDataReply("registrar_interesse_servico", "error", "Não consegui identificar o estabelecimento.");
+
+            var veiculoTexto = PrimeiroTextoNaoVazio(args.Veiculo, MontarVeiculo(args.VeiculoMarca, args.VeiculoModelo));
+            var marcaPeca = PrimeiroTextoNaoVazio(args.MarcaPeca);
 
             var atendimento = new ServicoAtendimento
             {
@@ -1326,7 +1615,10 @@ SEMPRE colete antes: nome do cliente, nome do serviço, veículo (se o serviço 
                 Status = "aguardando_interno",
                 DadosExtras = new Dictionary<string, object?>
                 {
-                    ["veiculo"] = args.Veiculo,
+                    ["veiculo"] = veiculoTexto,
+                    ["veiculo_marca"] = args.VeiculoMarca,
+                    ["veiculo_modelo"] = args.VeiculoModelo,
+                    ["marca_peca"] = marcaPeca,
                     ["observacoes"] = args.Observacoes
                 },
                 DataCriacao = DateTime.UtcNow,
@@ -1337,7 +1629,8 @@ SEMPRE colete antes: nome do cliente, nome do serviço, veículo (se o serviço 
             await _servicoAtendimentoRepository.CriarAsync(atendimento);
 
             var contextoResumo = $"Interesse em: {args.NomeServico}" +
-                                  (string.IsNullOrWhiteSpace(args.Veiculo) ? string.Empty : $" | Veículo: {args.Veiculo}") +
+                                  (string.IsNullOrWhiteSpace(veiculoTexto) ? string.Empty : $" | Veículo: {veiculoTexto}") +
+                                  (string.IsNullOrWhiteSpace(marcaPeca) ? string.Empty : $" | Marca: {marcaPeca}") +
                                   (string.IsNullOrWhiteSpace(args.Observacoes) ? string.Empty : $" | Obs: {args.Observacoes}");
 
             var detalhes = new HandoverContextDto
@@ -1350,9 +1643,156 @@ SEMPRE colete antes: nome do cliente, nome do serviço, veículo (se o serviço 
             await _handoverService.ProcessarMensagensTelegramAsync(args.IdConversa, null, false, detalhes);
 
             var primeiroNome = args.NomeCliente.Trim().Split(' ')[0];
-            return BuildJsonReply(
+            return BuildToolDataReply(
+                "registrar_interesse_servico",
+                "registered",
                 $"✅ Perfeito, {primeiroNome}! Registrei seu interesse em *{args.NomeServico}*.\n\n" +
-                "Nossa equipe vai entrar em contato em breve para confirmar os detalhes. 😊");
+                "Nossa equipe vai continuar o atendimento com você a partir daqui. 😊",
+                data: new
+                {
+                    atendimento.Id,
+                    nome_cliente = atendimento.NomeCliente,
+                    nome_servico = atendimento.NomeServico,
+                    veiculo = veiculoTexto,
+                    marca_peca = marcaPeca
+                },
+                fichaAtualSugerida: new ConversationFichaAtual
+                {
+                    NomeCliente = atendimento.NomeCliente,
+                    ModuloEmFoco = "servicos",
+                    Servico = atendimento.NomeServico,
+                    VeiculoMarca = args.VeiculoMarca,
+                    VeiculoModelo = args.VeiculoModelo,
+                    MarcaPeca = marcaPeca,
+                    Pendencias = new List<string>(),
+                    ProntoParaAgendamento = true
+                });
+        }
+
+        private static string? PrimeiroTextoNaoVazio(params string?[] valores)
+        {
+            foreach (var valor in valores)
+            {
+                if (!string.IsNullOrWhiteSpace(valor))
+                {
+                    return valor.Trim();
+                }
+            }
+
+            return null;
+        }
+
+        private static string? MontarVeiculo(string? marca, string? modelo)
+        {
+            var partes = new[] { marca?.Trim(), modelo?.Trim() }
+                .Where(item => !string.IsNullOrWhiteSpace(item))
+                .ToArray();
+
+            return partes.Length == 0 ? null : string.Join(" ", partes);
+        }
+
+        private static string? ObterTexto(IReadOnlyDictionary<string, object?>? dados, params string[] chaves)
+        {
+            if (dados == null)
+            {
+                return null;
+            }
+
+            foreach (var chave in chaves)
+            {
+                if (!dados.TryGetValue(chave, out var raw) || raw == null)
+                {
+                    continue;
+                }
+
+                switch (raw)
+                {
+                    case string texto when !string.IsNullOrWhiteSpace(texto):
+                        return texto.Trim();
+                    case JsonElement element when element.ValueKind == JsonValueKind.String:
+                    {
+                        var value = element.GetString();
+                        if (!string.IsNullOrWhiteSpace(value))
+                        {
+                            return value.Trim();
+                        }
+
+                        break;
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        private static void DecomporVeiculo(string? veiculoTexto, out string? marca, out string? modelo)
+        {
+            marca = null;
+            modelo = null;
+
+            if (string.IsNullOrWhiteSpace(veiculoTexto))
+            {
+                return;
+            }
+
+            var partes = veiculoTexto
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+            if (partes.Length == 0)
+            {
+                return;
+            }
+
+            marca = partes[0];
+            modelo = partes.Length == 1 ? null : string.Join(' ', partes.Skip(1));
+        }
+
+        private static ServicoCatalogVehicleItem? ResolverVeiculo(
+            ServicoCatalogItem servico,
+            string? marca,
+            string? modelo,
+            string? veiculoTexto)
+        {
+            var termo = MontarVeiculo(marca, modelo) ?? veiculoTexto;
+            if (string.IsNullOrWhiteSpace(termo))
+            {
+                return null;
+            }
+
+            var marcaNormalizada = string.IsNullOrWhiteSpace(marca) ? null : marca.Trim().ToLowerInvariant();
+            var modeloNormalizado = string.IsNullOrWhiteSpace(modelo) ? null : modelo.Trim().ToLowerInvariant();
+            var termoNormalizado = termo.Trim().ToLowerInvariant();
+
+            return servico.Veiculos
+                .Where(item => item.Compativel)
+                .FirstOrDefault(item =>
+                {
+                    var nome = item.NomeExibicao.ToLowerInvariant();
+                    if (!string.IsNullOrWhiteSpace(marcaNormalizada) && !nome.Contains(marcaNormalizada))
+                    {
+                        return false;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(modeloNormalizado))
+                    {
+                        return nome.Contains(modeloNormalizado);
+                    }
+
+                    return nome.Contains(termoNormalizado);
+                });
+        }
+
+        private static ServicoCatalogPieceItem? ResolverMarcaPeca(ServicoCatalogVehicleItem veiculo, string? marcaPeca)
+        {
+            if (string.IsNullOrWhiteSpace(marcaPeca))
+            {
+                return null;
+            }
+
+            var normalized = marcaPeca.Trim();
+            return veiculo.MarcasPeca.FirstOrDefault(item =>
+                item.Nome.Contains(normalized, StringComparison.OrdinalIgnoreCase) ||
+                item.Id.Contains(normalized, StringComparison.OrdinalIgnoreCase));
         }
     }
 }

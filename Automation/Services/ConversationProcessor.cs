@@ -6,12 +6,15 @@ using APIBack.Automation.Dtos;
 using APIBack.Automation.Interfaces;
 using APIBack.Automation.Models;
 using APIBack.Automation.Helpers;
+using APIBack.DTOs.Agendamentos;
+using APIBack.Service.Interface;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Message = APIBack.Automation.Models.Message;
 
@@ -30,10 +33,16 @@ namespace APIBack.Automation.Services
         private readonly IWabaPhoneRepository _wabaRepo;
         private readonly IIARegraRepository _regrasRepo;
         private readonly IEstabelecimentoRepository _estabelecimentoRepo;
+        private readonly IConversationRepository _conversationRepository;
+        private readonly IClienteRepository _clienteRepository;
         private readonly IMessageRepository _mensagemRepository;
         private readonly PromptAssembler _promptAssembler;
         private readonly CentralRoutingService _centralRouting;
         private readonly ServicoCatalogProvider _servicoCatalogProvider;
+        private readonly IServicoAtendimentoRepository _servicoAtendimentoRepository;
+        private readonly FaqCatalogProvider _faqCatalogProvider;
+        private readonly IEstabelecimentoAgendamentoConfigService _agendamentoConfigService;
+        private readonly IAgendaDisponibilidadeService _agendaDisponibilidadeService;
         private readonly IMemoryCache _cache;
         private readonly ILogger<ConversationProcessor> _logger;
 
@@ -55,10 +64,16 @@ namespace APIBack.Automation.Services
             IWabaPhoneRepository wabaRepo,
             IIARegraRepository regrasRepo,
             IEstabelecimentoRepository estabelecimentoRepo,
+            IConversationRepository conversationRepository,
+            IClienteRepository clienteRepository,
             IMessageRepository mensagemRepository,
             PromptAssembler promptAssembler,
             CentralRoutingService centralRouting,
             ServicoCatalogProvider servicoCatalogProvider,
+            IServicoAtendimentoRepository servicoAtendimentoRepository,
+            FaqCatalogProvider faqCatalogProvider,
+            IEstabelecimentoAgendamentoConfigService agendamentoConfigService,
+            IAgendaDisponibilidadeService agendaDisponibilidadeService,
             IMemoryCache cache,
             ILogger<ConversationProcessor> logger)
         {
@@ -67,10 +82,16 @@ namespace APIBack.Automation.Services
             _wabaRepo = wabaRepo;
             _regrasRepo = regrasRepo;
             _estabelecimentoRepo = estabelecimentoRepo;
+            _conversationRepository = conversationRepository;
+            _clienteRepository = clienteRepository;
             _mensagemRepository = mensagemRepository;
             _promptAssembler = promptAssembler;
             _centralRouting = centralRouting;
             _servicoCatalogProvider = servicoCatalogProvider;
+            _servicoAtendimentoRepository = servicoAtendimentoRepository;
+            _faqCatalogProvider = faqCatalogProvider;
+            _agendamentoConfigService = agendamentoConfigService;
+            _agendaDisponibilidadeService = agendaDisponibilidadeService;
             _cache = cache;
             _logger = logger;
         }
@@ -210,7 +231,8 @@ namespace APIBack.Automation.Services
                     return null;
                 }
 
-                var tipoEstabelecimento = await _estabelecimentoRepo.ObterTipoEstabelecimentoAsync(idEstabelecimento.Value);
+                var estabelecimentoId = idEstabelecimento.Value;
+                var tipoEstabelecimento = await _estabelecimentoRepo.ObterTipoEstabelecimentoAsync(estabelecimentoId);
                 if (string.Equals(tipoEstabelecimento, "garagem", StringComparison.OrdinalIgnoreCase) ||
                     string.Equals(tipoEstabelecimento, "nautica", StringComparison.OrdinalIgnoreCase))
                 {
@@ -220,34 +242,61 @@ namespace APIBack.Automation.Services
                     return null;
                 }
 
-                var modulosAtivos = await DeterminarModulosAtivosAsync(idEstabelecimento.Value);
+                var modulosAtivos = await DeterminarModulosAtivosAsync(estabelecimentoId);
 
-                var promptsCacheKey = $"prompts:{idEstabelecimento.Value}:{string.Join(",", modulosAtivos.OrderBy(m => m))}";
+                var promptsCacheKey = $"prompts:{estabelecimentoId}:{string.Join(",", modulosAtivos.OrderBy(m => m, StringComparer.OrdinalIgnoreCase))}";
                 if (!_cache.TryGetValue(promptsCacheKey, out string? promptMontado))
                 {
-                    var prompts = await _regrasRepo.ObterPromptsCompostosAsync(idEstabelecimento.Value, modulosAtivos);
+                    var prompts = await _regrasRepo.ObterPromptsCompostosAsync(estabelecimentoId, modulosAtivos);
                     promptMontado = _promptAssembler.Assemble(prompts);
                     _cache.Set(promptsCacheKey, promptMontado, PromptsCacheOptions);
                 }
 
+                var nomeEstabelecimento = await _estabelecimentoRepo.ObterNomeFantasiaAsync(estabelecimentoId);
+                var contextoAtual = await _conversationRepository.ObterContextoAsync(idConversa);
+                var fichaAtual = await BuildFichaAtualAsync(idConversa, estabelecimentoId, modulosAtivos, contextoAtual);
+
+                var secoes = new List<string>
+                {
+                    BuildAssistantProtocolPrompt(nomeEstabelecimento, tipoEstabelecimento, modulosAtivos, fichaAtual)
+                };
+
+                if (!string.IsNullOrWhiteSpace(promptMontado))
+                {
+                    secoes.Add($"Regras compostas do banco (IA_regras):\n{promptMontado}");
+                }
+
                 if (modulosAtivos.Any(item => string.Equals(item, "Servicos", StringComparison.OrdinalIgnoreCase)))
                 {
-                    var resumoServicos = await _servicoCatalogProvider.BuildCompactPromptAsync(idEstabelecimento.Value);
+                    var resumoServicos = await _servicoCatalogProvider.BuildCompactPromptAsync(estabelecimentoId);
                     if (!string.IsNullOrWhiteSpace(resumoServicos))
                     {
-                        promptMontado = string.IsNullOrWhiteSpace(promptMontado)
-                            ? resumoServicos
-                            : $"{promptMontado}\n\n{resumoServicos}";
+                        secoes.Add(resumoServicos);
                     }
                 }
 
-                if (string.Equals(tipoEstabelecimento, "oficina", StringComparison.OrdinalIgnoreCase))
+                if (modulosAtivos.Any(item => string.Equals(item, "FAQ", StringComparison.OrdinalIgnoreCase)))
                 {
-                    var nomeEstabelecimento = await _estabelecimentoRepo.ObterNomeFantasiaAsync(idEstabelecimento.Value);
-                    return BuildOficinaPrompt(nomeEstabelecimento, promptMontado);
+                    var resumoFaq = await _faqCatalogProvider.BuildCompactPromptAsync(estabelecimentoId);
+                    if (!string.IsNullOrWhiteSpace(resumoFaq))
+                    {
+                        secoes.Add(resumoFaq);
+                    }
                 }
 
-                return promptMontado;
+                if (modulosAtivos.Any(item =>
+                    string.Equals(item, "Disponibilidade", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(item, "Agendamentos", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(item, "Reserva", StringComparison.OrdinalIgnoreCase)))
+                {
+                    var resumoDisponibilidade = await BuildAvailabilityPromptAsync(estabelecimentoId);
+                    if (!string.IsNullOrWhiteSpace(resumoDisponibilidade))
+                    {
+                        secoes.Add(resumoDisponibilidade);
+                    }
+                }
+
+                return string.Join("\n\n", secoes.Where(item => !string.IsNullOrWhiteSpace(item)));
             }
             catch (Exception ex)
             {
@@ -256,33 +305,319 @@ namespace APIBack.Automation.Services
             }
         }
 
-        private static string BuildOficinaPrompt(string? nomeEstabelecimento, string? promptMontado)
+        private string BuildAssistantProtocolPrompt(
+            string? nomeEstabelecimento,
+            string? tipoEstabelecimento,
+            IReadOnlyCollection<string> modulosAtivos,
+            ConversationFichaAtual fichaAtual)
         {
-            var nome = string.IsNullOrWhiteSpace(nomeEstabelecimento) ? "Citrocar" : nomeEstabelecimento.Trim();
-            var basePrompt =
-                $"Voce representa a equipe da {nome}.\n\n" +
-                "Objetivo:\n" +
-                "- atender em portugues do Brasil\n" +
-                "- responder de forma curta, cordial e objetiva\n" +
-                "- priorizar FAQ simples da oficina\n\n" +
-                "Formato:\n" +
-                "- prefira responder sempre em JSON valido no formato {\"acao\":\"responder\",\"reply\":\"...\"}\n\n" +
-                "Regras:\n" +
-                "- se o nome do cliente ainda nao estiver conhecido, cumprimente e peca o nome antes de seguir\n" +
-                "- fale em nome da equipe, sem se apresentar como assistente virtual\n" +
-                "- nao faca diagnostico tecnico\n" +
-                "- nao gere orcamento\n" +
-                "- nao confirme preco, prazo ou agendamento automaticamente\n" +
-                "- responda FAQ simples sobre servicos, contato, horario, endereco e como funciona o agendamento\n" +
-                "- quando o assunto exigir equipe humana, avise de forma curta que a equipe vai continuar o atendimento por aqui\n" +
-                "- nao faca questionario tecnico nem peca placa, quilometragem, urgencia, guincho ou dados parecidos por padrao";
+            var nome = string.IsNullOrWhiteSpace(nomeEstabelecimento) ? "o estabelecimento" : nomeEstabelecimento.Trim();
+            var tipo = string.IsNullOrWhiteSpace(tipoEstabelecimento) ? "geral" : tipoEstabelecimento.Trim();
+            var modulos = modulosAtivos.Count == 0
+                ? "nenhum"
+                : string.Join(", ", modulosAtivos.OrderBy(item => item, StringComparer.OrdinalIgnoreCase));
 
-            if (string.IsNullOrWhiteSpace(promptMontado))
+            var builder = new StringBuilder();
+            builder.AppendLine($"Voce e a assistente virtual de atendimento via WhatsApp do estabelecimento {nome}.");
+            builder.AppendLine($"Tipo de estabelecimento: {tipo}.");
+            builder.AppendLine($"Modulos ativos neste atendimento: {modulos}.");
+            builder.AppendLine();
+            builder.AppendLine("Regras absolutas de memoria e continuidade:");
+            builder.AppendLine("- leia o historico inteiro antes de responder");
+            builder.AppendLine("- use a ficha_atual como memoria operacional da conversa");
+            builder.AppendLine("- construa incrementalmente e nunca recomece do zero");
+            builder.AppendLine("- se faltar apenas uma informacao, peca apenas essa informacao");
+            builder.AppendLine("- se o cliente corrigir um dado, use o valor mais recente");
+            builder.AppendLine("- mostre que voce lembra do que o cliente ja informou");
+            builder.AppendLine("- mantenha contexto mesmo quando o cliente mudar de assunto e depois voltar");
+            builder.AppendLine("- nunca invente preco, marca, prazo, disponibilidade ou qualquer outro dado que nao esteja no prompt, no historico ou no resultado de tools");
+            builder.AppendLine();
+            builder.AppendLine("Regras de atendimento para o modulo Servicos:");
+            builder.AppendLine("- voce e uma assistente de atendimento comercial, nao uma explicadora de mecanica");
+            builder.AppendLine("- quando o cliente pedir um servico, garanta primeiro o nome do cliente");
+            builder.AppendLine("- depois, se faltar veiculo, peca marca e modelo do veiculo");
+            builder.AppendLine("- quando o cliente pedir detalhes, priorize valor, marcas aplicaveis, tempo e proximo passo");
+            builder.AppendLine("- se o catalogo nao tiver algum dado, deixe isso claro e ofereca continuidade com a equipe sem inventar");
+            builder.AppendLine("- so ofereca seguir para agendamento quando servico, veiculo e marca aplicavel estiverem definidos");
+            builder.AppendLine();
+            builder.AppendLine("Regras de uso de tools:");
+            builder.AppendLine("- use as tools quando precisar consultar catalogo, disponibilidade ou registrar interesse");
+            builder.AppendLine("- trate o resultado das tools como fonte de verdade");
+            builder.AppendLine("- se uma tool retornar ficha_atual_sugerida, reflita isso na ficha_atual final da sua resposta");
+            builder.AppendLine();
+            builder.AppendLine("Formato de saida:");
+            builder.AppendLine("- responda sempre em JSON valido");
+            builder.AppendLine("- para respostas normais, prefira o formato:");
+            builder.AppendLine("{\"acao\":\"responder\",\"reply\":\"...\",\"ficha_atual\":{\"nome_cliente\":\"...\",\"modulo_em_foco\":\"...\",\"servico\":\"...\",\"veiculo_marca\":\"...\",\"veiculo_modelo\":\"...\",\"marca_peca\":\"...\",\"pendencias\":[\"...\"],\"pronto_para_agendamento\":false}}");
+            builder.AppendLine("- a ficha_atual e opcional, mas quando houver novos dados relevantes voce deve atualiza-la");
+            builder.AppendLine("- mantenha compatibilidade com acoes especiais ja existentes, como confirmar_reserva e escalar_para_humano, quando fizer sentido");
+            builder.AppendLine();
+            builder.AppendLine("Ficha atual da conversa:");
+            builder.AppendLine(ConversationFichaAtualStore.ToJson(fichaAtual));
+            return builder.ToString().TrimEnd();
+        }
+
+        private async Task<ConversationFichaAtual> BuildFichaAtualAsync(
+            Guid idConversa,
+            Guid idEstabelecimento,
+            IReadOnlyCollection<string> modulosAtivos,
+            ConversationContext? contextoAtual)
+        {
+            var fichaPersistida = ConversationFichaAtualStore.Read(contextoAtual);
+            var scope = await _centralRouting.ResolveEffectiveScopeAsync(idConversa);
+            var cliente = scope != null && scope.IdCliente != Guid.Empty
+                ? await _clienteRepository.ObterPorIdAsync(scope.IdCliente)
+                : null;
+            var atendimentoServico = await _servicoAtendimentoRepository.ObterPorConversaAsync(idConversa);
+
+            var conhecida = new ConversationFichaAtual
             {
-                return basePrompt;
+                NomeCliente = cliente?.Nome,
+                ModuloEmFoco = ResolveModuloEmFoco(modulosAtivos, atendimentoServico, fichaPersistida),
+                Servico = atendimentoServico?.NomeServico,
+                MarcaPeca = PrimeiroTextoDisponivel(
+                    atendimentoServico?.DadosExtras,
+                    "servicos_marca_nome",
+                    "marcaPeca",
+                    "marca_peca",
+                    "marca"),
+                ProntoParaAgendamento = fichaPersistida?.ProntoParaAgendamento
+            };
+
+            PopularVeiculo(atendimentoServico?.DadosExtras, conhecida);
+
+            var ficha = ConversationFichaAtualStore.Merge(fichaPersistida, conhecida);
+            ficha.Pendencias = BuildPendenciasPadrao(ficha, atendimentoServico);
+            ficha.ProntoParaAgendamento ??= false;
+
+            if (string.IsNullOrWhiteSpace(ficha.ModuloEmFoco))
+            {
+                ficha.ModuloEmFoco = ResolveModuloEmFoco(modulosAtivos, atendimentoServico, fichaPersistida);
             }
 
-            return $"{basePrompt}\n\nInformacoes especificas do estabelecimento:\n{promptMontado}";
+            return ConversationFichaAtualStore.Normalize(ficha);
+        }
+
+        private async Task<string?> BuildAvailabilityPromptAsync(Guid idEstabelecimento)
+        {
+            try
+            {
+                var configuracao = await _agendamentoConfigService.ObterAsync(idEstabelecimento);
+                var regras = await _agendaDisponibilidadeService.ListarTodasAsync(idEstabelecimento);
+
+                var builder = new StringBuilder();
+                builder.AppendLine("Resumo de disponibilidade/agendamento:");
+                builder.AppendLine($"- agenda_ativa={(configuracao.AgendaAtiva ? "sim" : "nao")}");
+                builder.AppendLine($"- exige_servico={(configuracao.ExigeServico ? "sim" : "nao")}");
+                builder.AppendLine($"- exige_profissional={(configuracao.ExigeProfissional ? "sim" : "nao")}");
+                builder.AppendLine($"- agenda_informativo={(configuracao.AgendaInformativo ? "sim" : "nao")}");
+
+                foreach (var regra in regras
+                    .Where(item => item.Ativo)
+                    .Take(8))
+                {
+                    builder.Append("- ");
+                    builder.Append(regra.Escopo);
+                    builder.Append(" | ");
+                    builder.Append(regra.Tipo);
+
+                    if (regra.DiasSemana.Count > 0)
+                    {
+                        builder.Append(" | dias=");
+                        builder.Append(string.Join(", ", regra.DiasSemana.Select(FormatarDiaSemana)));
+                    }
+
+                    if (regra.DataInicio.HasValue || regra.DataFim.HasValue)
+                    {
+                        builder.Append(" | periodo=");
+                        builder.Append(regra.DataInicio?.ToString("dd/MM/yyyy"));
+                        builder.Append(" a ");
+                        builder.Append(regra.DataFim?.ToString("dd/MM/yyyy"));
+                    }
+
+                    if (regra.DiaInteiro)
+                    {
+                        builder.Append(" | dia_inteiro=sim");
+                    }
+                    else if (regra.HoraInicio.HasValue && regra.HoraFim.HasValue)
+                    {
+                        builder.Append(" | horario=");
+                        builder.Append(regra.HoraInicio.Value.ToString("HH:mm"));
+                        builder.Append("-");
+                        builder.Append(regra.HoraFim.Value.ToString("HH:mm"));
+                    }
+
+                    builder.AppendLine();
+                }
+
+                return builder.ToString().TrimEnd();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogDebug(ex, "Falha ao montar resumo de disponibilidade para estabelecimento {Estabelecimento}", idEstabelecimento);
+                return null;
+            }
+        }
+
+        private static string ResolveModuloEmFoco(
+            IReadOnlyCollection<string> modulosAtivos,
+            ServicoAtendimento? atendimentoServico,
+            ConversationFichaAtual? fichaPersistida)
+        {
+            if (!string.IsNullOrWhiteSpace(fichaPersistida?.ModuloEmFoco))
+            {
+                return fichaPersistida.ModuloEmFoco!;
+            }
+
+            if (atendimentoServico != null || !string.IsNullOrWhiteSpace(fichaPersistida?.Servico))
+            {
+                return "servicos";
+            }
+
+            if (modulosAtivos.Any(item => string.Equals(item, "FAQ", StringComparison.OrdinalIgnoreCase)))
+            {
+                return "faq";
+            }
+
+            if (modulosAtivos.Any(item =>
+                string.Equals(item, "Disponibilidade", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(item, "Agendamentos", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(item, "Reserva", StringComparison.OrdinalIgnoreCase)))
+            {
+                return "agendamento";
+            }
+
+            return "atendimento";
+        }
+
+        private static List<string> BuildPendenciasPadrao(ConversationFichaAtual fichaAtual, ServicoAtendimento? atendimentoServico)
+        {
+            var pendencias = fichaAtual.Pendencias ?? new List<string>();
+            if (string.IsNullOrWhiteSpace(fichaAtual.NomeCliente))
+            {
+                pendencias.Add("nome_cliente");
+            }
+
+            if (!string.IsNullOrWhiteSpace(fichaAtual.Servico) || !string.IsNullOrWhiteSpace(atendimentoServico?.NomeServico))
+            {
+                if (string.IsNullOrWhiteSpace(fichaAtual.VeiculoMarca))
+                {
+                    pendencias.Add("veiculo_marca");
+                }
+
+                if (string.IsNullOrWhiteSpace(fichaAtual.VeiculoModelo))
+                {
+                    pendencias.Add("veiculo_modelo");
+                }
+            }
+
+            return pendencias
+                .Where(item => !string.IsNullOrWhiteSpace(item))
+                .Select(item => item.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+
+        private static void PopularVeiculo(IReadOnlyDictionary<string, object?>? dadosExtras, ConversationFichaAtual fichaAtual)
+        {
+            if (dadosExtras == null)
+            {
+                return;
+            }
+
+            var marca = PrimeiroTextoDisponivel(dadosExtras,
+                "veiculo_marca",
+                "marca_veiculo",
+                "vehicle_brand");
+            var modelo = PrimeiroTextoDisponivel(dadosExtras,
+                "veiculo_modelo",
+                "modelo_veiculo",
+                "vehicle_model");
+            var veiculoTexto = PrimeiroTextoDisponivel(dadosExtras,
+                "veiculo",
+                "servicos_veiculo_nome",
+                "vehicle",
+                "servicos_vehicle_name");
+
+            if (string.IsNullOrWhiteSpace(marca) || string.IsNullOrWhiteSpace(modelo))
+            {
+                DecomporVeiculoLivre(veiculoTexto, out var marcaInferida, out var modeloInferido);
+                marca ??= marcaInferida;
+                modelo ??= modeloInferido;
+            }
+
+            fichaAtual.VeiculoMarca = marca;
+            fichaAtual.VeiculoModelo = modelo;
+        }
+
+        private static string? PrimeiroTextoDisponivel(IReadOnlyDictionary<string, object?>? dados, params string[] chaves)
+        {
+            if (dados == null)
+            {
+                return null;
+            }
+
+            foreach (var chave in chaves)
+            {
+                if (!dados.TryGetValue(chave, out var raw) || raw == null)
+                {
+                    continue;
+                }
+
+                switch (raw)
+                {
+                    case string texto when !string.IsNullOrWhiteSpace(texto):
+                        return texto.Trim();
+                    case JsonElement element when element.ValueKind == JsonValueKind.String:
+                    {
+                        var value = element.GetString();
+                        if (!string.IsNullOrWhiteSpace(value))
+                        {
+                            return value.Trim();
+                        }
+
+                        break;
+                    }
+                }
+            }
+
+            return null;
+        }
+
+        private static void DecomporVeiculoLivre(string? veiculoTexto, out string? marca, out string? modelo)
+        {
+            marca = null;
+            modelo = null;
+
+            if (string.IsNullOrWhiteSpace(veiculoTexto))
+            {
+                return;
+            }
+
+            var partes = veiculoTexto
+                .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+            if (partes.Length == 0)
+            {
+                return;
+            }
+
+            marca = partes[0];
+            modelo = partes.Length == 1 ? null : string.Join(' ', partes.Skip(1));
+        }
+
+        private static string FormatarDiaSemana(int diaSemana)
+        {
+            return diaSemana switch
+            {
+                0 => "domingo",
+                1 => "segunda",
+                2 => "terca",
+                3 => "quarta",
+                4 => "quinta",
+                5 => "sexta",
+                6 => "sabado",
+                _ => diaSemana.ToString()
+            };
         }
 
         private async Task<IReadOnlyCollection<string>> DeterminarModulosAtivosAsync(Guid idEstabelecimento)

@@ -279,17 +279,8 @@ namespace APIBack.Automation.Services
                 return (true, nauticaDecision);
             }
 
-            // TopicOrchestratorService e ServicosFlowService removidos do pipeline:
-            // o módulo Servicos agora é tratado via AI + tools (GetDeclaredToolsAsync).
-
-            var (oficinaIntercepted, oficinaDecision) = await _oficinaFlow.TryHandleAsync(
-                idConversa,
-                mensagemTexto,
-                phoneNumberDisplay);
-            if (oficinaIntercepted)
-            {
-                return (true, oficinaDecision);
-            }
+            // Oficina segue pela IA como dona principal da conversa.
+            // Mantemos aqui apenas interceptacoes nao conversacionais, como reset e roteamento central.
 
             // ------- DETECÇÃO INTELIGENTE DE FILTROS -------
 

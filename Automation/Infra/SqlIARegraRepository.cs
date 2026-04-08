@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Threading.Tasks;
 using APIBack.Automation.Interfaces;
 using APIBack.Automation.Models;
@@ -73,7 +74,8 @@ DELETE FROM ia_regras
         {
             var moduloArray = (modulosAtivos ?? Array.Empty<string>())
                 .Where(m => !string.IsNullOrWhiteSpace(m))
-                .Select(m => m.Trim())
+                .Select(NormalizeModuloToken)
+                .Where(m => !string.IsNullOrWhiteSpace(m))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
 
@@ -134,6 +136,42 @@ DELETE FROM ia_regras
             }
 
             return (gerais, modulos, estabelecimento);
+        }
+
+        private static string NormalizeModuloToken(string? modulo)
+        {
+            var normalized = NormalizeText(modulo);
+            return normalized switch
+            {
+                "reserva" or "reservas" or "agendamento" or "agendamentos" => "AGENDAMENTOS",
+                "servico" or "servicos" => "SERVICOS",
+                "faq" => "FAQ",
+                "disponibilidade" or "disponivel" => "DISPONIBILIDADE",
+                "whatsapp" => "WHATSAPP",
+                "delivery" => "DELIVERY",
+                "configuracoes" or "configuracao" => "CONFIGURACOES",
+                _ => normalized.ToUpperInvariant()
+            };
+        }
+
+        private static string NormalizeText(string? value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return string.Empty;
+            }
+
+            var formD = value.Trim().ToLowerInvariant().Normalize(NormalizationForm.FormD);
+            var builder = new StringBuilder(formD.Length);
+            foreach (var ch in formD)
+            {
+                if (System.Globalization.CharUnicodeInfo.GetUnicodeCategory(ch) != System.Globalization.UnicodeCategory.NonSpacingMark)
+                {
+                    builder.Append(ch);
+                }
+            }
+
+            return builder.ToString().Normalize(NormalizationForm.FormC);
         }
 
 

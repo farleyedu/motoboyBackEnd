@@ -11,10 +11,12 @@ using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading.Tasks;
 using APIBack.Automation.Dtos;
 using APIBack.Automation.Infra.Config;
 using APIBack.Automation.Interfaces;
+using APIBack.Automation.Models;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 
@@ -37,17 +39,20 @@ namespace APIBack.Automation.Services
         private readonly IHttpClientFactory _httpFactory;
         private readonly ILogger<AssistantService> _logger;
         private readonly ToolExecutorService _toolExecutor;
+        private readonly IConversationRepository _conversationRepository;
         private readonly IOptions<OpenAIOptions> _options;
 
         public AssistantService(
             IHttpClientFactory httpFactory,
             ILogger<AssistantService> logger,
             ToolExecutorService toolExecutor,
+            IConversationRepository conversationRepository,
             IOptions<OpenAIOptions> options)
         {
             _httpFactory = httpFactory;
             _logger = logger;
             _toolExecutor = toolExecutor;
+            _conversationRepository = conversationRepository;
             _options = options;
         }
 
@@ -178,22 +183,7 @@ namespace APIBack.Automation.Services
                 userPreview);
 
             var toolsArray = await _toolExecutor.GetToolsForOpenAI(idConversa);
-
-            var payload = new
-            {
-                model,
-                messages = messages.ToArray(),
-                max_tokens = 2000,
-                tools = toolsArray,
-                tool_choice = "auto"
-            };
-
-            var json = JsonSerializer.Serialize(payload, JsonOptions);
-            var payloadPreview = json.Length > 200 ? json.Substring(0, 200) + "..." : json;
-            _logger.LogTrace("[Conversa={Conversa}] Payload enviado para OpenAI (len={Length}): {Preview}",
-                idConversa,
-                json.Length,
-                payloadPreview);
+            ConversationFichaAtual? fichaSugeridaPorTools = null;
 
             Exception? lastException = null;
 
@@ -206,49 +196,141 @@ namespace APIBack.Automation.Services
                     var client = _httpFactory.CreateClient();
                     client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
                     client.Timeout = TimeSpan.FromSeconds(TimeoutSeconds);
+                    var conversationMessages = new List<object>(messages);
 
+                    HttpResponseMessage? response = null;
+                    string body = string.Empty;
                     var endpoint = "https://api.openai.com/v1/chat/completions";
-                    using var content = new StringContent(json, Encoding.UTF8, "application/json");
-
-                    var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-                    var response = await client.PostAsync(endpoint, content);
-                    stopwatch.Stop();
-
-                    _logger.LogInformation("[Conversa={Conversa}] OpenAI respondeu em {Elapsed}ms (tentativa {Attempt})",
-                        idConversa, stopwatch.ElapsedMilliseconds, attempt);
-
-                    var body = await response.Content.ReadAsStringAsync();
-
-                    using var docCheck = JsonDocument.Parse(body);
-                    if (docCheck.RootElement.TryGetProperty("choices", out var choicesArray) &&
-                        choicesArray.GetArrayLength() > 0)
+                    for (var toolRound = 0; toolRound < 4; toolRound++)
                     {
-                        var firstChoice = choicesArray[0];
-                        if (firstChoice.TryGetProperty("message", out var msgObj) &&
-                            msgObj.TryGetProperty("tool_calls", out var toolCallsArray) &&
-                            toolCallsArray.GetArrayLength() > 0)
+                        var payload = new
                         {
-                            var toolCall = toolCallsArray[0];
+                            model,
+                            messages = conversationMessages.ToArray(),
+                            max_tokens = 2000,
+                            tools = toolsArray,
+                            tool_choice = "auto"
+                        };
+
+                        var json = JsonSerializer.Serialize(payload, JsonOptions);
+                        var payloadPreview = json.Length > 200 ? json.Substring(0, 200) + "..." : json;
+                        _logger.LogTrace(
+                            "[Conversa={Conversa}] Payload enviado para OpenAI (len={Length}, rodada={Round}): {Preview}",
+                            idConversa,
+                            json.Length,
+                            toolRound + 1,
+                            payloadPreview);
+
+                        using var content = new StringContent(json, Encoding.UTF8, "application/json");
+                        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+                        response = await client.PostAsync(endpoint, content);
+                        stopwatch.Stop();
+
+                        _logger.LogInformation(
+                            "[Conversa={Conversa}] OpenAI respondeu em {Elapsed}ms (tentativa {Attempt}, rodada={Round})",
+                            idConversa,
+                            stopwatch.ElapsedMilliseconds,
+                            attempt,
+                            toolRound + 1);
+
+                        body = await response.Content.ReadAsStringAsync();
+
+                        if (!response.IsSuccessStatusCode)
+                        {
+                            break;
+                        }
+
+                        using var docCheck = JsonDocument.Parse(body);
+                        if (!docCheck.RootElement.TryGetProperty("choices", out var choicesArray) ||
+                            choicesArray.ValueKind != JsonValueKind.Array ||
+                            choicesArray.GetArrayLength() == 0)
+                        {
+                            break;
+                        }
+
+                        var messageToolElement = choicesArray[0].GetProperty("message");
+                        if (!messageToolElement.TryGetProperty("tool_calls", out var toolCallsArray) ||
+                            toolCallsArray.ValueKind != JsonValueKind.Array ||
+                            toolCallsArray.GetArrayLength() == 0)
+                        {
+                            break;
+                        }
+
+                        var toolCallsToAppend = new List<object>();
+                        foreach (var toolCall in toolCallsArray.EnumerateArray())
+                        {
+                            var toolCallId = toolCall.TryGetProperty("id", out var toolCallIdElement)
+                                ? toolCallIdElement.GetString()
+                                : null;
                             var functionObj = toolCall.GetProperty("function");
                             var functionName = functionObj.GetProperty("name").GetString();
-                            var functionArgs = functionObj.GetProperty("arguments").GetString();
+                            var functionArgs = functionObj.GetProperty("arguments").GetString() ?? "{}";
+
+                            if (string.IsNullOrWhiteSpace(toolCallId) || string.IsNullOrWhiteSpace(functionName))
+                            {
+                                continue;
+                            }
+
+                            toolCallsToAppend.Add(new
+                            {
+                                id = toolCallId,
+                                type = "function",
+                                function = new
+                                {
+                                    name = functionName,
+                                    arguments = functionArgs
+                                }
+                            });
+                        }
+
+                        if (toolCallsToAppend.Count == 0)
+                        {
+                            break;
+                        }
+
+                        conversationMessages.Add(new
+                        {
+                            role = "assistant",
+                            tool_calls = toolCallsToAppend.ToArray()
+                        });
+
+                        foreach (var toolCall in toolCallsArray.EnumerateArray())
+                        {
+                            var toolCallId = toolCall.TryGetProperty("id", out var toolCallIdElement)
+                                ? toolCallIdElement.GetString()
+                                : null;
+                            var functionObj = toolCall.GetProperty("function");
+                            var functionName = functionObj.GetProperty("name").GetString();
+                            var functionArgs = functionObj.GetProperty("arguments").GetString() ?? "{}";
+
+                            if (string.IsNullOrWhiteSpace(toolCallId) || string.IsNullOrWhiteSpace(functionName))
+                            {
+                                continue;
+                            }
 
                             _logger.LogInformation(
-                                "[Conversa={Conversa}] OpenAI solicitou tool: {Tool}",
+                                "[Conversa={Conversa}] OpenAI solicitou tool: {Tool} (rodada={Round})",
                                 idConversa,
-                                functionName);
+                                functionName,
+                                toolRound + 1);
 
-                            var toolResult = await _toolExecutor.ExecuteToolAsync(functionName!, functionArgs!);
+                            var toolResult = await _toolExecutor.ExecuteToolAsync(functionName, functionArgs);
+                            fichaSugeridaPorTools = ConversationFichaAtualStore.Merge(
+                                fichaSugeridaPorTools,
+                                TryExtractFichaAtual(toolResult));
 
-                            return new AssistantDecision(
-                                Reply: toolResult,
-                                HandoverAction: "none",
-                                AgentPrompt: null,
-                                ReservaConfirmada: false,
-                                Detalhes: null,
-                                Media: null
-                            );
+                            conversationMessages.Add(new
+                            {
+                                role = "tool",
+                                tool_call_id = toolCallId,
+                                content = toolResult
+                            });
                         }
+                    }
+
+                    if (response == null)
+                    {
+                        return FallbackDecision();
                     }
 
                     if (!response.IsSuccessStatusCode)
@@ -305,6 +387,7 @@ namespace APIBack.Automation.Services
                     }
 
                     iaAction.Media = SanitizeMedia(iaAction.Media, idConversa);
+                    await PersistFichaAtualAsync(idConversa, fichaSugeridaPorTools, iaAction.FichaAtual);
 
                     return await ProcessarDecisaoIA(iaAction, idConversa, historico);
                 }
@@ -525,6 +608,13 @@ namespace APIBack.Automation.Services
                 {
                     _logger.LogWarning("[Conversa={Conversa}] Campo 'media' invalido, usando null", idConversa);
                 }
+
+                if (root.TryGetProperty("ficha_atual", out var fichaAtualElement) &&
+                    fichaAtualElement.ValueKind != JsonValueKind.Object &&
+                    fichaAtualElement.ValueKind != JsonValueKind.Null)
+                {
+                    _logger.LogWarning("[Conversa={Conversa}] Campo 'ficha_atual' invalido, usando null", idConversa);
+                }
             }
             catch (JsonException ex)
             {
@@ -627,6 +717,44 @@ namespace APIBack.Automation.Services
             };
         }
 
+        private async Task PersistFichaAtualAsync(
+            Guid idConversa,
+            ConversationFichaAtual? fichaSugeridaPorTools,
+            ConversationFichaAtual? fichaInformadaPelaIa)
+        {
+            if (!ConversationFichaAtualStore.HasMeaningfulData(fichaSugeridaPorTools) &&
+                !ConversationFichaAtualStore.HasMeaningfulData(fichaInformadaPelaIa))
+            {
+                return;
+            }
+
+            var contexto = await _conversationRepository.ObterContextoAsync(idConversa) ?? new ConversationContext();
+            var fichaPersistida = ConversationFichaAtualStore.Read(contexto);
+            var fichaFinal = ConversationFichaAtualStore.Merge(fichaPersistida, fichaSugeridaPorTools);
+            fichaFinal = ConversationFichaAtualStore.Merge(fichaFinal, fichaInformadaPelaIa);
+            ConversationFichaAtualStore.Write(contexto, fichaFinal);
+            await _conversationRepository.SalvarContextoAsync(idConversa, contexto);
+        }
+
+        private ConversationFichaAtual? TryExtractFichaAtual(string json)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(json);
+                if (doc.RootElement.TryGetProperty("ficha_atual_sugerida", out var fichaElement) &&
+                    fichaElement.ValueKind == JsonValueKind.Object)
+                {
+                    return JsonSerializer.Deserialize<ConversationFichaAtual>(fichaElement.GetRawText(), JsonOptions);
+                }
+            }
+            catch (JsonException ex)
+            {
+                _logger.LogDebug(ex, "Falha ao extrair ficha_atual_sugerida do retorno da tool");
+            }
+
+            return null;
+        }
+
         private sealed class IaActionResponse
         {
             public string? Acao { get; set; }
@@ -635,6 +763,8 @@ namespace APIBack.Automation.Services
             public DadosReservaPayload? DadosReserva { get; set; }
             public EscalacaoPayload? Escalacao { get; set; }
             public AssistantMedia? Media { get; set; }
+            [JsonPropertyName("ficha_atual")]
+            public ConversationFichaAtual? FichaAtual { get; set; }
         }
 
         private sealed class DadosReservaPayload
