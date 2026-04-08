@@ -154,6 +154,57 @@ namespace APIBack.Automation.Infra
             return Task.FromResult(_conversas.Values.Where(c => GroupId(c) == idConversaGrupo && c.IdEstabelecimento == idEstabelecimento && !c.EhRaizDoGrupo && IsOpen(c)).OrderByDescending(ConvDate).Select(c => c.IdConversa).FirstOrDefault());
         }
 
+        public Task<IReadOnlyList<Conversation>> ListarConversasAbertasPorTelefoneAsync(string telefoneE164)
+        {
+            if (string.IsNullOrWhiteSpace(telefoneE164))
+            {
+                return Task.FromResult<IReadOnlyList<Conversation>>(Array.Empty<Conversation>());
+            }
+
+            var abertas = _conversas.Values
+                .Where(c => IsOpen(c) && string.Equals(c.TelefoneCliente, telefoneE164, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(ConvDate)
+                .Select(Clone)
+                .ToList();
+
+            return Task.FromResult<IReadOnlyList<Conversation>>(abertas);
+        }
+
+        public Task<int> FecharConversasAbertasPorTelefoneAsync(string telefoneE164, int? idAgente, string? motivo, string? tipoFechamento = null, Guid? preservarConversaId = null)
+        {
+            if (string.IsNullOrWhiteSpace(telefoneE164))
+            {
+                return Task.FromResult(0);
+            }
+
+            var closeType = string.Equals(tipoFechamento, "inatividade", StringComparison.OrdinalIgnoreCase) ? "inatividade" : "manual";
+            var alvoEstado = closeType == "inatividade" ? EstadoConversa.FechadoAutomaticamente : EstadoConversa.FechadoAgente;
+            var alvoStatus = closeType == "inatividade" ? "encerrada_inatividade" : "encerrada_manual";
+            var atualizados = 0;
+
+            foreach (var conversa in _conversas.Values.Where(c =>
+                         IsOpen(c) &&
+                         string.Equals(c.TelefoneCliente, telefoneE164, StringComparison.OrdinalIgnoreCase) &&
+                         (!preservarConversaId.HasValue || c.IdConversa != preservarConversaId.Value)))
+            {
+                conversa.Estado = alvoEstado;
+                conversa.StatusAtendimento = alvoStatus;
+                conversa.MotivoFechamento = string.IsNullOrWhiteSpace(motivo) ? null : motivo.Trim();
+                conversa.FechadoPorId = idAgente;
+                conversa.DataFechamento = DateTime.UtcNow;
+                conversa.AtualizadoEm = DateTime.UtcNow;
+                atualizados++;
+            }
+
+            return Task.FromResult(atualizados);
+        }
+
+        public async Task<bool> ReiniciarConversaPorTelefoneAsync(string telefoneE164, Conversation novaConversa, int? idAgente, string? motivo, string? tipoFechamento = null)
+        {
+            await FecharConversasAbertasPorTelefoneAsync(telefoneE164, idAgente, motivo, tipoFechamento);
+            return await InserirOuAtualizarAsync(novaConversa);
+        }
+
         public Task AtualizarEstadoAsync(Guid idConversa, EstadoConversa novoEstado)
         {
             if (_conversas.TryGetValue(idConversa, out var conversa))

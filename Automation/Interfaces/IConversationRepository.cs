@@ -16,6 +16,9 @@ namespace APIBack.Automation.Interfaces
         Task<Guid> GarantirClienteAsync(string telefoneE164, Guid idEstabelecimento);
         Task<Guid> ObterIdConversaPorClienteAsync(Guid idCliente, Guid idEstabelecimento);
         Task<Guid> ObterIdConversaAbertaPorGrupoAsync(Guid idConversaGrupo, Guid idEstabelecimento);
+        Task<IReadOnlyList<Conversation>> ListarConversasAbertasPorTelefoneAsync(string telefoneE164);
+        Task<int> FecharConversasAbertasPorTelefoneAsync(string telefoneE164, int? idAgente, string? motivo, string? tipoFechamento = null, Guid? preservarConversaId = null);
+        Task<bool> ReiniciarConversaPorTelefoneAsync(string telefoneE164, Conversation novaConversa, int? idAgente, string? motivo, string? tipoFechamento = null);
         Task AtualizarEstadoAsync(Guid idConversa, EstadoConversa novoEstado);
         Task<IReadOnlyList<ConversationListItemDto>> ListarConversasAsync(string? estado, int? idAgente, bool incluirArquivadas, Guid? idEstabelecimento = null);
         Task<ConversationHistoryDto?> ObterHistoricoConversaAsync(Guid idConversa, int page, int pageSize, Guid? idEstabelecimento = null);
@@ -39,4 +42,3 @@ namespace APIBack.Automation.Interfaces
         Task LimparContextoGrupoCompletoAsync(Guid groupId);
     }
 }
-

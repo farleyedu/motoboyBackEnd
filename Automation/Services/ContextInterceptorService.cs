@@ -86,14 +86,14 @@ namespace APIBack.Automation.Services
                 .ToList();
         }
 
-        private async Task<(bool Intercepted, AssistantDecision? Decision)> TryHandleCentralRoutingAsync(
+        private async Task<(bool Intercepted, AssistantDecision? Decision, Guid? TargetConversationId)> TryHandleCentralRoutingAsync(
             Guid idConversa,
             string mensagemTexto,
             string? phoneNumberDisplay)
         {
             if (!_centralRouting.IsCentralDisplayPhone(phoneNumberDisplay))
             {
-                return (false, null);
+                return (false, null, null);
             }
 
             _logger.LogInformation("[Conversa={Conversa}] Numero central detectado", idConversa);
@@ -128,10 +128,10 @@ namespace APIBack.Automation.Services
                     selecao.EstabelecimentoId);
             }
 
-            return (false, null);
+            return (false, null, null);
         }
 
-        private async Task<(bool Intercepted, AssistantDecision? Decision)> ReenviarMenuCentralAsync(
+        private async Task<(bool Intercepted, AssistantDecision? Decision, Guid? TargetConversationId)> ReenviarMenuCentralAsync(
             Guid idConversa,
             bool reiniciado)
         {
@@ -143,10 +143,10 @@ namespace APIBack.Automation.Services
                 "[Conversa={Conversa}] Menu central enviado com {Count} opcoes",
                 idConversa,
                 estabelecimentos.Count);
-            return (true, new AssistantDecision(mensagem, "none", null, false, null, null));
+            return (true, new AssistantDecision(mensagem, "none", null, false, null, null), idConversa);
         }
 
-        private async Task<(bool Intercepted, AssistantDecision? Decision)> ProcessarEscolhaEstabelecimentoAsync(
+        private async Task<(bool Intercepted, AssistantDecision? Decision, Guid? TargetConversationId)> ProcessarEscolhaEstabelecimentoAsync(
             Guid idConversa,
             string mensagemTexto)
         {
@@ -156,7 +156,7 @@ namespace APIBack.Automation.Services
                 var indisponivel = _centralRouting.BuildSelectionMenuMessage(estabelecimentos, false);
                 await _centralRouting.SalvarMenuEscolhaAsync(idConversa, estabelecimentos);
                 await SalvarMensagemRespostaAsync(idConversa, indisponivel);
-                return (true, new AssistantDecision(indisponivel, "none", null, false, null, null));
+                return (true, new AssistantDecision(indisponivel, "none", null, false, null, null), idConversa);
             }
 
             var escolhido = _centralRouting.TryResolveEscolha(mensagemTexto, estabelecimentos, out var ambiguaPorNome);
@@ -165,7 +165,7 @@ namespace APIBack.Automation.Services
                 var respostaInvalida = _centralRouting.BuildSelectionInvalidMessage(estabelecimentos, ambiguaPorNome);
                 await _centralRouting.SalvarMenuEscolhaAsync(idConversa, estabelecimentos);
                 await SalvarMensagemRespostaAsync(idConversa, respostaInvalida);
-                return (true, new AssistantDecision(respostaInvalida, "none", null, false, null, null));
+                return (true, new AssistantDecision(respostaInvalida, "none", null, false, null, null), idConversa);
             }
 
             var idConversaAtiva = await _centralRouting.SalvarEstabelecimentoSelecionadoAsync(idConversa, escolhido);
@@ -178,7 +178,7 @@ namespace APIBack.Automation.Services
                     "[Conversa={Conversa}] Estabelecimento garagem escolhido no contexto: {Estabelecimento}",
                     idConversaAtiva,
                     escolhido.Id);
-                return (true, decisaoGaragem);
+                return (true, decisaoGaragem, idConversaAtiva);
             }
 
             var decisaoNautica = await _nauticaFlow.TryStartAfterCentralSelectionAsync(idConversaAtiva);
@@ -189,7 +189,7 @@ namespace APIBack.Automation.Services
                     "[Conversa={Conversa}] Estabelecimento nautica escolhido no contexto: {Estabelecimento}",
                     idConversaAtiva,
                     escolhido.Id);
-                return (true, decisaoNautica);
+                return (true, decisaoNautica, idConversaAtiva);
             }
 
             var resposta = $"Perfeito. Vou continuar seu atendimento com {escolhido.Nome}.";
@@ -198,7 +198,7 @@ namespace APIBack.Automation.Services
                 "[Conversa={Conversa}] Estabelecimento escolhido no contexto: {Estabelecimento}",
                 idConversaAtiva,
                 escolhido.Id);
-            return (true, new AssistantDecision(resposta, "none", null, false, null, null));
+            return (true, new AssistantDecision(resposta, "none", null, false, null, null), idConversaAtiva);
         }
 
         public async Task<(bool Intercepted, AssistantDecision? Decision, Guid? TargetConversationId)> TryHandleResetAsync(
@@ -219,7 +219,7 @@ namespace APIBack.Automation.Services
         /// Verifica se há contexto ativo e intercepta a mensagem se necessário
         /// </summary>
         /// <returns>True se a mensagem foi interceptada e processada, False se deve seguir para IA</returns>
-        public async Task<(bool Intercepted, AssistantDecision? Decision)> TryInterceptAsync(
+        public async Task<(bool Intercepted, AssistantDecision? Decision, Guid? TargetConversationId)> TryInterceptAsync(
             Guid idConversa,
             string mensagemTexto,
             DateTime? timestampMensagemUtc = null,
@@ -231,7 +231,7 @@ namespace APIBack.Automation.Services
                 phoneNumberDisplay);
             if (resetIntercepted)
             {
-                return (true, resetDecision);
+                return (true, resetDecision, null);
             }
 
             DateTime baseReferencia;
@@ -252,13 +252,13 @@ namespace APIBack.Automation.Services
                     baseReferencia);
             }
 
-            var (centralIntercepted, centralDecision) = await TryHandleCentralRoutingAsync(
+            var (centralIntercepted, centralDecision, centralTargetConversationId) = await TryHandleCentralRoutingAsync(
                 idConversa,
                 mensagemTexto,
                 phoneNumberDisplay);
             if (centralIntercepted)
             {
-                return (true, centralDecision);
+                return (true, centralDecision, centralTargetConversationId);
             }
 
             var (garageIntercepted, garageDecision) = await _garageFlow.TryHandleAsync(
@@ -267,7 +267,7 @@ namespace APIBack.Automation.Services
                 phoneNumberDisplay);
             if (garageIntercepted)
             {
-                return (true, garageDecision);
+                return (true, garageDecision, null);
             }
 
             var (nauticaIntercepted, nauticaDecision) = await _nauticaFlow.TryHandleAsync(
@@ -276,7 +276,7 @@ namespace APIBack.Automation.Services
                 phoneNumberDisplay);
             if (nauticaIntercepted)
             {
-                return (true, nauticaDecision);
+                return (true, nauticaDecision, null);
             }
 
             // Oficina segue pela IA como dona principal da conversa.
@@ -309,7 +309,7 @@ namespace APIBack.Automation.Services
                 var reply = respostaObj?["reply"]?.ToString() ?? "Reserva processada.";
 
                 await SalvarMensagemRespostaAsync(idConversa, reply);
-                return (true, new AssistantDecision(reply, "cancelar_reserva", null, false, null, null));
+                return (true, new AssistantDecision(reply, "cancelar_reserva", null, false, null, null), null);
             }
 
             // 2) Detectar "alterar/mudar a reserva 1035"
@@ -333,7 +333,7 @@ namespace APIBack.Automation.Services
                 var reply = respostaObj?["reply"]?.ToString() ?? "Reserva processada.";
 
                 await SalvarMensagemRespostaAsync(idConversa, reply);
-                return (true, new AssistantDecision(reply, "atualizar_reserva", null, false, null, null));
+                return (true, new AssistantDecision(reply, "atualizar_reserva", null, false, null, null), null);
             }
             // ═══════ FIM INTERCEPTADOR DIRETO ═══════
 
@@ -429,7 +429,7 @@ namespace APIBack.Automation.Services
 
                         await _conversationRepository.SalvarContextoAsync(idConversa, contextoPreservado);
 
-                        return (false, null);
+                        return (false, null, null);
                     }
                 }
             }
@@ -506,7 +506,7 @@ namespace APIBack.Automation.Services
 
                     await SalvarMensagemRespostaAsync(idConversa, mensagemRetorno);
 
-                    return (true, new AssistantDecision(mensagemRetorno, "none", null, false, null, null));
+                    return (true, new AssistantDecision(mensagemRetorno, "none", null, false, null, null), null);
                 }
             }
             // ═══════ FIM INTERCEPTADOR VOLTAR ═══════
@@ -528,7 +528,7 @@ namespace APIBack.Automation.Services
                     var escopo = await _centralRouting.ResolveEffectiveScopeAsync(idConversa, conversa);
                     if (escopo == null || escopo.IdCliente == Guid.Empty || escopo.IdEstabelecimento == Guid.Empty)
                     {
-                        return (false, null);
+                        return (false, null, null);
                     }
 
                     var reservasAtivas = await ObterReservasAtivasAsync(escopo.IdCliente, escopo.IdEstabelecimento, baseReferencia);
@@ -582,7 +582,7 @@ namespace APIBack.Automation.Services
                             });
 
                             await SalvarMensagemRespostaAsync(idConversa, reply);
-                            return (true, new AssistantDecision(reply, "none", null, false, null, null));
+                            return (true, new AssistantDecision(reply, "none", null, false, null, null), null);
                         }
                         else
                         {
@@ -618,7 +618,7 @@ namespace APIBack.Automation.Services
 
                             var reply = msg.ToString();
                             await SalvarMensagemRespostaAsync(idConversa, reply);
-                            return (true, new AssistantDecision(reply, "none", null, false, null, null));
+                            return (true, new AssistantDecision(reply, "none", null, false, null, null), null);
                         }
                     }
 
@@ -634,7 +634,7 @@ namespace APIBack.Automation.Services
                         var (ok, dec) = await ProcessarAlteracaoDiretaAsync(idConversa, mensagemTexto, baseReferencia);
                         if (ok)
                         {
-                            return (true, dec);
+                            return (true, dec, null);
                         }
                         else
                         {
@@ -664,7 +664,7 @@ namespace APIBack.Automation.Services
                 {
                     _logger.LogDebug("[Conversa={Conversa}] Nenhum contexto ativo encontrado", idConversa);
                 }
-                return (false, null);
+                return (false, null, null);
             }
 
             // ? NOVO: Log do contexto encontrado
@@ -692,7 +692,7 @@ namespace APIBack.Automation.Services
                         idConversa,
                         tempoRestante.TotalMinutes);
                     await _conversationRepository.LimparContextoAsync(idConversa);
-                    return (false, null);
+                    return (false, null, null);
                 }
             }
             // ===== FIM BUG 1 FIX =====
@@ -706,7 +706,7 @@ namespace APIBack.Automation.Services
                         idConversa);
 
                     var (interceptado, decisao) = await ProcessarEscolhaAcaoAsync(idConversa, mensagemTexto, contexto);
-                    return (interceptado, decisao);
+                    return (interceptado, decisao, null);
                 }
 
                 case "aguardando_escolha_reserva":
@@ -722,7 +722,7 @@ namespace APIBack.Automation.Services
                             "[Conversa={Conversa}] DadosColetados não tem lista de IDs - limpando contexto",
                             idConversa);
                         await _conversationRepository.LimparContextoAsync(idConversa);
-                        return (false, null);
+                        return (false, null, null);
                     }
 
                     List<long>? reservasIds = null;
@@ -774,7 +774,7 @@ namespace APIBack.Automation.Services
                             "[Conversa={Conversa}] reservas_ids vazio - limpando contexto",
                             idConversa);
                         await _conversationRepository.LimparContextoAsync(idConversa);
-                        return (false, null);
+                        return (false, null, null);
                     }
 
                     var reservasDoContexto = new List<Reserva>();
@@ -793,7 +793,7 @@ namespace APIBack.Automation.Services
                             "[Conversa={Conversa}] Nenhuma reserva encontrada para IDs armazenados - limpando contexto",
                             idConversa);
                         await _conversationRepository.LimparContextoAsync(idConversa);
-                        return (false, null);
+                        return (false, null, null);
                     }
 
                     var (encontrou, reservaSelecionada) = await ProcessarEscolhaReservaAsync(
@@ -803,7 +803,7 @@ namespace APIBack.Automation.Services
 
                     if (!encontrou || reservaSelecionada == null)
                     {
-                        return (true, null);
+                        return (true, null, null);
                     }
 
                     _logger.LogInformation(
@@ -853,19 +853,25 @@ namespace APIBack.Automation.Services
                     var resposta = msg.ToString();
                     await SalvarMensagemRespostaAsync(idConversa, resposta);
 
-                    return (true, new AssistantDecision(resposta, "none", null, false, null, null));
+                    return (true, new AssistantDecision(resposta, "none", null, false, null, null), null);
                 }
 
                 case "aguardando_dados_alteracao":
-                    return await ProcessarDadosAlteracaoAsync(idConversa, mensagemTexto, contexto);
+                {
+                    var (interceptado, decisao) = await ProcessarDadosAlteracaoAsync(idConversa, mensagemTexto, contexto);
+                    return (interceptado, decisao, null);
+                }
 
                 case "aguardando_confirmacao_alteracao":
-                    return await ProcessarConfirmacaoAlteracaoAsync(idConversa, mensagemTexto, contexto);
+                {
+                    var (interceptado, decisao) = await ProcessarConfirmacaoAlteracaoAsync(idConversa, mensagemTexto, contexto);
+                    return (interceptado, decisao, null);
+                }
 
                 default:
                     _logger.LogWarning("[Conversa={Conversa}] Estado de contexto desconhecido: {Estado}",
                         idConversa, contexto.Estado);
-                    return (false, null);
+                    return (false, null, null);
             }
         }
         /// <summary>

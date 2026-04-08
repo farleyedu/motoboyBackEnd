@@ -567,6 +567,7 @@ namespace APIBack.Automation.Services
             var conversaGrupoId = ObterConversaGrupoId(conversaAtual);
             if (idEstabelecimentoDestino == conversaAtual.IdEstabelecimento && !conversaAtual.EhRaizDoGrupo)
             {
+                await GarantirConversaUnicaPorTelefoneAsync(telefoneCliente, conversaAtual.IdConversa);
                 return conversaAtual;
             }
 
@@ -605,6 +606,7 @@ namespace APIBack.Automation.Services
                 var conversaAberta = await _conversationRepository.ObterPorIdAsync(conversaAbertaId);
                 if (conversaAberta != null)
                 {
+                    await GarantirConversaUnicaPorTelefoneAsync(telefoneCliente, conversaAberta.IdConversa);
                     return conversaAberta;
                 }
             }
@@ -624,7 +626,23 @@ namespace APIBack.Automation.Services
             };
 
             await _conversationRepository.InserirOuAtualizarAsync(novaConversa);
+            await GarantirConversaUnicaPorTelefoneAsync(telefoneCliente, novaConversa.IdConversa);
             return novaConversa;
+        }
+
+        private async Task GarantirConversaUnicaPorTelefoneAsync(string? telefoneCliente, Guid idConversaPreservada)
+        {
+            if (string.IsNullOrWhiteSpace(telefoneCliente))
+            {
+                return;
+            }
+
+            await _conversationRepository.FecharConversasAbertasPorTelefoneAsync(
+                telefoneCliente,
+                idAgente: null,
+                motivo: "Reconciliacao de conversa unica por telefone",
+                tipoFechamento: "manual",
+                preservarConversaId: idConversaPreservada);
         }
 
         private async Task<string?> GarantirTelefoneClienteAsync(Conversation conversaAtual, Conversation? conversaRaiz = null)

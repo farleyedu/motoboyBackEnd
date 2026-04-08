@@ -86,7 +86,7 @@ namespace APIBack.Automation.Services
                         continue;
                     }
 
-                    var (intercepted, interceptedDecision) = await contextInterceptor.TryInterceptAsync(
+                    var (intercepted, interceptedDecision, targetConversationId) = await contextInterceptor.TryInterceptAsync(
                         idConversa,
                         processamento.TextoUsuario,
                         envelope.Input.DataMensagemUtc,
@@ -94,6 +94,15 @@ namespace APIBack.Automation.Services
 
                     if (intercepted && interceptedDecision != null)
                     {
+                        if (targetConversationId.HasValue && targetConversationId.Value != Guid.Empty)
+                        {
+                            idConversa = targetConversationId.Value;
+                            processamento = processamento with
+                            {
+                                IdConversa = targetConversationId.Value
+                            };
+                        }
+
                         _logger.LogInformation("[Conversa={Conversa}] Mensagem interceptada por contexto ativo", idConversa);
                         await iaResponseHandler.HandleAsync(interceptedDecision, processamento);
                         continue;

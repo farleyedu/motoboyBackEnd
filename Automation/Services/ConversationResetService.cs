@@ -11,6 +11,7 @@ namespace APIBack.Automation.Services
     public class ConversationResetService
     {
         private const string HardResetReason = "Reset por comando do cliente (*3275)";
+        private const string ManualCloseCleanupReason = "Fechamento manual da conversa";
         private readonly IConversationRepository _conversationRepository;
         private readonly IClienteRepository _clienteRepository;
         private readonly IEstabelecimentoRepository _estabelecimentoRepository;
@@ -123,6 +124,14 @@ namespace APIBack.Automation.Services
 
             var conversaOperacional = await ResolverConversaOperacionalAsync(atual, segmentoAtivoId);
             var telefoneCliente = await ResolverTelefoneClienteAsync(conversaOperacional, atual);
+            var conversasAbertasMesmoTelefone = !string.IsNullOrWhiteSpace(telefoneCliente)
+                ? await _conversationRepository.ListarConversasAbertasPorTelefoneAsync(telefoneCliente!)
+                : Array.Empty<Conversation>();
+            var gruposParaLimpar = conversasAbertasMesmoTelefone
+                .Select(ObterRootConversationId)
+                .Append(rootConversationId)
+                .Distinct()
+                .ToList();
             if (!string.IsNullOrWhiteSpace(telefoneCliente))
             {
                 await CancelarLeadAbertoAsync(conversaOperacional.IdEstabelecimento, telefoneCliente!);
@@ -138,9 +147,30 @@ namespace APIBack.Automation.Services
                 await _servicoAtendimentoRepository.AtualizarStatusAsync(atendimentoServico.Id, "cancelado");
             }
 
-            await _conversationRepository.LimparContextoGrupoCompletoAsync(rootConversationId);
+            foreach (var groupId in gruposParaLimpar)
+            {
+                await _conversationRepository.LimparContextoGrupoCompletoAsync(groupId);
+            }
+
             if (!criarNovaConversa)
             {
+                if (!string.IsNullOrWhiteSpace(telefoneCliente))
+                {
+                    await _conversationRepository.FecharConversasAbertasPorTelefoneAsync(
+                        telefoneCliente!,
+                        idAgente: null,
+                        motivo: ManualCloseCleanupReason,
+                        tipoFechamento: "manual");
+                }
+                else
+                {
+                    await _conversationRepository.FecharGrupoConversaAsync(
+                        rootConversationId,
+                        idAgente: null,
+                        motivo: ManualCloseCleanupReason,
+                        tipoFechamento: "manual");
+                }
+
                 _logger.LogInformation(
                     "[Conversa={Conversa}] Limpeza de contexto aplicada apos fechamento manual. RootAntiga={RootAntiga} OperacionalAntiga={OperacionalAntiga}",
                     idConversa,
@@ -150,17 +180,30 @@ namespace APIBack.Automation.Services
                 return new ResetContext(conversaOperacional.IdConversa, rootConversationId, Guid.Empty);
             }
 
-            await _conversationRepository.FecharGrupoConversaAsync(
-                rootConversationId,
-                idAgente: null,
-                motivo: HardResetReason,
-                tipoFechamento: "manual");
-
             var novaConversa = await CriarNovaConversaAsync(
                 conversaRaiz,
                 conversaOperacional,
                 telefoneCliente,
                 ehNumeroCentral);
+
+            if (!string.IsNullOrWhiteSpace(telefoneCliente))
+            {
+                await _conversationRepository.ReiniciarConversaPorTelefoneAsync(
+                    telefoneCliente!,
+                    novaConversa,
+                    idAgente: null,
+                    motivo: HardResetReason,
+                    tipoFechamento: "manual");
+            }
+            else
+            {
+                await _conversationRepository.FecharGrupoConversaAsync(
+                    rootConversationId,
+                    idAgente: null,
+                    motivo: HardResetReason,
+                    tipoFechamento: "manual");
+                await _conversationRepository.InserirOuAtualizarAsync(novaConversa);
+            }
 
             _logger.LogInformation(
                 "[Conversa={Conversa}] Hard reset aplicado. RootAntiga={RootAntiga} OperacionalAntiga={OperacionalAntiga} NovaConversa={NovaConversa}",
@@ -269,7 +312,6 @@ namespace APIBack.Automation.Services
                 AtualizadoEm = agora
             };
 
-            await _conversationRepository.InserirOuAtualizarAsync(novaConversa);
             return novaConversa;
         }
 

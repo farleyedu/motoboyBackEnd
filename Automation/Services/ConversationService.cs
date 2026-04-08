@@ -178,79 +178,102 @@ namespace APIBack.Automation.Services
             Guid idConversaGrupo;
             Guid idEstabelecimentoEfetivo;
             Conversation? existente;
+            var conversaAbertaPorTelefone = await ResolverConversaAbertaPorTelefoneAsync(
+                telefoneE164,
+                idEstabelecimento.Value,
+                EhNumeroCentral(idEstabelecimento.Value));
 
             if (EhNumeroCentral(idEstabelecimento.Value))
             {
-                var idClienteCentral = await _repositorioClientes.GarantirClienteAsync(telefoneE164, idEstabelecimento.Value);
-                var idConversaRaiz = await _repositorio.ObterIdConversaPorClienteAsync(idClienteCentral, idEstabelecimento.Value);
-                var conversaRaiz = idConversaRaiz == Guid.Empty
-                    ? null
-                    : await _repositorio.ObterPorIdAsync(idConversaRaiz);
-
-                if (conversaRaiz == null)
+                if (conversaAbertaPorTelefone != null && !conversaAbertaPorTelefone.EhRaizDoGrupo)
                 {
-                    idConversaRaiz = Guid.NewGuid();
-                    conversaRaiz = new Conversation
-                    {
-                        IdConversa = idConversaRaiz,
-                        IdConversaGrupo = idConversaRaiz,
-                        IdEstabelecimento = idEstabelecimento.Value,
-                        IdCliente = idClienteCentral,
-                        IdWa = idWa,
-                        TelefoneCliente = telefoneE164,
-                        Modo = ModoConversa.Bot,
-                        CriadoEm = DateTime.UtcNow,
-                        AtualizadoEm = DateTime.UtcNow,
-                        MessageIdWhatsapp = idMensagemWa
-                    };
-
-                    await _repositorio.InserirOuAtualizarAsync(conversaRaiz);
+                    idCliente = conversaAbertaPorTelefone.IdCliente;
+                    idConversa = conversaAbertaPorTelefone.IdConversa;
+                    idConversaGrupo = conversaAbertaPorTelefone.IdConversaGrupo == Guid.Empty
+                        ? conversaAbertaPorTelefone.IdConversa
+                        : conversaAbertaPorTelefone.IdConversaGrupo;
+                    idEstabelecimentoEfetivo = conversaAbertaPorTelefone.IdEstabelecimento;
+                    existente = conversaAbertaPorTelefone;
                 }
-
-                var snapshot = await _centralRouting.ObterSelecaoAtualAsync(idConversaRaiz);
-                var idConversaEfetiva = idConversaRaiz;
-                var conversaEfetiva = conversaRaiz;
-                var idEstabelecimentoSelecionado = idEstabelecimento.Value;
-                var idClienteSelecionado = idClienteCentral;
-
-                if (snapshot.HasSelection)
+                else
                 {
-                    var idSegmentoAtivo = await _centralRouting.GarantirSegmentoAtivoAsync(idConversaRaiz, telefoneE164);
-                    if (idSegmentoAtivo.HasValue && idSegmentoAtivo.Value != Guid.Empty)
+                    var idClienteCentral = await _repositorioClientes.GarantirClienteAsync(telefoneE164, idEstabelecimento.Value);
+                    var conversaRaiz = conversaAbertaPorTelefone;
+
+                    if (conversaRaiz == null)
                     {
-                        idConversaEfetiva = idSegmentoAtivo.Value;
-                        conversaEfetiva = await _repositorio.ObterPorIdAsync(idConversaEfetiva);
-                        if (conversaEfetiva != null)
+                        var novaConversaRaizId = Guid.NewGuid();
+                        conversaRaiz = new Conversation
                         {
-                            idEstabelecimentoSelecionado = conversaEfetiva.IdEstabelecimento;
-                            idClienteSelecionado = conversaEfetiva.IdCliente;
-                        }
-                        else if (snapshot.EstabelecimentoId.HasValue)
+                            IdConversa = novaConversaRaizId,
+                            IdConversaGrupo = novaConversaRaizId,
+                            IdEstabelecimento = idEstabelecimento.Value,
+                            IdCliente = idClienteCentral,
+                            IdWa = idWa,
+                            TelefoneCliente = telefoneE164,
+                            Modo = ModoConversa.Bot,
+                            CriadoEm = DateTime.UtcNow,
+                            AtualizadoEm = DateTime.UtcNow,
+                            MessageIdWhatsapp = idMensagemWa
+                        };
+
+                        await _repositorio.InserirOuAtualizarAsync(conversaRaiz);
+                    }
+
+                    var idConversaRaiz = conversaRaiz.IdConversa;
+                    var snapshot = await _centralRouting.ObterSelecaoAtualAsync(idConversaRaiz);
+                    var idConversaEfetiva = idConversaRaiz;
+                    var conversaEfetiva = conversaRaiz;
+                    var idEstabelecimentoSelecionado = idEstabelecimento.Value;
+                    var idClienteSelecionado = idClienteCentral;
+
+                    if (snapshot.HasSelection)
+                    {
+                        var idSegmentoAtivo = await _centralRouting.GarantirSegmentoAtivoAsync(idConversaRaiz, telefoneE164);
+                        if (idSegmentoAtivo.HasValue && idSegmentoAtivo.Value != Guid.Empty)
                         {
-                            idEstabelecimentoSelecionado = snapshot.EstabelecimentoId.Value;
-                            idClienteSelecionado = await _repositorioClientes.GarantirClienteAsync(telefoneE164, idEstabelecimentoSelecionado);
+                            idConversaEfetiva = idSegmentoAtivo.Value;
+                            conversaEfetiva = await _repositorio.ObterPorIdAsync(idConversaEfetiva);
+                            if (conversaEfetiva != null)
+                            {
+                                idEstabelecimentoSelecionado = conversaEfetiva.IdEstabelecimento;
+                                idClienteSelecionado = conversaEfetiva.IdCliente;
+                            }
+                            else if (snapshot.EstabelecimentoId.HasValue)
+                            {
+                                idEstabelecimentoSelecionado = snapshot.EstabelecimentoId.Value;
+                                idClienteSelecionado = await _repositorioClientes.GarantirClienteAsync(telefoneE164, idEstabelecimentoSelecionado);
+                            }
                         }
                     }
-                }
 
-                idCliente = idClienteSelecionado;
-                idConversa = idConversaEfetiva;
-                idConversaGrupo = conversaRaiz.IdConversaGrupo == Guid.Empty ? conversaRaiz.IdConversa : conversaRaiz.IdConversaGrupo;
-                idEstabelecimentoEfetivo = idEstabelecimentoSelecionado;
-                existente = conversaEfetiva;
+                    idCliente = idClienteSelecionado;
+                    idConversa = idConversaEfetiva;
+                    idConversaGrupo = conversaRaiz.IdConversaGrupo == Guid.Empty ? conversaRaiz.IdConversa : conversaRaiz.IdConversaGrupo;
+                    idEstabelecimentoEfetivo = idEstabelecimentoSelecionado;
+                    existente = conversaEfetiva;
+                }
             }
             else
             {
-                idCliente = await _repositorioClientes.GarantirClienteAsync(telefoneE164, idEstabelecimento.Value);
-                idConversa = await _repositorio.ObterIdConversaPorClienteAsync(idCliente, idEstabelecimento.Value);
-                if (idConversa == Guid.Empty)
+                if (conversaAbertaPorTelefone != null)
                 {
-                    idConversa = Guid.NewGuid();
+                    idCliente = conversaAbertaPorTelefone.IdCliente;
+                    idConversa = conversaAbertaPorTelefone.IdConversa;
+                    idConversaGrupo = conversaAbertaPorTelefone.IdConversaGrupo == Guid.Empty
+                        ? conversaAbertaPorTelefone.IdConversa
+                        : conversaAbertaPorTelefone.IdConversaGrupo;
+                    idEstabelecimentoEfetivo = conversaAbertaPorTelefone.IdEstabelecimento;
+                    existente = conversaAbertaPorTelefone;
                 }
-
-                existente = await _repositorio.ObterPorIdAsync(idConversa);
-                idConversaGrupo = idConversa;
-                idEstabelecimentoEfetivo = idEstabelecimento.Value;
+                else
+                {
+                    idCliente = await _repositorioClientes.GarantirClienteAsync(telefoneE164, idEstabelecimento.Value);
+                    idConversa = Guid.NewGuid();
+                    existente = null;
+                    idConversaGrupo = idConversa;
+                    idEstabelecimentoEfetivo = idEstabelecimento.Value;
+                }
             }
 
             _waParaConversa[idWa] = idConversa; // cache auxiliar
@@ -431,11 +454,67 @@ namespace APIBack.Automation.Services
             fila.Enqueue(mensagem);
         }
 
+        private async Task<Conversation?> ResolverConversaAbertaPorTelefoneAsync(
+            string telefoneE164,
+            Guid idEstabelecimentoEntrada,
+            bool ehNumeroCentral)
+        {
+            if (string.IsNullOrWhiteSpace(telefoneE164))
+            {
+                return null;
+            }
+
+            var abertas = (await _repositorio.ListarConversasAbertasPorTelefoneAsync(telefoneE164)).ToList();
+            if (abertas.Count == 0)
+            {
+                return null;
+            }
+
+            Conversation? preservada;
+            if (ehNumeroCentral)
+            {
+                preservada = abertas
+                    .Where(c => c.IdEstabelecimento != idEstabelecimentoEntrada)
+                    .OrderByDescending(ConversationTimestamp)
+                    .FirstOrDefault()
+                    ?? abertas.OrderByDescending(ConversationTimestamp).FirstOrDefault();
+            }
+            else
+            {
+                preservada = abertas
+                    .Where(c => c.IdEstabelecimento == idEstabelecimentoEntrada)
+                    .OrderByDescending(ConversationTimestamp)
+                    .FirstOrDefault();
+            }
+
+            if (preservada == null)
+            {
+                await _repositorio.FecharConversasAbertasPorTelefoneAsync(
+                    telefoneE164,
+                    idAgente: null,
+                    motivo: "Troca de atendimento por telefone",
+                    tipoFechamento: "manual");
+                return null;
+            }
+
+            await _repositorio.FecharConversasAbertasPorTelefoneAsync(
+                telefoneE164,
+                idAgente: null,
+                motivo: "Reconciliacao de conversa unica por telefone",
+                tipoFechamento: "manual",
+                preservarConversaId: preservada.IdConversa);
+
+            return await _repositorio.ObterPorIdAsync(preservada.IdConversa) ?? preservada;
+        }
+
         private bool EhNumeroCentral(Guid idEstabelecimento)
         {
             return _centralRouting.CentralEstabelecimentoId.HasValue &&
                    _centralRouting.CentralEstabelecimentoId.Value == idEstabelecimento;
         }
+
+        private static DateTime ConversationTimestamp(Conversation conversa)
+            => conversa.AtualizadoEm ?? conversa.CriadoEm;
 
         private async Task<Guid?> ResolverEstabelecimentoAsync(string? displayPhoneNumber, string? phoneNumberId)
         {
