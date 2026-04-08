@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -182,23 +183,17 @@ namespace APIBack.Automation.Services
                 return string.Empty;
             }
 
-            var normalized = texto
-                .Trim()
-                .ToLowerInvariant()
-                .Replace("á", "a")
-                .Replace("à", "a")
-                .Replace("â", "a")
-                .Replace("ã", "a")
-                .Replace("é", "e")
-                .Replace("ê", "e")
-                .Replace("í", "i")
-                .Replace("ó", "o")
-                .Replace("ô", "o")
-                .Replace("õ", "o")
-                .Replace("ú", "u")
-                .Replace("ç", "c");
+            var formD = texto.Trim().ToLowerInvariant().Normalize(NormalizationForm.FormD);
+            var builder = new StringBuilder(formD.Length);
+            foreach (var ch in formD)
+            {
+                if (CharUnicodeInfo.GetUnicodeCategory(ch) != UnicodeCategory.NonSpacingMark)
+                {
+                    builder.Append(ch);
+                }
+            }
 
-            return Regex.Replace(normalized, @"\s+", " ").Trim();
+            return Regex.Replace(builder.ToString().Normalize(NormalizationForm.FormC), @"\s+", " ").Trim();
         }
 
         private static HashSet<string> Tokenize(string texto)

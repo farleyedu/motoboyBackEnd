@@ -340,8 +340,17 @@ namespace APIBack.Automation.Services
             builder.AppendLine("- se o catalogo nao tiver algum dado, deixe isso claro e ofereca continuidade com a equipe sem inventar");
             builder.AppendLine("- so ofereca seguir para agendamento quando servico, veiculo e marca aplicavel estiverem definidos");
             builder.AppendLine();
+            builder.AppendLine("Regras de atendimento para o modulo FAQ:");
+            builder.AppendLine("- se o cliente fizer uma pergunta objetiva de FAQ, use a tool consultar_faq");
+            builder.AppendLine("- FAQ pode interromper temporariamente qualquer outro assunto, inclusive servicos");
+            builder.AppendLine("- ao responder um FAQ no meio de outro atendimento, preserve a ficha_atual existente");
+            builder.AppendLine("- nao limpe servico, veiculo, pendencias ou pronto_para_agendamento so porque respondeu um FAQ");
+            builder.AppendLine("- responda de acordo com a resposta cadastrada no FAQ");
+            builder.AppendLine("- se havia uma pendencia antes do FAQ, voce pode retomar em uma unica frase curta no final");
+            builder.AppendLine("- se consultar_faq nao encontrar resposta forte, continue o atendimento normal sem inventar");
+            builder.AppendLine();
             builder.AppendLine("Regras de uso de tools:");
-            builder.AppendLine("- use as tools quando precisar consultar catalogo, disponibilidade ou registrar interesse");
+            builder.AppendLine("- use as tools quando precisar consultar catalogo, FAQ, disponibilidade ou registrar interesse");
             builder.AppendLine("- trate o resultado das tools como fonte de verdade");
             builder.AppendLine("- se uma tool retornar ficha_atual_sugerida, reflita isso na ficha_atual final da sua resposta");
             builder.AppendLine();
@@ -350,6 +359,7 @@ namespace APIBack.Automation.Services
             builder.AppendLine("- para respostas normais, prefira o formato:");
             builder.AppendLine("{\"acao\":\"responder\",\"reply\":\"...\",\"ficha_atual\":{\"nome_cliente\":\"...\",\"modulo_em_foco\":\"...\",\"servico\":\"...\",\"veiculo_marca\":\"...\",\"veiculo_modelo\":\"...\",\"marca_peca\":\"...\",\"pendencias\":[\"...\"],\"pronto_para_agendamento\":false}}");
             builder.AppendLine("- a ficha_atual e opcional, mas quando houver novos dados relevantes voce deve atualiza-la");
+            builder.AppendLine("- ao responder FAQ no meio de outro fluxo, normalmente preserve a ficha_atual atual sem trocar modulo_em_foco");
             builder.AppendLine("- mantenha compatibilidade com acoes especiais ja existentes, como confirmar_reserva e escalar_para_humano, quando fizer sentido");
             builder.AppendLine();
             builder.AppendLine("Ficha atual da conversa:");

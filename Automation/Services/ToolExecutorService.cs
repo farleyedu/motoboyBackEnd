@@ -66,6 +66,12 @@ namespace APIBack.Automation.Services
         public string? MarcaPeca { get; set; }
     }
 
+    public class ConsultarFaqArgs
+    {
+        public Guid IdConversa { get; set; }
+        public string Pergunta { get; set; } = string.Empty;
+    }
+
     public class RegistrarInteresseServicoArgs
     {
         public Guid IdConversa { get; set; }
@@ -92,6 +98,7 @@ namespace APIBack.Automation.Services
         private readonly IClienteRepository _clienteRepository;
         private readonly CentralRoutingService _centralRouting;
         private readonly ServicoCatalogProvider _catalogProvider;
+        private readonly FaqCatalogProvider _faqCatalogProvider;
         private readonly IServicoAtendimentoRepository _servicoAtendimentoRepository;
         private readonly IEstabelecimentoRepository _estabelecimentoRepository;
 
@@ -104,6 +111,7 @@ namespace APIBack.Automation.Services
             IClienteRepository clienteRepository,
             CentralRoutingService centralRouting,
             ServicoCatalogProvider catalogProvider,
+            FaqCatalogProvider faqCatalogProvider,
             IServicoAtendimentoRepository servicoAtendimentoRepository,
             IEstabelecimentoRepository estabelecimentoRepository)
         {
@@ -115,6 +123,7 @@ namespace APIBack.Automation.Services
             _clienteRepository = clienteRepository;
             _centralRouting = centralRouting;
             _catalogProvider = catalogProvider;
+            _faqCatalogProvider = faqCatalogProvider;
             _servicoAtendimentoRepository = servicoAtendimentoRepository;
             _estabelecimentoRepository = estabelecimentoRepository;
         }
@@ -231,6 +240,7 @@ PARÂMETROS IMPORTANTES:
 
             var modulos = await _estabelecimentoRepository.ObterModulosAtivosAsync(scope.IdEstabelecimento);
             var temServicos = modulos.Any(m => string.Equals(m, "Servicos", StringComparison.OrdinalIgnoreCase));
+            var temFaq = modulos.Any(m => string.Equals(m, "FAQ", StringComparison.OrdinalIgnoreCase));
             var temReserva = modulos.Any(m =>
                 string.Equals(m, "Reserva", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(m, "Agendamentos", StringComparison.OrdinalIgnoreCase));
@@ -239,6 +249,9 @@ PARÂMETROS IMPORTANTES:
 
             if (temServicos)
                 tools.AddRange(BuildServicosTools(idConversa.ToString()));
+
+            if (temFaq)
+                tools.AddRange(BuildFaqTools(idConversa.ToString()));
 
             if (temReserva)
                 tools.AddRange(GetDeclaredTools(idConversa));
@@ -435,6 +448,12 @@ SEMPRE colete antes: nome do cliente, nome do serviço, veículo (se o serviço 
                         if (consultarSvArgs == null)
                             return BuildJsonReply("Argumentos inválidos.");
                         return await HandleConsultarServico(consultarSvArgs);
+
+                    case "consultar_faq":
+                        var consultarFaqArgs = JsonSerializer.Deserialize<ConsultarFaqArgs>(argsJson, JsonOptions);
+                        if (consultarFaqArgs == null)
+                            return BuildJsonReply("Argumentos inválidos.");
+                        return await HandleConsultarFaq(consultarFaqArgs);
 
                     case "registrar_interesse_servico":
                         var registrarSvArgs = JsonSerializer.Deserialize<RegistrarInteresseServicoArgs>(argsJson, JsonOptions);
@@ -1108,6 +1127,7 @@ SEMPRE colete antes: nome do cliente, nome do serviço, veículo (se o serviço 
 
             var modulos = await _estabelecimentoRepository.ObterModulosAtivosAsync(scope.IdEstabelecimento);
             var temServicos = modulos.Any(m => string.Equals(m, "Servicos", StringComparison.OrdinalIgnoreCase));
+            var temFaq = modulos.Any(m => string.Equals(m, "FAQ", StringComparison.OrdinalIgnoreCase));
             var temAgendamento = modulos.Any(m =>
                 string.Equals(m, "Reserva", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(m, "Agendamentos", StringComparison.OrdinalIgnoreCase));
@@ -1171,6 +1191,29 @@ SEMPRE colete antes: nome do cliente, nome do serviço, veículo (se o serviço 
                                 },
                                 required = new[] { "idConversa", "nomeCliente", "nomeServico" }
                             }
+                        }
+                    }
+                });
+            }
+
+            if (temFaq)
+            {
+                tools.Add(new
+                {
+                    type = "function",
+                    function = new
+                    {
+                        name = "consultar_faq",
+                        description = "Consulta a resposta cadastrada no FAQ do estabelecimento. Use quando o cliente fizer uma pergunta objetiva, inclusive no meio de outro fluxo.",
+                        parameters = new
+                        {
+                            type = "object",
+                            properties = new
+                            {
+                                idConversa = new { type = "string", description = "ID único da conversa atual", @enum = new[] { idConversaString } },
+                                pergunta = new { type = "string", description = "Pergunta do cliente em linguagem natural" }
+                            },
+                            required = new[] { "idConversa", "pergunta" }
                         }
                     }
                 });
@@ -1273,6 +1316,32 @@ SEMPRE colete antes: nome do cliente, nome do serviço, veículo (se o serviço 
 
             return tools.ToArray();
         }
+
+        private static object[] BuildFaqTools(string idConversaString) => new object[]
+        {
+            new {
+                type = "function",
+                name = "consultar_faq",
+                description = @"Consulta o FAQ cadastrado do estabelecimento.
+
+QUANDO USAR:
+- Cliente fizer uma pergunta objetiva sobre funcionamento, regras, endereço, políticas ou dúvidas frequentes
+- Cliente interromper outro fluxo com uma pergunta pontual
+
+IMPORTANTE:
+- Use este tool para buscar a resposta cadastrada do FAQ
+- Responda com base no conteúdo retornado
+- Preserve o contexto atual da conversa; FAQ é uma consulta temporária, não um reinício do atendimento.",
+                parameters = new {
+                    type = "object",
+                    properties = new {
+                        idConversa = new { type = "string", description = "ID único da conversa atual", @enum = new[] { idConversaString } },
+                        pergunta = new { type = "string", description = "Pergunta do cliente em linguagem natural" }
+                    },
+                    required = new[] { "idConversa", "pergunta" }
+                }
+            }
+        };
 
         private async Task<string> HandleEscalarParaHumano(EscalarParaHumanoArgs args)
         {
@@ -1591,6 +1660,52 @@ SEMPRE colete antes: nome do cliente, nome do serviço, veículo (se o serviço 
                     valor_maximo_centavos = valorMaximoCentavos
                 },
                 fichaAtualSugerida: fichaBase);
+        }
+
+        private async Task<string> HandleConsultarFaq(ConsultarFaqArgs args)
+        {
+            var scope = await _centralRouting.ResolveEffectiveScopeAsync(args.IdConversa);
+            if (scope == null)
+            {
+                return BuildToolDataReply("consultar_faq", "error", "Não consegui identificar o estabelecimento.");
+            }
+
+            var pergunta = args.Pergunta?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(pergunta))
+            {
+                return BuildToolDataReply("consultar_faq", "invalid", "Preciso da pergunta do cliente para consultar o FAQ.");
+            }
+
+            var match = await _faqCatalogProvider.MatchStrongAsync(scope.IdEstabelecimento, pergunta);
+            if (match == null)
+            {
+                return BuildToolDataReply(
+                    "consultar_faq",
+                    "not_found",
+                    "Não encontrei uma resposta forte no FAQ para essa pergunta.",
+                    data: new
+                    {
+                        pergunta
+                    });
+            }
+
+            return BuildToolDataReply(
+                "consultar_faq",
+                "ok",
+                match.Item.Resposta.Trim(),
+                data: new
+                {
+                    faq = new
+                    {
+                        match.Item.Id,
+                        pergunta = match.Item.Pergunta,
+                        resposta = match.Item.Resposta,
+                        categoria = match.Item.Categoria,
+                        palavras_chave = match.Item.PalavrasChave
+                    },
+                    match_score = match.Score,
+                    contexto_preservado = true
+                });
         }
 
         private async Task<string> HandleRegistrarInteresseServico(RegistrarInteresseServicoArgs args)
