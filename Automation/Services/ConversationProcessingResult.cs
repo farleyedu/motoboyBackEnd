@@ -15,7 +15,8 @@ namespace APIBack.Automation.Services
         HandoverContextDto HandoverDetalhes,
         string TextoUsuario,
         string? NumeroTelefoneExibicao,
-        string? NumeroWhatsappId
+        string? NumeroWhatsappId,
+        string? AvisoRespostaInicial = null
     );
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================

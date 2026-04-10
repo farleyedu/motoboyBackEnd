@@ -86,6 +86,8 @@ builder.Services.AddHttpClient();
 builder.Services.AddMemoryCache();
 builder.Services.AddScoped<IUsuarioRepository, UsuarioRepository>();
 builder.Services.AddScoped<IUsuarioService, UsuarioService>();
+builder.Services.AddScoped<ICrmRepository, CrmRepository>();
+builder.Services.AddScoped<ICrmService, CrmService>();
 builder.Services.AddScoped<IAdminUsuariosRepository, AdminUsuariosRepository>();
 builder.Services.AddScoped<IAdminUsuariosService, AdminUsuariosService>();
 builder.Services.AddScoped<IGestaoRepository, GestaoRepository>();

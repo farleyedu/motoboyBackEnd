@@ -161,6 +161,8 @@ namespace APIBack.Automation.Infra
                 return Task.FromResult<IReadOnlyList<Conversation>>(Array.Empty<Conversation>());
             }
 
+            ExpireConversations(conversa => string.Equals(conversa.TelefoneCliente, telefoneE164, StringComparison.OrdinalIgnoreCase));
+
             var abertas = _conversas.Values
                 .Where(c => IsOpen(c) && string.Equals(c.TelefoneCliente, telefoneE164, StringComparison.OrdinalIgnoreCase))
                 .OrderByDescending(ConvDate)

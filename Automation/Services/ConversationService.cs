@@ -22,6 +22,7 @@ namespace APIBack.Automation.Services
         private readonly IMessageService _mensagemService;
         private readonly IConfiguration _configuration;
         private readonly CentralRoutingService _centralRouting;
+        private readonly ConversationResetService _conversationReset;
 
         // mapeia waId -> conversationId (in-memory)
         private readonly ConcurrentDictionary<string, Guid> _waParaConversa = new(StringComparer.OrdinalIgnoreCase);
@@ -36,6 +37,7 @@ namespace APIBack.Automation.Services
             IClienteRepository repositorioClientes,
             IWabaPhoneRepository wabaPhoneRepository,
             CentralRoutingService centralRouting,
+            ConversationResetService conversationReset,
             IConfiguration configuration,
             IMessageService mensagemService)
         {
@@ -45,6 +47,7 @@ namespace APIBack.Automation.Services
             _repositorioClientes = repositorioClientes;
             _wabaPhoneRepository = wabaPhoneRepository;
             _centralRouting = centralRouting;
+            _conversationReset = conversationReset;
             _configuration = configuration;
             _mensagemService = mensagemService;
         }
@@ -59,7 +62,7 @@ namespace APIBack.Automation.Services
         /// <param name="phoneNumberId">Identificador do número WhatsApp no Meta; usado como fallback para resolver estabelecimento</param>
         /// <param name="dataMensagemUtc">Data/hora UTC da mensagem</param>
         /// <param name="tipoOrigem">Tipo da mensagem (text, image, etc)</param>
-        public async Task<Message?> AcrescentarEntradaAsync(
+        public async Task<ConversationIngressResult?> AcrescentarEntradaAsync(
             string idWa,
             string idMensagemWa,
             string conteudo,
@@ -178,12 +181,14 @@ namespace APIBack.Automation.Services
             Guid idConversaGrupo;
             Guid idEstabelecimentoEfetivo;
             Conversation? existente;
-            var conversaAbertaPorTelefone = await ResolverConversaAbertaPorTelefoneAsync(
+            var ehNumeroCentralEntrada = EhNumeroCentral(idEstabelecimento.Value);
+            var conversaResolvidaPorTelefone = await ResolverConversaAbertaPorTelefoneAsync(
                 telefoneE164,
                 idEstabelecimento.Value,
-                EhNumeroCentral(idEstabelecimento.Value));
+                ehNumeroCentralEntrada);
+            var conversaAbertaPorTelefone = conversaResolvidaPorTelefone.Conversa;
 
-            if (EhNumeroCentral(idEstabelecimento.Value))
+            if (ehNumeroCentralEntrada)
             {
                 if (conversaAbertaPorTelefone != null && !conversaAbertaPorTelefone.EhRaizDoGrupo)
                 {
@@ -340,7 +345,9 @@ namespace APIBack.Automation.Services
             EnfileirarMensagem(mensagem);
             await _mensagemService.AdicionarMensagemAsync(mensagem, displayPhoneNumber, idWa);
 
-            return mensagem;
+            return new ConversationIngressResult(
+                mensagem,
+                conversaResolvidaPorTelefone.ReiniciadaPorExpiracao);
         }
 
         public async Task<Message> AcrescentarSaidaAsync(Guid idConversa, string idWa, string conteudo)
@@ -454,30 +461,43 @@ namespace APIBack.Automation.Services
             fila.Enqueue(mensagem);
         }
 
-        private async Task<Conversation?> ResolverConversaAbertaPorTelefoneAsync(
+        private async Task<ConversationLookupResult> ResolverConversaAbertaPorTelefoneAsync(
             string telefoneE164,
             Guid idEstabelecimentoEntrada,
             bool ehNumeroCentral)
         {
             if (string.IsNullOrWhiteSpace(telefoneE164))
             {
-                return null;
+                return new ConversationLookupResult(null, false);
             }
 
             var abertas = (await _repositorio.ListarConversasAbertasPorTelefoneAsync(telefoneE164)).ToList();
             if (abertas.Count == 0)
             {
-                return null;
+                return new ConversationLookupResult(null, false);
             }
 
             Conversation? preservada;
             if (ehNumeroCentral)
             {
-                preservada = abertas
-                    .Where(c => c.IdEstabelecimento != idEstabelecimentoEntrada)
+                preservada = null;
+
+                foreach (var candidata in abertas
+                             .Where(c => !c.EhRaizDoGrupo)
+                             .OrderByDescending(ConversationTimestamp))
+                {
+                    var selecao = await _centralRouting.ObterSelecaoAtualAsync(candidata.IdConversa);
+                    if (selecao.HasSelection)
+                    {
+                        preservada = candidata;
+                        break;
+                    }
+                }
+
+                preservada ??= abertas
+                    .Where(c => c.IdEstabelecimento == idEstabelecimentoEntrada && c.EhRaizDoGrupo)
                     .OrderByDescending(ConversationTimestamp)
-                    .FirstOrDefault()
-                    ?? abertas.OrderByDescending(ConversationTimestamp).FirstOrDefault();
+                    .FirstOrDefault();
             }
             else
             {
@@ -494,7 +514,18 @@ namespace APIBack.Automation.Services
                     idAgente: null,
                     motivo: "Troca de atendimento por telefone",
                     tipoFechamento: "manual");
-                return null;
+                return new ConversationLookupResult(null, false);
+            }
+
+            var classificacao = await ClassificarConversaParaEntradaAsync(preservada, ehNumeroCentral);
+            if (classificacao.ReiniciadaPorExpiracao)
+            {
+                return classificacao;
+            }
+
+            if (classificacao.Conversa == null)
+            {
+                return new ConversationLookupResult(null, false);
             }
 
             await _repositorio.FecharConversasAbertasPorTelefoneAsync(
@@ -502,9 +533,58 @@ namespace APIBack.Automation.Services
                 idAgente: null,
                 motivo: "Reconciliacao de conversa unica por telefone",
                 tipoFechamento: "manual",
-                preservarConversaId: preservada.IdConversa);
+                preservarConversaId: classificacao.Conversa.IdConversa);
 
-            return await _repositorio.ObterPorIdAsync(preservada.IdConversa) ?? preservada;
+            _logger.LogInformation(
+                "[Automation] Conversa preservada por telefone {Telefone}: {Conversa} (Central={Central})",
+                telefoneE164,
+                classificacao.Conversa.IdConversa,
+                ehNumeroCentral);
+
+            return new ConversationLookupResult(
+                await _repositorio.ObterPorIdAsync(classificacao.Conversa.IdConversa) ?? classificacao.Conversa,
+                false);
+        }
+
+        private async Task<ConversationLookupResult> ClassificarConversaParaEntradaAsync(Conversation candidata, bool ehNumeroCentral)
+        {
+            var controle = await _repositorio.ObterControleConversaAsync(candidata.IdConversa);
+            if (controle == null)
+            {
+                return new ConversationLookupResult(null, false);
+            }
+
+            var atualizada = await _repositorio.ObterPorIdAsync(candidata.IdConversa) ?? candidata;
+            if (controle.CanBotReply || controle.CanManualReply || IsHumanActiveStatus(controle.Status))
+            {
+                return new ConversationLookupResult(atualizada, false);
+            }
+
+            if (string.Equals(controle.Status, "encerrada_inatividade", StringComparison.OrdinalIgnoreCase))
+            {
+                var novaConversaId = await _conversationReset.RestartExpiredConversationAsync(candidata.IdConversa, ehNumeroCentral);
+                var novaConversa = await _repositorio.ObterPorIdAsync(novaConversaId);
+                if (novaConversa != null)
+                {
+                    _logger.LogInformation(
+                        "[Automation] Conversa {ConversaAntiga} reiniciada automaticamente por expiracao. Nova conversa: {NovaConversa}",
+                        candidata.IdConversa,
+                        novaConversa.IdConversa);
+                    return new ConversationLookupResult(novaConversa, true);
+                }
+
+                _logger.LogWarning(
+                    "[Automation] Reinicio automatico por expiracao falhou ao carregar a nova conversa derivada de {ConversaAntiga}",
+                    candidata.IdConversa);
+                return new ConversationLookupResult(null, false);
+            }
+
+            if (string.Equals(controle.Status, "encerrada_manual", StringComparison.OrdinalIgnoreCase))
+            {
+                return new ConversationLookupResult(null, false);
+            }
+
+            return new ConversationLookupResult(null, false);
         }
 
         private bool EhNumeroCentral(Guid idEstabelecimento)
@@ -515,6 +595,11 @@ namespace APIBack.Automation.Services
 
         private static DateTime ConversationTimestamp(Conversation conversa)
             => conversa.AtualizadoEm ?? conversa.CriadoEm;
+
+        private static bool IsHumanActiveStatus(string? status)
+            => string.Equals(status, "em_andamento", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(status, "aguardando_cliente", StringComparison.OrdinalIgnoreCase)
+               || string.Equals(status, "aguardando_interno", StringComparison.OrdinalIgnoreCase);
 
         private async Task<Guid?> ResolverEstabelecimentoAsync(string? displayPhoneNumber, string? phoneNumberId)
         {
@@ -555,6 +640,8 @@ namespace APIBack.Automation.Services
 
             return null;
         }
+
+        private sealed record ConversationLookupResult(Conversation? Conversa, bool ReiniciadaPorExpiracao);
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================

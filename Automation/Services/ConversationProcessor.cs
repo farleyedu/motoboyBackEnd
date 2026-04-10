@@ -22,6 +22,7 @@ namespace APIBack.Automation.Services
 {
     public class ConversationProcessor
     {
+        private const string AvisoReinicioPorExpiracao = "Seu atendimento anterior expirou por inatividade, entao reiniciei nossa conversa por aqui.";
         private static readonly System.Text.RegularExpressions.Regex PessoasRegex =
             new(@"(\d{1,3})\s*pessoas?", System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
@@ -110,7 +111,7 @@ namespace APIBack.Automation.Services
 
             var telefoneNormalizado = NormalizarTelefoneContato(input.Mensagem?.De);
 
-            var criada = await _conversationService.AcrescentarEntradaAsync(
+            var ingresso = await _conversationService.AcrescentarEntradaAsync(
                 idWa: input.Mensagem!.De!,
                 idMensagemWa: input.Mensagem.Id!,
                 conteudo: input.Texto,
@@ -121,12 +122,13 @@ namespace APIBack.Automation.Services
                 telefoneContato: telefoneNormalizado
             );
 
-            if (criada == null)
+            if (ingresso == null)
             {
                 _logger.LogInformation("[Webhook] Entrada ignorada apos verificacao de duplicidade. From={From}", input.Mensagem.De);
                 return new ConversationProcessingResult(true, null, null, Array.Empty<AssistantChatTurn>(), null, new HandoverContextDto(), textoUsuario, input.PhoneNumberDisplay, input.PhoneNumberId);
             }
 
+            var criada = ingresso.Mensagem;
             criada.CriadaPor ??= "cliente";
             await _fila.PublicarEntradaAsync(criada);
 
@@ -146,7 +148,8 @@ namespace APIBack.Automation.Services
                 HandoverDetalhes: handoverDetalhes,
                 TextoUsuario: textoUsuario,
                 NumeroTelefoneExibicao: input.PhoneNumberDisplay,
-                NumeroWhatsappId: input.PhoneNumberId);
+                NumeroWhatsappId: input.PhoneNumberId,
+                AvisoRespostaInicial: ingresso.ReiniciadaPorExpiracao ? AvisoReinicioPorExpiracao : null);
         }
 
         private bool MensagemDoSistema(ConversationProcessingInput input)
@@ -332,6 +335,14 @@ namespace APIBack.Automation.Services
             builder.AppendLine("- mantenha contexto mesmo quando o cliente mudar de assunto e depois voltar");
             builder.AppendLine("- nunca invente preco, marca, prazo, disponibilidade ou qualquer outro dado que nao esteja no prompt, no historico ou no resultado de tools");
             builder.AppendLine();
+            if (nome.Contains("Citrocar", StringComparison.OrdinalIgnoreCase))
+            {
+                builder.AppendLine("Regra especifica de abertura para a Citrocar:");
+                builder.AppendLine("- no inicio de um novo atendimento, apresente-se como Citrocar e depois pergunte como pode ajudar");
+                builder.AppendLine("- use preferencialmente: \"Ola! Voce esta falando com a Citrocar. Como posso ajuda-lo hoje?\"");
+                builder.AppendLine("- nao peca o nome na primeira frase; so peca depois se ainda for necessario para avancar");
+                builder.AppendLine();
+            }
             builder.AppendLine("Regras de atendimento para o modulo Servicos:");
             builder.AppendLine("- voce e uma assistente de atendimento comercial, nao uma explicadora de mecanica");
             builder.AppendLine("- quando o cliente pedir um servico, garanta primeiro o nome do cliente");

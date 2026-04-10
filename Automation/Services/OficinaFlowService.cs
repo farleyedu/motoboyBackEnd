@@ -86,8 +86,7 @@ namespace APIBack.Automation.Services
             if (EhSaudacaoInicial(mensagemTexto))
             {
                 await SalvarContextoAsync(idConversa, EstadoAguardandoNome, viaNumeroCentral, null);
-                return (true, CriarRespostaJsonDecision(
-                    $"Ola! Voce esta falando com a equipe da {nomeEstabelecimento}. Antes de continuarmos, me fala seu nome, por favor."));
+                return (true, CriarRespostaJsonDecision(CriarSaudacaoInicial(nomeEstabelecimento)));
             }
 
             if (string.IsNullOrWhiteSpace(cliente?.Nome))
@@ -99,8 +98,7 @@ namespace APIBack.Automation.Services
                     idConversa,
                     scope.IdEstabelecimento);
 
-                return (true, CriarRespostaJsonDecision(
-                    $"Ola! Voce esta falando com a equipe da {nomeEstabelecimento}. Antes de continuarmos, me fala seu nome, por favor."));
+                return (true, CriarRespostaJsonDecision(CriarSaudacaoInicial(nomeEstabelecimento)));
             }
 
             if (string.Equals(contextoAtual?.Estado, EstadoAguardandoMotivoHandover, StringComparison.OrdinalIgnoreCase))
@@ -510,6 +508,16 @@ namespace APIBack.Automation.Services
                 false,
                 detalhes,
                 null);
+        }
+
+        private static string CriarSaudacaoInicial(string nomeEstabelecimento)
+        {
+            if (string.Equals(nomeEstabelecimento, "Citrocar", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Ola! Voce esta falando com a Citrocar. Como posso ajuda-lo hoje?";
+            }
+
+            return $"Ola! Voce esta falando com a equipe da {nomeEstabelecimento}. Como posso te ajudar hoje?";
         }
 
         private static ClassificacaoMensagem ClassificarMensagem(string? mensagemTexto)

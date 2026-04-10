@@ -401,11 +401,32 @@ UPDATE conversas
             var rows = (await cx.QueryAsync<ConversationRow>(
                 SelectConversation + @"
  WHERE cl.telefone_e164 = @Telefone
-   AND c.estado NOT IN ('fechado_automaticamente'::estado_conversa_enum, 'fechado_agente'::estado_conversa_enum, 'arquivada'::estado_conversa_enum)
- ORDER BY COALESCE(c.data_ultima_mensagem, c.data_atualizacao, c.data_criacao) DESC;",
+    AND c.estado NOT IN ('fechado_automaticamente'::estado_conversa_enum, 'fechado_agente'::estado_conversa_enum, 'arquivada'::estado_conversa_enum)
+  ORDER BY COALESCE(c.data_ultima_mensagem, c.data_atualizacao, c.data_criacao) DESC;",
                 new { Telefone = telefoneE164 })).ToList();
 
-            return rows.Select(ToConversation).ToList();
+            var abertas = new List<Conversation>(rows.Count);
+            foreach (var row in rows)
+            {
+                var synced = await ExactSyncedAsync(cx, row.Id);
+                if (synced == null)
+                {
+                    continue;
+                }
+
+                var status = CanonicalStatus(
+                    synced.StatusAtendimento,
+                    synced.Estado,
+                    synced.IdAgenteAtribuido.HasValue ? ModoConversa.Humano : ModoConversa.Bot);
+                if (IsClosedStatus(status))
+                {
+                    continue;
+                }
+
+                abertas.Add(ToConversation(synced));
+            }
+
+            return abertas;
         }
 
         public async Task<int> FecharConversasAbertasPorTelefoneAsync(string telefoneE164, int? idAgente, string? motivo, string? tipoFechamento = null, Guid? preservarConversaId = null)

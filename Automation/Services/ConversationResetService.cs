@@ -12,9 +12,11 @@ namespace APIBack.Automation.Services
     {
         private const string HardResetReason = "Reset por comando do cliente (*3275)";
         private const string ManualCloseCleanupReason = "Fechamento manual da conversa";
+        private const string ExpirationRestartReason = "Reinicio automatico apos expiracao da conversa";
         private readonly IConversationRepository _conversationRepository;
         private readonly IClienteRepository _clienteRepository;
         private readonly IEstabelecimentoRepository _estabelecimentoRepository;
+        private readonly IOficinaAtendimentoRepository _oficinaAtendimentoRepository;
         private readonly IServicoAtendimentoRepository _servicoAtendimentoRepository;
         private readonly IGaragemLeadRepository _garagemLeadRepository;
         private readonly INauticaLeadRepository _nauticaLeadRepository;
@@ -27,6 +29,7 @@ namespace APIBack.Automation.Services
             IConversationRepository conversationRepository,
             IClienteRepository clienteRepository,
             IEstabelecimentoRepository estabelecimentoRepository,
+            IOficinaAtendimentoRepository oficinaAtendimentoRepository,
             IServicoAtendimentoRepository servicoAtendimentoRepository,
             IGaragemLeadRepository garagemLeadRepository,
             INauticaLeadRepository nauticaLeadRepository,
@@ -38,6 +41,7 @@ namespace APIBack.Automation.Services
             _conversationRepository = conversationRepository;
             _clienteRepository = clienteRepository;
             _estabelecimentoRepository = estabelecimentoRepository;
+            _oficinaAtendimentoRepository = oficinaAtendimentoRepository;
             _servicoAtendimentoRepository = servicoAtendimentoRepository;
             _garagemLeadRepository = garagemLeadRepository;
             _nauticaLeadRepository = nauticaLeadRepository;
@@ -90,6 +94,16 @@ namespace APIBack.Automation.Services
             await ResetarEstadoInternoAsync(idConversa, ehNumeroCentral: false, criarNovaConversa: false);
         }
 
+        public async Task<Guid> RestartExpiredConversationAsync(Guid idConversa, bool ehNumeroCentral)
+        {
+            var contexto = await ResetarEstadoInternoAsync(
+                idConversa,
+                ehNumeroCentral,
+                criarNovaConversa: true,
+                motivoFechamento: ExpirationRestartReason);
+            return contexto.NewConversationId;
+        }
+
         private async Task GarantirBotAtivoAsync(Guid idConversa)
         {
             var controle = await _conversationRepository.ObterControleConversaAsync(idConversa);
@@ -101,7 +115,11 @@ namespace APIBack.Automation.Services
             await _conversationRepository.VoltarParaBotAsync(idConversa);
         }
 
-        private async Task<ResetContext> ResetarEstadoInternoAsync(Guid idConversa, bool ehNumeroCentral, bool criarNovaConversa = true)
+        private async Task<ResetContext> ResetarEstadoInternoAsync(
+            Guid idConversa,
+            bool ehNumeroCentral,
+            bool criarNovaConversa = true,
+            string? motivoFechamento = null)
         {
             var atual = await _conversationRepository.ObterPorIdAsync(idConversa);
             if (atual == null)
@@ -132,25 +150,19 @@ namespace APIBack.Automation.Services
                 .Append(rootConversationId)
                 .Distinct()
                 .ToList();
-            if (!string.IsNullOrWhiteSpace(telefoneCliente))
-            {
-                await CancelarLeadAbertoAsync(conversaOperacional.IdEstabelecimento, telefoneCliente!);
-            }
-
-            var atendimentoServico = await _servicoAtendimentoRepository.ObterPorConversaAsync(conversaOperacional.IdConversa);
-            if (atendimentoServico != null &&
-                (string.Equals(atendimentoServico.Status, "em_triagem", StringComparison.OrdinalIgnoreCase) ||
-                 string.Equals(atendimentoServico.Status, "aguardando_cliente", StringComparison.OrdinalIgnoreCase) ||
-                 string.Equals(atendimentoServico.Status, "aguardando_interno", StringComparison.OrdinalIgnoreCase) ||
-                 string.Equals(atendimentoServico.Status, "em_andamento", StringComparison.OrdinalIgnoreCase)))
-            {
-                await _servicoAtendimentoRepository.AtualizarStatusAsync(atendimentoServico.Id, "cancelado");
-            }
+            await CancelarEstadosRecuperaveisAsync(
+                conversaOperacional.IdEstabelecimento,
+                conversaOperacional.IdConversa,
+                telefoneCliente);
 
             foreach (var groupId in gruposParaLimpar)
             {
                 await _conversationRepository.LimparContextoGrupoCompletoAsync(groupId);
             }
+
+            var motivo = string.IsNullOrWhiteSpace(motivoFechamento)
+                ? (criarNovaConversa ? HardResetReason : ManualCloseCleanupReason)
+                : motivoFechamento!;
 
             if (!criarNovaConversa)
             {
@@ -159,7 +171,7 @@ namespace APIBack.Automation.Services
                     await _conversationRepository.FecharConversasAbertasPorTelefoneAsync(
                         telefoneCliente!,
                         idAgente: null,
-                        motivo: ManualCloseCleanupReason,
+                        motivo: motivo,
                         tipoFechamento: "manual");
                 }
                 else
@@ -167,7 +179,7 @@ namespace APIBack.Automation.Services
                     await _conversationRepository.FecharGrupoConversaAsync(
                         rootConversationId,
                         idAgente: null,
-                        motivo: ManualCloseCleanupReason,
+                        motivo: motivo,
                         tipoFechamento: "manual");
                 }
 
@@ -192,7 +204,7 @@ namespace APIBack.Automation.Services
                     telefoneCliente!,
                     novaConversa,
                     idAgente: null,
-                    motivo: HardResetReason,
+                    motivo: motivo,
                     tipoFechamento: "manual");
             }
             else
@@ -200,14 +212,15 @@ namespace APIBack.Automation.Services
                 await _conversationRepository.FecharGrupoConversaAsync(
                     rootConversationId,
                     idAgente: null,
-                    motivo: HardResetReason,
+                    motivo: motivo,
                     tipoFechamento: "manual");
                 await _conversationRepository.InserirOuAtualizarAsync(novaConversa);
             }
 
             _logger.LogInformation(
-                "[Conversa={Conversa}] Hard reset aplicado. RootAntiga={RootAntiga} OperacionalAntiga={OperacionalAntiga} NovaConversa={NovaConversa}",
+                "[Conversa={Conversa}] Reinicio interno aplicado. Motivo={Motivo} RootAntiga={RootAntiga} OperacionalAntiga={OperacionalAntiga} NovaConversa={NovaConversa}",
                 idConversa,
+                motivo,
                 rootConversationId,
                 conversaOperacional.IdConversa,
                 novaConversa.IdConversa);
@@ -256,6 +269,57 @@ namespace APIBack.Automation.Services
             }
 
             return null;
+        }
+
+        private async Task CancelarEstadosRecuperaveisAsync(Guid idEstabelecimento, Guid idConversa, string? telefoneE164)
+        {
+            if (!string.IsNullOrWhiteSpace(telefoneE164))
+            {
+                await CancelarLeadAbertoAsync(idEstabelecimento, telefoneE164!);
+            }
+
+            await CancelarAtendimentoServicoAsync(idEstabelecimento, idConversa, telefoneE164);
+            await CancelarAtendimentoOficinaAsync(idEstabelecimento, idConversa, telefoneE164);
+        }
+
+        private async Task CancelarAtendimentoServicoAsync(Guid idEstabelecimento, Guid idConversa, string? telefoneE164)
+        {
+            var atendimento = await _servicoAtendimentoRepository.ObterPorConversaAsync(idConversa);
+            if (atendimento == null &&
+                !string.IsNullOrWhiteSpace(telefoneE164) &&
+                idEstabelecimento != Guid.Empty)
+            {
+                atendimento = await _servicoAtendimentoRepository.ObterAbertoAsync(idEstabelecimento, telefoneE164!);
+            }
+
+            if (atendimento != null && IsAtendimentoAberto(atendimento.Status))
+            {
+                await _servicoAtendimentoRepository.AtualizarStatusAsync(atendimento.Id, "cancelado");
+            }
+        }
+
+        private async Task CancelarAtendimentoOficinaAsync(Guid idEstabelecimento, Guid idConversa, string? telefoneE164)
+        {
+            var atendimento = await _oficinaAtendimentoRepository.ObterPorConversaAsync(idConversa);
+            if (atendimento == null &&
+                !string.IsNullOrWhiteSpace(telefoneE164) &&
+                idEstabelecimento != Guid.Empty)
+            {
+                atendimento = await _oficinaAtendimentoRepository.ObterAbertoAsync(idEstabelecimento, telefoneE164!);
+            }
+
+            if (atendimento != null && IsAtendimentoAberto(atendimento.Status))
+            {
+                await _oficinaAtendimentoRepository.AtualizarStatusAsync(atendimento.Id, "cancelado");
+            }
+        }
+
+        private static bool IsAtendimentoAberto(string? status)
+        {
+            return string.Equals(status, "em_triagem", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(status, "aguardando_cliente", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(status, "aguardando_interno", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(status, "em_andamento", StringComparison.OrdinalIgnoreCase);
         }
 
         private async Task CancelarLeadAbertoAsync(Guid idEstabelecimento, string telefoneE164)

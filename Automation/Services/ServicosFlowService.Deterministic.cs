@@ -103,7 +103,7 @@ namespace APIBack.Automation.Services
                 [ChaveTentativas] = 0
             });
 
-            var reply = $"Ola! Voce esta falando com a equipe da {nomeEstabelecimento}. Antes de continuar, me fala seu nome.";
+            var reply = CriarSaudacaoInicialServico(nomeEstabelecimento);
             await PersistirEstadoDeterministicoAsync(
                 idConversa,
                 scope,
@@ -1602,6 +1602,16 @@ namespace APIBack.Automation.Services
             var culture = CultureInfo.GetCultureInfo("pt-BR");
             nome = culture.TextInfo.ToTitleCase(texto.ToLower(culture));
             return true;
+        }
+
+        private static string CriarSaudacaoInicialServico(string nomeEstabelecimento)
+        {
+            if (string.Equals(nomeEstabelecimento, "Citrocar", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Ola! Voce esta falando com a Citrocar. Como posso ajuda-lo hoje?";
+            }
+
+            return $"Ola! Voce esta falando com a equipe da {nomeEstabelecimento}. Como posso te ajudar hoje?";
         }
 
         private static bool TemTrocaPendente(ConversationContext? contextoAtual, ServicoAtendimento? atendimentoAtual)

@@ -2,6 +2,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading.Tasks;
 using APIBack.Automation.Dtos;
 using APIBack.Automation.Interfaces;
@@ -47,6 +48,7 @@ namespace APIBack.Automation.Services
             }
 
             var idConversa = processamento.IdConversa.Value;
+            var decisionFinal = AplicarAvisoRespostaInicial(decision, processamento.AvisoRespostaInicial);
             var controle = await _conversationRepository.ObterControleConversaAsync(idConversa);
             if (controle == null)
             {
@@ -102,9 +104,23 @@ namespace APIBack.Automation.Services
                 return;
             }
 
-            if (decision.Media != null)
+            var enviarTextoAntesDaMedia = !string.IsNullOrWhiteSpace(processamento.AvisoRespostaInicial) &&
+                                          !string.IsNullOrWhiteSpace(decisionFinal.Reply);
+
+            if (enviarTextoAntesDaMedia)
             {
-                var mediaEnviada = await TentarEnviarMediaAsync(idConversa, phoneNumberId, numeroDestino, decision.Media, phoneNumberDisplay);
+                await EnviarMensagemAoClienteAsync(
+                    idConversa,
+                    phoneNumberDisplay ?? string.Empty,
+                    numeroDestino,
+                    phoneNumberId,
+                    decisionFinal.Reply,
+                    decisionFinal.ReplyButtons);
+            }
+
+            if (decisionFinal.Media != null)
+            {
+                var mediaEnviada = await TentarEnviarMediaAsync(idConversa, phoneNumberId, numeroDestino, decisionFinal.Media, phoneNumberDisplay);
                 if (!mediaEnviada)
                 {
                     _logger.LogInformation(
@@ -113,9 +129,9 @@ namespace APIBack.Automation.Services
                 }
             }
 
-            if (string.IsNullOrWhiteSpace(decision.Reply))
+            if (string.IsNullOrWhiteSpace(decisionFinal.Reply))
             {
-                if (decision.Media == null)
+                if (decisionFinal.Media == null)
                 {
                     _logger.LogInformation(
                         "[Conversa={Conversa}] IA nao retornou mensagem de resposta",
@@ -124,15 +140,18 @@ namespace APIBack.Automation.Services
                 return;
             }
 
-            await EnviarMensagemAoClienteAsync(
-                idConversa,
-                phoneNumberDisplay ?? string.Empty,
-                numeroDestino,
-                phoneNumberId,
-                decision.Reply,
-                decision.ReplyButtons);
+            if (!enviarTextoAntesDaMedia)
+            {
+                await EnviarMensagemAoClienteAsync(
+                    idConversa,
+                    phoneNumberDisplay ?? string.Empty,
+                    numeroDestino,
+                    phoneNumberId,
+                    decisionFinal.Reply,
+                    decisionFinal.ReplyButtons);
+            }
 
-            await ExecutarAcoesPosEnvioAsync(idConversa, decision, processamento);
+            await ExecutarAcoesPosEnvioAsync(idConversa, decisionFinal, processamento);
 
             _logger.LogInformation(
                 "[Conversa={Conversa}] Resposta da IA processada com sucesso",
@@ -234,6 +253,48 @@ namespace APIBack.Automation.Services
             }
 
             return texto;
+        }
+
+        private static AssistantDecision AplicarAvisoRespostaInicial(AssistantDecision decision, string? aviso)
+        {
+            if (string.IsNullOrWhiteSpace(aviso))
+            {
+                return decision;
+            }
+
+            var reply = PrefixarTextoDeResposta(decision.Reply, aviso);
+            return decision with
+            {
+                Reply = reply
+            };
+        }
+
+        private static string PrefixarTextoDeResposta(string texto, string aviso)
+        {
+            if (string.IsNullOrWhiteSpace(texto))
+            {
+                return aviso;
+            }
+
+            try
+            {
+                var node = JsonNode.Parse(texto);
+                if (node is JsonObject obj &&
+                    obj["reply"] is JsonNode replyNode &&
+                    replyNode.GetValueKind() == JsonValueKind.String)
+                {
+                    var replyAtual = replyNode.GetValue<string>();
+                    obj["reply"] = string.IsNullOrWhiteSpace(replyAtual)
+                        ? aviso
+                        : $"{aviso}\n\n{replyAtual}";
+                    return obj.ToJsonString();
+                }
+            }
+            catch (JsonException)
+            {
+            }
+
+            return $"{aviso}\n\n{texto}";
         }
 
         private async Task ExecutarAcoesPosEnvioAsync(Guid idConversa, AssistantDecision decision, ConversationProcessingResult processamento)
