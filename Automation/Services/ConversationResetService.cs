@@ -357,10 +357,15 @@ namespace APIBack.Automation.Services
             }
 
             var agora = DateTime.UtcNow;
+            // Preserva o grupo raiz para que todas as conversas reiniciadas permaneçam no mesmo grupo,
+            // permitindo que o histórico completo (incluindo mensagens do hub central) seja recuperado.
+            var grupoRaiz = conversaRaizAnterior.IdConversaGrupo == Guid.Empty
+                ? conversaRaizAnterior.IdConversa
+                : conversaRaizAnterior.IdConversaGrupo;
             var novaConversa = new Conversation
             {
                 IdConversa = Guid.NewGuid(),
-                IdConversaGrupo = Guid.Empty,
+                IdConversaGrupo = grupoRaiz,
                 IdEstabelecimento = idEstabelecimento,
                 IdCliente = idCliente,
                 TelefoneCliente = !string.IsNullOrWhiteSpace(telefoneCliente)

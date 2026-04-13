@@ -23,6 +23,28 @@ namespace APIBack.Automation.Services
     public class ConversationProcessor
     {
         private const string AvisoReinicioPorExpiracao = "Seu atendimento anterior expirou por inatividade, entao reiniciei nossa conversa por aqui.";
+
+        private static string MontarAvisoEncerramentoManual(DateTime dataFechamento)
+        {
+            var diff = DateTime.UtcNow - dataFechamento;
+            string quando;
+            if (diff.TotalMinutes < 2)
+                quando = "agora há pouco";
+            else if (diff.TotalMinutes < 60)
+                quando = $"há {(int)diff.TotalMinutes} minutos";
+            else if (diff.TotalHours < 2)
+                quando = "há cerca de 1 hora";
+            else if (diff.TotalHours < 24)
+                quando = $"há {(int)diff.TotalHours} horas";
+            else if (diff.TotalDays < 2)
+                quando = "ontem";
+            else if (diff.TotalDays < 7)
+                quando = $"há {(int)diff.TotalDays} dias";
+            else
+                quando = $"em {dataFechamento.ToLocalTime():dd/MM/yyyy}";
+
+            return $"Olá! Identifiquei que você encerrou nosso atendimento {quando}. Caso queira iniciar uma nova conversa, é só continuar por aqui!";
+        }
         private static readonly System.Text.RegularExpressions.Regex PessoasRegex =
             new(@"(\d{1,3})\s*pessoas?", System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
 
@@ -149,7 +171,11 @@ namespace APIBack.Automation.Services
                 TextoUsuario: textoUsuario,
                 NumeroTelefoneExibicao: input.PhoneNumberDisplay,
                 NumeroWhatsappId: input.PhoneNumberId,
-                AvisoRespostaInicial: ingresso.ReiniciadaPorExpiracao ? AvisoReinicioPorExpiracao : null);
+                AvisoRespostaInicial: ingresso.ReiniciadaPorExpiracao
+                    ? AvisoReinicioPorExpiracao
+                    : ingresso.AposEncerramentoManualEm.HasValue
+                        ? MontarAvisoEncerramentoManual(ingresso.AposEncerramentoManualEm.Value)
+                        : null);
         }
 
         private bool MensagemDoSistema(ConversationProcessingInput input)

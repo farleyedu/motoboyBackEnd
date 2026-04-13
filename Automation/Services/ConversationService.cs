@@ -348,7 +348,8 @@ namespace APIBack.Automation.Services
 
             return new ConversationIngressResult(
                 mensagem,
-                conversaResolvidaPorTelefone.ReiniciadaPorExpiracao);
+                conversaResolvidaPorTelefone.ReiniciadaPorExpiracao,
+                conversaResolvidaPorTelefone.DataFechamentoAnteriorManual);
         }
 
         public async Task<Message> AcrescentarSaidaAsync(Guid idConversa, string idWa, string conteudo)
@@ -526,7 +527,7 @@ namespace APIBack.Automation.Services
 
             if (classificacao.Conversa == null)
             {
-                return new ConversationLookupResult(null, false);
+                return new ConversationLookupResult(null, false, classificacao.DataFechamentoAnteriorManual);
             }
 
             await _repositorio.FecharConversasAbertasPorTelefoneAsync(
@@ -582,7 +583,8 @@ namespace APIBack.Automation.Services
 
             if (string.Equals(controle.Status, "encerrada_manual", StringComparison.OrdinalIgnoreCase))
             {
-                return new ConversationLookupResult(null, false);
+                var dataFechamento = atualizada.DataFechamento ?? atualizada.AtualizadoEm ?? DateTime.UtcNow;
+                return new ConversationLookupResult(null, false, dataFechamento);
             }
 
             return new ConversationLookupResult(null, false);
@@ -642,7 +644,7 @@ namespace APIBack.Automation.Services
             return null;
         }
 
-        private sealed record ConversationLookupResult(Conversation? Conversa, bool ReiniciadaPorExpiracao);
+        private sealed record ConversationLookupResult(Conversation? Conversa, bool ReiniciadaPorExpiracao, DateTime? DataFechamentoAnteriorManual = null);
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================

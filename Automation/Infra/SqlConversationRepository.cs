@@ -624,7 +624,25 @@ UPDATE conversas
                 return null;
             }
 
-            var clientRows = (await ClientMessagesAsync(cx, exact.IdCliente, exact.IdEstabelecimento, before, limit)).ToList();
+            // Se a conversa pertence a um grupo (ex: veio do hub central), busca mensagens do grupo
+            // inteiro para incluir as mensagens do roteamento inicial que ficam num id_cliente/
+            // id_estabelecimento diferente. Caso contrário usa ClientMessages (histórico por cliente).
+            var groupId = exact.IdConversaGrupo == Guid.Empty ? exact.Id : exact.IdConversaGrupo;
+            var ehMembroDeGrupo = groupId != exact.Id;
+
+            List<ConversationMessageItemDto> clientRows;
+            IReadOnlyList<ConversationEventDto> eventos;
+            if (ehMembroDeGrupo)
+            {
+                clientRows = (await GroupMessagesAsync(cx, groupId, before, limit)).ToList();
+                eventos = await ListarEventosInternalAsync(cx, groupId);
+            }
+            else
+            {
+                clientRows = (await ClientMessagesAsync(cx, exact.IdCliente, exact.IdEstabelecimento, before, limit)).ToList();
+                eventos = await ListarEventosClienteAsync(cx, exact.IdCliente, exact.IdEstabelecimento);
+            }
+
             var clientHasMore = clientRows.Count > pageSize;
             if (clientHasMore) clientRows = clientRows.Take(pageSize).ToList();
             clientRows.Reverse(); // retorna em ordem ASC para exibicao
@@ -634,7 +652,7 @@ UPDATE conversas
             {
                 Conversa = Details(exact),
                 Controle = await BuildControlAsync(cx, exact, exact.IdEstabelecimento),
-                Eventos = await ListarEventosClienteAsync(cx, exact.IdCliente, exact.IdEstabelecimento),
+                Eventos = eventos,
                 Mensagens = clientRows,
                 HasMore = clientHasMore,
                 Cursor = clientCursor,
