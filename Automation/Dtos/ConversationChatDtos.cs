@@ -65,9 +65,8 @@ namespace APIBack.Automation.Dtos
         public ConversationControlDto? Controle { get; set; }
         public IReadOnlyList<ConversationEventDto> Eventos { get; set; } = Array.Empty<ConversationEventDto>();
         public IReadOnlyList<ConversationMessageItemDto> Mensagens { get; set; } = Array.Empty<ConversationMessageItemDto>();
-        public int Page { get; set; }
-        public int PageSize { get; set; }
-        public int Total { get; set; }
+        public bool HasMore { get; set; }
+        public string? Cursor { get; set; }
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================

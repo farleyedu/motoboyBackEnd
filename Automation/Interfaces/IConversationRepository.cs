@@ -21,7 +21,7 @@ namespace APIBack.Automation.Interfaces
         Task<bool> ReiniciarConversaPorTelefoneAsync(string telefoneE164, Conversation novaConversa, int? idAgente, string? motivo, string? tipoFechamento = null);
         Task AtualizarEstadoAsync(Guid idConversa, EstadoConversa novoEstado);
         Task<IReadOnlyList<ConversationListItemDto>> ListarConversasAsync(string? estado, int? idAgente, bool incluirArquivadas, Guid? idEstabelecimento = null);
-        Task<ConversationHistoryDto?> ObterHistoricoConversaAsync(Guid idConversa, int page, int pageSize, Guid? idEstabelecimento = null);
+        Task<ConversationHistoryDto?> ObterHistoricoConversaAsync(Guid idConversa, DateTime? before, int pageSize, Guid? idEstabelecimento = null);
         Task<bool> AtribuirConversaAsync(Guid idConversa, int idAgente, Guid? idEstabelecimento = null);
         Task<bool> FecharConversaAsync(Guid idConversa, int? idAgente, string? motivo, Guid? idEstabelecimento = null, string? tipoFechamento = null);
         Task<bool> FecharGrupoConversaAsync(Guid idConversaGrupo, int? idAgente, string? motivo, string? tipoFechamento = null);

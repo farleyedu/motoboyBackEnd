@@ -83,6 +83,7 @@ SELECT c.id AS Id,
                 cx.Execute("CREATE INDEX IF NOT EXISTS ix_conversas_id_conversa_grupo ON conversas (id_conversa_grupo, data_criacao DESC);");
                 cx.Execute("CREATE INDEX IF NOT EXISTS ix_conversa_eventos_group_created ON conversa_eventos (id_conversa_grupo, data_criacao DESC);");
                 cx.Execute("CREATE INDEX IF NOT EXISTS ix_conversas_cliente_estabelecimento ON conversas (id_cliente, id_estabelecimento);");
+                cx.Execute("CREATE INDEX IF NOT EXISTS ix_mensagens_conversa_criacao ON mensagens (id_conversa, COALESCE(data_criacao, data_envio) DESC);");
                 _indexesEnsured = true;
             }
             catch (Exception ex)
@@ -515,10 +516,10 @@ UPDATE conversas
             return itens.OrderByDescending(i => i.UltimaMensagemData ?? i.DataUltimaMensagem ?? i.DataAtualizacao).ToList();
         }
 
-        public async Task<ConversationHistoryDto?> ObterHistoricoConversaAsync(Guid idConversa, int page, int pageSize, Guid? idEstabelecimento = null)
+        public async Task<ConversationHistoryDto?> ObterHistoricoConversaAsync(Guid idConversa, DateTime? before, int pageSize, Guid? idEstabelecimento = null)
         {
-            page = Math.Max(1, page);
             pageSize = pageSize <= 0 ? 50 : pageSize;
+            var limit = pageSize + 1; // busca um a mais para saber se tem proxima pagina
 
             await using var cx = new NpgsqlConnection(_connectionString);
             var exact = await ExactSyncedAsync(cx, idConversa);
@@ -535,18 +536,20 @@ UPDATE conversas
                     return null;
                 }
 
-                var mensagens = (await GroupMessagesAsync(cx, root.IdConversaGrupo, page, pageSize)).ToList();
-                var total = await cx.ExecuteScalarAsync<int>("SELECT COUNT(1) FROM mensagens m JOIN conversas c ON c.id = m.id_conversa WHERE COALESCE(c.id_conversa_grupo, c.id) = @GroupId;", new { GroupId = root.IdConversaGrupo });
+                var rows = (await GroupMessagesAsync(cx, root.IdConversaGrupo, before, limit)).ToList();
+                var hasMore = rows.Count > pageSize;
+                if (hasMore) rows = rows.Take(pageSize).ToList();
+                rows.Reverse(); // retorna em ordem ASC para exibicao
+                var cursor = rows.Count > 0 ? rows[0].DataCriacao.ToString("O") : null;
 
                 return new ConversationHistoryDto
                 {
                     Conversa = await BuildCentralDetailsAsync(cx, root),
                     Controle = await BuildControlAsync(cx, exact, idEstabelecimento.Value),
                     Eventos = await ListarEventosInternalAsync(cx, root.IdConversaGrupo),
-                    Mensagens = mensagens,
-                    Page = page,
-                    PageSize = pageSize,
-                    Total = total
+                    Mensagens = rows,
+                    HasMore = hasMore,
+                    Cursor = cursor,
                 };
             }
 
@@ -555,16 +558,20 @@ UPDATE conversas
                 return null;
             }
 
-            var count = await cx.ExecuteScalarAsync<int>(@"SELECT COUNT(1) FROM mensagens m JOIN conversas c ON c.id = m.id_conversa WHERE c.id_cliente = @IdCliente AND c.id_estabelecimento = @IdEstabelecimento;", new { IdCliente = exact.IdCliente, IdEstabelecimento = exact.IdEstabelecimento });
+            var clientRows = (await ClientMessagesAsync(cx, exact.IdCliente, exact.IdEstabelecimento, before, limit)).ToList();
+            var clientHasMore = clientRows.Count > pageSize;
+            if (clientHasMore) clientRows = clientRows.Take(pageSize).ToList();
+            clientRows.Reverse(); // retorna em ordem ASC para exibicao
+            var clientCursor = clientRows.Count > 0 ? clientRows[0].DataCriacao.ToString("O") : null;
+
             return new ConversationHistoryDto
             {
                 Conversa = Details(exact),
                 Controle = await BuildControlAsync(cx, exact, exact.IdEstabelecimento),
                 Eventos = await ListarEventosClienteAsync(cx, exact.IdCliente, exact.IdEstabelecimento),
-                Mensagens = (await ClientMessagesAsync(cx, exact.IdCliente, exact.IdEstabelecimento, page, pageSize)).ToList(),
-                Page = page,
-                PageSize = pageSize,
-                Total = count
+                Mensagens = clientRows,
+                HasMore = clientHasMore,
+                Cursor = clientCursor,
             };
         }
 
@@ -1198,9 +1205,9 @@ UPDATE conversas c
         private Task<GroupAggregate> GroupAggregateAsync(NpgsqlConnection cx, Guid groupId) => cx.QueryFirstAsync<GroupAggregate>("SELECT MIN(COALESCE(data_primeira_mensagem, data_criacao)) AS FirstMessage, MAX(COALESCE(data_ultima_mensagem, data_atualizacao, data_criacao)) AS LastMessage, MAX(data_atualizacao) AS LastUpdate, COALESCE(SUM(COALESCE(qtd_nao_lidas, 0)), 0)::int AS UnreadCount FROM conversas WHERE COALESCE(id_conversa_grupo, id) = @GroupId;", new { GroupId = groupId });
         private Task<int> GroupUnreadCountAsync(NpgsqlConnection cx, Guid groupId) => cx.ExecuteScalarAsync<int>("SELECT COALESCE(SUM(COALESCE(qtd_nao_lidas, 0)), 0)::int FROM conversas WHERE COALESCE(id_conversa_grupo, id) = @GroupId;", new { GroupId = groupId });
         private Task<MessagePreview?> LastMessageAsync(NpgsqlConnection cx, Guid id, bool byGroup) => cx.QueryFirstOrDefaultAsync<MessagePreview>(@"SELECT m.conteudo AS Conteudo, COALESCE(m.data_criacao, m.data_envio) AS DataCriacao, COALESCE(m.criada_por, '') AS CriadaPor FROM mensagens m JOIN conversas c ON c.id = m.id_conversa WHERE " + (byGroup ? "COALESCE(c.id_conversa_grupo, c.id) = @Id" : "m.id_conversa = @Id") + " ORDER BY COALESCE(m.data_criacao, m.data_envio) DESC LIMIT 1;", new { Id = id });
-        private Task<IEnumerable<ConversationMessageItemDto>> ExactMessagesAsync(NpgsqlConnection cx, Guid id, int page, int pageSize) => cx.QueryAsync<ConversationMessageItemDto>(@"SELECT m.id AS Id, COALESCE(m.criada_por, '') AS CriadaPor, COALESCE(m.conteudo, '') AS Conteudo, COALESCE(m.tipo::text, 'texto') AS Tipo, COALESCE(m.status::text, '') AS Status, m.data_envio AS DataEnvio, COALESCE(m.data_criacao, m.data_envio, NOW()) AS DataCriacao FROM mensagens m WHERE m.id_conversa = @Id ORDER BY COALESCE(m.data_criacao, m.data_envio) ASC LIMIT @PageSize OFFSET @Offset;", new { Id = id, PageSize = pageSize, Offset = (page - 1) * pageSize });
-        private Task<IEnumerable<ConversationMessageItemDto>> GroupMessagesAsync(NpgsqlConnection cx, Guid groupId, int page, int pageSize) => cx.QueryAsync<ConversationMessageItemDto>(@"SELECT m.id AS Id, COALESCE(m.criada_por, '') AS CriadaPor, COALESCE(m.conteudo, '') AS Conteudo, COALESCE(m.tipo::text, 'texto') AS Tipo, COALESCE(m.status::text, '') AS Status, m.data_envio AS DataEnvio, COALESCE(m.data_criacao, m.data_envio, NOW()) AS DataCriacao FROM mensagens m JOIN conversas c ON c.id = m.id_conversa WHERE COALESCE(c.id_conversa_grupo, c.id) = @GroupId ORDER BY COALESCE(m.data_criacao, m.data_envio) ASC LIMIT @PageSize OFFSET @Offset;", new { GroupId = groupId, PageSize = pageSize, Offset = (page - 1) * pageSize });
-        private Task<IEnumerable<ConversationMessageItemDto>> ClientMessagesAsync(NpgsqlConnection cx, Guid idCliente, Guid idEstabelecimento, int page, int pageSize) => cx.QueryAsync<ConversationMessageItemDto>(@"SELECT m.id AS Id, COALESCE(m.criada_por, '') AS CriadaPor, COALESCE(m.conteudo, '') AS Conteudo, COALESCE(m.tipo::text, 'texto') AS Tipo, COALESCE(m.status::text, '') AS Status, m.data_envio AS DataEnvio, COALESCE(m.data_criacao, m.data_envio, NOW()) AS DataCriacao FROM mensagens m JOIN conversas c ON c.id = m.id_conversa WHERE c.id_cliente = @IdCliente AND c.id_estabelecimento = @IdEstabelecimento ORDER BY COALESCE(m.data_criacao, m.data_envio) ASC LIMIT @PageSize OFFSET @Offset;", new { IdCliente = idCliente, IdEstabelecimento = idEstabelecimento, PageSize = pageSize, Offset = (page - 1) * pageSize });
+        private Task<IEnumerable<ConversationMessageItemDto>> ExactMessagesAsync(NpgsqlConnection cx, Guid id, DateTime? before, int limit) => cx.QueryAsync<ConversationMessageItemDto>(@"SELECT m.id AS Id, COALESCE(m.criada_por, '') AS CriadaPor, COALESCE(m.conteudo, '') AS Conteudo, COALESCE(m.tipo::text, 'texto') AS Tipo, COALESCE(m.status::text, '') AS Status, m.data_envio AS DataEnvio, COALESCE(m.data_criacao, m.data_envio, NOW()) AS DataCriacao FROM mensagens m WHERE m.id_conversa = @Id AND (@Before IS NULL OR COALESCE(m.data_criacao, m.data_envio) < @Before) ORDER BY COALESCE(m.data_criacao, m.data_envio) DESC LIMIT @Limit;", new { Id = id, Before = before, Limit = limit });
+        private Task<IEnumerable<ConversationMessageItemDto>> GroupMessagesAsync(NpgsqlConnection cx, Guid groupId, DateTime? before, int limit) => cx.QueryAsync<ConversationMessageItemDto>(@"SELECT m.id AS Id, COALESCE(m.criada_por, '') AS CriadaPor, COALESCE(m.conteudo, '') AS Conteudo, COALESCE(m.tipo::text, 'texto') AS Tipo, COALESCE(m.status::text, '') AS Status, m.data_envio AS DataEnvio, COALESCE(m.data_criacao, m.data_envio, NOW()) AS DataCriacao FROM mensagens m JOIN conversas c ON c.id = m.id_conversa WHERE COALESCE(c.id_conversa_grupo, c.id) = @GroupId AND (@Before IS NULL OR COALESCE(m.data_criacao, m.data_envio) < @Before) ORDER BY COALESCE(m.data_criacao, m.data_envio) DESC LIMIT @Limit;", new { GroupId = groupId, Before = before, Limit = limit });
+        private Task<IEnumerable<ConversationMessageItemDto>> ClientMessagesAsync(NpgsqlConnection cx, Guid idCliente, Guid idEstabelecimento, DateTime? before, int limit) => cx.QueryAsync<ConversationMessageItemDto>(@"SELECT m.id AS Id, COALESCE(m.criada_por, '') AS CriadaPor, COALESCE(m.conteudo, '') AS Conteudo, COALESCE(m.tipo::text, 'texto') AS Tipo, COALESCE(m.status::text, '') AS Status, m.data_envio AS DataEnvio, COALESCE(m.data_criacao, m.data_envio, NOW()) AS DataCriacao FROM mensagens m JOIN conversas c ON c.id = m.id_conversa WHERE c.id_cliente = @IdCliente AND c.id_estabelecimento = @IdEstabelecimento AND (@Before IS NULL OR COALESCE(m.data_criacao, m.data_envio) < @Before) ORDER BY COALESCE(m.data_criacao, m.data_envio) DESC LIMIT @Limit;", new { IdCliente = idCliente, IdEstabelecimento = idEstabelecimento, Before = before, Limit = limit });
 
         private async Task<IReadOnlyList<ConversationEventDto>> ListarEventosInternalAsync(NpgsqlConnection cx, Guid groupId)
         {

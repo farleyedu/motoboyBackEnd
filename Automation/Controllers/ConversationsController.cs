@@ -57,7 +57,7 @@ namespace APIBack.Automation.Controllers
 
         [HttpGet("{id:guid}/mensagens")]
         [RequirePermission("WhatsApp", "visualizar")]
-        public async Task<IActionResult> ObterMensagens(Guid id, [FromQuery] int page = 1, [FromQuery] int pageSize = DefaultPageSize)
+        public async Task<IActionResult> ObterMensagens(Guid id, [FromQuery] DateTime? before = null, [FromQuery] int pageSize = DefaultPageSize)
         {
             var estabelecimentoId = HttpContext.GetEstabelecimentoId();
             if (!estabelecimentoId.HasValue)
@@ -65,10 +65,9 @@ namespace APIBack.Automation.Controllers
                 return BadRequest(new { success = false, error = "Selecione um estabelecimento para consultar mensagens." });
             }
 
-            page = Math.Max(1, page);
             pageSize = Math.Clamp(pageSize <= 0 ? DefaultPageSize : pageSize, 1, MaxPageSize);
 
-            var historico = await _conversationRepository.ObterHistoricoConversaAsync(id, page, pageSize, estabelecimentoId.Value);
+            var historico = await _conversationRepository.ObterHistoricoConversaAsync(id, before, pageSize, estabelecimentoId.Value);
             return historico == null ? NotFound(new { success = false, error = "Conversa nao encontrada." }) : Ok(historico);
         }
 

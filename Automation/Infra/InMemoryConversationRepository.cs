@@ -250,7 +250,7 @@ namespace APIBack.Automation.Infra
             return Task.FromResult<IReadOnlyList<ConversationListItemDto>>(itens.OrderByDescending(i => i.UltimaMensagemData ?? i.DataUltimaMensagem ?? i.DataAtualizacao).ToList());
         }
 
-        public Task<ConversationHistoryDto?> ObterHistoricoConversaAsync(Guid idConversa, int page, int pageSize, Guid? idEstabelecimento = null)
+        public Task<ConversationHistoryDto?> ObterHistoricoConversaAsync(Guid idConversa, DateTime? before, int pageSize, Guid? idEstabelecimento = null)
         {
             var alvo = idEstabelecimento.HasValue ? ResolveTarget(idConversa, idEstabelecimento.Value) : ResolveExact(idConversa);
             if (alvo == null)
@@ -258,15 +258,19 @@ namespace APIBack.Automation.Infra
                 return Task.FromResult<ConversationHistoryDto?>(null);
             }
 
-            page = Math.Max(1, page);
             pageSize = pageSize <= 0 ? 50 : pageSize;
-            var mensagens = (IsCentral(idEstabelecimento ?? Guid.Empty) ? GroupMessages(alvo.IdConversaGrupo) : Messages(alvo.IdConversa))
-                .Skip((page - 1) * pageSize)
-                .Take(pageSize)
-                .Select(ToItem)
+            var allMessages = (IsCentral(idEstabelecimento ?? Guid.Empty) ? GroupMessages(alvo.IdConversaGrupo) : Messages(alvo.IdConversa))
+                .OrderByDescending(MsgDate)
                 .ToList();
 
-            var allMessages = IsCentral(idEstabelecimento ?? Guid.Empty) ? GroupMessages(alvo.IdConversaGrupo) : Messages(alvo.IdConversa);
+            if (before.HasValue)
+                allMessages = allMessages.Where(m => MsgDate(m) < before.Value).ToList();
+
+            var hasMore = allMessages.Count > pageSize;
+            var mensagens = allMessages.Take(pageSize).ToList();
+            mensagens.Reverse(); // retorna em ASC para exibicao
+            var cursor = mensagens.Count > 0 ? MsgDate(mensagens[0]).ToString("O") : null;
+
             var detalhes = IsCentral(idEstabelecimento ?? Guid.Empty) ? ToCentralDetails(GetRoot(alvo) ?? alvo) : ToDetails(alvo);
             var controle = BuildControl(alvo, idEstabelecimento ?? alvo.IdEstabelecimento);
 
@@ -275,10 +279,9 @@ namespace APIBack.Automation.Infra
                 Conversa = detalhes,
                 Controle = controle,
                 Eventos = BuildEvents(alvo.IdConversaGrupo),
-                Mensagens = mensagens,
-                Page = page,
-                PageSize = pageSize,
-                Total = allMessages.Count
+                Mensagens = mensagens.Select(ToItem).ToList(),
+                HasMore = hasMore,
+                Cursor = cursor,
             });
         }
 

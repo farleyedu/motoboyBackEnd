@@ -411,7 +411,7 @@ namespace APIBack.Automation.Services
 
             if (idEstabelecimento.HasValue)
             {
-                var historico = await _repositorio.ObterHistoricoConversaAsync(idConversa, 1, ultimasN, idEstabelecimento.Value);
+                var historico = await _repositorio.ObterHistoricoConversaAsync(idConversa, null, ultimasN, idEstabelecimento.Value);
                 if (historico != null)
                 {
                     return new ConversationResponse
