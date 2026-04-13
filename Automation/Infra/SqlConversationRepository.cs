@@ -56,10 +56,51 @@ SELECT c.id AS Id,
   LEFT JOIN agentes a ON a.id = c.id_agente_atribuido
   LEFT JOIN usuario u ON u.id = a.usuarioid";
 
+        // Query otimizada para listagem: busca ultima mensagem via LATERAL em vez de N+1
+        private const string SelectConversationListWithLastMessage = @"
+SELECT c.id AS Id,
+       COALESCE(c.id_conversa_grupo, c.id) AS IdConversaGrupo,
+       c.id_estabelecimento AS IdEstabelecimento,
+       c.id_cliente AS IdCliente,
+       c.estado::text AS Estado,
+       COALESCE(NULLIF(c.status_atendimento, ''), '') AS StatusAtendimento,
+       c.id_agente_atribuido AS IdAgenteAtribuido,
+       COALESCE(c.qtd_nao_lidas, 0) AS QtdNaoLidas,
+       c.data_primeira_mensagem AS DataPrimeiraMensagem,
+       c.data_ultima_mensagem AS DataUltimaMensagem,
+       c.data_criacao AS DataCriacao,
+       c.data_atualizacao AS DataAtualizacao,
+       c.data_fechamento AS DataFechamento,
+       cl.telefone_e164 AS TelefoneCliente,
+       COALESCE(cl.nome, cl.telefone_e164) AS ClienteNome,
+       CASE
+           WHEN c.id_agente_atribuido IS NULL THEN NULL
+           ELSE COALESCE(u.nome, CONCAT('Agente ', c.id_agente_atribuido::text))
+       END AS AgenteNome,
+       lm.UltimaMensagemConteudo,
+       lm.UltimaMensagemData,
+       lm.UltimaMensagemCriadaPor
+  FROM conversas c
+  LEFT JOIN clientes cl ON cl.id = c.id_cliente
+  LEFT JOIN agentes a ON a.id = c.id_agente_atribuido
+  LEFT JOIN usuario u ON u.id = a.usuarioid
+  LEFT JOIN LATERAL (
+      SELECT COALESCE(m.conteudo, '') AS UltimaMensagemConteudo,
+             COALESCE(m.data_criacao, m.data_envio) AS UltimaMensagemData,
+             COALESCE(m.criada_por, '') AS UltimaMensagemCriadaPor
+        FROM mensagens m
+       WHERE m.id_conversa = c.id
+       ORDER BY COALESCE(m.data_criacao, m.data_envio) DESC
+       LIMIT 1
+  ) lm ON TRUE";
+
         private readonly string _connectionString;
         private readonly ILogger<SqlConversationRepository> _logger;
         private readonly Guid? _centralEstabelecimentoId;
         private static bool _indexesEnsured;
+        // Throttle do expire: evita rodar em todo polling de 5s
+        private static DateTime _lastExpireRunAt = DateTime.MinValue;
+        private static readonly TimeSpan ExpireThrottle = TimeSpan.FromSeconds(30);
 
         public SqlConversationRepository(IConfiguration config, ILogger<SqlConversationRepository> logger)
         {
@@ -76,14 +117,19 @@ SELECT c.id AS Id,
                 return;
             }
 
+            // Indexes criados com CONCURRENTLY para nao bloquear a tabela durante o boot.
+            // CONCURRENTLY nao pode rodar dentro de transacao — ok aqui pois usamos conexao avulsa.
             try
             {
                 using var cx = new NpgsqlConnection(_connectionString);
-                cx.Execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_mensagens_id_provedor ON mensagens (id_provedor);");
-                cx.Execute("CREATE INDEX IF NOT EXISTS ix_conversas_id_conversa_grupo ON conversas (id_conversa_grupo, data_criacao DESC);");
-                cx.Execute("CREATE INDEX IF NOT EXISTS ix_conversa_eventos_group_created ON conversa_eventos (id_conversa_grupo, data_criacao DESC);");
-                cx.Execute("CREATE INDEX IF NOT EXISTS ix_conversas_cliente_estabelecimento ON conversas (id_cliente, id_estabelecimento);");
-                cx.Execute("CREATE INDEX IF NOT EXISTS ix_mensagens_conversa_criacao ON mensagens (id_conversa, COALESCE(data_criacao, data_envio) DESC);");
+                cx.Open();
+                cx.Execute("CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS ux_mensagens_id_provedor ON mensagens (id_provedor);");
+                cx.Execute("CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_conversas_id_conversa_grupo ON conversas (id_conversa_grupo, data_criacao DESC);");
+                cx.Execute("CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_conversa_eventos_group_created ON conversa_eventos (id_conversa_grupo, data_criacao DESC);");
+                cx.Execute("CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_conversas_cliente_estabelecimento ON conversas (id_cliente, id_estabelecimento);");
+                cx.Execute("CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_mensagens_conversa_criacao ON mensagens (id_conversa, COALESCE(data_criacao, data_envio) DESC);");
+                // Indice para acelerar a query de expire (janela_24h_fim + estado)
+                cx.Execute("CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_conversas_janela_expiracao ON conversas (janela_24h_fim, estado) WHERE janela_24h_fim IS NOT NULL;");
                 _indexesEnsured = true;
             }
             catch (Exception ex)
@@ -477,41 +523,61 @@ UPDATE conversas
         public async Task<IReadOnlyList<ConversationListItemDto>> ListarConversasAsync(string? estado, int? idAgente, bool incluirArquivadas, Guid? idEstabelecimento = null)
         {
             await using var cx = new NpgsqlConnection(_connectionString);
-            await ExpireExpiredConversationsForEstablishmentAsync(cx, idEstabelecimento);
-            var sql = SelectConversation + (idEstabelecimento.HasValue ? " WHERE c.id_estabelecimento = @IdEstabelecimento" : string.Empty);
-            var rows = (await cx.QueryAsync<ConversationRow>(sql, new { IdEstabelecimento = idEstabelecimento })).ToList();
-            var itens = new List<ConversationListItemDto>();
+            if (DateTime.UtcNow - _lastExpireRunAt >= ExpireThrottle)
+            {
+                await ExpireExpiredConversationsForEstablishmentAsync(cx, idEstabelecimento);
+                _lastExpireRunAt = DateTime.UtcNow;
+            }
+
+            List<ConversationListItemDto> itens;
 
             if (idEstabelecimento.HasValue && IsCentral(idEstabelecimento.Value))
             {
+                // Caminho central: mantem N+1 pois agrega por grupo (caso raro)
+                var sql = SelectConversation + " WHERE c.id_estabelecimento = @IdEstabelecimento";
+                var rows = (await cx.QueryAsync<ConversationRow>(sql, new { IdEstabelecimento = idEstabelecimento })).ToList();
+                itens = new List<ConversationListItemDto>();
                 foreach (var root in rows.Where(r => r.Id == r.IdConversaGrupo && r.IdEstabelecimento == idEstabelecimento.Value))
-                {
                     itens.Add(await BuildCentralListItemAsync(cx, root));
-                }
             }
             else
             {
-                foreach (var row in rows)
+                // Caminho padrao: query unica com LATERAL join - elimina N+1
+                var listSql = SelectConversationListWithLastMessage +
+                              (idEstabelecimento.HasValue ? " WHERE c.id_estabelecimento = @IdEstabelecimento" : string.Empty);
+                var listRows = (await cx.QueryAsync<ConversationListRow>(listSql, new { IdEstabelecimento = idEstabelecimento })).ToList();
+                itens = listRows.Select(row => new ConversationListItemDto
                 {
-                    itens.Add(await BuildStandardListItemAsync(cx, row));
-                }
+                    Id = row.Id,
+                    IdCliente = row.IdCliente,
+                    IdConversaOperacional = row.Id,
+                    IdConversaGrupo = row.IdConversaGrupo,
+                    ClienteNome = row.ClienteNome,
+                    ClienteNumero = row.TelefoneCliente,
+                    Estado = CanonicalStatus(row.StatusAtendimento, row.Estado, row.IdAgenteAtribuido.HasValue ? ModoConversa.Humano : ModoConversa.Bot),
+                    IdAgenteAtribuido = row.IdAgenteAtribuido,
+                    AgenteNome = row.AgenteNome,
+                    QtdNaoLidas = row.QtdNaoLidas,
+                    DataPrimeiraMensagem = row.DataPrimeiraMensagem ?? row.DataCriacao,
+                    DataUltimaMensagem = row.DataUltimaMensagem ?? row.DataAtualizacao,
+                    DataCriacao = row.DataCriacao,
+                    DataAtualizacao = row.DataAtualizacao,
+                    DataFechamento = row.DataFechamento,
+                    UltimaMensagemConteudo = row.UltimaMensagemConteudo,
+                    UltimaMensagemData = row.UltimaMensagemData,
+                    UltimaMensagemCriadaPor = row.UltimaMensagemCriadaPor,
+                }).ToList();
             }
 
             var filtro = NormalizeStatus(estado);
             if (!string.IsNullOrWhiteSpace(filtro))
-            {
                 itens = itens.Where(i => NormalizeStatus(i.Estado) == filtro).ToList();
-            }
 
             if (idAgente.HasValue)
-            {
                 itens = itens.Where(i => i.IdAgenteAtribuido == idAgente.Value).ToList();
-            }
 
             if (!incluirArquivadas)
-            {
                 itens = itens.Where(i => !string.Equals(i.Estado, "arquivada", StringComparison.OrdinalIgnoreCase)).ToList();
-            }
 
             return itens.OrderByDescending(i => i.UltimaMensagemData ?? i.DataUltimaMensagem ?? i.DataAtualizacao).ToList();
         }
@@ -540,7 +606,7 @@ UPDATE conversas
                 var hasMore = rows.Count > pageSize;
                 if (hasMore) rows = rows.Take(pageSize).ToList();
                 rows.Reverse(); // retorna em ordem ASC para exibicao
-                var cursor = rows.Count > 0 ? rows[0].DataCriacao.ToString("O") : null;
+                var cursor = rows.Count > 0 ? DateTime.SpecifyKind(rows[0].DataCriacao, DateTimeKind.Utc).ToString("O") : null;
 
                 return new ConversationHistoryDto
                 {
@@ -562,7 +628,7 @@ UPDATE conversas
             var clientHasMore = clientRows.Count > pageSize;
             if (clientHasMore) clientRows = clientRows.Take(pageSize).ToList();
             clientRows.Reverse(); // retorna em ordem ASC para exibicao
-            var clientCursor = clientRows.Count > 0 ? clientRows[0].DataCriacao.ToString("O") : null;
+            var clientCursor = clientRows.Count > 0 ? DateTime.SpecifyKind(clientRows[0].DataCriacao, DateTimeKind.Utc).ToString("O") : null;
 
             return new ConversationHistoryDto
             {
@@ -1379,6 +1445,29 @@ UPDATE conversas c
             public string? TelefoneCliente { get; set; }
             public string? ClienteNome { get; set; }
             public string? AgenteNome { get; set; }
+        }
+
+        private sealed class ConversationListRow
+        {
+            public Guid Id { get; set; }
+            public Guid IdConversaGrupo { get; set; }
+            public Guid IdEstabelecimento { get; set; }
+            public Guid IdCliente { get; set; }
+            public string? Estado { get; set; }
+            public string? StatusAtendimento { get; set; }
+            public int? IdAgenteAtribuido { get; set; }
+            public int QtdNaoLidas { get; set; }
+            public DateTime? DataPrimeiraMensagem { get; set; }
+            public DateTime? DataUltimaMensagem { get; set; }
+            public DateTime DataCriacao { get; set; }
+            public DateTime DataAtualizacao { get; set; }
+            public DateTime? DataFechamento { get; set; }
+            public string? TelefoneCliente { get; set; }
+            public string? ClienteNome { get; set; }
+            public string? AgenteNome { get; set; }
+            public string? UltimaMensagemConteudo { get; set; }
+            public DateTime? UltimaMensagemData { get; set; }
+            public string? UltimaMensagemCriadaPor { get; set; }
         }
 
         private sealed class ExpiredConversationCandidateRow

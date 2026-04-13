@@ -67,7 +67,12 @@ namespace APIBack.Automation.Controllers
 
             pageSize = Math.Clamp(pageSize <= 0 ? DefaultPageSize : pageSize, 1, MaxPageSize);
 
-            var historico = await _conversationRepository.ObterHistoricoConversaAsync(id, before, pageSize, estabelecimentoId.Value);
+            // Garante UTC — ASP.NET pode parsear o query param como Unspecified dependendo do formato
+            var beforeUtc = before.HasValue
+                ? DateTime.SpecifyKind(before.Value, DateTimeKind.Utc)
+                : (DateTime?)null;
+
+            var historico = await _conversationRepository.ObterHistoricoConversaAsync(id, beforeUtc, pageSize, estabelecimentoId.Value);
             return historico == null ? NotFound(new { success = false, error = "Conversa nao encontrada." }) : Ok(historico);
         }
 

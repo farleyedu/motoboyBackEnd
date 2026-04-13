@@ -310,7 +310,8 @@ namespace APIBack.Automation.Services
             var conversaInserida = await _repositorio.InserirOuAtualizarAsync(conversa);
             if (!conversaInserida)
             {
-                _logger.LogError("Falha ao inserir/atualizar conversa {IdConversa}", idConversa);
+                _logger.LogError("Falha ao inserir/atualizar conversa {IdConversa} — abortando processamento da mensagem", idConversa);
+                throw new InvalidOperationException($"Não foi possível persistir a conversa {idConversa} antes de salvar a mensagem.");
             }
 
             if (existente == null)
