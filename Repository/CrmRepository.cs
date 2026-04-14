@@ -125,7 +125,7 @@ INSERT INTO crm_oportunidade (
     dt_resposta_prevista, dt_pagamento_prevista, closed_at)
 VALUES (
     @NomeEmpresa, @NomeContato, @Telefone, @Email, @Cnpj, @Tipo::crm_tipo_servico, @Responsavel::crm_responsavel, @Coluna::crm_coluna, @Status::crm_oportunidade_status,
-    @Substatus, @ProximaAcao, COALESCE(@EstimativaJson, '{}'::jsonb), @PropostaJson, @PropostaEnviadaEm,
+    @Substatus, @ProximaAcao, COALESCE(@EstimativaJson::jsonb, '{}'::jsonb), @PropostaJson::jsonb, @PropostaEnviadaEm,
     @ReuniaoReservaId, @ReuniaoLocal, @RespostaReservaId, @PagamentoReservaId,
     @DtRespostaPrevista, @DtPagamentoPrevista, @ClosedAt)
 RETURNING id;";
@@ -170,7 +170,7 @@ UPDATE crm_oportunidade
        status = @Status::crm_oportunidade_status,
        substatus = @Substatus,
        proxima_acao = @ProximaAcao,
-       estimativa_json = COALESCE(@EstimativaJson, '{}'::jsonb),
+       estimativa_json = COALESCE(@EstimativaJson::jsonb, '{}'::jsonb),
        proposta_json = @PropostaJson,
        proposta_enviada_em = @PropostaEnviadaEm,
        reuniao_local = @ReuniaoLocal,
