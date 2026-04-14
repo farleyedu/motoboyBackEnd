@@ -48,9 +48,9 @@ SELECT id,
        updated_at,
        closed_at
   FROM crm_oportunidade
- WHERE (@Status IS NULL OR status = @Status)
-   AND (@Tipo IS NULL OR tipo = @Tipo)
-   AND (@Responsavel IS NULL OR responsavel = @Responsavel)
+ WHERE (@Status IS NULL OR status::text = @Status)
+   AND (@Tipo IS NULL OR tipo::text = @Tipo)
+   AND (@Responsavel IS NULL OR responsavel::text = @Responsavel)
    AND (
        @Busca IS NULL
        OR nome_empresa ILIKE '%' || @Busca || '%'
@@ -124,7 +124,7 @@ INSERT INTO crm_oportunidade (
     reserva_reuniao_id, reuniao_local, reserva_resposta_id, reserva_pagamento_id,
     dt_resposta_prevista, dt_pagamento_prevista, closed_at)
 VALUES (
-    @NomeEmpresa, @NomeContato, @Telefone, @Email, @Cnpj, @Tipo, @Responsavel, @Coluna, @Status,
+    @NomeEmpresa, @NomeContato, @Telefone, @Email, @Cnpj, @Tipo::crm_tipo_servico, @Responsavel::crm_responsavel, @Coluna::crm_coluna, @Status::crm_oportunidade_status,
     @Substatus, @ProximaAcao, COALESCE(@EstimativaJson, '{}'::jsonb), @PropostaJson, @PropostaEnviadaEm,
     @ReuniaoReservaId, @ReuniaoLocal, @RespostaReservaId, @PagamentoReservaId,
     @DtRespostaPrevista, @DtPagamentoPrevista, @ClosedAt)
@@ -166,8 +166,8 @@ UPDATE crm_oportunidade
        telefone = @Telefone,
        email = @Email,
        cnpj = @Cnpj,
-       responsavel = @Responsavel,
-       status = @Status,
+       responsavel = @Responsavel::crm_responsavel,
+       status = @Status::crm_oportunidade_status,
        substatus = @Substatus,
        proxima_acao = @ProximaAcao,
        estimativa_json = COALESCE(@EstimativaJson, '{}'::jsonb),
@@ -216,8 +216,8 @@ UPDATE crm_oportunidade
         {
             const string sql = @"
 UPDATE crm_oportunidade
-   SET coluna = @Coluna,
-       status = @Status,
+   SET coluna = @Coluna::crm_coluna,
+       status = @Status::crm_oportunidade_status,
        substatus = @Substatus,
        proposta_json = @PropostaJson,
        proposta_enviada_em = @PropostaEnviadaEm,
@@ -385,9 +385,9 @@ VALUES (
     @OportunidadeId,
     @EmpresaId,
     @EstabelecimentoId,
-    @Tipo,
-    @Status,
-    @Responsavel,
+    @Tipo::crm_tipo_servico,
+    @Status::crm_contrato_status,
+    @Responsavel::crm_responsavel,
     @MensalidadeSaas,
     @MensalidadeMarketing,
     @MarketingValorFixo,
@@ -437,7 +437,7 @@ INSERT INTO crm_implantacao (
     observacoes)
 VALUES (
     @ContratoId,
-    @Status,
+    @Status::crm_implantacao_status,
     @ValorTotal,
     @ValorPago,
     @Paga,
@@ -581,10 +581,10 @@ SELECT c.id,
   JOIN empresas e ON e.id = c.empresa_id
   JOIN estabelecimentos est ON est.id = c.estabelecimento_id
  WHERE (
-       @Status IS NOT NULL AND c.status = @Status
+       @Status IS NOT NULL AND c.status::text = @Status
    )
     OR (
-       @Status IS NULL AND c.status <> 'cancelado'
+       @Status IS NULL AND c.status::text <> 'cancelado'
    )
  ORDER BY c.updated_at DESC;";
 
@@ -629,12 +629,12 @@ SELECT c.id,
         {
             const string sql = @"
 UPDATE crm_contrato
-   SET status = COALESCE(@Status, status),
+   SET status = COALESCE(@Status::crm_contrato_status, status),
        dia_vencimento = COALESCE(@DiaVencimento, dia_vencimento),
        dt_inicio_cobranca = COALESCE(@DataInicioCobranca, dt_inicio_cobranca),
        observacoes = COALESCE(@Observacoes, observacoes),
        canceled_at = CASE
-                        WHEN COALESCE(@Status, status) = 'cancelado' THEN NOW()
+                        WHEN COALESCE(@Status::crm_contrato_status, status)::text = 'cancelado' THEN NOW()
                         ELSE canceled_at
                      END,
        updated_at = NOW()
