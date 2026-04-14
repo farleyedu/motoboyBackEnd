@@ -26,8 +26,13 @@ namespace APIBack.Model.CRM
         public long? PagamentoReservaId { get; set; }
         public DateTime? DtRespostaPrevista { get; set; }
         public DateTime? DtPagamentoPrevista { get; set; }
+        public DateTime? ProxAcaoData { get; set; }
+        public decimal? ValorMensalEst { get; set; }
+        public decimal? ValorImplEst { get; set; }
+        public Guid? IdEmpresa { get; set; }
         public DateTimeOffset CreatedAt { get; set; }
         public DateTimeOffset UpdatedAt { get; set; }
+        public DateTimeOffset? DeletedAt { get; set; }
         public DateTimeOffset? ClosedAt { get; set; }
     }
 

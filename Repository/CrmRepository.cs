@@ -38,14 +38,19 @@ SELECT id,
        estimativa_json,
        proposta_json,
        proposta_enviada_em,
-       reserva_reuniao_id  AS reuniao_reserva_id,
+       reserva_reuniao_id   AS reuniao_reserva_id,
        reuniao_local,
-       reserva_resposta_id AS resposta_reserva_id,
+       reserva_resposta_id  AS resposta_reserva_id,
        reserva_pagamento_id AS pagamento_reserva_id,
        dt_resposta_prevista,
        dt_pagamento_prevista,
+       prox_acao_data,
+       valor_mensal_est,
+       valor_impl_est,
+       id_empresa,
        created_at,
        updated_at,
+       deleted_at,
        closed_at
   FROM crm_oportunidade
  WHERE (@Status IS NULL OR status::text = @Status)
@@ -98,14 +103,19 @@ SELECT id,
        estimativa_json,
        proposta_json,
        proposta_enviada_em,
-       reserva_reuniao_id  AS reuniao_reserva_id,
+       reserva_reuniao_id   AS reuniao_reserva_id,
        reuniao_local,
-       reserva_resposta_id AS resposta_reserva_id,
+       reserva_resposta_id  AS resposta_reserva_id,
        reserva_pagamento_id AS pagamento_reserva_id,
        dt_resposta_prevista,
        dt_pagamento_prevista,
+       prox_acao_data,
+       valor_mensal_est,
+       valor_impl_est,
+       id_empresa,
        created_at,
        updated_at,
+       deleted_at,
        closed_at
   FROM crm_oportunidade
  WHERE id = @OportunidadeId
@@ -124,7 +134,7 @@ INSERT INTO crm_oportunidade (
     reserva_reuniao_id, reuniao_local, reserva_resposta_id, reserva_pagamento_id,
     dt_resposta_prevista, dt_pagamento_prevista, closed_at)
 VALUES (
-    @NomeEmpresa, @NomeContato, @Telefone, @Email, @Cnpj, @Tipo::crm_tipo_servico, @Responsavel::crm_responsavel, @Coluna::crm_coluna, @Status::crm_oportunidade_status,
+    @NomeEmpresa, @NomeContato, @Telefone, @Email, @Cnpj, @Tipo, @Responsavel, @Coluna, @Status::crm_oportunidade_status,
     @Substatus, @ProximaAcao, COALESCE(@EstimativaJson::jsonb, '{}'::jsonb), @PropostaJson::jsonb, @PropostaEnviadaEm,
     @ReuniaoReservaId, @ReuniaoLocal, @RespostaReservaId, @PagamentoReservaId,
     @DtRespostaPrevista, @DtPagamentoPrevista, @ClosedAt)
@@ -166,7 +176,7 @@ UPDATE crm_oportunidade
        telefone = @Telefone,
        email = @Email,
        cnpj = @Cnpj,
-       responsavel = @Responsavel::crm_responsavel,
+       responsavel = @Responsavel,
        status = @Status::crm_oportunidade_status,
        substatus = @Substatus,
        proxima_acao = @ProximaAcao,
@@ -216,7 +226,7 @@ UPDATE crm_oportunidade
         {
             const string sql = @"
 UPDATE crm_oportunidade
-   SET coluna = @Coluna::crm_coluna,
+   SET coluna = @Coluna,
        status = @Status::crm_oportunidade_status,
        substatus = @Substatus,
        proposta_json = @PropostaJson,
@@ -254,14 +264,14 @@ UPDATE crm_oportunidade
         {
             const string sql = @"
 SELECT id,
-       oportunidade_id,
-       NULL::uuid AS contrato_id,
-       usuario_id,
+       id_oportunidade AS oportunidade_id,
+       NULL::uuid      AS contrato_id,
+       id_usuario      AS usuario_id,
        acao,
        detalhe,
        created_at
   FROM crm_oportunidade_historico
- WHERE oportunidade_id = @OportunidadeId
+ WHERE id_oportunidade = @OportunidadeId
  ORDER BY created_at DESC;";
 
             await using var connection = await _dataSource.OpenConnectionAsync();
@@ -272,7 +282,7 @@ SELECT id,
         public async Task AdicionarHistoricoOportunidadeAsync(Guid oportunidadeId, int usuarioId, string acao, string? detalhe)
         {
             const string sql = @"
-INSERT INTO crm_oportunidade_historico (oportunidade_id, usuario_id, acao, detalhe)
+INSERT INTO crm_oportunidade_historico (id_oportunidade, id_usuario, acao, detalhe)
 VALUES (@OportunidadeId, @UsuarioId, @Acao, @Detalhe);";
 
             await using var connection = await _dataSource.OpenConnectionAsync();
@@ -306,7 +316,7 @@ SELECT id,
             const string sql = @"
 SELECT id
   FROM crm_contrato
- WHERE oportunidade_id = @OportunidadeId
+ WHERE id_oportunidade = @OportunidadeId
  ORDER BY created_at DESC
  LIMIT 1;";
 
@@ -335,14 +345,19 @@ SELECT id,
        estimativa_json,
        proposta_json,
        proposta_enviada_em,
-       reserva_reuniao_id  AS reuniao_reserva_id,
+       reserva_reuniao_id   AS reuniao_reserva_id,
        reuniao_local,
-       reserva_resposta_id AS resposta_reserva_id,
+       reserva_resposta_id  AS resposta_reserva_id,
        reserva_pagamento_id AS pagamento_reserva_id,
        dt_resposta_prevista,
        dt_pagamento_prevista,
+       prox_acao_data,
+       valor_mensal_est,
+       valor_impl_est,
+       id_empresa,
        created_at,
        updated_at,
+       deleted_at,
        closed_at
   FROM crm_oportunidade
  WHERE id = @OportunidadeId
@@ -367,7 +382,7 @@ SELECT id,
 
             var contratoId = await connection.ExecuteScalarAsync<Guid>(@"
 INSERT INTO crm_contrato (
-    oportunidade_id,
+    id_oportunidade,
     empresa_id,
     estabelecimento_id,
     tipo,
@@ -385,9 +400,9 @@ VALUES (
     @OportunidadeId,
     @EmpresaId,
     @EstabelecimentoId,
-    @Tipo::crm_tipo_servico,
-    @Status::crm_contrato_status,
-    @Responsavel::crm_responsavel,
+    @Tipo,
+    @Status,
+    @Responsavel,
     @MensalidadeSaas,
     @MensalidadeMarketing,
     @MarketingValorFixo,
@@ -437,7 +452,7 @@ INSERT INTO crm_implantacao (
     observacoes)
 VALUES (
     @ContratoId,
-    @Status::crm_implantacao_status,
+    @Status,
     @ValorTotal,
     @ValorPago,
     @Paga,
@@ -563,7 +578,7 @@ SELECT c.id,
        e.nome_fantasia AS nome_empresa,
        c.estabelecimento_id,
        est.nome_fantasia AS nome_estabelecimento,
-       c.oportunidade_id,
+       c.id_oportunidade AS oportunidade_id,
        c.tipo,
        c.status,
        c.responsavel,
@@ -601,7 +616,7 @@ SELECT c.id,
        e.nome_fantasia AS nome_empresa,
        c.estabelecimento_id,
        est.nome_fantasia AS nome_estabelecimento,
-       c.oportunidade_id,
+       c.id_oportunidade AS oportunidade_id,
        c.tipo,
        c.status,
        c.responsavel,
@@ -629,12 +644,12 @@ SELECT c.id,
         {
             const string sql = @"
 UPDATE crm_contrato
-   SET status = COALESCE(@Status::crm_contrato_status, status),
+   SET status = COALESCE(@Status, status),
        dia_vencimento = COALESCE(@DiaVencimento, dia_vencimento),
        dt_inicio_cobranca = COALESCE(@DataInicioCobranca, dt_inicio_cobranca),
        observacoes = COALESCE(@Observacoes, observacoes),
        canceled_at = CASE
-                        WHEN COALESCE(@Status::crm_contrato_status, status)::text = 'cancelado' THEN NOW()
+                        WHEN COALESCE(@Status, status) = 'cancelado' THEN NOW()
                         ELSE canceled_at
                      END,
        updated_at = NOW()
@@ -1321,7 +1336,7 @@ RETURNING id;";
             string? detalhe)
         {
             await connection.ExecuteAsync(@"
-INSERT INTO crm_oportunidade_historico (oportunidade_id, usuario_id, acao, detalhe)
+INSERT INTO crm_oportunidade_historico (id_oportunidade, id_usuario, acao, detalhe)
 VALUES (@OportunidadeId, @UsuarioId, @Acao, @Detalhe);",
                 new
                 {
