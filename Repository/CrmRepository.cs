@@ -134,7 +134,7 @@ INSERT INTO crm_oportunidade (
     reserva_reuniao_id, reuniao_local, reserva_resposta_id, reserva_pagamento_id,
     dt_resposta_prevista, dt_pagamento_prevista, closed_at)
 VALUES (
-    @NomeEmpresa, @NomeContato, @Telefone, @Email, @Cnpj, @Tipo, @Responsavel, @Coluna, @Status::crm_oportunidade_status,
+    @NomeEmpresa, @NomeContato, @Telefone, @Email, @Cnpj, @Tipo::crm_tipo_servico, @Responsavel::crm_responsavel, @Coluna::crm_kanban_col, @Status::crm_oportunidade_status,
     @Substatus, @ProximaAcao, COALESCE(@EstimativaJson::jsonb, '{}'::jsonb), @PropostaJson::jsonb, @PropostaEnviadaEm,
     @ReuniaoReservaId, @ReuniaoLocal, @RespostaReservaId, @PagamentoReservaId,
     @DtRespostaPrevista, @DtPagamentoPrevista, @ClosedAt)
@@ -176,12 +176,12 @@ UPDATE crm_oportunidade
        telefone = @Telefone,
        email = @Email,
        cnpj = @Cnpj,
-       responsavel = @Responsavel,
+       responsavel = @Responsavel::crm_responsavel,
        status = @Status::crm_oportunidade_status,
        substatus = @Substatus,
        proxima_acao = @ProximaAcao,
        estimativa_json = COALESCE(@EstimativaJson::jsonb, '{}'::jsonb),
-       proposta_json = @PropostaJson,
+       proposta_json = @PropostaJson::jsonb,
        proposta_enviada_em = @PropostaEnviadaEm,
        reuniao_local = @ReuniaoLocal,
        closed_at = @ClosedAt,
@@ -226,10 +226,10 @@ UPDATE crm_oportunidade
         {
             const string sql = @"
 UPDATE crm_oportunidade
-   SET coluna = @Coluna,
+   SET coluna = @Coluna::crm_kanban_col,
        status = @Status::crm_oportunidade_status,
        substatus = @Substatus,
-       proposta_json = @PropostaJson,
+       proposta_json = @PropostaJson::jsonb,
        proposta_enviada_em = @PropostaEnviadaEm,
        reserva_reuniao_id = @ReuniaoReservaId,
        reuniao_local = @ReuniaoLocal,
@@ -400,9 +400,9 @@ VALUES (
     @OportunidadeId,
     @EmpresaId,
     @EstabelecimentoId,
-    @Tipo,
-    @Status,
-    @Responsavel,
+    @Tipo::crm_tipo_servico,
+    @Status::crm_contrato_status,
+    @Responsavel::crm_responsavel,
     @MensalidadeSaas,
     @MensalidadeMarketing,
     @MarketingValorFixo,
@@ -452,7 +452,7 @@ INSERT INTO crm_implantacao (
     observacoes)
 VALUES (
     @ContratoId,
-    @Status,
+    @Status::crm_implantacao_status,
     @ValorTotal,
     @ValorPago,
     @Paga,
@@ -644,12 +644,12 @@ SELECT c.id,
         {
             const string sql = @"
 UPDATE crm_contrato
-   SET status = COALESCE(@Status, status),
+   SET status = COALESCE(@Status::crm_contrato_status, status),
        dia_vencimento = COALESCE(@DiaVencimento, dia_vencimento),
        dt_inicio_cobranca = COALESCE(@DataInicioCobranca, dt_inicio_cobranca),
        observacoes = COALESCE(@Observacoes, observacoes),
        canceled_at = CASE
-                        WHEN COALESCE(@Status, status) = 'cancelado' THEN NOW()
+                        WHEN COALESCE(@Status::crm_contrato_status, status)::text = 'cancelado' THEN NOW()
                         ELSE canceled_at
                      END,
        updated_at = NOW()
@@ -831,7 +831,7 @@ SELECT l.id,
 UPDATE crm_lancamento
    SET valor_pago = @ValorPago,
        data_pagamento = @DataPagamento,
-       status = @Status,
+       status = @Status::crm_lancamento_status,
        data_vencimento = COALESCE(@DataVencimento, data_vencimento),
        valor_total = COALESCE(@ValorTotal, valor_total),
        updated_at = NOW()
@@ -1302,14 +1302,14 @@ INSERT INTO crm_lancamento (
 VALUES (
     @ContratoId,
     @EmpresaId,
-    @TipoLancamento,
+    @TipoLancamento::crm_lancamento_tipo,
     @Descricao,
     @Competencia,
     @DataVencimento,
     @DataPagamento,
     @ValorTotal,
     @ValorPago,
-    @Status)
+    @Status::crm_lancamento_status)
 RETURNING id;";
 
             return await connection.ExecuteScalarAsync<Guid>(sql, new
