@@ -197,12 +197,12 @@ namespace APIBack.Service
                         substatus: row.Substatus,
                         propostaJson: row.PropostaJson,
                         propostaEnviadaEm: row.PropostaEnviadaEm,
-                        reuniaoReservaId: null,
-                        reuniaoLocal: null,
-                        respostaReservaId: null,
-                        pagamentoReservaId: null,
-                        dtRespostaPrevista: null,
-                        dtPagamentoPrevista: null,
+                        reuniaoReservaId: row.ReuniaoReservaId,
+                        reuniaoLocal: row.ReuniaoLocal,
+                        respostaReservaId: row.RespostaReservaId,
+                        pagamentoReservaId: row.PagamentoReservaId,
+                        dtRespostaPrevista: row.DtRespostaPrevista,
+                        dtPagamentoPrevista: row.DtPagamentoPrevista,
                         closedAt: row.ClosedAt);
                     await _crmRepository.AdicionarHistoricoOportunidadeAsync(row.Id, usuarioId, "Movido para Aguardando", "Lead movido para aguardando retorno.");
                     return (await ObterOportunidadeResumoAsync(row.Id))!;
@@ -214,12 +214,12 @@ namespace APIBack.Service
                         substatus: row.Substatus,
                         propostaJson: row.PropostaJson,
                         propostaEnviadaEm: row.PropostaEnviadaEm,
-                        reuniaoReservaId: null,
-                        reuniaoLocal: null,
-                        respostaReservaId: null,
-                        pagamentoReservaId: null,
-                        dtRespostaPrevista: null,
-                        dtPagamentoPrevista: null,
+                        reuniaoReservaId: row.ReuniaoReservaId,
+                        reuniaoLocal: row.ReuniaoLocal,
+                        respostaReservaId: row.RespostaReservaId,
+                        pagamentoReservaId: row.PagamentoReservaId,
+                        dtRespostaPrevista: row.DtRespostaPrevista,
+                        dtPagamentoPrevista: row.DtPagamentoPrevista,
                         closedAt: row.ClosedAt);
                     await _crmRepository.AdicionarHistoricoOportunidadeAsync(row.Id, usuarioId, "Movido para Conversa", "Lead movido para conversa inicial.");
                     return (await ObterOportunidadeResumoAsync(row.Id))!;
@@ -247,20 +247,33 @@ namespace APIBack.Service
             {
                 AddError(errors, "diaVencimento", "Informe um dia de vencimento entre 1 e 31.");
             }
+            if (row.Coluna != "quase" && row.Coluna != "aguardando")
+            {
+                AddError(errors, "coluna", "A oportunidade so pode ser fechada nas colunas quase fechado ou aguardando retorno.");
+            }
 
             ThrowIfValidationErrors(errors);
 
             var proposta = DeserializeProposta(row.PropostaJson, row.PropostaEnviadaEm) ?? new CrmPropostaDto();
+            var nomeEmpresa = NormalizeNullable(request.NomeEmpresaOverride) ?? row.NomeEmpresa;
+            var nomeContato = NormalizeNullable(request.NomeContatoOverride) ?? row.NomeContato;
+            var telefone = NormalizeNullable(request.TelefoneOverride) ?? row.Telefone;
+            var email = request.EmailOverride != null
+                ? NormalizeNullable(request.EmailOverride)
+                : row.Email;
+            var cnpj = request.CnpjOverride != null
+                ? NormalizeDigits(request.CnpjOverride)
+                : row.Cnpj;
             var command = new CrmCloseOpportunityCommand
             {
                 OportunidadeId = row.Id,
                 UsuarioId = usuarioId,
                 Responsavel = row.Responsavel,
-                NomeEmpresa = row.NomeEmpresa,
-                NomeContato = row.NomeContato,
-                Telefone = row.Telefone,
-                Email = row.Email,
-                Cnpj = row.Cnpj,
+                NomeEmpresa = nomeEmpresa,
+                NomeContato = nomeContato,
+                Telefone = telefone,
+                Email = email,
+                Cnpj = cnpj,
                 Tipo = row.Tipo,
                 StatusInicial = NormalizeToken(request.StatusInicial),
                 DiaVencimento = request.DiaVencimento,
@@ -508,34 +521,40 @@ namespace APIBack.Service
             }
             ThrowIfValidationErrors(errors);
 
-            var reservaId = await CriarReservaAsync(
+            var reuniaoRequest = request!;
+            var local = reuniaoRequest.Local!.Trim();
+            var observacoes = NormalizeNullable(reuniaoRequest.Observacoes);
+            var resumoReuniao = $"Reuniao agendada para {reuniaoRequest.Data:dd/MM/yyyy}";
+
+            var reservaId = await CriarOuAtualizarReservaAsync(
                 row,
-                request!.Data!.Value.ToDateTime(TimeOnly.MinValue),
+                row.ReuniaoReservaId,
+                reuniaoRequest.Data!.Value.ToDateTime(TimeOnly.MinValue),
                 horaInicio,
                 horaFim,
-                $"CRM oportunidade {row.Id} | tipo=reuniao | local={request.Local}",
+                observacoes,
                 ReservaStatus.Confirmado);
 
             await _crmRepository.AtualizarMovimentacaoOportunidadeAsync(
                 row.Id,
                 "reuniao",
                 status: row.Status,
-                substatus: request.Observacoes ?? $"Reuniao agendada para {request.Data:dd/MM/yyyy}",
+                substatus: observacoes ?? resumoReuniao,
                 propostaJson: row.PropostaJson,
                 propostaEnviadaEm: row.PropostaEnviadaEm,
                 reuniaoReservaId: reservaId,
-                reuniaoLocal: request.Local,
-                respostaReservaId: null,
-                pagamentoReservaId: null,
-                dtRespostaPrevista: null,
-                dtPagamentoPrevista: null,
+                reuniaoLocal: local,
+                respostaReservaId: row.RespostaReservaId,
+                pagamentoReservaId: row.PagamentoReservaId,
+                dtRespostaPrevista: row.DtRespostaPrevista,
+                dtPagamentoPrevista: row.DtPagamentoPrevista,
                 closedAt: row.ClosedAt);
 
             await _crmRepository.AdicionarHistoricoOportunidadeAsync(
                 row.Id,
                 usuarioId,
                 "Movido para Reuniao",
-                $"Reuniao agendada para {request.Data:dd/MM/yyyy} {request.HoraInicio}-{request.HoraFim} em {request.Local}.");
+                $"Reuniao agendada para {reuniaoRequest.Data:dd/MM/yyyy} {reuniaoRequest.HoraInicio}-{reuniaoRequest.HoraFim} em {local}.");
 
             return (await ObterOportunidadeResumoAsync(row.Id))!;
         }
@@ -560,12 +579,12 @@ namespace APIBack.Service
                     substatus: row.Substatus,
                     propostaJson: SerializeProposta(request),
                     propostaEnviadaEm: ToDateTimeOffset(request.EnviadaEm) ?? DateTimeOffset.UtcNow,
-                    reuniaoReservaId: null,
-                    reuniaoLocal: null,
-                    respostaReservaId: null,
-                    pagamentoReservaId: null,
-                    dtRespostaPrevista: null,
-                    dtPagamentoPrevista: null,
+                    reuniaoReservaId: row.ReuniaoReservaId,
+                    reuniaoLocal: row.ReuniaoLocal,
+                    respostaReservaId: row.RespostaReservaId,
+                    pagamentoReservaId: row.PagamentoReservaId,
+                    dtRespostaPrevista: row.DtRespostaPrevista,
+                    dtPagamentoPrevista: row.DtPagamentoPrevista,
                     closedAt: row.ClosedAt);
 
                 await _crmRepository.AdicionarHistoricoOportunidadeAsync(row.Id, usuarioId, "Movido para Proposta", BuildPropostaHistorico(request));
@@ -579,12 +598,12 @@ namespace APIBack.Service
                     substatus: row.Substatus,
                     propostaJson: row.PropostaJson,
                     propostaEnviadaEm: row.PropostaEnviadaEm,
-                    reuniaoReservaId: null,
-                    reuniaoLocal: null,
-                    respostaReservaId: null,
-                    pagamentoReservaId: null,
-                    dtRespostaPrevista: null,
-                    dtPagamentoPrevista: null,
+                    reuniaoReservaId: row.ReuniaoReservaId,
+                    reuniaoLocal: row.ReuniaoLocal,
+                    respostaReservaId: row.RespostaReservaId,
+                    pagamentoReservaId: row.PagamentoReservaId,
+                    dtRespostaPrevista: row.DtRespostaPrevista,
+                    dtPagamentoPrevista: row.DtPagamentoPrevista,
                     closedAt: row.ClosedAt);
 
                 await _crmRepository.AdicionarHistoricoOportunidadeAsync(row.Id, usuarioId, "Movido para Proposta", "Lead movido para proposta.");
@@ -606,47 +625,82 @@ namespace APIBack.Service
             }
             ThrowIfValidationErrors(errors);
 
-            var respostaId = await CriarReservaAsync(
+            var quaseFechadoRequest = request!;
+            var observacoes = NormalizeNullable(quaseFechadoRequest.Observacoes);
+            var respostaId = await CriarOuAtualizarReservaAsync(
                 row,
-                request!.DtRespostaPrevista!.Value.ToDateTime(TimeOnly.MinValue),
+                row.RespostaReservaId,
+                quaseFechadoRequest.DtRespostaPrevista!.Value.ToDateTime(TimeOnly.MinValue),
                 new TimeSpan(9, 0, 0),
                 new TimeSpan(9, 30, 0),
-                $"CRM oportunidade {row.Id} | tipo=resposta | data_prevista={request.DtRespostaPrevista:yyyy-MM-dd}",
+                $"CRM oportunidade {row.Id} | tipo=resposta | data_prevista={quaseFechadoRequest.DtRespostaPrevista:yyyy-MM-dd}",
                 ReservaStatus.Pendente);
 
-            var pagamentoId = await CriarReservaAsync(
+            var pagamentoId = await CriarOuAtualizarReservaAsync(
                 row,
-                request.DtPagamentoPrevista!.Value.ToDateTime(TimeOnly.MinValue),
+                row.PagamentoReservaId,
+                quaseFechadoRequest.DtPagamentoPrevista!.Value.ToDateTime(TimeOnly.MinValue),
                 new TimeSpan(10, 0, 0),
                 new TimeSpan(10, 30, 0),
-                $"CRM oportunidade {row.Id} | tipo=pagamento | data_prevista={request.DtPagamentoPrevista:yyyy-MM-dd}",
+                $"CRM oportunidade {row.Id} | tipo=pagamento | data_prevista={quaseFechadoRequest.DtPagamentoPrevista:yyyy-MM-dd}",
                 ReservaStatus.Pendente);
 
             await _crmRepository.AtualizarMovimentacaoOportunidadeAsync(
                 row.Id,
                 "quase",
                 status: row.Status,
-                substatus: request.Observacoes ?? row.Substatus,
+                substatus: observacoes ?? row.Substatus,
                 propostaJson: row.PropostaJson,
                 propostaEnviadaEm: row.PropostaEnviadaEm,
-                reuniaoReservaId: null,
-                reuniaoLocal: null,
+                reuniaoReservaId: row.ReuniaoReservaId,
+                reuniaoLocal: row.ReuniaoLocal,
                 respostaReservaId: respostaId,
                 pagamentoReservaId: pagamentoId,
-                dtRespostaPrevista: request.DtRespostaPrevista.Value.ToDateTime(TimeOnly.MinValue),
-                dtPagamentoPrevista: request.DtPagamentoPrevista.Value.ToDateTime(TimeOnly.MinValue),
+                dtRespostaPrevista: quaseFechadoRequest.DtRespostaPrevista.Value.ToDateTime(TimeOnly.MinValue),
+                dtPagamentoPrevista: quaseFechadoRequest.DtPagamentoPrevista.Value.ToDateTime(TimeOnly.MinValue),
                 closedAt: row.ClosedAt);
 
             await _crmRepository.AdicionarHistoricoOportunidadeAsync(
                 row.Id,
                 usuarioId,
                 "Movido para Quase fechado",
-                $"Datas previstas registradas: resposta {request.DtRespostaPrevista:dd/MM/yyyy}; pagamento {request.DtPagamentoPrevista:dd/MM/yyyy}.");
+                $"Datas previstas registradas: resposta {quaseFechadoRequest.DtRespostaPrevista:dd/MM/yyyy}; pagamento {quaseFechadoRequest.DtPagamentoPrevista:dd/MM/yyyy}.");
 
             return (await ObterOportunidadeResumoAsync(row.Id))!;
         }
 
-        private async Task<long> CriarReservaAsync(CrmOportunidadeRow row, DateTime data, TimeSpan horaInicio, TimeSpan? horaFim, string observacoes, ReservaStatus status)
+        private async Task<long> CriarOuAtualizarReservaAsync(
+            CrmOportunidadeRow row,
+            long? reservaId,
+            DateTime data,
+            TimeSpan horaInicio,
+            TimeSpan? horaFim,
+            string? observacoes,
+            ReservaStatus status)
+        {
+            var observacoesNormalizadas = NormalizeNullable(observacoes);
+            if (!reservaId.HasValue)
+            {
+                return await CriarReservaAsync(row, data, horaInicio, horaFim, observacoesNormalizadas, status);
+            }
+
+            var reserva = await _reservaRepository.BuscarPorIdAsync(reservaId.Value);
+            if (reserva == null || reserva.Status == ReservaStatus.Cancelado)
+            {
+                return await CriarReservaAsync(row, data, horaInicio, horaFim, observacoesNormalizadas, status);
+            }
+
+            reserva.NomeCliente = string.IsNullOrWhiteSpace(row.NomeContato) ? row.NomeEmpresa : row.NomeContato;
+            reserva.QtdPessoas = 1;
+            reserva.DataReserva = data.Date;
+            reserva.HoraInicio = horaInicio;
+            reserva.HoraFim = horaFim;
+            reserva.Observacoes = observacoesNormalizadas;
+            await _reservaRepository.AtualizarAsync(reserva);
+            return reserva.Id ?? reservaId.Value;
+        }
+
+        private async Task<long> CriarReservaAsync(CrmOportunidadeRow row, DateTime data, TimeSpan horaInicio, TimeSpan? horaFim, string? observacoes, ReservaStatus status)
         {
             if (!_centralEstabelecimentoId.HasValue)
             {
@@ -692,13 +746,13 @@ namespace APIBack.Service
                 ProximaAcao = row.ProximaAcao,
                 Estimativa = DeserializeValores(row.EstimativaJson),
                 Proposta = DeserializeProposta(row.PropostaJson, row.PropostaEnviadaEm),
-                ReuniaoReservaId = row.Coluna == "reuniao" ? row.ReuniaoReservaId : null,
-                RespostaReservaId = row.Coluna == "quase" ? row.RespostaReservaId : null,
-                PagamentoReservaId = row.Coluna == "quase" ? row.PagamentoReservaId : null,
-                DtRespostaPrevista = row.Coluna == "quase" && row.DtRespostaPrevista.HasValue
+                ReuniaoReservaId = row.ReuniaoReservaId,
+                RespostaReservaId = row.RespostaReservaId,
+                PagamentoReservaId = row.PagamentoReservaId,
+                DtRespostaPrevista = row.DtRespostaPrevista.HasValue
                     ? DateOnly.FromDateTime(row.DtRespostaPrevista.Value)
                     : null,
-                DtPagamentoPrevista = row.Coluna == "quase" && row.DtPagamentoPrevista.HasValue
+                DtPagamentoPrevista = row.DtPagamentoPrevista.HasValue
                     ? DateOnly.FromDateTime(row.DtPagamentoPrevista.Value)
                     : null,
                 Reuniao = reuniao,
@@ -742,7 +796,7 @@ namespace APIBack.Service
 
         private async Task<CrmReservaVinculadaDto?> MapReuniaoAsync(CrmOportunidadeRow row)
         {
-            if (row.Coluna != "reuniao" || !row.ReuniaoReservaId.HasValue)
+            if (!row.ReuniaoReservaId.HasValue)
             {
                 return null;
             }

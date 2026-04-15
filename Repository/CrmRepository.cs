@@ -370,7 +370,7 @@ SELECT id,
                 throw new KeyNotFoundException("Oportunidade nao encontrada.");
             }
 
-            var empresaId = await ObterEmpresaExistenteAsync(connection, transaction, command.NomeEmpresa)
+            var empresaId = await ObterEmpresaExistenteAsync(connection, transaction, command.Cnpj, command.NomeEmpresa)
                 ?? await CriarEmpresaAsync(connection, transaction, command);
             var tipoEstabelecimentoId = await ResolverTipoEstabelecimentoIdAsync(connection, transaction, command.EstabelecimentoTipoSlug);
             var estabelecimentoId = await ObterEstabelecimentoExistenteAsync(connection, transaction, empresaId)
@@ -947,16 +947,32 @@ SELECT CASE
             return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
         }
 
-        private async Task<Guid?> ObterEmpresaExistenteAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, string nomeEmpresa)
+        private async Task<Guid?> ObterEmpresaExistenteAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, string? cnpj, string nomeEmpresa)
         {
-            const string sql = @"
+            var cnpjNormalizado = NormalizeDigits(cnpj);
+            if (!string.IsNullOrWhiteSpace(cnpjNormalizado))
+            {
+                const string sqlByCnpj = @"
 SELECT id
   FROM empresas
- WHERE nome_fantasia ILIKE '%' || @NomeEmpresa || '%'
- ORDER BY LENGTH(nome_fantasia), created_at
+ WHERE regexp_replace(COALESCE(cnpj, ''), '[^0-9]', '', 'g') = @Cnpj
  LIMIT 1;";
 
-            return await connection.ExecuteScalarAsync<Guid?>(sql, new { NomeEmpresa = nomeEmpresa.Trim() }, transaction);
+                var empresaIdPorCnpj = await connection.ExecuteScalarAsync<Guid?>(sqlByCnpj, new { Cnpj = cnpjNormalizado }, transaction);
+                if (empresaIdPorCnpj.HasValue)
+                {
+                    return empresaIdPorCnpj;
+                }
+            }
+
+            const string sqlByNome = @"
+SELECT id
+  FROM empresas
+ WHERE lower(btrim(nome_fantasia)) = lower(btrim(@NomeEmpresa))
+ ORDER BY created_at
+ LIMIT 1;";
+
+            return await connection.ExecuteScalarAsync<Guid?>(sqlByNome, new { NomeEmpresa = nomeEmpresa.Trim() }, transaction);
         }
 
         private async Task<Guid> CriarEmpresaAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, CrmCloseOpportunityCommand command)

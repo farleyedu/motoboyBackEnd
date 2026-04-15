@@ -136,6 +136,11 @@ namespace APIBack.DTOs.CRM
         [JsonConverter(typeof(FlexibleNullableDateOnlyJsonConverter))]
         public DateOnly? DataInicioCobranca { get; set; }
         public bool ImplantacaoJaPaga { get; set; }
+        public string? NomeEmpresaOverride { get; set; }
+        public string? NomeContatoOverride { get; set; }
+        public string? TelefoneOverride { get; set; }
+        public string? EmailOverride { get; set; }
+        public string? CnpjOverride { get; set; }
         public string? EstabelecimentoTipoSlug { get; set; }
         public string? Observacoes { get; set; }
     }
