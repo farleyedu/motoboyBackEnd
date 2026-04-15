@@ -18,6 +18,7 @@ namespace APIBack.Repository.Interface
         Task<Guid?> ObterContratoIdPorOportunidadeAsync(Guid oportunidadeId);
 
         Task<CrmCloseOpportunityResult> FecharOportunidadeAsync(CrmCloseOpportunityCommand command);
+        Task<int> SincronizarContratosLegadosAsync();
 
         Task<IReadOnlyCollection<CrmContratoRow>> ListarContratosAsync(string? status);
         Task<CrmContratoRow?> ObterContratoAsync(Guid contratoId);

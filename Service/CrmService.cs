@@ -303,6 +303,7 @@ namespace APIBack.Service
 
         public async Task<IReadOnlyCollection<CrmContratoResumoDto>> ListarContratosAsync(string? status)
         {
+            await SincronizarContratosLegadosAsync();
             var rows = await _crmRepository.ListarContratosAsync(NormalizeNullable(status));
             return rows.Select(MapContratoResumo).ToList();
         }
@@ -458,6 +459,7 @@ namespace APIBack.Service
 
         public async Task<CrmFinanceiroResumoDto> ObterResumoFinanceiroAsync(DateTime? referenciaMes)
         {
+            await SincronizarContratosLegadosAsync();
             var referencia = PrimeiroDiaMes(referenciaMes ?? DateTime.Today);
             var resumo = await _crmRepository.ObterResumoFinanceiroAsync(referencia);
             var divisao = await _crmRepository.ObterDivisaoFinanceiraAsync(referencia);
@@ -473,12 +475,14 @@ namespace APIBack.Service
 
         public async Task<IReadOnlyCollection<CrmLancamentoDto>> ListarLancamentosEmAbertoAsync()
         {
+            await SincronizarContratosLegadosAsync();
             var rows = await _crmRepository.ListarLancamentosEmAbertoAsync();
             return rows.Select(MapLancamento).ToList();
         }
 
         public async Task<CrmDivisaoFinanceiraDto> ObterDivisaoFinanceiraAsync(DateTime? referenciaMes)
         {
+            await SincronizarContratosLegadosAsync();
             var referencia = PrimeiroDiaMes(referenciaMes ?? DateTime.Today);
             var rows = await _crmRepository.ObterDivisaoFinanceiraAsync(referencia);
 
@@ -496,6 +500,15 @@ namespace APIBack.Service
                     SocioValor = item.SocioValor
                 }).ToList()
             };
+        }
+
+        private async Task SincronizarContratosLegadosAsync()
+        {
+            var inseridos = await _crmRepository.SincronizarContratosLegadosAsync();
+            if (inseridos > 0)
+            {
+                _logger.LogInformation("CRM legado equalizado: {Quantidade} contratos antigos criados em crm_contrato.", inseridos);
+            }
         }
 
         private async Task<CrmOportunidadeResumoDto> MoverParaReuniaoAsync(int usuarioId, CrmOportunidadeRow row, CrmAgendamentoReuniaoRequest? request)

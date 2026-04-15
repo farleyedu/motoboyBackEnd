@@ -570,6 +570,225 @@ UPDATE crm_oportunidade
             };
         }
 
+        public async Task<int> SincronizarContratosLegadosAsync()
+        {
+            const string sql = @"
+WITH empresas_alvo AS (
+    SELECT e.id AS empresa_id,
+           e.nome_fantasia AS nome_empresa,
+           COALESCE(NULLIF(e.razao_social, ''), e.nome_fantasia) AS nome_contato,
+           e.telefone,
+           e.email,
+           e.cnpj,
+           COALESCE(e.data_criacao::date, CURRENT_DATE) AS data_inicio_base
+      FROM empresas e
+     WHERE NOT EXISTS (
+           SELECT 1
+             FROM crm_contrato c
+            WHERE c.empresa_id = e.id
+     )
+),
+estabelecimento_principal AS (
+    SELECT ranked.empresa_id,
+           ranked.estabelecimento_id,
+           ranked.nome_estabelecimento,
+           ranked.ativo,
+           ranked.status_estabelecimento
+      FROM (
+            SELECT est.id_empresa AS empresa_id,
+                   est.id AS estabelecimento_id,
+                   est.nome_fantasia AS nome_estabelecimento,
+                   COALESCE(est.ativo, TRUE) AS ativo,
+                   COALESCE(est.status, 'ativo') AS status_estabelecimento,
+                   ROW_NUMBER() OVER (
+                       PARTITION BY est.id_empresa
+                       ORDER BY CASE
+                                   WHEN COALESCE(est.ativo, TRUE) = TRUE
+                                    AND COALESCE(est.status, 'ativo') IN ('ativo', 'trial') THEN 0
+                                   ELSE 1
+                                END,
+                                CASE WHEN est.tipo_unidade::text = 'matriz' THEN 0 ELSE 1 END,
+                                est.data_criacao,
+                                est.id
+                   ) AS rn
+              FROM estabelecimentos est
+      ) ranked
+     WHERE ranked.rn = 1
+),
+fonte AS (
+    SELECT alvo.empresa_id,
+           alvo.nome_empresa,
+           alvo.nome_contato,
+           alvo.telefone,
+           alvo.email,
+           alvo.cnpj,
+           ep.estabelecimento_id,
+           COALESCE(NULLIF(opp.tipo::text, ''), 'saas') AS tipo,
+           CASE
+               WHEN ep.ativo = FALSE THEN 'pausado'
+               WHEN ep.status_estabelecimento IN ('ativo', 'trial') THEN 'ativo'
+               ELSE 'pausado'
+           END AS status,
+           COALESCE(NULLIF(opp.responsavel::text, ''), 'farley') AS responsavel,
+           COALESCE(NULLIF(opp.proposta_json ->> 'saaSMensalidade', '')::numeric, 0) AS mensalidade_saas,
+           COALESCE(NULLIF(opp.proposta_json ->> 'marketingMensalidade', '')::numeric, 0) AS mensalidade_marketing,
+           COALESCE(NULLIF(opp.proposta_json ->> 'marketingValorFixo', '')::numeric, 0) AS marketing_valor_fixo,
+           COALESCE(NULLIF(opp.proposta_json ->> 'implantacao', '')::numeric, 0) AS implantacao_valor,
+           CASE
+               WHEN COALESCE(NULLIF(opp.proposta_json ->> 'implantacao', '')::numeric, 0) <= 0 THEN TRUE
+               ELSE FALSE
+           END AS implantacao_paga,
+           1 AS dia_vencimento,
+           COALESCE(opp.closed_at::date, alvo.data_inicio_base) AS data_inicio_cobranca,
+           CASE
+               WHEN opp.id IS NOT NULL THEN 'Contrato legado equalizado com proposta historica do CRM. Revisar vencimento e status.'
+               ELSE 'Contrato legado equalizado a partir de empresa existente. Revisar valores, vencimento e responsavel.'
+           END AS observacoes,
+           opp.id AS oportunidade_id
+      FROM empresas_alvo alvo
+      JOIN estabelecimento_principal ep ON ep.empresa_id = alvo.empresa_id
+      LEFT JOIN LATERAL (
+            SELECT o.id,
+                   o.tipo,
+                   o.responsavel,
+                   o.proposta_json,
+                   o.closed_at,
+                   o.updated_at,
+                   o.created_at
+              FROM crm_oportunidade o
+             WHERE (
+                       o.id_empresa = alvo.empresa_id
+                    OR (
+                        NULLIF(regexp_replace(COALESCE(alvo.cnpj, ''), '[^0-9]', '', 'g'), '') IS NOT NULL
+                        AND regexp_replace(COALESCE(o.cnpj, ''), '[^0-9]', '', 'g') = regexp_replace(COALESCE(alvo.cnpj, ''), '[^0-9]', '', 'g')
+                    )
+                    OR lower(btrim(o.nome_empresa)) = lower(btrim(alvo.nome_empresa))
+                   )
+               AND (o.status::text = 'fechado' OR o.closed_at IS NOT NULL)
+             ORDER BY CASE
+                          WHEN o.status::text = 'fechado' THEN 0
+                          WHEN o.closed_at IS NOT NULL THEN 1
+                          ELSE 2
+                      END,
+                      o.closed_at DESC NULLS LAST,
+                      o.updated_at DESC,
+                      o.created_at DESC
+             LIMIT 1
+      ) opp ON TRUE
+),
+oportunidades_legado AS (
+    INSERT INTO crm_oportunidade (
+        nome_empresa,
+        nome_contato,
+        telefone,
+        email,
+        cnpj,
+        tipo,
+        responsavel,
+        coluna,
+        status,
+        substatus,
+        proxima_acao,
+        estimativa_json,
+        proposta_json,
+        proposta_enviada_em,
+        id_empresa,
+        valor_mensal_est,
+        valor_impl_est,
+        closed_at
+    )
+    SELECT fonte.nome_empresa,
+           fonte.nome_contato,
+           fonte.telefone,
+           fonte.email,
+           fonte.cnpj,
+           fonte.tipo::crm_tipo_servico,
+           fonte.responsavel::crm_responsavel,
+           'aguardando'::crm_kanban_col,
+           'fechado'::crm_oportunidade_status,
+           'legacy_equalized',
+           'Equalizacao automatica de contrato legado',
+           '{}'::jsonb,
+           jsonb_build_object(
+               'saaSMensalidade', fonte.mensalidade_saas,
+               'marketingMensalidade', fonte.mensalidade_marketing,
+               'marketingValorFixo', fonte.marketing_valor_fixo,
+               'implantacao', fonte.implantacao_valor,
+               'observacoes', fonte.observacoes,
+               'enviadaEm', fonte.data_inicio_cobranca
+           ),
+           fonte.data_inicio_cobranca,
+           fonte.empresa_id,
+           fonte.mensalidade_saas + fonte.mensalidade_marketing + fonte.marketing_valor_fixo,
+           fonte.implantacao_valor,
+           NOW()
+      FROM fonte
+     WHERE fonte.oportunidade_id IS NULL
+    RETURNING id, id_empresa
+),
+fonte_resolvida AS (
+    SELECT fonte.empresa_id,
+           fonte.estabelecimento_id,
+           fonte.tipo,
+           fonte.status,
+           fonte.responsavel,
+           fonte.mensalidade_saas,
+           fonte.mensalidade_marketing,
+           fonte.marketing_valor_fixo,
+           fonte.implantacao_valor,
+           fonte.implantacao_paga,
+           fonte.dia_vencimento,
+           fonte.data_inicio_cobranca,
+           fonte.observacoes,
+           COALESCE(fonte.oportunidade_id, oportunidades_legado.id) AS oportunidade_id
+      FROM fonte
+      LEFT JOIN oportunidades_legado ON oportunidades_legado.id_empresa = fonte.empresa_id
+),
+inserted AS (
+    INSERT INTO crm_contrato (
+        id_oportunidade,
+        empresa_id,
+        estabelecimento_id,
+        tipo,
+        status,
+        responsavel,
+        mensalidade_saas,
+        mensalidade_marketing,
+        marketing_valor_fixo,
+        implantacao_valor,
+        implantacao_paga,
+        dia_vencimento,
+        dt_inicio_cobranca,
+        observacoes
+    )
+    SELECT fonte_resolvida.oportunidade_id,
+           fonte_resolvida.empresa_id,
+           fonte_resolvida.estabelecimento_id,
+           fonte_resolvida.tipo::crm_tipo_servico,
+           fonte_resolvida.status::crm_contrato_status,
+           fonte_resolvida.responsavel::crm_responsavel,
+           fonte_resolvida.mensalidade_saas,
+           fonte_resolvida.mensalidade_marketing,
+           fonte_resolvida.marketing_valor_fixo,
+           fonte_resolvida.implantacao_valor,
+           fonte_resolvida.implantacao_paga,
+           fonte_resolvida.dia_vencimento,
+           fonte_resolvida.data_inicio_cobranca,
+           fonte_resolvida.observacoes
+      FROM fonte_resolvida
+    RETURNING id
+)
+SELECT COUNT(*)
+  FROM inserted;";
+
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            await connection.ExecuteAsync("SELECT pg_advisory_xact_lock(hashtext('crm_sync_contratos_legados'));", transaction: transaction);
+            var inseridos = await connection.ExecuteScalarAsync<int>(sql, transaction: transaction);
+            await transaction.CommitAsync();
+            return inseridos;
+        }
+
         public async Task<IReadOnlyCollection<CrmContratoRow>> ListarContratosAsync(string? status)
         {
             const string sql = @"
