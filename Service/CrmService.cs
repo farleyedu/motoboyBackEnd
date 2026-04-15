@@ -991,6 +991,10 @@ namespace APIBack.Service
             var normalized = NormalizeToken(value);
             return normalized switch
             {
+                // Old DB enum values (backward compat)
+                "implantacao" => "implantacao_saas",
+                "mensalidade" => "mensalidade_saas",
+                "fixo" => "marketing_valor_fixo",
                 "marketing_fixo" => "marketing_valor_fixo",
                 _ => normalized
             };

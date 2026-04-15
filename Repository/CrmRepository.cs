@@ -461,7 +461,7 @@ RETURNING id;",
                     new
                     {
                         ContratoId = contratoId,
-                        Status = command.ImplantacaoJaPaga ? "concluida" : "pendente",
+                        Status = command.ImplantacaoJaPaga ? "concluida" : "aguardando",
                         ValorTotal = command.ImplantacaoValor,
                         ValorPago = command.ImplantacaoJaPaga ? command.ImplantacaoValor : 0m,
                         Paga = command.ImplantacaoJaPaga,
