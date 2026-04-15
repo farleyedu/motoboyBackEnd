@@ -38,7 +38,7 @@ namespace APIBack.Model.CRM
 
     public class CrmHistoricoRow
     {
-        public Guid Id { get; set; }
+        public long Id { get; set; }
         public Guid? OportunidadeId { get; set; }
         public Guid? ContratoId { get; set; }
         public int UsuarioId { get; set; }

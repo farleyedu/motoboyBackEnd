@@ -33,7 +33,7 @@ namespace APIBack.DTOs.CRM
 
     public class CrmHistoricoItemDto
     {
-        public Guid Id { get; set; }
+        public long Id { get; set; }
         public int UsuarioId { get; set; }
         public string Acao { get; set; } = string.Empty;
         public string? Detalhe { get; set; }
