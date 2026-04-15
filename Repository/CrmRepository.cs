@@ -1130,19 +1130,19 @@ SELECT COALESCE(SUM(CASE
         {
             const string sql = @"
 SELECT CASE
-           WHEN l.tipo_lancamento = 'marketing_fixo' THEN 'marketing_valor_fixo'
-           ELSE l.tipo_lancamento
+           WHEN l.tipo_lancamento::text = 'marketing_fixo' THEN 'marketing_valor_fixo'
+           ELSE l.tipo_lancamento::text
        END AS tipo_lancamento,
        SUM(l.valor_pago) AS total_pago,
        SUM(CASE
-               WHEN l.tipo_lancamento = 'implantacao_saas' THEN ROUND(l.valor_pago * 0.5, 2)
-               WHEN l.tipo_lancamento = 'mensalidade_saas' THEN ROUND(l.valor_pago * 0.8, 2)
+               WHEN l.tipo_lancamento::text = 'implantacao_saas' THEN ROUND(l.valor_pago * 0.5, 2)
+               WHEN l.tipo_lancamento::text = 'mensalidade_saas' THEN ROUND(l.valor_pago * 0.8, 2)
                ELSE 0
            END) AS farley_valor,
        SUM(CASE
-               WHEN l.tipo_lancamento = 'implantacao_saas' THEN ROUND(l.valor_pago * 0.5, 2)
-               WHEN l.tipo_lancamento = 'mensalidade_saas' THEN ROUND(l.valor_pago * 0.2, 2)
-               WHEN l.tipo_lancamento IN ('mensalidade_marketing', 'marketing_valor_fixo', 'marketing_fixo') THEN l.valor_pago
+               WHEN l.tipo_lancamento::text = 'implantacao_saas' THEN ROUND(l.valor_pago * 0.5, 2)
+               WHEN l.tipo_lancamento::text = 'mensalidade_saas' THEN ROUND(l.valor_pago * 0.2, 2)
+               WHEN l.tipo_lancamento::text IN ('mensalidade_marketing', 'marketing_valor_fixo', 'marketing_fixo') THEN l.valor_pago
                ELSE l.valor_pago
            END) AS socio_valor
   FROM crm_lancamento l
@@ -1151,8 +1151,8 @@ SELECT CASE
    AND l.data_pagamento IS NOT NULL
    AND DATE_TRUNC('month', l.data_pagamento::timestamp) = DATE_TRUNC('month', @ReferenciaMes::timestamp)
  GROUP BY CASE
-              WHEN l.tipo_lancamento = 'marketing_fixo' THEN 'marketing_valor_fixo'
-              ELSE l.tipo_lancamento
+              WHEN l.tipo_lancamento::text = 'marketing_fixo' THEN 'marketing_valor_fixo'
+              ELSE l.tipo_lancamento::text
           END
  ORDER BY tipo_lancamento;";
 
