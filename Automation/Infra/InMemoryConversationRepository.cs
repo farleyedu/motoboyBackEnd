@@ -60,6 +60,10 @@ namespace APIBack.Automation.Infra
 
         public Task DefinirModoAsync(Guid id, ModoConversa modo, int? agenteId)
         {
+            var statusAtendimento = modo == ModoConversa.Humano
+                ? (agenteId.HasValue ? "em_andamento" : "aguardando_interno")
+                : "com_bot";
+
             _conversas.AddOrUpdate(
                 id,
                 _ => new Conversation
@@ -69,7 +73,7 @@ namespace APIBack.Automation.Infra
                     Modo = modo,
                     AgenteDesignadoId = agenteId,
                     Estado = modo == ModoConversa.Humano ? EstadoConversa.EmAtendimento : EstadoConversa.Aberto,
-                    StatusAtendimento = modo == ModoConversa.Humano ? "em_andamento" : "com_bot",
+                    StatusAtendimento = statusAtendimento,
                     CriadoEm = DateTime.UtcNow,
                     AtualizadoEm = DateTime.UtcNow
                 },
@@ -78,7 +82,7 @@ namespace APIBack.Automation.Infra
                     c.Modo = modo;
                     c.AgenteDesignadoId = agenteId;
                     c.Estado = modo == ModoConversa.Humano ? EstadoConversa.EmAtendimento : EstadoConversa.Aberto;
-                    c.StatusAtendimento = modo == ModoConversa.Humano ? "em_andamento" : "com_bot";
+                    c.StatusAtendimento = statusAtendimento;
                     c.AtualizadoEm = DateTime.UtcNow;
                     return c;
                 });
@@ -371,7 +375,11 @@ namespace APIBack.Automation.Infra
                 return Task.FromResult(false);
             }
 
-            var normalized = NormalizeStatus(status);
+            var normalized = NormalizeStatusForAssignment(NormalizeStatus(status), idAgente.HasValue || alvo.AgenteDesignadoId.HasValue);
+            var clearAgent =
+                normalized == "com_bot" ||
+                (normalized == "aguardando_interno" && !idAgente.HasValue);
+
             alvo.StatusAtendimento = normalized;
             alvo.Estado = normalized switch
             {
@@ -381,7 +389,7 @@ namespace APIBack.Automation.Infra
                 _ => EstadoConversa.EmAtendimento
             };
             alvo.Modo = normalized == "com_bot" ? ModoConversa.Bot : ModoConversa.Humano;
-            alvo.AgenteDesignadoId = normalized == "com_bot" ? null : (idAgente ?? alvo.AgenteDesignadoId);
+            alvo.AgenteDesignadoId = clearAgent ? null : (idAgente ?? alvo.AgenteDesignadoId);
             alvo.AtualizadoEm = DateTime.UtcNow;
             return Task.FromResult(true);
         }
@@ -671,14 +679,20 @@ namespace APIBack.Automation.Infra
             var status = CanonicalStatus(c);
             var windowExpired = IsWindowExpired(c.Janela24hExpiraEm);
             var closed = IsClosedStatus(status);
+            var waitingInternalWithoutAgent =
+                status == "aguardando_interno" &&
+                !c.AgenteDesignadoId.HasValue;
+            var manualReplyAllowed =
+                IsHumanStatus(status) &&
+                c.AgenteDesignadoId.HasValue;
             return new ConversationControlDto
             {
                 ConversationId = c.IdConversa,
                 ClientId = c.IdCliente,
                 ConversationGroupId = GroupId(c),
                 Status = status,
-                CanBotReply = status == "com_bot" && !closed && !windowExpired,
-                CanManualReply = IsHumanStatus(status) && !closed && !windowExpired,
+                CanBotReply = (status == "com_bot" || waitingInternalWithoutAgent) && !closed && !windowExpired,
+                CanManualReply = manualReplyAllowed && !closed && !windowExpired,
                 SendBlockReasonCode = ResolveSendBlockReasonCode(c, status),
                 AssignedAgentId = c.AgenteDesignadoId,
                 LastInteractionAt = c.AtualizadoEm,
@@ -754,11 +768,15 @@ namespace APIBack.Automation.Infra
             => m.DataCriacao ?? m.DataEnvio ?? m.DataHora;
 
         private static string CanonicalStatus(Conversation c)
-            => NormalizeStatus(c.StatusAtendimento) switch
+        {
+            var status = NormalizeStatus(c.StatusAtendimento) switch
             {
                 "" => LegacyToCanonical(c.Estado),
-                var status => status
+                var normalized => normalized
             };
+
+            return NormalizeStatusForAssignment(status, c.AgenteDesignadoId.HasValue);
+        }
 
         private static string LegacyToCanonical(EstadoConversa estado)
             => estado switch
@@ -782,6 +800,11 @@ namespace APIBack.Automation.Infra
                 "fechado_agente" => "encerrada_manual",
                 _ => (status ?? string.Empty).Trim().ToLowerInvariant()
             };
+
+        private static string NormalizeStatusForAssignment(string status, bool hasAssignedAgent)
+            => !hasAssignedAgent && status == "em_andamento"
+                ? "aguardando_interno"
+                : status;
 
         private static bool IsHumanStatus(string status)
             => status == "em_andamento" || status == "aguardando_cliente" || status == "aguardando_interno";

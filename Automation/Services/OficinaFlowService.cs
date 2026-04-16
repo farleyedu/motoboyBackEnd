@@ -130,6 +130,29 @@ namespace APIBack.Automation.Services
             }
 
             var classificacao = ClassificarMensagem(mensagemTexto);
+            var telefoneClienteAtual = await GarantirTelefoneClienteAsync(idConversa, scope);
+            var atendimentoAberto = await _oficinaAtendimentoRepository.ObterPorConversaAsync(idConversa);
+            if (atendimentoAberto == null &&
+                !string.IsNullOrWhiteSpace(telefoneClienteAtual))
+            {
+                atendimentoAberto = await _oficinaAtendimentoRepository.ObterAbertoAsync(scope.IdEstabelecimento, telefoneClienteAtual!);
+            }
+
+            var (bypassEscalado, respostaEscalada) = TryHandleAtendimentoEscaladoSemAssumir(
+                cliente,
+                atendimentoAberto,
+                classificacao,
+                mensagemTexto);
+            if (respostaEscalada != null)
+            {
+                return (true, respostaEscalada);
+            }
+
+            if (bypassEscalado)
+            {
+                return (false, null);
+            }
+
             if (!classificacao.Interceptar)
             {
                 return (false, null);
@@ -916,6 +939,58 @@ namespace APIBack.Automation.Services
 
             return normalizado is "oi" or "ola" or "ola!" or "bom dia" or "boa tarde" or "boa noite" ||
                    ContemAlgum(normalizado, "ola tudo bem", "oi tudo bem", "ola, tudo bem", "oi, tudo bem");
+        }
+
+        private static (bool ShouldBypassFlow, AssistantDecision? Decision) TryHandleAtendimentoEscaladoSemAssumir(
+            Cliente? cliente,
+            OficinaAtendimento? atendimentoAberto,
+            ClassificacaoMensagem classificacao,
+            string? mensagemTexto)
+        {
+            if (!AtendimentoEscaladoSemAssumir(atendimentoAberto))
+            {
+                return (false, null);
+            }
+
+            var genericFollowUp = EhFollowUpGenerico(mensagemTexto);
+            if (!genericFollowUp && !classificacao.Interceptar)
+            {
+                return (false, null);
+            }
+
+            var mesmoAssunto =
+                genericFollowUp ||
+                (string.Equals(atendimentoAberto!.IntencaoPrincipal, classificacao.IntencaoPrincipal, StringComparison.OrdinalIgnoreCase) &&
+                 string.Equals(atendimentoAberto.IntencaoDetalhe ?? string.Empty, classificacao.IntencaoDetalhe ?? string.Empty, StringComparison.OrdinalIgnoreCase));
+
+            if (!mesmoAssunto)
+            {
+                return (true, null);
+            }
+
+            var primeiroNome = cliente?.Nome?.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).FirstOrDefault();
+            var prefixo = string.IsNullOrWhiteSpace(primeiroNome) ? string.Empty : $"Perfeito, {primeiroNome}. ";
+
+            return (false, CriarRespostaJsonDecision(
+                $"{prefixo}Seu atendimento sobre esse assunto já foi encaminhado para a equipe e está aguardando alguém assumir por aqui. Se quiser tratar outro assunto enquanto isso, pode me mandar por aqui."));
+        }
+
+        private static bool AtendimentoEscaladoSemAssumir(OficinaAtendimento? atendimentoAberto)
+        {
+            if (atendimentoAberto == null)
+            {
+                return false;
+            }
+
+            return string.Equals(atendimentoAberto.Status, "aguardando_interno", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(atendimentoAberto.Status, "em_andamento", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool EhFollowUpGenerico(string? mensagemTexto)
+        {
+            var normalizado = NormalizeText(mensagemTexto);
+            return normalizado is "ok" or "correto" or "isso" or "isso mesmo" or "sim" or "blz" or "beleza" ||
+                   ContemAlgum(normalizado, "e ai", "e aí", "alguma novidade", "algum retorno", "continua", "segue");
         }
 
         private sealed record ClassificacaoMensagem(

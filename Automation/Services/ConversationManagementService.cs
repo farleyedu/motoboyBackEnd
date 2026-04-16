@@ -201,13 +201,15 @@ namespace APIBack.Automation.Services
             else
             {
                 var agenteId = controleAtual.AssignedAgentId;
-                if (!agenteId.HasValue)
+                var requerAgenteAtribuido = !string.Equals(status, "aguardando_interno", StringComparison.OrdinalIgnoreCase);
+
+                if (!agenteId.HasValue && requerAgenteAtribuido)
                 {
                     var agente = await ResolveAgentAsync(null, actorUserId, null);
                     agenteId = agente?.Id;
                 }
 
-                if (!agenteId.HasValue)
+                if (!agenteId.HasValue && requerAgenteAtribuido)
                 {
                     throw new ConversationManagementException(422, "Status humano exige um agente atribuido.");
                 }

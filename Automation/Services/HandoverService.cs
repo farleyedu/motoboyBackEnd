@@ -51,7 +51,18 @@ namespace APIBack.Automation.Services
         {
             if (!reservaConfirmada)
             {
-                await _repositorio.DefinirModoAsync(idConversa, ModoConversa.Humano, agente?.Id);
+                if (agente?.Id > 0)
+                {
+                    await _repositorio.DefinirModoAsync(idConversa, ModoConversa.Humano, agente.Id);
+                }
+                else
+                {
+                    await _repositorio.AtualizarStatusAtendimentoAsync(
+                        idConversa,
+                        "aguardando_interno",
+                        idAgente: null,
+                        agente?.Nome);
+                }
             }
 
             await EnviarAlertaTelegramAsync(idConversa, agente, reservaConfirmada, detalhes, telegramChatIdOverride);

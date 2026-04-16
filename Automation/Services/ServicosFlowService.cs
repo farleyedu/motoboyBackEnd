@@ -142,6 +142,22 @@ namespace APIBack.Automation.Services
             var atendimentoAtual = await ObterAtendimentoAtualAsync(idConversa, scope);
             var texto = mensagemTexto?.Trim() ?? string.Empty;
             var viaNumeroCentral = _centralRouting.IsCentralDisplayPhone(phoneNumberDisplay);
+            var (bypassEscalado, decisaoEscalado) = TryHandleAtendimentoEscaladoSemAssumir(
+                cliente,
+                atendimentoAtual,
+                catalogo,
+                texto);
+
+            if (decisaoEscalado != null)
+            {
+                return (true, decisaoEscalado);
+            }
+
+            if (bypassEscalado)
+            {
+                return (false, null);
+            }
+
             var estadoDeterministico = ResolveDeterministicState(contextoAtual?.Estado, atendimentoAtual?.EtapaAtual);
 
             if (!string.IsNullOrWhiteSpace(estadoDeterministico))
@@ -223,6 +239,56 @@ namespace APIBack.Automation.Services
                 viaNumeroCentral);
 
             return (true, decisao);
+        }
+
+        private static (bool ShouldBypassFlow, AssistantDecision? Decision) TryHandleAtendimentoEscaladoSemAssumir(
+            Cliente? cliente,
+            ServicoAtendimento? atendimentoAtual,
+            IReadOnlyList<ServicoCatalogItem> catalogo,
+            string mensagemTexto)
+        {
+            if (!AtendimentoEscaladoSemAssumir(atendimentoAtual))
+            {
+                return (false, null);
+            }
+
+            var texto = mensagemTexto?.Trim() ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(texto))
+            {
+                return (false, null);
+            }
+
+            var matches = SelecionarMelhoresCandidatos(MatchServices(texto, catalogo));
+            if (matches.Count == 1 && !ServicoCorrespondeAoAtendimento(matches[0].Servico, atendimentoAtual!))
+            {
+                return (true, null);
+            }
+
+            var genericFollowUp =
+                EhConfirmacaoPositiva(texto) ||
+                EhConfirmacaoNegativa(texto) ||
+                EhConfirmacaoFeliz(texto) ||
+                EhContinuacaoGenerica(texto);
+
+            if (!genericFollowUp &&
+                matches.Count == 0 &&
+                !EhPerguntaAmplaDeServicos(texto) &&
+                !MensagemRefereAoAtendimentoAtual(texto, atendimentoAtual!))
+            {
+                return (true, null);
+            }
+
+            var primeiroNome = ObterPrimeiroNome(cliente?.Nome ?? atendimentoAtual!.NomeCliente);
+            var servico = string.IsNullOrWhiteSpace(atendimentoAtual!.NomeServico)
+                ? "esse assunto"
+                : atendimentoAtual.NomeServico.Trim();
+
+            var prefixo = string.IsNullOrWhiteSpace(primeiroNome)
+                ? string.Empty
+                : $"Perfeito, {primeiroNome}. ";
+
+            return (false, CriarResposta(
+                $"{prefixo}Seu atendimento sobre {servico} já foi encaminhado para a equipe e está aguardando alguém assumir por aqui. Se quiser tratar outro assunto enquanto isso, pode me mandar por aqui."));
         }
 
         private async Task<AssistantDecision> ProcessarEstadoAsync(
@@ -1463,6 +1529,50 @@ namespace APIBack.Automation.Services
                    string.Equals(status, "aguardando_cliente", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(status, "aguardando_interno", StringComparison.OrdinalIgnoreCase) ||
                    string.Equals(status, "em_andamento", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool AtendimentoEscaladoSemAssumir(ServicoAtendimento? atendimentoAtual)
+        {
+            if (atendimentoAtual == null)
+            {
+                return false;
+            }
+
+            return string.Equals(atendimentoAtual.Status, "aguardando_interno", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(atendimentoAtual.Status, "em_andamento", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool ServicoCorrespondeAoAtendimento(ServicoCatalogItem servico, ServicoAtendimento atendimentoAtual)
+        {
+            if (atendimentoAtual.IdServico.HasValue && atendimentoAtual.IdServico.Value == servico.Id)
+            {
+                return true;
+            }
+
+            return string.Equals(
+                NormalizeText(atendimentoAtual.NomeServico),
+                NormalizeText(servico.Nome),
+                StringComparison.Ordinal);
+        }
+
+        private static bool MensagemRefereAoAtendimentoAtual(string mensagemTexto, ServicoAtendimento atendimentoAtual)
+        {
+            var texto = NormalizeText(mensagemTexto);
+            if (string.IsNullOrWhiteSpace(texto))
+            {
+                return false;
+            }
+
+            var servico = NormalizeText(atendimentoAtual.NomeServico);
+            var veiculo = NormalizeText(ObterTexto(atendimentoAtual.DadosExtras, ChaveVehicleNome));
+            var marca = NormalizeText(ObterTexto(atendimentoAtual.DadosExtras, ChaveMarcaPecaNome));
+
+            return (!string.IsNullOrWhiteSpace(servico) && texto.Contains(servico, StringComparison.Ordinal)) ||
+                   (!string.IsNullOrWhiteSpace(veiculo) && texto.Contains(veiculo, StringComparison.Ordinal)) ||
+                   (!string.IsNullOrWhiteSpace(marca) && texto.Contains(marca, StringComparison.Ordinal)) ||
+                   texto.Contains("atendimento", StringComparison.Ordinal) ||
+                   texto.Contains("equipe", StringComparison.Ordinal) ||
+                   texto.Contains("encaminh", StringComparison.Ordinal);
         }
 
         private static bool PodeContinuarServicoAtual(string mensagemTexto, ServicoAtendimento atendimentoAtual)

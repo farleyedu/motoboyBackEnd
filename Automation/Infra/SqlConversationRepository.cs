@@ -173,7 +173,9 @@ UPDATE conversas
                 Id = id,
                 IdAgente = modo == ModoConversa.Humano ? agenteId : null,
                 Estado = modo == ModoConversa.Humano ? "em_atendimento" : "aberto",
-                StatusAtendimento = modo == ModoConversa.Humano ? "em_andamento" : "com_bot"
+                StatusAtendimento = modo == ModoConversa.Humano
+                    ? (agenteId.HasValue ? "em_andamento" : "aguardando_interno")
+                    : "com_bot"
             });
         }
 
@@ -782,7 +784,9 @@ UPDATE conversas
             }
 
             var canonicalStatus = CanonicalStatus(status, alvo.Estado, alvo.IdAgenteAtribuido.HasValue ? ModoConversa.Humano : ModoConversa.Bot);
-            var clearAgent = string.Equals(canonicalStatus, "com_bot", StringComparison.OrdinalIgnoreCase);
+            var clearAgent =
+                string.Equals(canonicalStatus, "com_bot", StringComparison.OrdinalIgnoreCase) ||
+                (string.Equals(canonicalStatus, "aguardando_interno", StringComparison.OrdinalIgnoreCase) && !idAgente.HasValue);
 
             await using var cx = new NpgsqlConnection(_connectionString);
             return await cx.ExecuteAsync(@"
@@ -1268,6 +1272,12 @@ UPDATE conversas c
             var status = CanonicalStatus(row.StatusAtendimento, row.Estado, row.IdAgenteAtribuido.HasValue ? ModoConversa.Humano : ModoConversa.Bot);
             var windowExpired = IsWindowExpired(row.Janela24hFim);
             var closed = IsClosedStatus(status);
+            var waitingInternalWithoutAgent =
+                string.Equals(status, "aguardando_interno", StringComparison.OrdinalIgnoreCase) &&
+                !row.IdAgenteAtribuido.HasValue;
+            var manualReplyAllowed =
+                IsHumanStatus(status) &&
+                row.IdAgenteAtribuido.HasValue;
             var unreadCount = IsCentral(idEstabelecimento) ? await GroupUnreadCountAsync(cx, row.IdConversaGrupo) : row.QtdNaoLidas;
             return new ConversationControlDto
             {
@@ -1275,8 +1285,11 @@ UPDATE conversas c
                 ClientId = row.IdCliente,
                 ConversationGroupId = row.IdConversaGrupo,
                 Status = status,
-                CanBotReply = string.Equals(status, "com_bot", StringComparison.OrdinalIgnoreCase) && !closed && !windowExpired,
-                CanManualReply = IsHumanStatus(status) && !closed && !windowExpired,
+                CanBotReply =
+                    (string.Equals(status, "com_bot", StringComparison.OrdinalIgnoreCase) || waitingInternalWithoutAgent) &&
+                    !closed &&
+                    !windowExpired,
+                CanManualReply = manualReplyAllowed && !closed && !windowExpired,
                 SendBlockReasonCode = ResolveSendBlockReasonCode(row, status),
                 AssignedAgentId = row.IdAgenteAtribuido,
                 AssignedAgentName = row.AgenteNome,
@@ -1420,10 +1433,28 @@ UPDATE conversas c
         private static string EstadoDb(EstadoConversa estado) => estado switch { EstadoConversa.Aberto => "aberto", EstadoConversa.EmAtendimento => "em_atendimento", EstadoConversa.FechadoAutomaticamente => "fechado_automaticamente", EstadoConversa.FechadoAgente => "fechado_agente", EstadoConversa.Arquivada => "arquivada", _ => "aberto" };
         private static EstadoConversa EstadoModel(string? estado) => NormalizeLegacyState(estado) switch { "aberto" => EstadoConversa.Aberto, "em_atendimento" => EstadoConversa.EmAtendimento, "fechado_agente" => EstadoConversa.FechadoAgente, "fechado_automaticamente" => EstadoConversa.FechadoAutomaticamente, "arquivada" => EstadoConversa.Arquivada, _ => EstadoConversa.Aberto };
         private static string LegacyStatusToCanonical(string? legacyState) => NormalizeLegacyState(legacyState) switch { "em_atendimento" => "em_andamento", "fechado_agente" => "encerrada_manual", "fechado_automaticamente" => "encerrada_inatividade", "arquivada" => "encerrada_manual", _ => "com_bot" };
-        private static string CanonicalStatus(string? statusAtendimento, string? legacyState, ModoConversa modo) { var normalized = NormalizeStatus(statusAtendimento); if (!string.IsNullOrWhiteSpace(normalized)) return normalized; if (modo == ModoConversa.Humano && string.Equals(NormalizeLegacyState(legacyState), "aberto", StringComparison.OrdinalIgnoreCase)) return "em_andamento"; return LegacyStatusToCanonical(legacyState); }
+        private static string CanonicalStatus(string? statusAtendimento, string? legacyState, ModoConversa modo)
+        {
+            var normalized = NormalizeStatus(statusAtendimento);
+            if (!string.IsNullOrWhiteSpace(normalized))
+            {
+                return NormalizeStatusForAssignment(normalized, modo == ModoConversa.Humano);
+            }
+
+            if (modo == ModoConversa.Humano && string.Equals(NormalizeLegacyState(legacyState), "aberto", StringComparison.OrdinalIgnoreCase))
+            {
+                return "em_andamento";
+            }
+
+            return NormalizeStatusForAssignment(LegacyStatusToCanonical(legacyState), modo == ModoConversa.Humano);
+        }
         private static string LegacyStateFromCanonicalStatus(string? status) => NormalizeStatus(status) switch { "em_andamento" => "em_atendimento", "aguardando_cliente" => "em_atendimento", "aguardando_interno" => "em_atendimento", "encerrada_manual" => "fechado_agente", "encerrada_inatividade" => "fechado_automaticamente", _ => "aberto" };
         private static string NormalizeLegacyState(string? estado) => (estado ?? string.Empty).Trim().ToLowerInvariant() switch { "aguardando_atendimento" => "em_atendimento", "fechado_bot" => "fechado_automaticamente", "arquivado" => "arquivada", _ => (estado ?? string.Empty).Trim().ToLowerInvariant() };
         private static string NormalizeStatus(string? status) => (status ?? string.Empty).Trim().ToLowerInvariant() switch { "aberto" => "com_bot", "novo_bot" => "com_bot", "pendente" => "com_bot", "em_atendimento" => "em_andamento", "em_atendimento_humano" => "em_andamento", "fechado_bot" => "encerrada_inatividade", "fechado_agente" => "encerrada_manual", "arquivada" => "encerrada_manual", _ => (status ?? string.Empty).Trim().ToLowerInvariant() };
+        private static string NormalizeStatusForAssignment(string status, bool hasAssignedAgent)
+            => !hasAssignedAgent && string.Equals(status, "em_andamento", StringComparison.OrdinalIgnoreCase)
+                ? "aguardando_interno"
+                : status;
         private static string NormalizeCloseType(string? closeType) => string.IsNullOrWhiteSpace(closeType) ? "manual" : closeType.Trim().ToLowerInvariant();
         private static bool IsHumanStatus(string status) => string.Equals(status, "em_andamento", StringComparison.OrdinalIgnoreCase) || string.Equals(status, "aguardando_cliente", StringComparison.OrdinalIgnoreCase) || string.Equals(status, "aguardando_interno", StringComparison.OrdinalIgnoreCase);
         private static bool IsClosedStatus(string status) => string.Equals(status, "encerrada_manual", StringComparison.OrdinalIgnoreCase) || string.Equals(status, "encerrada_inatividade", StringComparison.OrdinalIgnoreCase);

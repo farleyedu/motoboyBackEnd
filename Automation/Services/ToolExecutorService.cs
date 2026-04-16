@@ -1348,6 +1348,13 @@ IMPORTANTE:
             args.Motivo = args.Motivo?.Trim() ?? string.Empty;
             args.ResumoConversa = args.ResumoConversa?.Trim() ?? string.Empty;
 
+            var controle = await _conversationRepository.ObterControleConversaAsync(args.IdConversa);
+            if (JaEscaladoSemAgente(controle))
+            {
+                return BuildJsonReply(
+                    "Seu atendimento já foi encaminhado para a equipe e está aguardando alguém assumir por aqui. Se quiser tratar outro assunto enquanto isso, pode me mandar por aqui.");
+            }
+
             if (string.IsNullOrWhiteSpace(args.Motivo) || string.IsNullOrWhiteSpace(args.ResumoConversa))
             {
                 _logger.LogWarning("[Conversa={Conversa}] Motivo ou resumo ausentes na solicitação de escalonamento", args.IdConversa);
@@ -1716,6 +1723,57 @@ IMPORTANTE:
 
             var veiculoTexto = PrimeiroTextoNaoVazio(args.Veiculo, MontarVeiculo(args.VeiculoMarca, args.VeiculoModelo));
             var marcaPeca = PrimeiroTextoNaoVazio(args.MarcaPeca);
+            var controleConversa = await _conversationRepository.ObterControleConversaAsync(args.IdConversa);
+            var atendimentoAberto = string.IsNullOrWhiteSpace(scope.TelefoneCliente)
+                ? null
+                : await _servicoAtendimentoRepository.ObterAbertoAsync(scope.IdEstabelecimento, scope.TelefoneCliente);
+
+            if (atendimentoAberto != null &&
+                JaEscaladoSemAgente(controleConversa) &&
+                MesmoAssuntoServico(atendimentoAberto, args.NomeServico, veiculoTexto, args.VeiculoMarca, args.VeiculoModelo, marcaPeca))
+            {
+                var primeiroNomeExistente = ExtrairPrimeiroNome(args.NomeCliente, atendimentoAberto.NomeCliente);
+                var tratamentoExistente = string.IsNullOrWhiteSpace(primeiroNomeExistente)
+                    ? "Perfeito!"
+                    : $"Perfeito, {primeiroNomeExistente}!";
+                var nomeServico = string.IsNullOrWhiteSpace(atendimentoAberto.NomeServico) ? args.NomeServico.Trim() : atendimentoAberto.NomeServico!.Trim();
+                var veiculoExistente = PrimeiroTextoNaoVazio(
+                    ObterTexto(atendimentoAberto.DadosExtras, "veiculo"),
+                    MontarVeiculo(
+                        ObterTexto(atendimentoAberto.DadosExtras, "veiculo_marca"),
+                        ObterTexto(atendimentoAberto.DadosExtras, "veiculo_modelo")));
+
+                return BuildToolDataReply(
+                    "registrar_interesse_servico",
+                    "already_escalated",
+                    $"{tratamentoExistente} Seu atendimento sobre *{nomeServico}* já foi encaminhado para a equipe e está aguardando alguém assumir por aqui.\n\n" +
+                    "Se quiser tratar outro assunto enquanto isso, pode me mandar por aqui.",
+                    data: new
+                    {
+                        atendimentoAberto.Id,
+                        nome_cliente = atendimentoAberto.NomeCliente,
+                        nome_servico = nomeServico,
+                        veiculo = veiculoExistente,
+                        marca_peca = ObterTexto(atendimentoAberto.DadosExtras, "marca_peca")
+                    },
+                    fichaAtualSugerida: new ConversationFichaAtual
+                    {
+                        NomeCliente = PrimeiroTextoNaoVazio(atendimentoAberto.NomeCliente, args.NomeCliente),
+                        ModuloEmFoco = "servicos",
+                        Servico = nomeServico,
+                        VeiculoMarca = PrimeiroTextoNaoVazio(
+                            ObterTexto(atendimentoAberto.DadosExtras, "veiculo_marca"),
+                            args.VeiculoMarca),
+                        VeiculoModelo = PrimeiroTextoNaoVazio(
+                            ObterTexto(atendimentoAberto.DadosExtras, "veiculo_modelo"),
+                            args.VeiculoModelo),
+                        MarcaPeca = PrimeiroTextoNaoVazio(
+                            ObterTexto(atendimentoAberto.DadosExtras, "marca_peca"),
+                            marcaPeca),
+                        Pendencias = new List<string>(),
+                        ProntoParaAgendamento = true
+                    });
+            }
 
             var atendimento = new ServicoAtendimento
             {
@@ -1727,7 +1785,10 @@ IMPORTANTE:
                 NomeCliente = args.NomeCliente.Trim(),
                 NomeServico = args.NomeServico.Trim(),
                 IntencaoPrincipal = "agendamento",
+                IntencaoDetalhe = "registrar_interesse_servico",
+                ResumoAtendimento = $"Interesse em serviço: {args.NomeServico.Trim()}",
                 Status = "aguardando_interno",
+                EtapaAtual = "encaminhado",
                 DadosExtras = new Dictionary<string, object?>
                 {
                     ["veiculo"] = veiculoTexto,
@@ -1755,7 +1816,7 @@ IMPORTANTE:
                 Contexto = contextoResumo
             };
 
-            await _handoverService.ProcessarMensagensTelegramAsync(args.IdConversa, null, false, detalhes);
+            await _handoverService.SolicitarAtendimentoHumanoAsync(args.IdConversa, detalhes);
 
             var primeiroNome = args.NomeCliente.Trim().Split(' ')[0];
             return BuildToolDataReply(
@@ -1804,6 +1865,102 @@ IMPORTANTE:
                 .ToArray();
 
             return partes.Length == 0 ? null : string.Join(" ", partes);
+        }
+
+        private static bool JaEscaladoSemAgente(ConversationControlDto? controle)
+        {
+            if (controle == null || controle.AssignedAgentId.HasValue)
+            {
+                return false;
+            }
+
+            return string.Equals(controle.Status, "aguardando_interno", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(controle.Status, "em_andamento", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static bool MesmoAssuntoServico(
+            ServicoAtendimento atendimento,
+            string? nomeServico,
+            string? veiculoTexto,
+            string? veiculoMarca,
+            string? veiculoModelo,
+            string? marcaPeca)
+        {
+            if (!MesmoTexto(atendimento.NomeServico, nomeServico))
+            {
+                return false;
+            }
+
+            var veiculoAtual = PrimeiroTextoNaoVazio(
+                ObterTexto(atendimento.DadosExtras, "veiculo"),
+                MontarVeiculo(
+                    ObterTexto(atendimento.DadosExtras, "veiculo_marca"),
+                    ObterTexto(atendimento.DadosExtras, "veiculo_modelo")));
+
+            if (!MesmoTextoOpcional(veiculoAtual, veiculoTexto))
+            {
+                return false;
+            }
+
+            if (!MesmoTextoOpcional(ObterTexto(atendimento.DadosExtras, "veiculo_marca"), veiculoMarca))
+            {
+                return false;
+            }
+
+            if (!MesmoTextoOpcional(ObterTexto(atendimento.DadosExtras, "veiculo_modelo"), veiculoModelo))
+            {
+                return false;
+            }
+
+            return MesmoTextoOpcional(ObterTexto(atendimento.DadosExtras, "marca_peca"), marcaPeca);
+        }
+
+        private static bool MesmoTexto(string? atual, string? recebido)
+            => string.Equals(NormalizarComparacao(atual), NormalizarComparacao(recebido), StringComparison.Ordinal);
+
+        private static bool MesmoTextoOpcional(string? atual, string? recebido)
+        {
+            if (string.IsNullOrWhiteSpace(atual) || string.IsNullOrWhiteSpace(recebido))
+            {
+                return true;
+            }
+
+            return MesmoTexto(atual, recebido);
+        }
+
+        private static string NormalizarComparacao(string? texto)
+        {
+            if (string.IsNullOrWhiteSpace(texto))
+            {
+                return string.Empty;
+            }
+
+            var normalized = texto.Normalize(NormalizationForm.FormD);
+            var chars = normalized
+                .Where(ch => CharUnicodeInfo.GetUnicodeCategory(ch) != UnicodeCategory.NonSpacingMark)
+                .ToArray();
+
+            return string.Join(" ",
+                new string(chars)
+                    .ToLowerInvariant()
+                    .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+        }
+
+        private static string ExtrairPrimeiroNome(params string?[] nomes)
+        {
+            foreach (var nome in nomes)
+            {
+                var primeiro = nome?
+                    .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .FirstOrDefault();
+
+                if (!string.IsNullOrWhiteSpace(primeiro))
+                {
+                    return primeiro;
+                }
+            }
+
+            return string.Empty;
         }
 
         private static string? ObterTexto(IReadOnlyDictionary<string, object?>? dados, params string[] chaves)
