@@ -330,18 +330,39 @@ namespace APIBack.Service
                     errors);
             }
 
+            if (request.Responsavel != null)
+            {
+                ValidateAllowed(
+                    NormalizeToken(request.Responsavel),
+                    "responsavel",
+                    new[] { "farley", "socio" },
+                    "Responsavel invalido.",
+                    errors);
+            }
+
             if (request.DiaVencimento.HasValue && (request.DiaVencimento.Value < 1 || request.DiaVencimento.Value > 31))
             {
                 AddError(errors, "diaVencimento", "Informe um dia de vencimento entre 1 e 31.");
             }
+
+            if (request.MensalidadeSaas.HasValue && request.MensalidadeSaas.Value < 0)
+                AddError(errors, "mensalidadeSaas", "Mensalidade SaaS nao pode ser negativa.");
+            if (request.MensalidadeMarketing.HasValue && request.MensalidadeMarketing.Value < 0)
+                AddError(errors, "mensalidadeMarketing", "Mensalidade Marketing nao pode ser negativa.");
+            if (request.MarketingValorFixo.HasValue && request.MarketingValorFixo.Value < 0)
+                AddError(errors, "marketingValorFixo", "Marketing valor fixo nao pode ser negativo.");
 
             ThrowIfValidationErrors(errors);
 
             await _crmRepository.AtualizarContratoAsync(
                 contratoId,
                 request.Status != null ? NormalizeToken(request.Status) : null,
+                request.Responsavel != null ? NormalizeToken(request.Responsavel) : null,
                 request.DiaVencimento,
                 request.DataInicioCobranca?.ToDateTime(TimeOnly.MinValue),
+                request.MensalidadeSaas,
+                request.MensalidadeMarketing,
+                request.MarketingValorFixo,
                 request.Observacoes);
 
             await _crmRepository.AdicionarHistoricoContratoAsync(
@@ -473,10 +494,13 @@ namespace APIBack.Service
             };
         }
 
-        public async Task<IReadOnlyCollection<CrmLancamentoDto>> ListarLancamentosEmAbertoAsync()
+        public async Task<IReadOnlyCollection<CrmLancamentoDto>> ListarLancamentosFinanceiroAsync(DateTime? referenciaMes)
         {
             await SincronizarContratosLegadosAsync();
-            var rows = await _crmRepository.ListarLancamentosEmAbertoAsync();
+            var referencia = PrimeiroDiaMes(referenciaMes ?? DateTime.Today);
+            var mesAtual = PrimeiroDiaMes(DateTime.Today);
+            var apenasEmAberto = referencia >= mesAtual;
+            var rows = await _crmRepository.ListarLancamentosFinanceiroAsync(referencia, apenasEmAberto);
             return rows.Select(MapLancamento).ToList();
         }
 

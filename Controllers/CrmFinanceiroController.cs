@@ -42,14 +42,14 @@ namespace APIBack.Controllers
         }
 
         [HttpGet("lancamentos")]
-        public async Task<IActionResult> Lancamentos()
+        public async Task<IActionResult> Lancamentos([FromQuery] DateTime? referenciaMes)
         {
             var access = EnsureCrmAccess();
             if (access != null) return access;
 
             try
             {
-                var response = await _service.ListarLancamentosEmAbertoAsync();
+                var response = await _service.ListarLancamentosFinanceiroAsync(referenciaMes);
                 return Ok(ApiResponse<IReadOnlyCollection<CrmLancamentoDto>>.Ok(response));
             }
             catch (Exception ex)

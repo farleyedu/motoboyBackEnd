@@ -219,9 +219,13 @@ namespace APIBack.DTOs.CRM
     public class AtualizarCrmContratoRequest
     {
         public string? Status { get; set; }
+        public string? Responsavel { get; set; }
         public int? DiaVencimento { get; set; }
         [JsonConverter(typeof(FlexibleNullableDateOnlyJsonConverter))]
         public DateOnly? DataInicioCobranca { get; set; }
+        public decimal? MensalidadeSaas { get; set; }
+        public decimal? MensalidadeMarketing { get; set; }
+        public decimal? MarketingValorFixo { get; set; }
         public string? Observacoes { get; set; }
     }
 

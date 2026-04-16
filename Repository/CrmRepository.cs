@@ -859,13 +859,17 @@ SELECT c.id,
             return await connection.QueryFirstOrDefaultAsync<CrmContratoRow>(sql, new { ContratoId = contratoId });
         }
 
-        public async Task AtualizarContratoAsync(Guid contratoId, string? status, int? diaVencimento, DateTime? dataInicioCobranca, string? observacoes)
+        public async Task AtualizarContratoAsync(Guid contratoId, string? status, string? responsavel, int? diaVencimento, DateTime? dataInicioCobranca, decimal? mensalidadeSaas, decimal? mensalidadeMarketing, decimal? marketingValorFixo, string? observacoes)
         {
             const string sql = @"
 UPDATE crm_contrato
    SET status = COALESCE(@Status::crm_contrato_status, status),
+       responsavel = COALESCE(@Responsavel::crm_responsavel, responsavel),
        dia_vencimento = COALESCE(@DiaVencimento, dia_vencimento),
        dt_inicio_cobranca = COALESCE(@DataInicioCobranca, dt_inicio_cobranca),
+       mensalidade_saas = COALESCE(@MensalidadeSaas, mensalidade_saas),
+       mensalidade_marketing = COALESCE(@MensalidadeMarketing, mensalidade_marketing),
+       marketing_valor_fixo = COALESCE(@MarketingValorFixo, marketing_valor_fixo),
        observacoes = COALESCE(@Observacoes, observacoes),
        canceled_at = CASE
                         WHEN COALESCE(@Status::crm_contrato_status, status)::text = 'cancelado' THEN NOW()
@@ -879,8 +883,12 @@ UPDATE crm_contrato
             {
                 ContratoId = contratoId,
                 Status = NormalizeNullable(status),
+                Responsavel = NormalizeNullable(responsavel),
                 DiaVencimento = diaVencimento,
                 DataInicioCobranca = dataInicioCobranca?.Date,
+                MensalidadeSaas = mensalidadeSaas,
+                MensalidadeMarketing = mensalidadeMarketing,
+                MarketingValorFixo = marketingValorFixo,
                 Observacoes = NormalizeNullable(observacoes)
             });
         }
@@ -969,9 +977,12 @@ SELECT l.id,
             return rows.ToList();
         }
 
-        public async Task<IReadOnlyCollection<CrmLancamentoRow>> ListarLancamentosEmAbertoAsync()
+        public async Task<IReadOnlyCollection<CrmLancamentoRow>> ListarLancamentosFinanceiroAsync(DateTime referenciaMes, bool apenasEmAberto)
         {
-            const string sql = @"
+            string sql;
+            if (apenasEmAberto)
+            {
+                sql = @"
 SELECT l.id,
        l.contrato_id,
        l.empresa_id,
@@ -992,10 +1003,39 @@ SELECT l.id,
   JOIN crm_contrato c ON c.id = l.contrato_id
  WHERE l.status IN ('pendente', 'parcial')
  ORDER BY l.data_vencimento ASC, l.created_at DESC;";
-
-            await using var connection = await _dataSource.OpenConnectionAsync();
-            var rows = await connection.QueryAsync<CrmLancamentoRow>(sql);
-            return rows.ToList();
+                await using var conn1 = await _dataSource.OpenConnectionAsync();
+                var rows1 = await conn1.QueryAsync<CrmLancamentoRow>(sql);
+                return rows1.ToList();
+            }
+            else
+            {
+                sql = @"
+SELECT l.id,
+       l.contrato_id,
+       l.empresa_id,
+       e.nome_fantasia AS nome_empresa,
+       c.tipo AS tipo_contrato,
+       l.tipo_lancamento,
+       l.descricao,
+       l.competencia,
+       l.data_vencimento,
+       l.data_pagamento,
+       l.valor_total,
+       l.valor_pago,
+       l.status,
+       l.created_at,
+       l.updated_at
+  FROM crm_lancamento l
+  JOIN empresas e ON e.id = l.empresa_id
+  JOIN crm_contrato c ON c.id = l.contrato_id
+ WHERE l.status IN ('pago', 'parcial')
+   AND l.data_pagamento IS NOT NULL
+   AND DATE_TRUNC('month', l.data_pagamento::timestamp) = DATE_TRUNC('month', @ReferenciaMes::timestamp)
+ ORDER BY l.data_pagamento DESC, l.created_at DESC;";
+                await using var conn2 = await _dataSource.OpenConnectionAsync();
+                var rows2 = await conn2.QueryAsync<CrmLancamentoRow>(sql, new { ReferenciaMes = referenciaMes.Date });
+                return rows2.ToList();
+            }
         }
 
         public async Task<CrmLancamentoRow?> ObterLancamentoAsync(Guid lancamentoId)

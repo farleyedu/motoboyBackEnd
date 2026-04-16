@@ -22,12 +22,12 @@ namespace APIBack.Repository.Interface
 
         Task<IReadOnlyCollection<CrmContratoRow>> ListarContratosAsync(string? status);
         Task<CrmContratoRow?> ObterContratoAsync(Guid contratoId);
-        Task AtualizarContratoAsync(Guid contratoId, string? status, int? diaVencimento, DateTime? dataInicioCobranca, string? observacoes);
+        Task AtualizarContratoAsync(Guid contratoId, string? status, string? responsavel, int? diaVencimento, DateTime? dataInicioCobranca, decimal? mensalidadeSaas, decimal? mensalidadeMarketing, decimal? marketingValorFixo, string? observacoes);
         Task<IReadOnlyCollection<CrmHistoricoRow>> ListarHistoricoContratoAsync(Guid contratoId);
         Task AdicionarHistoricoContratoAsync(Guid contratoId, int usuarioId, string acao, string? detalhe);
         Task<CrmImplantacaoRow?> ObterImplantacaoAsync(Guid contratoId);
         Task<IReadOnlyCollection<CrmLancamentoRow>> ListarLancamentosContratoAsync(Guid contratoId);
-        Task<IReadOnlyCollection<CrmLancamentoRow>> ListarLancamentosEmAbertoAsync();
+        Task<IReadOnlyCollection<CrmLancamentoRow>> ListarLancamentosFinanceiroAsync(DateTime referenciaMes, bool apenasEmAberto);
         Task<CrmLancamentoRow?> ObterLancamentoAsync(Guid lancamentoId);
         Task<Guid> CriarLancamentoAsync(CrmLancamentoRow lancamento);
         Task AtualizarLancamentoAsync(Guid lancamentoId, decimal valorPago, DateTime? dataPagamento, string status, DateTime? dataVencimento, decimal? valorTotal);

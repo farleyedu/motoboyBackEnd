@@ -20,7 +20,7 @@ namespace APIBack.Service.Interface
         Task<CrmLancamentoDto> RegistrarPagamentoAsync(int usuarioId, RegistrarCrmLancamentoRequest request);
 
         Task<CrmFinanceiroResumoDto> ObterResumoFinanceiroAsync(DateTime? referenciaMes);
-        Task<IReadOnlyCollection<CrmLancamentoDto>> ListarLancamentosEmAbertoAsync();
+        Task<IReadOnlyCollection<CrmLancamentoDto>> ListarLancamentosFinanceiroAsync(DateTime? referenciaMes);
         Task<CrmDivisaoFinanceiraDto> ObterDivisaoFinanceiraAsync(DateTime? referenciaMes);
     }
 }
