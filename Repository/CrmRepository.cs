@@ -1002,9 +1002,7 @@ SELECT l.id,
  WHERE DATE_TRUNC('month', COALESCE(l.competencia::timestamp, l.data_vencimento::timestamp))
        = DATE_TRUNC('month', @ReferenciaMes::timestamp)";
 
-            string sql = apenasEmAberto
-                ? selectCols + "\n   AND l.status IN ('pendente', 'parcial')\n ORDER BY l.data_vencimento ASC, l.created_at DESC;"
-                : selectCols + "\n   AND l.status IN ('pago', 'parcial')\n ORDER BY l.data_vencimento ASC, l.created_at DESC;";
+            string sql = selectCols + "\n ORDER BY l.data_vencimento ASC, l.created_at DESC;";
 
             await using var conn = await _dataSource.OpenConnectionAsync();
             var rows = await conn.QueryAsync<CrmLancamentoRow>(sql, new { ReferenciaMes = referenciaMes.Date });

@@ -498,9 +498,7 @@ namespace APIBack.Service
         {
             await SincronizarContratosLegadosAsync();
             var referencia = PrimeiroDiaMes(referenciaMes ?? DateTime.Today);
-            var mesAtual = PrimeiroDiaMes(DateTime.Today);
-            var apenasEmAberto = referencia >= mesAtual;
-            var rows = await _crmRepository.ListarLancamentosFinanceiroAsync(referencia, apenasEmAberto);
+            var rows = await _crmRepository.ListarLancamentosFinanceiroAsync(referencia, false);
             return rows.Select(MapLancamento).ToList();
         }
 
