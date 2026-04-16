@@ -979,10 +979,8 @@ SELECT l.id,
 
         public async Task<IReadOnlyCollection<CrmLancamentoRow>> ListarLancamentosFinanceiroAsync(DateTime referenciaMes, bool apenasEmAberto)
         {
-            string sql;
-            if (apenasEmAberto)
-            {
-                sql = @"
+            // Both branches filter by competencia (or fallback to data_vencimento) within the reference month.
+            const string selectCols = @"
 SELECT l.id,
        l.contrato_id,
        l.empresa_id,
@@ -1001,41 +999,29 @@ SELECT l.id,
   FROM crm_lancamento l
   JOIN empresas e ON e.id = l.empresa_id
   JOIN crm_contrato c ON c.id = l.contrato_id
- WHERE l.status IN ('pendente', 'parcial')
- ORDER BY l.data_vencimento ASC, l.created_at DESC;";
-                await using var conn1 = await _dataSource.OpenConnectionAsync();
-                var rows1 = await conn1.QueryAsync<CrmLancamentoRow>(sql);
-                return rows1.ToList();
-            }
-            else
-            {
-                sql = @"
-SELECT l.id,
-       l.contrato_id,
-       l.empresa_id,
-       e.nome_fantasia AS nome_empresa,
-       c.tipo AS tipo_contrato,
-       l.tipo_lancamento,
-       l.descricao,
-       l.competencia,
-       l.data_vencimento,
-       l.data_pagamento,
-       l.valor_total,
-       l.valor_pago,
-       l.status,
-       l.created_at,
-       l.updated_at
-  FROM crm_lancamento l
-  JOIN empresas e ON e.id = l.empresa_id
-  JOIN crm_contrato c ON c.id = l.contrato_id
- WHERE l.status IN ('pago', 'parcial')
-   AND l.data_pagamento IS NOT NULL
-   AND DATE_TRUNC('month', l.data_pagamento::timestamp) = DATE_TRUNC('month', @ReferenciaMes::timestamp)
- ORDER BY l.data_pagamento DESC, l.created_at DESC;";
-                await using var conn2 = await _dataSource.OpenConnectionAsync();
-                var rows2 = await conn2.QueryAsync<CrmLancamentoRow>(sql, new { ReferenciaMes = referenciaMes.Date });
-                return rows2.ToList();
-            }
+ WHERE DATE_TRUNC('month', COALESCE(l.competencia::timestamp, l.data_vencimento::timestamp))
+       = DATE_TRUNC('month', @ReferenciaMes::timestamp)";
+
+            string sql = apenasEmAberto
+                ? selectCols + "\n   AND l.status IN ('pendente', 'parcial')\n ORDER BY l.data_vencimento ASC, l.created_at DESC;"
+                : selectCols + "\n   AND l.status IN ('pago', 'parcial')\n ORDER BY l.data_vencimento ASC, l.created_at DESC;";
+
+            await using var conn = await _dataSource.OpenConnectionAsync();
+            var rows = await conn.QueryAsync<CrmLancamentoRow>(sql, new { ReferenciaMes = referenciaMes.Date });
+            return rows.ToList();
+        }
+
+        public async Task<IReadOnlyCollection<string>> ListarMesesComLancamentosAsync(int ultimos)
+        {
+            const string sql = @"
+SELECT DISTINCT TO_CHAR(DATE_TRUNC('month', COALESCE(competencia::timestamp, data_vencimento::timestamp)), 'YYYY-MM') AS mes
+  FROM crm_lancamento
+ ORDER BY mes DESC
+ LIMIT @Ultimos;";
+
+            await using var conn = await _dataSource.OpenConnectionAsync();
+            var rows = await conn.QueryAsync<string>(sql, new { Ultimos = ultimos });
+            return rows.ToList();
         }
 
         public async Task<CrmLancamentoRow?> ObterLancamentoAsync(Guid lancamentoId)
@@ -1148,8 +1134,9 @@ UPDATE crm_contrato
             const string sql = @"
 SELECT COALESCE(SUM(CASE
                         WHEN status IN ('pago', 'parcial')
-                         AND data_pagamento IS NOT NULL
-                         AND DATE_TRUNC('month', data_pagamento::timestamp) = DATE_TRUNC('month', @ReferenciaMes::timestamp)
+                         AND valor_pago > 0
+                         AND DATE_TRUNC('month', COALESCE(competencia::timestamp, data_vencimento::timestamp))
+                             = DATE_TRUNC('month', @ReferenciaMes::timestamp)
                         THEN valor_pago
                         ELSE 0
                     END), 0) AS recebido_mes,
@@ -1188,8 +1175,8 @@ SELECT CASE
   FROM crm_lancamento l
  WHERE l.status IN ('pago', 'parcial')
    AND l.valor_pago > 0
-   AND l.data_pagamento IS NOT NULL
-   AND DATE_TRUNC('month', l.data_pagamento::timestamp) = DATE_TRUNC('month', @ReferenciaMes::timestamp)
+   AND DATE_TRUNC('month', COALESCE(l.competencia::timestamp, l.data_vencimento::timestamp))
+       = DATE_TRUNC('month', @ReferenciaMes::timestamp)
  GROUP BY CASE
               WHEN l.tipo_lancamento::text = 'marketing_fixo' THEN 'marketing_valor_fixo'
               ELSE l.tipo_lancamento::text

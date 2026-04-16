@@ -526,6 +526,11 @@ namespace APIBack.Service
             };
         }
 
+        public async Task<IReadOnlyCollection<string>> ListarMesesAtivosAsync()
+        {
+            return await _crmRepository.ListarMesesComLancamentosAsync(12);
+        }
+
         private async Task SincronizarContratosLegadosAsync()
         {
             var inseridos = await _crmRepository.SincronizarContratosLegadosAsync();

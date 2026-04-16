@@ -22,5 +22,6 @@ namespace APIBack.Service.Interface
         Task<CrmFinanceiroResumoDto> ObterResumoFinanceiroAsync(DateTime? referenciaMes);
         Task<IReadOnlyCollection<CrmLancamentoDto>> ListarLancamentosFinanceiroAsync(DateTime? referenciaMes);
         Task<CrmDivisaoFinanceiraDto> ObterDivisaoFinanceiraAsync(DateTime? referenciaMes);
+        Task<IReadOnlyCollection<string>> ListarMesesAtivosAsync();
     }
 }

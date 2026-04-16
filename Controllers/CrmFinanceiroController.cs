@@ -59,6 +59,24 @@ namespace APIBack.Controllers
             }
         }
 
+        [HttpGet("meses-ativos")]
+        public async Task<IActionResult> MesesAtivos()
+        {
+            var access = EnsureCrmAccess();
+            if (access != null) return access;
+
+            try
+            {
+                var response = await _service.ListarMesesAtivosAsync();
+                return Ok(ApiResponse<IReadOnlyCollection<string>>.Ok(response));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao listar meses ativos do CRM");
+                return StatusCode(StatusCodes.Status500InternalServerError, ApiResponse<object>.Fail("Erro ao listar meses ativos."));
+            }
+        }
+
         [HttpGet("divisao")]
         public async Task<IActionResult> Divisao([FromQuery] DateTime? referenciaMes)
         {

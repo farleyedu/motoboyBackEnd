@@ -36,5 +36,6 @@ namespace APIBack.Repository.Interface
 
         Task<CrmFinanceiroResumoRow> ObterResumoFinanceiroAsync(DateTime referenciaMes);
         Task<IReadOnlyCollection<CrmDivisaoRow>> ObterDivisaoFinanceiraAsync(DateTime referenciaMes);
+        Task<IReadOnlyCollection<string>> ListarMesesComLancamentosAsync(int ultimos);
     }
 }
