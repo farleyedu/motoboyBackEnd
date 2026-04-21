@@ -1,11 +1,13 @@
 // ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
 using System;
+using System.Threading;
 using System.Threading.Tasks;
 using APIBack.Attributes;
 using APIBack.Automation.Dtos;
 using APIBack.Automation.Interfaces;
 using APIBack.Automation.Services;
 using APIBack.Extensions;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 
 namespace APIBack.Automation.Controllers
@@ -18,13 +20,16 @@ namespace APIBack.Automation.Controllers
         private const int MaxPageSize = 200;
         private readonly IConversationRepository _conversationRepository;
         private readonly ConversationManagementService _managementService;
+        private readonly ConversaAnexoService _anexoService;
 
         public ConversationsController(
             IConversationRepository conversationRepository,
-            ConversationManagementService managementService)
+            ConversationManagementService managementService,
+            ConversaAnexoService anexoService)
         {
             _conversationRepository = conversationRepository;
             _managementService = managementService;
+            _anexoService = anexoService;
         }
 
         [HttpGet]
@@ -110,6 +115,26 @@ namespace APIBack.Automation.Controllers
         [RequirePermission("WhatsApp", "enviar_mensagem")]
         public async Task<IActionResult> EnviarMensagem(Guid id, [FromBody] SendConversationMessageRequest request)
             => await ExecuteManagementAsync(() => _managementService.SendMessageAsync(id, RequireEstabelecimento(), HttpContext.GetUserId(), HttpContext.GetUserNome(), request));
+
+        [HttpPost("{id:guid}/mensagens/midia")]
+        [RequirePermission("WhatsApp", "enviar_mensagem")]
+        public async Task<IActionResult> EnviarMidia(Guid id, [FromBody] SendConversationMediaRequest request)
+            => await ExecuteManagementAsync(() => _managementService.SendMediaAsync(id, RequireEstabelecimento(), HttpContext.GetUserId(), HttpContext.GetUserNome(), request));
+
+        [HttpPost("{id:guid}/anexos")]
+        [RequirePermission("WhatsApp", "enviar_mensagem")]
+        public async Task<IActionResult> UploadAnexo(Guid id, IFormFile file, CancellationToken cancellationToken)
+        {
+            try
+            {
+                var resultado = await _anexoService.SalvarAsync(id, file, cancellationToken);
+                return Ok(resultado);
+            }
+            catch (ConversationManagementException ex)
+            {
+                return StatusCode(ex.StatusCode, new { success = false, error = ex.Message });
+            }
+        }
 
         [HttpPost("{id:guid}/archive")]
         [RequirePermission("WhatsApp", "arquivar")]

@@ -172,6 +172,7 @@ builder.Services.AddScoped<AgenteService>();
 builder.Services.AddScoped<ConversationService>();
 builder.Services.AddScoped<ConversationManagementService>();
 builder.Services.AddScoped<GarageSimulationStorageService>();
+builder.Services.AddScoped<ConversaAnexoService>();
 builder.Services.AddSingleton<PromptAssembler>();
 builder.Services.AddScoped<IMessageService, MessageService>();
 builder.Services.AddScoped<HandoverService>();

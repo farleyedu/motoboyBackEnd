@@ -357,6 +357,152 @@ namespace APIBack.Automation.Services
             return await BuildResponseAsync(requestedConversationId, idEstabelecimento);
         }
 
+        public async Task<ConversationActionResponseDto> SendMediaAsync(
+            Guid requestedConversationId,
+            Guid idEstabelecimento,
+            int? actorUserId,
+            string? actorName,
+            SendConversationMediaRequest? request)
+        {
+            var url = request?.Url?.Trim();
+            if (string.IsNullOrWhiteSpace(url))
+                throw new ConversationManagementException(422, "URL do arquivo e obrigatoria.");
+
+            var controleAtual = await EnsureControlAsync(requestedConversationId, idEstabelecimento);
+            EnsureNotClosed(controleAtual);
+
+            if (!StatusHumanos.Contains(controleAtual.Status))
+                throw new ConversationManagementException(409, "Envio manual so e permitido em atendimento humano aberto.");
+
+            if (!controleAtual.CanManualReply)
+            {
+                if (string.Equals(controleAtual.SendBlockReasonCode, WhatsAppWindowExpiredCode, StringComparison.OrdinalIgnoreCase))
+                    throw new ConversationManagementException(409, WhatsAppWindowExpiredMessage, WhatsAppWindowExpiredCode);
+
+                throw new ConversationManagementException(409, "Envio manual indisponivel para esta conversa no momento.");
+            }
+
+            var conversaOperacional = await _conversationRepository.ObterPorIdAsync(controleAtual.ConversationId);
+            if (conversaOperacional == null)
+                throw new ConversationManagementException(404, "Conversa operacional nao encontrada.");
+
+            var numeroDestino = await _clienteRepository.ObterTelefoneClienteAsync(
+                conversaOperacional.IdCliente, conversaOperacional.IdEstabelecimento);
+
+            if (string.IsNullOrWhiteSpace(numeroDestino))
+                throw new ConversationManagementException(422, "Telefone do cliente nao encontrado para envio.");
+
+            string? displayPhone = null;
+            string? phoneNumberId = null;
+
+            if (conversaOperacional.IdConversaGrupo != Guid.Empty
+                && conversaOperacional.IdConversaGrupo != conversaOperacional.IdConversa)
+            {
+                var conversaRaiz = await _conversationRepository.ObterPorIdAsync(conversaOperacional.IdConversaGrupo);
+                if (conversaRaiz != null && conversaRaiz.IdEstabelecimento != Guid.Empty)
+                {
+                    displayPhone = await _wabaPhoneRepository.ObterDisplayPhonePorEstabelecimentoAsync(conversaRaiz.IdEstabelecimento);
+                    phoneNumberId = await _wabaPhoneRepository.ObterPhoneNumberIdPorEstabelecimentoAsync(conversaRaiz.IdEstabelecimento);
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(displayPhone) || string.IsNullOrWhiteSpace(phoneNumberId))
+            {
+                displayPhone = await _wabaPhoneRepository.ObterDisplayPhonePorEstabelecimentoAsync(conversaOperacional.IdEstabelecimento);
+                phoneNumberId = await _wabaPhoneRepository.ObterPhoneNumberIdPorEstabelecimentoAsync(conversaOperacional.IdEstabelecimento);
+            }
+
+            if (string.IsNullOrWhiteSpace(displayPhone) || string.IsNullOrWhiteSpace(phoneNumberId))
+            {
+                var centralDisplayConfig = _configuration["WhatsApp:CentralDisplayPhone"];
+                if (!string.IsNullOrWhiteSpace(centralDisplayConfig))
+                {
+                    var idWabaCentral = await _wabaPhoneRepository.ObterPhoneNumberIdPorDisplayPhoneAsync(centralDisplayConfig);
+                    if (!string.IsNullOrWhiteSpace(idWabaCentral))
+                    {
+                        displayPhone = centralDisplayConfig;
+                        phoneNumberId = idWabaCentral;
+                    }
+                }
+            }
+
+            phoneNumberId ??= _configuration["Automation:Meta:PhoneNumberId"];
+
+            var criadoPor = !string.IsNullOrWhiteSpace(actorName)
+                ? actorName!.Trim()
+                : controleAtual.AssignedAgentName ?? "atendente";
+
+            var contentType = request?.ContentType;
+            var nome = request?.Nome?.Trim();
+            var isImage = !string.IsNullOrWhiteSpace(contentType)
+                ? contentType.StartsWith("image/", StringComparison.OrdinalIgnoreCase)
+                : Path.GetExtension(url).ToLowerInvariant() is ".jpg" or ".jpeg" or ".png" or ".webp" or ".gif";
+
+            var tipoOriginal = isImage ? "image" : "document";
+            var agora = DateTime.UtcNow;
+            var conteudo = !string.IsNullOrWhiteSpace(request?.Legenda) ? request.Legenda.Trim() : url;
+
+            var mensagem = new Message
+            {
+                Id = Guid.NewGuid(),
+                IdConversa = controleAtual.ConversationId,
+                IdMensagemWa = $"manual-{Guid.NewGuid():N}",
+                Direcao = DirecaoMensagem.Saida,
+                Conteudo = conteudo,
+                DataHora = agora,
+                DataCriacao = agora,
+                DataEnvio = agora,
+                CriadaPor = criadoPor,
+                TipoOriginal = tipoOriginal,
+                Tipo = MessageTypeMapper.MapType(tipoOriginal, DirecaoMensagem.Saida, criadoPor),
+                Status = "fila"
+            };
+
+            var persisted = await _messageService.AdicionarMensagemAsync(mensagem, displayPhone, numeroDestino);
+            if (persisted == null)
+                throw new ConversationManagementException(409, "Nao foi possivel persistir a mensagem.");
+
+            await _queueBus.PublicarSaidaAsync(mensagem);
+
+            if (string.IsNullOrWhiteSpace(phoneNumberId))
+            {
+                await _messageService.AtualizarStatusAsync(mensagem.Id, "falhou", "waba_not_configured", "PhoneNumberId nao configurado.");
+                throw new ConversationManagementException(422, "Configuracao do WhatsApp Business ausente para este estabelecimento.");
+            }
+
+            try
+            {
+                if (isImage)
+                    await _whatsAppSender.SendImageAsync(mensagem.IdConversa, phoneNumberId, numeroDestino, url, displayPhone);
+                else
+                    await _whatsAppSender.SendDocumentAsync(mensagem.IdConversa, phoneNumberId, numeroDestino, url, nome, displayPhone);
+
+                await _messageService.AtualizarStatusAsync(mensagem.Id, MessageStatusMapper.Enviada);
+                mensagem.Status = MessageStatusMapper.Enviada;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Falha ao enviar midia manual da conversa {Conversa}", mensagem.IdConversa);
+                await _messageService.AtualizarStatusAsync(mensagem.Id, "falhou", "send_failed", ex.Message);
+                mensagem.Status = "falhou";
+                throw new ConversationManagementException(422, $"Falha ao enviar arquivo pelo WhatsApp: {ex.Message}");
+            }
+
+            return await BuildResponseAsync(
+                requestedConversationId,
+                idEstabelecimento,
+                new ConversationMessageItemDto
+                {
+                    Id = mensagem.Id,
+                    CriadaPor = mensagem.CriadaPor ?? string.Empty,
+                    Conteudo = mensagem.Conteudo,
+                    Tipo = string.IsNullOrWhiteSpace(mensagem.Tipo) ? tipoOriginal : mensagem.Tipo!,
+                    Status = mensagem.Status ?? MessageStatusMapper.Enviada,
+                    DataEnvio = mensagem.DataEnvio,
+                    DataCriacao = mensagem.DataCriacao ?? agora
+                });
+        }
+
         public async Task<ConversationActionResponseDto> SendMessageAsync(
             Guid requestedConversationId,
             Guid idEstabelecimento,
