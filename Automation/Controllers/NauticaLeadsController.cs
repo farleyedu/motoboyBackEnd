@@ -46,7 +46,7 @@ namespace APIBack.Automation.Controllers
             }
 
             var paginaNormalizada = pagina < 1 ? 1 : pagina;
-            var tamanhoNormalizado = Math.Clamp(tamanhoPagina <= 0 ? 20 : tamanhoPagina, 1, 200);
+            var tamanhoNormalizado = Math.Clamp(tamanhoPagina <= 0 ? 20 : tamanhoPagina, 1, 1000);
 
             var (itens, total) = await _repository.ListarLeadsAsync(estabelecimentoId, busca, status, paginaNormalizada, tamanhoNormalizado);
             var contagens = await _repository.ContarLeadsPorStatusAsync(estabelecimentoId, busca);
