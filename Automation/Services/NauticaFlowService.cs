@@ -791,7 +791,7 @@ namespace APIBack.Automation.Services
 
         private static AssistantDecision CriarBoasVindas()
         {
-            var mensagem = "Ola, tudo bem? 👋\n\nAqui e o Claudelino, da Amazon Nautica ⚓🚤\n\nVou fazer algumas perguntas rapidas para entender melhor o seu perfil e ja te enviar as informacoes certas.\n\nPara comecar: qual o seu nome?";
+            var mensagem = "Ola, tudo bem? 👋\n\nAqui e a equipe da Amazon Nautica ⚓🚤\n\nVamos fazer algumas perguntas rapidas para entender melhor o seu perfil e ja te enviar as informacoes certas.\n\nPara comecar: qual o seu nome?";
             return new AssistantDecision(mensagem, "none", null, false, null);
         }
 

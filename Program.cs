@@ -24,6 +24,7 @@ using APIBack.Payments.Services.Interface;
 using System.Net;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
+using APIBack.Hubs;
 // ================= ADIÇÕES NECESSÁRIAS (BEGIN) ========================
 using Npgsql;
 using APIBack.Model; // Namespace onde seu enum ReservaStatus está
@@ -82,6 +83,7 @@ builder.Services.AddControllers(options =>
     // Global auth by default. Use [AllowAnonymous] explicitly on public endpoints.
     options.Filters.Add(new APIBack.Attributes.AuthorizeAttribute());
 });
+builder.Services.AddSignalR();
 builder.Services.AddHttpClient();
 builder.Services.AddMemoryCache();
 builder.Services.AddScoped<IUsuarioRepository, UsuarioRepository>();
@@ -101,10 +103,12 @@ builder.Services.AddScoped<IEstabelecimentoAgendamentoConfigRepository, Estabele
 builder.Services.AddScoped<IAgendaDisponibilidadeRepository, AgendaDisponibilidadeRepository>();
 builder.Services.AddScoped<IPedidoService, PedidoService>();
 builder.Services.AddScoped<IMotoboyRepository, MotoboyRepository>();
+builder.Services.AddScoped<ITrackingRepository, TrackingRepository>();
 builder.Services.AddScoped<IReservaRepository, ReservaRepository>();
 builder.Services.AddScoped<IReservasRepository, ReservasRepository>();
 builder.Services.AddScoped<IMotoboyService, MotoboyService>();
 builder.Services.AddScoped<ILocalizacaoService, LocalizacaoService>();
+builder.Services.AddScoped<ITrackingService, TrackingService>();
 builder.Services.AddScoped<IReservasService, ReservasService>();
 builder.Services.AddScoped<IEstabelecimentoFaqService, EstabelecimentoFaqService>();
 builder.Services.AddScoped<ICardapioService, CardapioService>();
@@ -280,6 +284,7 @@ app.UseMiddleware<JwtAuthenticationMiddleware>();
 app.UseAuthorization();
 
 app.MapControllers();
+app.MapHub<DeliveryHub>("/hubs/delivery");
 
 // Log bound URLs at startup
 app.Lifetime.ApplicationStarted.Register(() =>

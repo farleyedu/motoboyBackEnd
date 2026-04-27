@@ -1,9 +1,13 @@
 using APIBack.DTOs;
 using APIBack.Model;
 using APIBack.Attributes;
+using APIBack.DTOs.Tracking;
+using APIBack.Extensions;
+using APIBack.Hubs;
 using APIBack.Service;
 using APIBack.Service.Interface;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
 
 namespace APIBack.Controllers
 {
@@ -12,12 +16,14 @@ namespace APIBack.Controllers
     public class PedidoController : Controller
     {
         readonly IPedidoService _pedidoService;
+        private readonly IHubContext<DeliveryHub> _deliveryHub;
 
         // Simulação de repositório em memória (trocar pelo seu contexto do EF depois)
         private static readonly List<string> PedidosRegistrados = new();
-        public PedidoController(IPedidoService pedidoService)
+        public PedidoController(IPedidoService pedidoService, IHubContext<DeliveryHub> deliveryHub)
         {
             _pedidoService = pedidoService;
+            _deliveryHub = deliveryHub;
         }
         // GET: api/pedidos
         [HttpGet]
@@ -178,12 +184,33 @@ namespace APIBack.Controllers
 
         [HttpPut("AtribuirMotoboy")]
         [RequirePermission("Delivery", "atribuir_motoboy")]
-        public IActionResult AtribuirMotoboy([FromBody] EnviarPedidosParaRotaDTO dto)
+        public async Task<IActionResult> AtribuirMotoboy([FromBody] EnviarPedidosParaRotaDTO dto)
         {
             if (dto.PedidosIds == null || !dto.PedidosIds.Any())
                 return BadRequest("Nenhum pedido informado.");
 
-            _pedidoService.AtribuirMotoboy(dto);
+            await _pedidoService.AtribuirMotoboy(dto);
+
+            var estabelecimentoId = HttpContext.GetEstabelecimentoId();
+            if (estabelecimentoId.HasValue && estabelecimentoId.Value != Guid.Empty)
+            {
+                var evt = new DeliveryRouteAssignedRealtimeDto
+                {
+                    MotoboyId = dto.MotoboyResponsavel,
+                    EstabelecimentoId = estabelecimentoId.Value,
+                    PedidoIds = dto.PedidosIds.ToList(),
+                    UpdatedAtUtc = DateTimeOffset.UtcNow
+                };
+
+                await _deliveryHub.Clients
+                    .Group(DeliveryRealtimeEvents.EstablishmentGroup(estabelecimentoId.Value))
+                    .SendAsync(DeliveryRealtimeEvents.DeliveryRouteAssigned, evt);
+
+                await _deliveryHub.Clients
+                    .Group(DeliveryRealtimeEvents.EstablishmentGroup(estabelecimentoId.Value))
+                    .SendAsync(DeliveryRealtimeEvents.DeliveryOrderUpdated, evt);
+            }
+
             return NoContent();
         }
 
