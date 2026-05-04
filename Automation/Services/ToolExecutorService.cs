@@ -9,9 +9,11 @@ using APIBack.Automation.Dtos;
 using APIBack.Automation.Helpers;
 using APIBack.Automation.Interfaces;
 using APIBack.Automation.Models;
+using APIBack.DTOs.Agendamentos;
 using APIBack.Model;
 using APIBack.Repository.Interface;
 using APIBack.Service;
+using APIBack.Service.Interface;
 using Microsoft.Extensions.Logging;
 
 namespace APIBack.Automation.Services
@@ -84,6 +86,48 @@ namespace APIBack.Automation.Services
         public string? Observacoes { get; set; }
     }
 
+    public class ConsultarDisponibilidadeOficinaArgs
+    {
+        public Guid IdConversa { get; set; }
+        public string NomeServico { get; set; } = string.Empty;
+        public string Data { get; set; } = string.Empty;
+        public int? DuracaoMinutos { get; set; }
+        public long? ProfissionalId { get; set; }
+    }
+
+    public class CriarAgendamentoOficinaArgs
+    {
+        public Guid IdConversa { get; set; }
+        public string NomeCliente { get; set; } = string.Empty;
+        public string NomeServico { get; set; } = string.Empty;
+        public string Data { get; set; } = string.Empty;
+        public string HoraInicio { get; set; } = string.Empty;
+        public int? DuracaoMinutos { get; set; }
+        public long? ProfissionalId { get; set; }
+        public string? Veiculo { get; set; }
+        public string? VeiculoMarca { get; set; }
+        public string? VeiculoModelo { get; set; }
+        public string? MarcaPeca { get; set; }
+        public string? Observacoes { get; set; }
+    }
+
+    public class CodigoAgendamentoOficinaArgs
+    {
+        public Guid IdConversa { get; set; }
+        public string? CodigoAgendamento { get; set; }
+        public string? MotivoCliente { get; set; }
+    }
+
+    public class RemarcarAgendamentoOficinaArgs
+    {
+        public Guid IdConversa { get; set; }
+        public string? CodigoAgendamento { get; set; }
+        public string NovaData { get; set; } = string.Empty;
+        public string NovoHorario { get; set; } = string.Empty;
+        public int? DuracaoMinutos { get; set; }
+        public long? ProfissionalId { get; set; }
+    }
+
     public class ToolExecutorService
     {
         private const string MissingReservationDataMessage = "Para organizar a sua reserva, preciso de algumas informações:\n\n📋 Nome completo\n👥 Número de pessoas\n📅 Data\n⏰ Horário\n\nPode me passar esses dados? 😊";
@@ -101,6 +145,7 @@ namespace APIBack.Automation.Services
         private readonly FaqCatalogProvider _faqCatalogProvider;
         private readonly IServicoAtendimentoRepository _servicoAtendimentoRepository;
         private readonly IEstabelecimentoRepository _estabelecimentoRepository;
+        private readonly IOficinaAgendamentoService _oficinaAgendamentoService;
 
         public ToolExecutorService(
             ILogger<ToolExecutorService> logger,
@@ -113,7 +158,8 @@ namespace APIBack.Automation.Services
             ServicoCatalogProvider catalogProvider,
             FaqCatalogProvider faqCatalogProvider,
             IServicoAtendimentoRepository servicoAtendimentoRepository,
-            IEstabelecimentoRepository estabelecimentoRepository)
+            IEstabelecimentoRepository estabelecimentoRepository,
+            IOficinaAgendamentoService oficinaAgendamentoService)
         {
             _logger = logger;
             _conversationRepository = conversationRepository;
@@ -126,6 +172,7 @@ namespace APIBack.Automation.Services
             _faqCatalogProvider = faqCatalogProvider;
             _servicoAtendimentoRepository = servicoAtendimentoRepository;
             _estabelecimentoRepository = estabelecimentoRepository;
+            _oficinaAgendamentoService = oficinaAgendamentoService;
         }
 
         public object[] GetDeclaredTools(Guid idConversa)
@@ -244,6 +291,8 @@ PARÂMETROS IMPORTANTES:
             var temReserva = modulos.Any(m =>
                 string.Equals(m, "Reserva", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(m, "Agendamentos", StringComparison.OrdinalIgnoreCase));
+            var tipoEstabelecimento = await _estabelecimentoRepository.ObterTipoEstabelecimentoAsync(scope.IdEstabelecimento);
+            var ehOficina = string.Equals(tipoEstabelecimento, "oficina", StringComparison.OrdinalIgnoreCase);
 
             var tools = new List<object>();
 
@@ -253,8 +302,11 @@ PARÂMETROS IMPORTANTES:
             if (temFaq)
                 tools.AddRange(BuildFaqTools(idConversa.ToString()));
 
-            if (temReserva)
+            if (temReserva && !ehOficina)
                 tools.AddRange(GetDeclaredTools(idConversa));
+
+            if (ehOficina && temServicos && temReserva)
+                tools.AddRange(BuildOficinaAgendamentoTools(idConversa.ToString()));
 
             // escalar_para_humano sempre presente
             if (!tools.Any())
@@ -262,6 +314,94 @@ PARÂMETROS IMPORTANTES:
 
             return tools.ToArray();
         }
+
+        private static object[] BuildOficinaAgendamentoTools(string idConversaString) => new object[]
+        {
+            new {
+                type = "function",
+                name = "consultar_disponibilidade_oficina",
+                description = @"Consulta horários disponíveis para agendar serviço de oficina.
+
+Use quando o cliente pedir horário, quiser agendar ou perguntar disponibilidade. Antes, identifique o serviço e a data desejada.",
+                parameters = new {
+                    type = "object",
+                    properties = new {
+                        idConversa = new { type = "string", description = "ID único da conversa atual", @enum = new[] { idConversaString } },
+                        nomeServico = new { type = "string", description = "Nome do serviço desejado" },
+                        data = new { type = "string", description = "Data em yyyy-MM-dd" },
+                        duracaoMinutos = new { type = "integer", description = "Duração do serviço em minutos, se conhecida" },
+                        profissionalId = new { type = "integer", description = "ID do profissional se o cliente escolheu um" }
+                    },
+                    required = new[] { "idConversa", "nomeServico", "data" }
+                }
+            },
+            new {
+                type = "function",
+                name = "criar_agendamento_oficina",
+                description = @"Cria um agendamento real de oficina após o cliente escolher explicitamente um horário disponível.",
+                parameters = new {
+                    type = "object",
+                    properties = new {
+                        idConversa = new { type = "string", description = "ID único da conversa atual", @enum = new[] { idConversaString } },
+                        nomeCliente = new { type = "string", description = "Nome do cliente" },
+                        nomeServico = new { type = "string", description = "Nome do serviço" },
+                        data = new { type = "string", description = "Data em yyyy-MM-dd" },
+                        horaInicio = new { type = "string", description = "Hora escolhida em HH:mm" },
+                        duracaoMinutos = new { type = "integer", description = "Duração do serviço em minutos, se conhecida" },
+                        profissionalId = new { type = "integer", description = "ID do profissional se aplicável" },
+                        veiculo = new { type = "string", description = "Texto completo do veículo" },
+                        veiculoMarca = new { type = "string", description = "Marca do veículo" },
+                        veiculoModelo = new { type = "string", description = "Modelo do veículo" },
+                        marcaPeca = new { type = "string", description = "Marca da peça escolhida" },
+                        observacoes = new { type = "string", description = "Observações do cliente" }
+                    },
+                    required = new[] { "idConversa", "nomeCliente", "nomeServico", "data", "horaInicio" }
+                }
+            },
+            new {
+                type = "function",
+                name = "listar_agendamentos_oficina",
+                description = "Lista agendamentos ativos de oficina do cliente atual.",
+                parameters = new {
+                    type = "object",
+                    properties = new {
+                        idConversa = new { type = "string", description = "ID único da conversa atual", @enum = new[] { idConversaString } }
+                    },
+                    required = new[] { "idConversa" }
+                }
+            },
+            new {
+                type = "function",
+                name = "cancelar_agendamento_oficina",
+                description = "Cancela um agendamento de oficina após confirmação explícita do cliente.",
+                parameters = new {
+                    type = "object",
+                    properties = new {
+                        idConversa = new { type = "string", description = "ID único da conversa atual", @enum = new[] { idConversaString } },
+                        codigoAgendamento = new { type = "string", description = "Código do agendamento, se informado" },
+                        motivoCliente = new { type = "string", description = "Motivo do cancelamento, se informado" }
+                    },
+                    required = new[] { "idConversa" }
+                }
+            },
+            new {
+                type = "function",
+                name = "remarcar_agendamento_oficina",
+                description = "Remarca um agendamento de oficina após o cliente escolher nova data e novo horário.",
+                parameters = new {
+                    type = "object",
+                    properties = new {
+                        idConversa = new { type = "string", description = "ID único da conversa atual", @enum = new[] { idConversaString } },
+                        codigoAgendamento = new { type = "string", description = "Código do agendamento, se informado" },
+                        novaData = new { type = "string", description = "Nova data em yyyy-MM-dd" },
+                        novoHorario = new { type = "string", description = "Novo horário em HH:mm" },
+                        duracaoMinutos = new { type = "integer", description = "Duração em minutos, se conhecida" },
+                        profissionalId = new { type = "integer", description = "ID do profissional se aplicável" }
+                    },
+                    required = new[] { "idConversa", "novaData", "novoHorario" }
+                }
+            }
+        };
 
         private static object[] BuildServicosTools(string idConversaString) => new object[]
         {
@@ -314,9 +454,13 @@ QUANDO USAR:
                 description = @"Registra o interesse do cliente em um serviço e aciona a equipe.
 
 QUANDO USAR:
-- Cliente quiser agendar um serviço
 - Cliente quiser orçamento formal
 - Cliente confirmar interesse explícito
+- Cliente quiser humano ou quando não for possível criar agendamento automático
+
+IMPORTANTE PARA OFICINA:
+- Se houver tools de oficina e o cliente quiser agendar, consulte disponibilidade e use criar_agendamento_oficina.
+- Não use esta tool para agendar oficina quando existir horário disponível.
 
 SEMPRE colete antes: nome do cliente, nome do serviço, veículo (se o serviço variar por veículo).",
                 parameters = new {
@@ -460,6 +604,36 @@ SEMPRE colete antes: nome do cliente, nome do serviço, veículo (se o serviço 
                         if (registrarSvArgs == null)
                             return BuildJsonReply("Argumentos inválidos.");
                         return await HandleRegistrarInteresseServico(registrarSvArgs);
+
+                    case "consultar_disponibilidade_oficina":
+                        var disponibilidadeArgs = JsonSerializer.Deserialize<ConsultarDisponibilidadeOficinaArgs>(argsJson, JsonOptions);
+                        if (disponibilidadeArgs == null)
+                            return BuildJsonReply("Argumentos inválidos para consultar disponibilidade.");
+                        return await HandleConsultarDisponibilidadeOficina(disponibilidadeArgs);
+
+                    case "criar_agendamento_oficina":
+                        var criarOficinaArgs = JsonSerializer.Deserialize<CriarAgendamentoOficinaArgs>(argsJson, JsonOptions);
+                        if (criarOficinaArgs == null)
+                            return BuildJsonReply("Argumentos inválidos para criar agendamento.");
+                        return await HandleCriarAgendamentoOficina(criarOficinaArgs);
+
+                    case "listar_agendamentos_oficina":
+                        var listarOficinaArgs = JsonSerializer.Deserialize<Dictionary<string, Guid>>(argsJson, JsonOptions);
+                        if (listarOficinaArgs == null || !listarOficinaArgs.TryGetValue("idConversa", out var idConvOficina))
+                            return BuildJsonReply("Argumentos inválidos para listar agendamentos.");
+                        return await HandleListarAgendamentosOficina(idConvOficina);
+
+                    case "cancelar_agendamento_oficina":
+                        var cancelarOficinaArgs = JsonSerializer.Deserialize<CodigoAgendamentoOficinaArgs>(argsJson, JsonOptions);
+                        if (cancelarOficinaArgs == null)
+                            return BuildJsonReply("Argumentos inválidos para cancelar agendamento.");
+                        return await HandleCancelarAgendamentoOficina(cancelarOficinaArgs);
+
+                    case "remarcar_agendamento_oficina":
+                        var remarcarOficinaArgs = JsonSerializer.Deserialize<RemarcarAgendamentoOficinaArgs>(argsJson, JsonOptions);
+                        if (remarcarOficinaArgs == null)
+                            return BuildJsonReply("Argumentos inválidos para remarcar agendamento.");
+                        return await HandleRemarcarAgendamentoOficina(remarcarOficinaArgs);
 
                     default:
                         _logger.LogWarning("Ferramenta desconhecida: {Tool}", toolName);
@@ -1381,8 +1555,13 @@ IMPORTANTE:
                 return BuildToolDataReply("listar_servicos", "error", "Não consegui identificar o estabelecimento.");
 
             var catalogo = await _catalogProvider.ObterCatalogoVisivelAsync(scope.IdEstabelecimento);
+            _logger.FlowInfo("SERVICO_SEARCH", conversationId: args.IdConversa, estabelecimentoId: scope.IdEstabelecimento, clienteId: scope.IdCliente, telefone: scope.TelefoneCliente, acao: "listar_servicos",
+                extra: new[] { ("filtro", (object?)args.Filtro), ("totalCatalogo", catalogo.Count) });
             if (catalogo.Count == 0)
+            {
+                _logger.FlowWarning("SERVICO_NOT_FOUND", conversationId: args.IdConversa, estabelecimentoId: scope.IdEstabelecimento, clienteId: scope.IdCliente, telefone: scope.TelefoneCliente, resultado: "empty", motivo: "catalogo_vazio");
                 return BuildToolDataReply("listar_servicos", "empty", "Não encontrei serviços cadastrados no momento.");
+            }
 
             IEnumerable<ServicoCatalogItem> lista = catalogo;
             if (!string.IsNullOrWhiteSpace(args.Filtro))
@@ -1395,7 +1574,11 @@ IMPORTANTE:
 
             var itens = lista.ToList();
             if (itens.Count == 0)
+            {
+                _logger.FlowWarning("SERVICO_NOT_FOUND", conversationId: args.IdConversa, estabelecimentoId: scope.IdEstabelecimento, clienteId: scope.IdCliente, telefone: scope.TelefoneCliente, resultado: "not_found",
+                    extra: new[] { ("filtro", (object?)args.Filtro) });
                 return BuildToolDataReply("listar_servicos", "not_found", $"Não encontrei serviços relacionados a \"{args.Filtro}\".");
+            }
 
             var sb = new StringBuilder();
             sb.AppendLine(string.IsNullOrWhiteSpace(args.Filtro)
@@ -1448,6 +1631,8 @@ IMPORTANTE:
 
             var catalogo = await _catalogProvider.ObterCatalogoVisivelAsync(scope.IdEstabelecimento);
             var nomeNorm = args.NomeServico.Trim().ToLowerInvariant();
+            _logger.FlowInfo("SERVICO_SEARCH", conversationId: args.IdConversa, estabelecimentoId: scope.IdEstabelecimento, clienteId: scope.IdCliente, telefone: scope.TelefoneCliente, acao: "consultar_servico",
+                extra: new[] { ("termo", (object?)args.NomeServico), ("totalCatalogo", catalogo.Count) });
 
             var servico = catalogo.FirstOrDefault(s =>
                 s.Nome.ToLowerInvariant().Contains(nomeNorm) ||
@@ -1456,7 +1641,14 @@ IMPORTANTE:
                     nomeNorm.Contains(k.ToLowerInvariant())));
 
             if (servico == null)
+            {
+                _logger.FlowWarning("SERVICO_NOT_FOUND", conversationId: args.IdConversa, estabelecimentoId: scope.IdEstabelecimento, clienteId: scope.IdCliente, telefone: scope.TelefoneCliente, resultado: "not_found",
+                    extra: new[] { ("termo", (object?)args.NomeServico) });
                 return BuildToolDataReply("consultar_servico", "not_found", $"Não encontrei o serviço \"{args.NomeServico}\". Quer ver a lista completa?");
+            }
+
+            _logger.FlowInfo("SERVICO_SELECTED", conversationId: args.IdConversa, estabelecimentoId: scope.IdEstabelecimento, clienteId: scope.IdCliente, telefone: scope.TelefoneCliente, resultado: "ok",
+                extra: new[] { ("servicoId", (object?)servico.Id), ("nome", servico.Nome), ("permiteAgendamento", servico.PermiteAgendamento), ("diferePorVeiculo", servico.DiferePorVeiculo) });
 
             var contexto = await _conversationRepository.ObterContextoAsync(args.IdConversa);
             var fichaPersistida = ConversationFichaAtualStore.Read(contexto);
@@ -1678,6 +1870,8 @@ IMPORTANTE:
             }
 
             var pergunta = args.Pergunta?.Trim() ?? string.Empty;
+            _logger.FlowInfo("FAQ_SEARCH", conversationId: args.IdConversa, estabelecimentoId: scope.IdEstabelecimento, clienteId: scope.IdCliente, telefone: scope.TelefoneCliente, acao: "consultar_faq",
+                extra: new[] { ("pergunta", (object?)pergunta) });
             if (string.IsNullOrWhiteSpace(pergunta))
             {
                 return BuildToolDataReply("consultar_faq", "invalid", "Preciso da pergunta do cliente para consultar o FAQ.");
@@ -1686,6 +1880,8 @@ IMPORTANTE:
             var match = await _faqCatalogProvider.MatchStrongAsync(scope.IdEstabelecimento, pergunta);
             if (match == null)
             {
+                _logger.FlowInfo("FAQ_NOT_FOUND", conversationId: args.IdConversa, estabelecimentoId: scope.IdEstabelecimento, clienteId: scope.IdCliente, telefone: scope.TelefoneCliente, resultado: "not_found",
+                    extra: new[] { ("pergunta", (object?)pergunta) });
                 return BuildToolDataReply(
                     "consultar_faq",
                     "not_found",
@@ -1695,6 +1891,9 @@ IMPORTANTE:
                         pergunta
                     });
             }
+
+            _logger.FlowInfo("FAQ_ANSWERED", conversationId: args.IdConversa, estabelecimentoId: scope.IdEstabelecimento, clienteId: scope.IdCliente, telefone: scope.TelefoneCliente, resultado: "ok",
+                extra: new[] { ("faqId", (object?)match.Item.Id), ("categoria", match.Item.Categoria), ("matchScore", match.Score) });
 
             return BuildToolDataReply(
                 "consultar_faq",
@@ -1715,6 +1914,258 @@ IMPORTANTE:
                 });
         }
 
+        private async Task<string> HandleConsultarDisponibilidadeOficina(ConsultarDisponibilidadeOficinaArgs args)
+        {
+            var scope = await ResolveOficinaScopeAsync(args.IdConversa, "consultar_disponibilidade_oficina");
+            if (scope == null)
+                return BuildToolDataReply("consultar_disponibilidade_oficina", "error", "Não consegui identificar seus dados para consultar a agenda.");
+
+            if (!TryParseDate(args.Data, out var data))
+                return BuildToolDataReply("consultar_disponibilidade_oficina", "invalid", "Preciso de uma data válida para consultar horários.");
+
+            var servico = await ResolverServicoCatalogoAsync(scope.IdEstabelecimento, args.NomeServico);
+            if (servico == null)
+            {
+                _logger.FlowWarning("SERVICO_NOT_FOUND", conversationId: args.IdConversa, estabelecimentoId: scope.IdEstabelecimento, clienteId: scope.IdCliente, telefone: scope.TelefoneCliente, resultado: "not_found",
+                    extra: new[] { ("nomeServico", (object?)args.NomeServico) });
+                return BuildToolDataReply("consultar_disponibilidade_oficina", "service_not_found", $"Não encontrei o serviço \"{args.NomeServico}\" no catálogo.");
+            }
+
+            if (!servico.PermiteAgendamento)
+            {
+                _logger.FlowWarning("AGENDA_SLOT_EMPTY", conversationId: args.IdConversa, estabelecimentoId: scope.IdEstabelecimento, clienteId: scope.IdCliente, telefone: scope.TelefoneCliente, motivo: "servico_nao_agendavel",
+                    extra: new[] { ("servicoId", (object?)servico.Id), ("nomeServico", servico.Nome) });
+                return BuildToolDataReply("consultar_disponibilidade_oficina", "service_not_schedulable", $"O serviço {servico.Nome} não está liberado para agendamento automático. Posso chamar a equipe para continuar.");
+            }
+
+            var duracao = args.DuracaoMinutos ?? servico.DuracaoMinutos;
+            var slots = await _oficinaAgendamentoService.BuscarSlotsAsync(scope.IdEstabelecimento, servico.Id, data, duracao, args.ProfissionalId);
+            if (slots.Count == 0)
+            {
+                return BuildToolDataReply("consultar_disponibilidade_oficina", "empty", "Não encontrei horários disponíveis nessa data. Quer tentar outro dia?");
+            }
+
+            var sb = new StringBuilder();
+            sb.AppendLine($"Encontrei estes horários para *{servico.Nome}* em {data:dd/MM/yyyy}:");
+            sb.AppendLine();
+            foreach (var slot in slots.Take(6))
+            {
+                sb.AppendLine($"- {slot.HoraInicio}");
+            }
+
+            sb.AppendLine();
+            sb.Append("Qual horário você prefere?");
+
+            return BuildToolDataReply(
+                "consultar_disponibilidade_oficina",
+                "ok",
+                sb.ToString(),
+                data: new
+                {
+                    servico = new { servico.Id, servico.Nome, duracao_minutos = duracao },
+                    data = data.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
+                    slots
+                },
+                fichaAtualSugerida: new ConversationFichaAtual
+                {
+                    ModuloEmFoco = "servicos",
+                    Servico = servico.Nome,
+                    ProntoParaAgendamento = true
+                });
+        }
+
+        private async Task<string> HandleCriarAgendamentoOficina(CriarAgendamentoOficinaArgs args)
+        {
+            var scope = await ResolveOficinaScopeAsync(args.IdConversa, "criar_agendamento_oficina");
+            if (scope == null)
+                return BuildToolDataReply("criar_agendamento_oficina", "error", "Não consegui identificar seus dados para criar o agendamento.");
+
+            if (!TryParseDate(args.Data, out var data))
+                return BuildToolDataReply("criar_agendamento_oficina", "invalid", "Preciso de uma data válida para criar o agendamento.");
+
+            var servico = await ResolverServicoCatalogoAsync(scope.IdEstabelecimento, args.NomeServico);
+            if (servico == null)
+                return BuildToolDataReply("criar_agendamento_oficina", "service_not_found", $"Não encontrei o serviço \"{args.NomeServico}\" no catálogo.");
+
+            if (!servico.PermiteAgendamento)
+                return BuildToolDataReply("criar_agendamento_oficina", "service_not_schedulable", $"O serviço {servico.Nome} não está liberado para agendamento automático. Posso chamar a equipe para continuar.");
+
+            var atendimento = await _servicoAtendimentoRepository.ObterPorConversaAsync(args.IdConversa);
+            var veiculoTexto = PrimeiroTextoNaoVazio(args.Veiculo, MontarVeiculo(args.VeiculoMarca, args.VeiculoModelo), ObterTexto(atendimento?.DadosExtras, "veiculo"));
+            var marcaPeca = PrimeiroTextoNaoVazio(args.MarcaPeca, ObterTexto(atendimento?.DadosExtras, "marca_peca"));
+            var veiculoMarca = PrimeiroTextoNaoVazio(args.VeiculoMarca, ObterTexto(atendimento?.DadosExtras, "veiculo_marca"));
+            var veiculoModelo = PrimeiroTextoNaoVazio(args.VeiculoModelo, ObterTexto(atendimento?.DadosExtras, "veiculo_modelo"));
+            if ((string.IsNullOrWhiteSpace(veiculoMarca) || string.IsNullOrWhiteSpace(veiculoModelo)) && !string.IsNullOrWhiteSpace(veiculoTexto))
+            {
+                DecomporVeiculo(veiculoTexto, out var marcaInferida, out var modeloInferido);
+                veiculoMarca ??= marcaInferida;
+                veiculoModelo ??= modeloInferido;
+            }
+
+            _logger.FlowInfo("AGENDAMENTO_CREATE_ATTEMPT", conversationId: args.IdConversa, estabelecimentoId: scope.IdEstabelecimento, clienteId: scope.IdCliente, telefone: scope.TelefoneCliente, acao: "criar_agendamento",
+                extra: new[] { ("servicoId", (object?)servico.Id), ("data", data.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)), ("hora", args.HoraInicio) });
+
+            try
+            {
+                var agendamento = await _oficinaAgendamentoService.CriarAsync(
+                    scope.IdEstabelecimento,
+                    scope.IdCliente,
+                    scope.TelefoneCliente ?? string.Empty,
+                    new CriarOficinaAgendamentoRequest
+                    {
+                        ConversaId = args.IdConversa,
+                        AtendimentoServicoId = atendimento?.Id,
+                        ServicoId = servico.Id,
+                        ProfissionalId = args.ProfissionalId,
+                        NomeCliente = PrimeiroTextoNaoVazio(args.NomeCliente, atendimento?.NomeCliente),
+                        NomeServico = servico.Nome,
+                        VeiculoMarca = veiculoMarca,
+                        VeiculoModelo = veiculoModelo,
+                        MarcaPeca = marcaPeca,
+                        DataAgendamento = data,
+                        HoraInicio = args.HoraInicio,
+                        DuracaoMinutos = args.DuracaoMinutos ?? servico.DuracaoMinutos,
+                        Observacao = args.Observacoes,
+                        DadosExtras = new Dictionary<string, object?>
+                        {
+                            ["veiculo"] = veiculoTexto,
+                            ["origem"] = "whatsapp_bot"
+                        }
+                    });
+
+                if (atendimento != null)
+                {
+                    atendimento.Status = "agendado";
+                    atendimento.EtapaAtual = "agendado";
+                    atendimento.IntencaoPrincipal = "agendamento";
+                    atendimento.IntencaoDetalhe = "agendamento_confirmado";
+                    atendimento.IdServico = servico.Id;
+                    atendimento.NomeServico = servico.Nome;
+                    atendimento.DadosExtras["oficina_agendamento_id"] = agendamento.Id;
+                    atendimento.DadosExtras["oficina_agendamento_codigo"] = agendamento.Codigo;
+                    atendimento.DadosExtras["data_agendamento"] = agendamento.DataAgendamento.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+                    atendimento.DadosExtras["hora_agendamento"] = agendamento.HoraInicio;
+                    atendimento.DataAtualizacao = DateTime.UtcNow;
+                    await _servicoAtendimentoRepository.AtualizarAsync(atendimento);
+                    _logger.FlowInfo("ATENDIMENTO_STATUS_UPDATED", conversationId: args.IdConversa, estabelecimentoId: scope.IdEstabelecimento, clienteId: scope.IdCliente, telefone: scope.TelefoneCliente, estadoNovo: "agendado", resultado: "ok",
+                        extra: new[] { ("atendimentoId", (object?)atendimento.Id), ("agendamentoId", agendamento.Id) });
+                }
+
+                var reply = new StringBuilder();
+                reply.AppendLine("✅ Agendamento confirmado!");
+                reply.AppendLine();
+                reply.AppendLine($"Serviço: {agendamento.NomeServico}");
+                reply.AppendLine($"Data: {agendamento.DataAgendamento:dd/MM/yyyy}");
+                reply.AppendLine($"Horário: {agendamento.HoraInicio}");
+                if (!string.IsNullOrWhiteSpace(veiculoTexto))
+                    reply.AppendLine($"Veículo: {veiculoTexto}");
+                reply.AppendLine($"Código: {agendamento.Codigo}");
+                reply.AppendLine();
+                reply.Append("Se precisar remarcar ou cancelar, é só me informar esse código.");
+
+                return BuildToolDataReply("criar_agendamento_oficina", "created", reply.ToString(), data: new { agendamento });
+            }
+            catch (Exception ex)
+            {
+                _logger.FlowError(ex, "AGENDAMENTO_CREATE_FAILED", conversationId: args.IdConversa, estabelecimentoId: scope.IdEstabelecimento, clienteId: scope.IdCliente, telefone: scope.TelefoneCliente, resultado: "failed", motivo: ex.Message);
+                return BuildToolDataReply("criar_agendamento_oficina", "error", ex.Message);
+            }
+        }
+
+        private async Task<string> HandleListarAgendamentosOficina(Guid idConversa)
+        {
+            var scope = await ResolveOficinaScopeAsync(idConversa, "listar_agendamentos_oficina");
+            if (scope == null)
+                return BuildToolDataReply("listar_agendamentos_oficina", "error", "Não consegui identificar seus dados para buscar agendamentos.");
+
+            _logger.FlowInfo("AGENDAMENTO_LOOKUP", conversationId: idConversa, estabelecimentoId: scope.IdEstabelecimento, clienteId: scope.IdCliente, telefone: scope.TelefoneCliente, acao: "listar_ativos");
+            var agendamentos = (await _oficinaAgendamentoService.ListarAtivosPorClienteAsync(scope.IdEstabelecimento, scope.IdCliente, scope.TelefoneCliente)).ToList();
+            if (agendamentos.Count == 0)
+            {
+                return BuildToolDataReply("listar_agendamentos_oficina", "empty", "Não encontrei agendamentos ativos no seu nome.");
+            }
+
+            var sb = new StringBuilder();
+            sb.AppendLine(agendamentos.Count == 1 ? "Encontrei este agendamento:" : $"Encontrei {agendamentos.Count} agendamentos ativos:");
+            sb.AppendLine();
+            foreach (var item in agendamentos)
+            {
+                sb.AppendLine($"Código: {item.Codigo}");
+                sb.AppendLine($"Serviço: {item.NomeServico}");
+                sb.AppendLine($"Data: {item.DataAgendamento:dd/MM/yyyy}");
+                sb.AppendLine($"Horário: {item.HoraInicio}");
+                sb.AppendLine($"Status: {item.Status}");
+                sb.AppendLine();
+            }
+
+            _logger.FlowInfo("AGENDAMENTO_STATUS_FOUND", conversationId: idConversa, estabelecimentoId: scope.IdEstabelecimento, clienteId: scope.IdCliente, telefone: scope.TelefoneCliente, resultado: "ok",
+                extra: new[] { ("total", (object?)agendamentos.Count) });
+            return BuildToolDataReply("listar_agendamentos_oficina", "ok", sb.ToString().Trim(), data: new { agendamentos });
+        }
+
+        private async Task<string> HandleCancelarAgendamentoOficina(CodigoAgendamentoOficinaArgs args)
+        {
+            var scope = await ResolveOficinaScopeAsync(args.IdConversa, "cancelar_agendamento_oficina");
+            if (scope == null)
+                return BuildToolDataReply("cancelar_agendamento_oficina", "error", "Não consegui identificar seus dados para cancelar agendamento.");
+
+            var agendamento = await ResolverAgendamentoDoClienteAsync(scope.IdEstabelecimento, scope.IdCliente, scope.TelefoneCliente, args.CodigoAgendamento);
+            if (agendamento == null)
+                return BuildToolDataReply("cancelar_agendamento_oficina", "not_found", "Não encontrei um agendamento ativo para cancelar.");
+
+            _logger.FlowInfo("AGENDAMENTO_CANCEL_REQUEST", conversationId: args.IdConversa, estabelecimentoId: scope.IdEstabelecimento, clienteId: scope.IdCliente, telefone: scope.TelefoneCliente, acao: "cancelar",
+                extra: new[] { ("agendamentoId", (object?)agendamento.Id), ("codigo", agendamento.Codigo) });
+            var cancelado = await _oficinaAgendamentoService.CancelarAsync(scope.IdEstabelecimento, agendamento.Id, args.MotivoCliente);
+
+            return BuildToolDataReply(
+                "cancelar_agendamento_oficina",
+                "cancelled",
+                $"✅ Agendamento {cancelado.Codigo} cancelado com sucesso.",
+                data: new { agendamento = cancelado });
+        }
+
+        private async Task<string> HandleRemarcarAgendamentoOficina(RemarcarAgendamentoOficinaArgs args)
+        {
+            var scope = await ResolveOficinaScopeAsync(args.IdConversa, "remarcar_agendamento_oficina");
+            if (scope == null)
+                return BuildToolDataReply("remarcar_agendamento_oficina", "error", "Não consegui identificar seus dados para remarcar agendamento.");
+
+            if (!TryParseDate(args.NovaData, out var novaData))
+                return BuildToolDataReply("remarcar_agendamento_oficina", "invalid", "Preciso de uma nova data válida para remarcar.");
+
+            var agendamento = await ResolverAgendamentoDoClienteAsync(scope.IdEstabelecimento, scope.IdCliente, scope.TelefoneCliente, args.CodigoAgendamento);
+            if (agendamento == null)
+                return BuildToolDataReply("remarcar_agendamento_oficina", "not_found", "Não encontrei um agendamento ativo para remarcar.");
+
+            _logger.FlowInfo("AGENDAMENTO_CHANGE_ATTEMPT", conversationId: args.IdConversa, estabelecimentoId: scope.IdEstabelecimento, clienteId: scope.IdCliente, telefone: scope.TelefoneCliente, acao: "remarcar",
+                extra: new[] { ("agendamentoId", (object?)agendamento.Id), ("novaData", novaData.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)), ("novoHorario", args.NovoHorario) });
+
+            try
+            {
+                var remarcado = await _oficinaAgendamentoService.RemarcarAsync(
+                    scope.IdEstabelecimento,
+                    agendamento.Id,
+                    new RemarcarOficinaAgendamentoRequest
+                    {
+                        DataAgendamento = novaData,
+                        HoraInicio = args.NovoHorario,
+                        DuracaoMinutos = args.DuracaoMinutos,
+                        ProfissionalId = args.ProfissionalId
+                    });
+
+                return BuildToolDataReply(
+                    "remarcar_agendamento_oficina",
+                    "changed",
+                    $"✅ Agendamento {remarcado.Codigo} remarcado para {remarcado.DataAgendamento:dd/MM/yyyy} às {remarcado.HoraInicio}.",
+                    data: new { agendamento = remarcado });
+            }
+            catch (Exception ex)
+            {
+                _logger.FlowError(ex, "AGENDAMENTO_OPERATION_FAILED", conversationId: args.IdConversa, estabelecimentoId: scope.IdEstabelecimento, clienteId: scope.IdCliente, telefone: scope.TelefoneCliente, resultado: "failed", motivo: ex.Message);
+                return BuildToolDataReply("remarcar_agendamento_oficina", "error", ex.Message);
+            }
+        }
+
         private async Task<string> HandleRegistrarInteresseServico(RegistrarInteresseServicoArgs args)
         {
             var scope = await _centralRouting.ResolveEffectiveScopeAsync(args.IdConversa);
@@ -1732,6 +2183,8 @@ IMPORTANTE:
                 JaEscaladoSemAgente(controleConversa) &&
                 MesmoAssuntoServico(atendimentoAberto, args.NomeServico, veiculoTexto, args.VeiculoMarca, args.VeiculoModelo, marcaPeca))
             {
+                _logger.FlowInfo("HANDOVER_SKIPPED_ALREADY_OPEN", conversationId: args.IdConversa, estabelecimentoId: scope.IdEstabelecimento, clienteId: scope.IdCliente, telefone: scope.TelefoneCliente, resultado: "already_open",
+                    extra: new[] { ("atendimentoId", (object?)atendimentoAberto.Id), ("nomeServico", atendimentoAberto.NomeServico) });
                 var primeiroNomeExistente = ExtrairPrimeiroNome(args.NomeCliente, atendimentoAberto.NomeCliente);
                 var tratamentoExistente = string.IsNullOrWhiteSpace(primeiroNomeExistente)
                     ? "Perfeito!"
@@ -1816,7 +2269,11 @@ IMPORTANTE:
                 Contexto = contextoResumo
             };
 
+            _logger.FlowInfo("HANDOVER_REQUESTED", conversationId: args.IdConversa, estabelecimentoId: scope.IdEstabelecimento, clienteId: scope.IdCliente, telefone: scope.TelefoneCliente, acao: "registrar_interesse_servico", motivo: "interesse_servico",
+                extra: new[] { ("atendimentoId", (object?)atendimento.Id), ("nomeServico", atendimento.NomeServico), ("veiculo", veiculoTexto) });
             await _handoverService.SolicitarAtendimentoHumanoAsync(args.IdConversa, detalhes);
+            _logger.FlowInfo("HANDOVER_CREATED", conversationId: args.IdConversa, estabelecimentoId: scope.IdEstabelecimento, clienteId: scope.IdCliente, telefone: scope.TelefoneCliente, resultado: "ok",
+                extra: new[] { ("atendimentoId", (object?)atendimento.Id) });
 
             var primeiroNome = args.NomeCliente.Trim().Split(' ')[0];
             return BuildToolDataReply(
@@ -1843,6 +2300,81 @@ IMPORTANTE:
                     Pendencias = new List<string>(),
                     ProntoParaAgendamento = true
                 });
+        }
+
+        private async Task<EffectiveConversationScope?> ResolveOficinaScopeAsync(Guid idConversa, string acao)
+        {
+            var scope = await _centralRouting.ResolveEffectiveScopeAsync(idConversa);
+            if (scope == null || scope.IdEstabelecimento == Guid.Empty || scope.IdCliente == Guid.Empty)
+            {
+                _logger.FlowWarning("OFICINA_FLOW_DECISION", conversationId: idConversa, acao: acao, resultado: "failed", motivo: "scope_invalido");
+                return null;
+            }
+
+            var tipo = await _estabelecimentoRepository.ObterTipoEstabelecimentoAsync(scope.IdEstabelecimento);
+            if (!string.Equals(tipo, "oficina", StringComparison.OrdinalIgnoreCase))
+            {
+                _logger.FlowWarning("OFICINA_FLOW_DECISION", conversationId: idConversa, estabelecimentoId: scope.IdEstabelecimento, clienteId: scope.IdCliente, telefone: scope.TelefoneCliente, tipoEstabelecimento: tipo, acao: acao, resultado: "ignored", motivo: "nao_e_oficina");
+                return null;
+            }
+
+            var contexto = await _conversationRepository.ObterContextoAsync(idConversa);
+            var modulos = await _estabelecimentoRepository.ObterModulosAtivosAsync(scope.IdEstabelecimento);
+            _logger.FlowInfo("OFICINA_FLOW_START", conversationId: idConversa, estabelecimentoId: scope.IdEstabelecimento, clienteId: scope.IdCliente, telefone: scope.TelefoneCliente, tipoEstabelecimento: tipo, modulosAtivos: modulos, estadoAnterior: contexto?.Estado, acao: acao, resultado: "ok");
+            return scope;
+        }
+
+        private async Task<ServicoCatalogItem?> ResolverServicoCatalogoAsync(Guid idEstabelecimento, string nomeServico)
+        {
+            var catalogo = await _catalogProvider.ObterCatalogoVisivelAsync(idEstabelecimento);
+            var nomeNorm = NormalizarComparacao(nomeServico);
+            _logger.FlowInfo("SERVICO_SEARCH", estabelecimentoId: idEstabelecimento, acao: "resolver_servico",
+                extra: new[] { ("termo", (object?)nomeServico), ("totalCatalogo", catalogo.Count) });
+
+            if (string.IsNullOrWhiteSpace(nomeNorm))
+            {
+                return null;
+            }
+
+            var servico = catalogo.FirstOrDefault(s => NormalizarComparacao(s.Nome) == nomeNorm)
+                ?? catalogo.FirstOrDefault(s => NormalizarComparacao(s.Nome).Contains(nomeNorm) || nomeNorm.Contains(NormalizarComparacao(s.Nome)))
+                ?? catalogo.FirstOrDefault(s => s.PalavrasChave.Any(k =>
+                {
+                    var keyword = NormalizarComparacao(k);
+                    return keyword.Contains(nomeNorm) || nomeNorm.Contains(keyword);
+                }));
+
+            if (servico == null)
+            {
+                _logger.FlowWarning("SERVICO_NOT_FOUND", estabelecimentoId: idEstabelecimento, resultado: "not_found", extra: new[] { ("termo", (object?)nomeServico) });
+                return null;
+            }
+
+            _logger.FlowInfo("SERVICO_SELECTED", estabelecimentoId: idEstabelecimento, resultado: "ok",
+                extra: new[] { ("servicoId", (object?)servico.Id), ("nome", servico.Nome), ("permiteAgendamento", servico.PermiteAgendamento), ("diferePorVeiculo", servico.DiferePorVeiculo) });
+            return servico;
+        }
+
+        private async Task<OficinaAgendamentoDto?> ResolverAgendamentoDoClienteAsync(Guid idEstabelecimento, Guid idCliente, string? telefoneE164, string? codigoAgendamento)
+        {
+            if (!string.IsNullOrWhiteSpace(codigoAgendamento))
+            {
+                var porCodigo = await _oficinaAgendamentoService.ObterPorCodigoAsync(idEstabelecimento, codigoAgendamento.Trim());
+                if (porCodigo != null && (porCodigo.ClienteId == idCliente || string.Equals(porCodigo.TelefoneE164, telefoneE164, StringComparison.OrdinalIgnoreCase)))
+                {
+                    return porCodigo;
+                }
+            }
+
+            var ativos = (await _oficinaAgendamentoService.ListarAtivosPorClienteAsync(idEstabelecimento, idCliente, telefoneE164)).OrderBy(item => item.DataAgendamento).ThenBy(item => item.HoraInicio).ToList();
+            return ativos.Count == 1 ? ativos[0] : null;
+        }
+
+        private static bool TryParseDate(string? value, out DateTime data)
+        {
+            value = value?.Trim() ?? string.Empty;
+            return DateTime.TryParseExact(value, new[] { "yyyy-MM-dd", "dd/MM/yyyy", "dd/MM" }, CultureInfo.InvariantCulture, DateTimeStyles.None, out data) ||
+                   DateTime.TryParse(value, CultureInfo.GetCultureInfo("pt-BR"), DateTimeStyles.AssumeLocal, out data);
         }
 
         private static string? PrimeiroTextoNaoVazio(params string?[] valores)

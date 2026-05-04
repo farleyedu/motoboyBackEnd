@@ -114,6 +114,64 @@ SELECT id,
             return Map(row);
         }
 
+        public async Task<IReadOnlyCollection<ServicoAtendimento>> ListarPorEstabelecimentoAsync(Guid idEstabelecimento, string? status, int limite)
+        {
+            if (idEstabelecimento == Guid.Empty)
+            {
+                return Array.Empty<ServicoAtendimento>();
+            }
+
+            await EnsureSchemaAsync();
+
+            const string sql = @"
+SELECT id,
+       id_estabelecimento AS IdEstabelecimento,
+       id_conversa        AS IdConversa,
+       id_cliente         AS IdCliente,
+       telefone_e164      AS TelefoneE164,
+       nome_cliente       AS NomeCliente,
+       intencao_principal AS IntencaoPrincipal,
+       intencao_detalhe   AS IntencaoDetalhe,
+       id_servico         AS IdServico,
+       nome_servico       AS NomeServico,
+       categoria_servico  AS CategoriaServico,
+       resumo_atendimento AS ResumoAtendimento,
+       status             AS Status,
+       etapa_atual        AS EtapaAtual,
+       ultima_pergunta    AS UltimaPergunta,
+       dados_extras::text AS DadosExtrasJson,
+       via_numero_central AS ViaNumeroCentral,
+       data_handover      AS DataHandover,
+       data_conclusao     AS DataConclusao,
+       data_criacao       AS DataCriacao,
+       data_atualizacao   AS DataAtualizacao
+  FROM cliente_servicos
+ WHERE id_estabelecimento = @IdEstabelecimento
+   AND (@Status IS NULL OR status = @Status)
+ ORDER BY data_atualizacao DESC
+ LIMIT @Limite;";
+
+            await using var connection = new NpgsqlConnection(_connectionString);
+            var rows = await connection.QueryAsync<ServicoAtendimentoRow>(sql, new
+            {
+                IdEstabelecimento = idEstabelecimento,
+                Status = string.IsNullOrWhiteSpace(status) ? null : status,
+                Limite = Math.Clamp(limite, 1, 500)
+            });
+
+            var result = new List<ServicoAtendimento>();
+            foreach (var row in rows)
+            {
+                var item = Map(row);
+                if (item != null)
+                {
+                    result.Add(item);
+                }
+            }
+
+            return result;
+        }
+
         public async Task<Guid> CriarAsync(ServicoAtendimento atendimento)
         {
             ArgumentNullException.ThrowIfNull(atendimento);

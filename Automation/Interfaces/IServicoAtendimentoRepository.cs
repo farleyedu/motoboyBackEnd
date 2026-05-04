@@ -9,6 +9,7 @@ namespace APIBack.Automation.Interfaces
     {
         Task<ServicoAtendimento?> ObterAbertoAsync(Guid idEstabelecimento, string telefoneE164);
         Task<ServicoAtendimento?> ObterPorConversaAsync(Guid idConversa);
+        Task<IReadOnlyCollection<ServicoAtendimento>> ListarPorEstabelecimentoAsync(Guid idEstabelecimento, string? status, int limite);
         Task<Guid> CriarAsync(ServicoAtendimento atendimento);
         Task AtualizarAsync(ServicoAtendimento atendimento);
         Task AtualizarExtrasAsync(Guid id, IReadOnlyDictionary<string, object?> dadosExtras);
