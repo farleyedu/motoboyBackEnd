@@ -9,6 +9,8 @@ using APIBack.Automation.Interfaces;
 using APIBack.Automation.Models;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Configuration;
+using Dapper;
+using Npgsql;
 
 namespace APIBack.Automation.Services
 {
@@ -23,6 +25,8 @@ namespace APIBack.Automation.Services
         private readonly IConfiguration _configuration;
         private readonly CentralRoutingService _centralRouting;
         private readonly ConversationResetService _conversationReset;
+        private readonly string _connectionString;
+        private static bool _webhookAuditSchemaEnsured;
 
         // mapeia waId -> conversationId (in-memory)
         private readonly ConcurrentDictionary<string, Guid> _waParaConversa = new(StringComparer.OrdinalIgnoreCase);
@@ -50,6 +54,10 @@ namespace APIBack.Automation.Services
             _conversationReset = conversationReset;
             _configuration = configuration;
             _mensagemService = mensagemService;
+            _connectionString = configuration.GetConnectionString("DefaultConnection")
+                                ?? configuration["ConnectionStrings:DefaultConnection"]
+                                ?? throw new InvalidOperationException("Connection string 'DefaultConnection' nao encontrada.");
+            EnsureWebhookAuditSchema();
         }
 
         /// <summary>
@@ -126,6 +134,26 @@ namespace APIBack.Automation.Services
                     throw new InvalidOperationException(
                         $"Não foi possível resolver id_estabelecimento para display_phone_number={displayPhoneNumber}, phone_number_id={phoneNumberId}");
                 }
+            }
+
+            var estadoOperacional = await ObterEstadoOperacionalAsync(idEstabelecimento.Value);
+            if (!estadoOperacional.EmpresaAtiva)
+            {
+                await RegistrarWebhookIgnoradoAsync(
+                    estadoOperacional.EmpresaId,
+                    idEstabelecimento.Value,
+                    idMensagemWa,
+                    idWa,
+                    displayPhoneNumber,
+                    phoneNumberId,
+                    conteudo,
+                    "empresa_desativada");
+                _logger.LogInformation(
+                    "[Automation] Entrada ignorada por empresa desativada. Empresa={EmpresaId} Estabelecimento={EstabelecimentoId} WaId={WaId}",
+                    estadoOperacional.EmpresaId,
+                    idEstabelecimento.Value,
+                    idWa);
+                return null;
             }
 
             if (!string.IsNullOrWhiteSpace(displayPhoneNumber) || !string.IsNullOrWhiteSpace(phoneNumberId))
@@ -296,6 +324,14 @@ namespace APIBack.Automation.Services
                 MessageIdWhatsapp = idMensagemWa
             };
 
+            if (estadoOperacional.EmpresaPausada)
+            {
+                conversa.Modo = ModoConversa.Bot;
+                conversa.AgenteDesignadoId = null;
+                conversa.StatusAtendimento = "empresa_pausada";
+                conversa.MotivoFechamento = "Empresa pausada temporariamente";
+            }
+
             // Garante WaId e Estabelecimento salvos
             conversa.IdWa = idWa;
             conversa.IdConversaGrupo = conversa.IdConversaGrupo == Guid.Empty ? idConversaGrupo : conversa.IdConversaGrupo;
@@ -349,7 +385,8 @@ namespace APIBack.Automation.Services
             return new ConversationIngressResult(
                 mensagem,
                 conversaResolvidaPorTelefone.ReiniciadaPorExpiracao,
-                conversaResolvidaPorTelefone.DataFechamentoAnteriorManual);
+                conversaResolvidaPorTelefone.DataFechamentoAnteriorManual,
+                estadoOperacional.EmpresaPausada);
         }
 
         public async Task<Message> AcrescentarSaidaAsync(Guid idConversa, string idWa, string conteudo)
@@ -645,6 +682,105 @@ namespace APIBack.Automation.Services
         }
 
         private sealed record ConversationLookupResult(Conversation? Conversa, bool ReiniciadaPorExpiracao, DateTime? DataFechamentoAnteriorManual = null);
+        private sealed class EmpresaOperacionalState
+        {
+            public Guid EmpresaId { get; set; }
+            public bool EmpresaAtiva { get; set; } = true;
+            public bool EmpresaPausada { get; set; }
+        }
+
+        private async Task<EmpresaOperacionalState> ObterEstadoOperacionalAsync(Guid idEstabelecimento)
+        {
+            const string sql = @"
+SELECT emp.id AS EmpresaId,
+       COALESCE(emp.ativo, TRUE) AS EmpresaAtiva,
+       COALESCE(emp.pausada, FALSE) AS EmpresaPausada
+  FROM estabelecimentos e
+  JOIN empresas emp ON emp.id = e.id_empresa
+ WHERE e.id = @IdEstabelecimento
+ LIMIT 1;";
+
+            await using var connection = new NpgsqlConnection(_connectionString);
+            var state = await connection.QueryFirstOrDefaultAsync<EmpresaOperacionalState>(sql, new { IdEstabelecimento = idEstabelecimento });
+            return state ?? new EmpresaOperacionalState { EmpresaId = Guid.Empty, EmpresaAtiva = true, EmpresaPausada = false };
+        }
+
+        private void EnsureWebhookAuditSchema()
+        {
+            if (_webhookAuditSchemaEnsured)
+            {
+                return;
+            }
+
+            try
+            {
+                using var connection = new NpgsqlConnection(_connectionString);
+                connection.Open();
+                connection.Execute("ALTER TABLE empresas ADD COLUMN IF NOT EXISTS ativo boolean NOT NULL DEFAULT TRUE;");
+                connection.Execute("ALTER TABLE empresas ADD COLUMN IF NOT EXISTS pausada boolean NOT NULL DEFAULT FALSE;");
+                connection.Execute(@"
+CREATE TABLE IF NOT EXISTS empresa_webhook_auditoria (
+    id uuid PRIMARY KEY,
+    id_empresa uuid NULL,
+    id_estabelecimento uuid NULL,
+    id_mensagem_wa text NULL,
+    telefone_cliente text NULL,
+    display_phone_number text NULL,
+    phone_number_id text NULL,
+    motivo text NOT NULL,
+    conteudo_preview text NULL,
+    data_criacao timestamptz NOT NULL DEFAULT NOW()
+);");
+                connection.Execute("CREATE INDEX IF NOT EXISTS ix_empresa_webhook_auditoria_empresa_data ON empresa_webhook_auditoria (id_empresa, data_criacao DESC);");
+                _webhookAuditSchemaEnsured = true;
+            }
+            catch
+            {
+            }
+        }
+
+        private async Task RegistrarWebhookIgnoradoAsync(
+            Guid empresaId,
+            Guid estabelecimentoId,
+            string idMensagemWa,
+            string idWa,
+            string? displayPhoneNumber,
+            string? phoneNumberId,
+            string? conteudo,
+            string motivo)
+        {
+            try
+            {
+                await using var connection = new NpgsqlConnection(_connectionString);
+                await connection.ExecuteAsync(@"
+INSERT INTO empresa_webhook_auditoria (
+    id, id_empresa, id_estabelecimento, id_mensagem_wa, telefone_cliente,
+    display_phone_number, phone_number_id, motivo, conteudo_preview, data_criacao
+)
+VALUES (
+    @Id, @EmpresaId, @EstabelecimentoId, @IdMensagemWa, @TelefoneCliente,
+    @DisplayPhoneNumber, @PhoneNumberId, @Motivo, @ConteudoPreview, NOW()
+);",
+                    new
+                    {
+                        Id = Guid.NewGuid(),
+                        EmpresaId = empresaId == Guid.Empty ? (Guid?)null : empresaId,
+                        EstabelecimentoId = estabelecimentoId == Guid.Empty ? (Guid?)null : estabelecimentoId,
+                        IdMensagemWa = idMensagemWa,
+                        TelefoneCliente = idWa,
+                        DisplayPhoneNumber = displayPhoneNumber,
+                        PhoneNumberId = phoneNumberId,
+                        Motivo = motivo,
+                        ConteudoPreview = string.IsNullOrWhiteSpace(conteudo)
+                            ? null
+                            : conteudo.Length > 500 ? conteudo[..500] : conteudo
+                    });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Falha ao registrar auditoria de webhook ignorado para Empresa={EmpresaId}", empresaId);
+            }
+        }
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================

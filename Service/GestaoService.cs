@@ -106,6 +106,36 @@ namespace APIBack.Service
             await _repository.AtualizarStatusEmpresaAsync(targetEmpresaId, ativa);
         }
 
+        public async Task AtualizarPausaEmpresaAsync(
+            int userId,
+            Guid? empresaId,
+            Guid? estabelecimentoId,
+            string? companyRole,
+            string? establishmentRole,
+            bool isSuperAdmin,
+            Guid targetEmpresaId,
+            bool pausada)
+        {
+            var scope = BuildScope(empresaId, estabelecimentoId, companyRole, establishmentRole, isSuperAdmin);
+            EnsureCanManageCompany(scope, targetEmpresaId);
+            await _repository.AtualizarPausaEmpresaAsync(targetEmpresaId, pausada);
+        }
+
+        public async Task<IReadOnlyCollection<GestaoContatoPausadoDto>> ListarContatosPausadosAsync(
+            int userId,
+            Guid? empresaId,
+            Guid? estabelecimentoId,
+            string? companyRole,
+            string? establishmentRole,
+            bool isSuperAdmin,
+            Guid targetEmpresaId)
+        {
+            var scope = BuildScope(empresaId, estabelecimentoId, companyRole, establishmentRole, isSuperAdmin);
+            EnsureCanManageCompany(scope, targetEmpresaId);
+            var rows = await _repository.ListarContatosPausadosAsync(targetEmpresaId);
+            return rows.Select(MapContatoPausado).ToArray();
+        }
+
         public async Task<IReadOnlyCollection<GestaoEstabelecimentoDto>> ListarEstabelecimentosAsync(
             int userId,
             Guid? empresaId,
@@ -843,9 +873,35 @@ namespace APIBack.Service
                 CidadeBase = row.CidadeBase,
                 TipoOrganizacao = string.IsNullOrWhiteSpace(row.TipoOrganizacao) ? "empresa" : row.TipoOrganizacao,
                 Ativa = row.Ativa,
+                Pausada = row.Pausada,
+                StatusOperacional = !row.Ativa
+                    ? "desativada"
+                    : row.Pausada
+                        ? "pausada"
+                        : "ativo",
                 CreatedAt = row.CreatedAt,
                 UpdatedAt = row.UpdatedAt,
                 Plano = null
+            };
+        }
+
+        private static GestaoContatoPausadoDto MapContatoPausado(GestaoContatoPausadoRow row)
+        {
+            return new GestaoContatoPausadoDto
+            {
+                ConversaId = row.ConversaId,
+                EmpresaId = row.EmpresaId,
+                EmpresaNome = row.EmpresaNome,
+                EstabelecimentoId = row.EstabelecimentoId,
+                EstabelecimentoNome = row.EstabelecimentoNome,
+                ClienteId = row.ClienteId,
+                ClienteNome = row.ClienteNome,
+                Telefone = row.Telefone,
+                PrimeiraMensagem = row.PrimeiraMensagem,
+                UltimaMensagem = row.UltimaMensagem,
+                PrimeiraMensagemEm = row.PrimeiraMensagemEm,
+                UltimaMensagemEm = row.UltimaMensagemEm,
+                Status = string.IsNullOrWhiteSpace(row.Status) ? "empresa_pausada" : row.Status
             };
         }
 

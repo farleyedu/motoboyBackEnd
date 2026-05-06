@@ -16,8 +16,26 @@ namespace APIBack.Model.Gestao
         public string? CidadeBase { get; set; }
         public string TipoOrganizacao { get; set; } = "empresa";
         public bool Ativa { get; set; }
+        public bool Pausada { get; set; }
         public DateTime? CreatedAt { get; set; }
         public DateTime? UpdatedAt { get; set; }
+    }
+
+    public class GestaoContatoPausadoRow
+    {
+        public Guid ConversaId { get; set; }
+        public Guid EmpresaId { get; set; }
+        public string EmpresaNome { get; set; } = string.Empty;
+        public Guid EstabelecimentoId { get; set; }
+        public string EstabelecimentoNome { get; set; } = string.Empty;
+        public Guid ClienteId { get; set; }
+        public string? ClienteNome { get; set; }
+        public string? Telefone { get; set; }
+        public string? PrimeiraMensagem { get; set; }
+        public string? UltimaMensagem { get; set; }
+        public DateTime? PrimeiraMensagemEm { get; set; }
+        public DateTime? UltimaMensagemEm { get; set; }
+        public string Status { get; set; } = "empresa_pausada";
     }
 
     public class GestaoEstabelecimentoRow

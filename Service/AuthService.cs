@@ -42,6 +42,7 @@ namespace APIBack.Service
         private const string GoogleUserInfoEndpoint = "https://www.googleapis.com/oauth2/v3/userinfo";
         private const string StateCachePrefix = "oauth:google:";
         private static readonly string[] DefaultGoogleScopes = { "openid", "profile", "email" };
+        private static bool _empresaOperacionalSchemaEnsured;
 
         public AuthService(
             IConfiguration configuration,
@@ -68,6 +69,7 @@ namespace APIBack.Service
             _connectionString = configuration.GetConnectionString("DefaultConnection")
                                ?? configuration["ConnectionStrings:DefaultConnection"]
                                ?? throw new InvalidOperationException("Connection string 'DefaultConnection' n\u00e3o encontrada.");
+            EnsureEmpresaOperacionalSchema();
         }
 
         public async Task<TokenResponse> LoginAsync(LoginRequest request)
@@ -796,14 +798,14 @@ SELECT id,
             var estabelecimentoId = await TentarObterPrimeiroEstabelecimentoAsync(
                 connection,
                 userId,
-                "ORDER BY data_criacao ASC");
+                "ORDER BY ue.data_criacao ASC");
 
             if (!estabelecimentoId.HasValue)
             {
                 estabelecimentoId = await TentarObterPrimeiroEstabelecimentoAsync(
                     connection,
                     userId,
-                    "ORDER BY created_at ASC");
+                    "ORDER BY ue.created_at ASC");
             }
 
             if (!estabelecimentoId.HasValue)
@@ -811,7 +813,7 @@ SELECT id,
                 estabelecimentoId = await TentarObterPrimeiroEstabelecimentoAsync(
                     connection,
                     userId,
-                    "ORDER BY id ASC",
+                    "ORDER BY ue.id ASC",
                     suppressUndefinedColumnLog: true);
             }
 
@@ -841,11 +843,17 @@ SELECT id,
             bool suppressUndefinedColumnLog = false)
         {
             var sql = $@"
-SELECT id_estabelecimento
-  FROM usuario_estabelecimentos
- WHERE id_usuario = @UserId
-   AND ativo = TRUE
-   AND status = 'ativo'
+SELECT ue.id_estabelecimento
+  FROM usuario_estabelecimentos ue
+  JOIN estabelecimentos e ON e.id = ue.id_estabelecimento
+  JOIN empresas emp ON emp.id = e.id_empresa
+ WHERE ue.id_usuario = @UserId
+   AND ue.ativo = TRUE
+   AND ue.status = 'ativo'
+   AND COALESCE(e.ativo, TRUE) = TRUE
+   AND COALESCE(e.status, 'ativo') IN ('ativo', 'trial')
+   AND COALESCE(emp.ativo, TRUE) = TRUE
+   AND COALESCE(emp.pausada, FALSE) = FALSE
  {orderByClause}
  LIMIT 1";
 
@@ -982,7 +990,11 @@ SELECT id_estabelecimento
 SELECT  e.id                    AS EstabelecimentoId,
         e.id_empresa            AS EmpresaId,
         emp.nome_fantasia       AS EmpresaNome,
+        COALESCE(emp.ativo, TRUE) AS EmpresaAtiva,
+        COALESCE(emp.pausada, FALSE) AS EmpresaPausada,
         e.nome_fantasia         AS EstabelecimentoNome,
+        COALESCE(e.ativo, TRUE) AS EstabelecimentoAtivo,
+        COALESCE(e.status, 'ativo') AS EstabelecimentoStatus,
         te.nome                 AS TipoEstabelecimento,
         e.modulos_ativos::text[] AS ModulosAtivosRaw,
         ue.id                   AS VinculoId,
@@ -1030,6 +1042,11 @@ SELECT  e.id                    AS EstabelecimentoId,
                 throw new UnauthorizedAccessException("Estabelecimento não encontrado.");
             }
 
+            if (!isSuperAdmin && (!contexto.EmpresaAtiva || contexto.EmpresaPausada || !contexto.EstabelecimentoAtivo || !IsActiveEstablishmentStatus(contexto.EstabelecimentoStatus)))
+            {
+                throw new UnauthorizedAccessException("Empresa ou estabelecimento indisponivel.");
+            }
+
             if (!isSuperAdmin && contexto.VinculoId == null)
             {
                 throw new UnauthorizedAccessException("Usuário não possui vínculo ativo com este estabelecimento.");
@@ -1047,7 +1064,11 @@ SELECT  e.id                    AS EstabelecimentoId,
 SELECT  e.id                    AS EstabelecimentoId,
         e.id_empresa            AS EmpresaId,
         emp.nome_fantasia       AS EmpresaNome,
+        COALESCE(emp.ativo, TRUE) AS EmpresaAtiva,
+        COALESCE(emp.pausada, FALSE) AS EmpresaPausada,
         e.nome_fantasia         AS EstabelecimentoNome,
+        COALESCE(e.ativo, TRUE) AS EstabelecimentoAtivo,
+        COALESCE(e.status, 'ativo') AS EstabelecimentoStatus,
         te.nome                 AS TipoEstabelecimento,
         e.modulos_ativos::text[] AS ModulosAtivosRaw,
         ue.id                   AS VinculoId,
@@ -1085,6 +1106,33 @@ SELECT  e.id                    AS EstabelecimentoId,
             }
 
             return ex.MessageText?.IndexOf("usuario_empresas", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private void EnsureEmpresaOperacionalSchema()
+        {
+            if (_empresaOperacionalSchemaEnsured)
+            {
+                return;
+            }
+
+            try
+            {
+                using var connection = new NpgsqlConnection(_connectionString);
+                connection.Open();
+                connection.Execute("ALTER TABLE empresas ADD COLUMN IF NOT EXISTS ativo boolean NOT NULL DEFAULT TRUE;");
+                connection.Execute("ALTER TABLE empresas ADD COLUMN IF NOT EXISTS pausada boolean NOT NULL DEFAULT FALSE;");
+                _empresaOperacionalSchemaEnsured = true;
+            }
+            catch
+            {
+            }
+        }
+
+        private static bool IsActiveEstablishmentStatus(string? status)
+        {
+            return string.IsNullOrWhiteSpace(status) ||
+                   string.Equals(status, "ativo", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(status, "trial", StringComparison.OrdinalIgnoreCase);
         }
 
         private async Task<Dictionary<string, List<string>>> ObterPermissoesAsync(
@@ -1471,10 +1519,14 @@ UPDATE usuario
         {
             public Guid EmpresaId { get; set; }
             public string? EmpresaNome { get; set; }
+            public bool EmpresaAtiva { get; set; } = true;
+            public bool EmpresaPausada { get; set; }
             public Guid? EmpresaVinculoId { get; set; }
             public string? TipoAcessoEmpresa { get; set; }
             public Guid EstabelecimentoId { get; set; }
             public string? EstabelecimentoNome { get; set; }
+            public bool EstabelecimentoAtivo { get; set; } = true;
+            public string? EstabelecimentoStatus { get; set; }
             public string? TipoEstabelecimento { get; set; }
             public string[]? ModulosAtivosRaw { get; set; }
             public Guid? VinculoId { get; set; }

@@ -194,5 +194,79 @@ namespace APIBack.Controllers
                 return StatusCode(500, ApiResponse<object>.Fail("Erro ao atualizar status da empresa."));
             }
         }
+
+        [HttpPatch("{empresaId:guid}/pausa")]
+        public async Task<IActionResult> AtualizarPausa(Guid empresaId, [FromBody] AtualizarPausaEmpresaRequest request)
+        {
+            if (!CurrentUserId.HasValue)
+            {
+                return UnauthorizedResponse();
+            }
+
+            if (!HasAnyPermission(("Empresas", "desativar"), ("Empresas", "editar"), ("Configuracoes", "editar")))
+            {
+                return ForbiddenResponse();
+            }
+
+            try
+            {
+                await _service.AtualizarPausaEmpresaAsync(
+                    CurrentUserId.Value,
+                    CurrentEmpresaId,
+                    CurrentEstabelecimentoId,
+                    CurrentCompanyRole,
+                    CurrentEstablishmentRole,
+                    CurrentIsSuperAdmin,
+                    empresaId,
+                    request.Pausada);
+                return Ok(ApiResponse<object>.Ok(new { empresaId, pausada = request.Pausada }));
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ex.Message));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao atualizar pausa da empresa {EmpresaId} para UserId={UserId}", empresaId, CurrentUserId.Value);
+                return StatusCode(500, ApiResponse<object>.Fail("Erro ao atualizar pausa da empresa."));
+            }
+        }
+
+        [HttpGet("{empresaId:guid}/contatos-pausados")]
+        [ProducesResponseType(typeof(ApiResponse<IReadOnlyCollection<GestaoContatoPausadoDto>>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> ListarContatosPausados(Guid empresaId)
+        {
+            if (!CurrentUserId.HasValue)
+            {
+                return UnauthorizedResponse();
+            }
+
+            if (!HasAnyPermission(("Empresas", "visualizar"), ("Configuracoes", "visualizar"), ("Usuarios", "visualizar")))
+            {
+                return ForbiddenResponse();
+            }
+
+            try
+            {
+                var response = await _service.ListarContatosPausadosAsync(
+                    CurrentUserId.Value,
+                    CurrentEmpresaId,
+                    CurrentEstabelecimentoId,
+                    CurrentCompanyRole,
+                    CurrentEstablishmentRole,
+                    CurrentIsSuperAdmin,
+                    empresaId);
+                return Ok(ApiResponse<IReadOnlyCollection<GestaoContatoPausadoDto>>.Ok(response));
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ex.Message));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao listar contatos pausados da empresa {EmpresaId} para UserId={UserId}", empresaId, CurrentUserId.Value);
+                return StatusCode(500, ApiResponse<object>.Fail("Erro ao listar contatos pausados."));
+            }
+        }
     }
 }

@@ -14,6 +14,8 @@ namespace APIBack.Repository.Interface
         Task<Guid> CriarEmpresaComEstabelecimentoAsync(SalvarEmpresaRequest request, SalvarEstabelecimentoRequest estabelecimentoRequest);
         Task AtualizarEmpresaAsync(Guid empresaId, SalvarEmpresaRequest request);
         Task AtualizarStatusEmpresaAsync(Guid empresaId, bool ativa);
+        Task AtualizarPausaEmpresaAsync(Guid empresaId, bool pausada);
+        Task<IReadOnlyCollection<GestaoContatoPausadoRow>> ListarContatosPausadosAsync(Guid empresaId);
 
         Task<IReadOnlyCollection<GestaoEstabelecimentoRow>> ListarEstabelecimentosAsync(Guid? empresaId, Guid? estabelecimentoId);
         Task<GestaoEstabelecimentoRow?> ObterEstabelecimentoAsync(Guid estabelecimentoId);

@@ -3,7 +3,10 @@ using System.Linq;
 using System.Threading.Tasks;
 using APIBack.Model.Auth;
 using APIBack.Service.Interface;
+using Dapper;
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Configuration;
+using Npgsql;
 
 namespace APIBack.Middleware
 {
@@ -16,7 +19,7 @@ namespace APIBack.Middleware
             _next = next ?? throw new ArgumentNullException(nameof(next));
         }
 
-        public async Task InvokeAsync(HttpContext context, IJwtService jwtService)
+        public async Task InvokeAsync(HttpContext context, IJwtService jwtService, IConfiguration configuration)
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
 
@@ -27,29 +30,34 @@ namespace APIBack.Middleware
                 authorizationHeader.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
             {
                 var rawToken = authorizationHeader["Bearer ".Length..].Trim();
-                await TryAttachPayloadAsync(context, jwtService, rawToken);
+                await TryAttachPayloadAsync(context, jwtService, configuration, rawToken);
             }
             else if (!string.IsNullOrWhiteSpace(queryToken) &&
                      context.Request.Path.StartsWithSegments("/hubs", StringComparison.OrdinalIgnoreCase))
             {
-                await TryAttachPayloadAsync(context, jwtService, queryToken);
+                await TryAttachPayloadAsync(context, jwtService, configuration, queryToken);
             }
 
             await _next(context);
         }
 
-        private static Task TryAttachPayloadAsync(HttpContext context, IJwtService jwtService, string rawToken)
+        private static async Task TryAttachPayloadAsync(HttpContext context, IJwtService jwtService, IConfiguration configuration, string rawToken)
         {
             var token = ExtractJwt(rawToken);
 
             if (string.IsNullOrWhiteSpace(token))
             {
-                return Task.CompletedTask;
+                return;
             }
 
             try
             {
                 var payload = jwtService.ValidateToken(token);
+
+                if (!await IsPayloadStillAllowedAsync(payload, configuration))
+                {
+                    return;
+                }
 
                 context.Items["JwtPayload"] = payload;
                 context.Items["UserId"] = payload.UserId;
@@ -74,7 +82,55 @@ namespace APIBack.Middleware
                 // A valida\u00e7\u00e3o \u00e9 responsabilidade dos endpoints com [Authorize].
             }
 
-            return Task.CompletedTask;
+            return;
+        }
+
+        private static async Task<bool> IsPayloadStillAllowedAsync(JwtPayload payload, IConfiguration configuration)
+        {
+            if (payload.IsSuperAdmin || !payload.EmpresaId.HasValue)
+            {
+                return true;
+            }
+
+            var connectionString = configuration.GetConnectionString("DefaultConnection")
+                                   ?? configuration["ConnectionStrings:DefaultConnection"];
+            if (string.IsNullOrWhiteSpace(connectionString))
+            {
+                return true;
+            }
+
+            try
+            {
+                await using var connection = new NpgsqlConnection(connectionString);
+                var allowed = await connection.ExecuteScalarAsync<bool?>(@"
+SELECT COALESCE(emp.ativo, TRUE) = TRUE
+   AND COALESCE(emp.pausada, FALSE) = FALSE
+   AND (
+        @EstabelecimentoId IS NULL
+        OR EXISTS (
+            SELECT 1
+              FROM estabelecimentos e
+             WHERE e.id = @EstabelecimentoId
+               AND e.id_empresa = emp.id
+               AND COALESCE(e.ativo, TRUE) = TRUE
+               AND COALESCE(e.status, 'ativo') IN ('ativo', 'trial')
+        )
+   )
+  FROM empresas emp
+ WHERE emp.id = @EmpresaId
+ LIMIT 1;",
+                    new
+                    {
+                        EmpresaId = payload.EmpresaId,
+                        EstabelecimentoId = payload.EstabelecimentoId
+                    });
+
+                return allowed == true;
+            }
+            catch
+            {
+                return true;
+            }
         }
 
         private static string ExtractJwt(string rawToken)

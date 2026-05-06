@@ -17,6 +17,7 @@ namespace APIBack.Repository
     public class GestaoRepository : IGestaoRepository
     {
         private static readonly Regex SlugRegex = new("[^a-z0-9]+", RegexOptions.Compiled | RegexOptions.CultureInvariant);
+        private static bool _empresaOperacionalSchemaEnsured;
         private readonly string _connectionString;
 
         public GestaoRepository(IConfiguration configuration)
@@ -24,6 +25,7 @@ namespace APIBack.Repository
             _connectionString = configuration.GetConnectionString("DefaultConnection")
                 ?? configuration["ConnectionStrings:DefaultConnection"]
                 ?? throw new InvalidOperationException("Connection string 'DefaultConnection' nao configurada.");
+            EnsureEmpresaOperacionalSchema();
         }
 
         public async Task<IReadOnlyCollection<GestaoEmpresaRow>> ListarEmpresasAsync(Guid? empresaId)
@@ -51,13 +53,17 @@ SELECT  emp.id                    AS Id,
             ) THEN 'centro'
             ELSE 'empresa'
         END                       AS TipoOrganizacao,
-        COALESCE(BOOL_OR(COALESCE(e.ativo, TRUE) = TRUE AND COALESCE(e.status, 'ativo') = 'ativo'), TRUE) AS Ativa,
+        (
+            COALESCE(emp.ativo, TRUE) = TRUE
+            AND COALESCE(BOOL_OR(COALESCE(e.ativo, TRUE) = TRUE AND COALESCE(e.status, 'ativo') IN ('ativo', 'trial')), TRUE)
+        )                         AS Ativa,
+        COALESCE(emp.pausada, FALSE) AS Pausada,
         emp.data_criacao          AS CreatedAt,
         emp.data_atualizacao      AS UpdatedAt
   FROM empresas emp
   LEFT JOIN estabelecimentos e ON e.id_empresa = emp.id
  WHERE (@EmpresaId IS NULL OR emp.id = @EmpresaId)
- GROUP BY emp.id, emp.id_int, emp.nome_fantasia, emp.razao_social, emp.cnpj, emp.email, emp.telefone, emp.site, emp.data_criacao, emp.data_atualizacao
+ GROUP BY emp.id, emp.id_int, emp.nome_fantasia, emp.razao_social, emp.cnpj, emp.email, emp.telefone, emp.site, emp.ativo, emp.pausada, emp.data_criacao, emp.data_atualizacao
  ORDER BY emp.nome_fantasia;";
 
             await using var connection = new NpgsqlConnection(_connectionString);
@@ -131,6 +137,13 @@ UPDATE empresas
             await connection.OpenAsync();
             await using var transaction = await connection.BeginTransactionAsync();
 
+            await connection.ExecuteAsync(@"
+UPDATE empresas
+   SET ativo = @Ativa,
+       pausada = CASE WHEN @Ativa THEN pausada ELSE FALSE END,
+       data_atualizacao = NOW()
+ WHERE id = @EmpresaId;", new { EmpresaId = empresaId, Ativa = ativa }, transaction);
+
             if (ativa)
             {
                 await connection.ExecuteAsync(@"
@@ -193,6 +206,68 @@ UPDATE estabelecimentos
             }
 
             await transaction.CommitAsync();
+        }
+
+        public async Task AtualizarPausaEmpresaAsync(Guid empresaId, bool pausada)
+        {
+            const string sql = @"
+UPDATE empresas
+   SET pausada = @Pausada,
+       data_atualizacao = NOW()
+ WHERE id = @EmpresaId
+   AND COALESCE(ativo, TRUE) = TRUE;";
+
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.ExecuteAsync(sql, new { EmpresaId = empresaId, Pausada = pausada });
+        }
+
+        public async Task<IReadOnlyCollection<GestaoContatoPausadoRow>> ListarContatosPausadosAsync(Guid empresaId)
+        {
+            const string sql = @"
+WITH primeiras AS (
+    SELECT DISTINCT ON (m.id_conversa)
+           m.id_conversa,
+           m.conteudo AS primeira_mensagem,
+           COALESCE(m.data_criacao, m.data_envio) AS primeira_mensagem_em
+      FROM mensagens m
+     WHERE m.direcao = 'entrada'::direcao_mensagem_enum
+     ORDER BY m.id_conversa, COALESCE(m.data_criacao, m.data_envio) ASC
+),
+ultimas AS (
+    SELECT DISTINCT ON (m.id_conversa)
+           m.id_conversa,
+           m.conteudo AS ultima_mensagem,
+           COALESCE(m.data_criacao, m.data_envio) AS ultima_mensagem_em
+      FROM mensagens m
+     WHERE m.direcao = 'entrada'::direcao_mensagem_enum
+     ORDER BY m.id_conversa, COALESCE(m.data_criacao, m.data_envio) DESC
+)
+SELECT c.id AS ConversaId,
+       emp.id AS EmpresaId,
+       emp.nome_fantasia AS EmpresaNome,
+       e.id AS EstabelecimentoId,
+       e.nome_fantasia AS EstabelecimentoNome,
+       cl.id AS ClienteId,
+       cl.nome AS ClienteNome,
+       cl.telefone_e164 AS Telefone,
+       p.primeira_mensagem AS PrimeiraMensagem,
+       u.ultima_mensagem AS UltimaMensagem,
+       p.primeira_mensagem_em AS PrimeiraMensagemEm,
+       u.ultima_mensagem_em AS UltimaMensagemEm,
+       COALESCE(NULLIF(c.status_atendimento, ''), 'empresa_pausada') AS Status
+  FROM conversas c
+  JOIN estabelecimentos e ON e.id = c.id_estabelecimento
+  JOIN empresas emp ON emp.id = e.id_empresa
+  JOIN clientes cl ON cl.id = c.id_cliente
+  LEFT JOIN primeiras p ON p.id_conversa = c.id
+  LEFT JOIN ultimas u ON u.id_conversa = c.id
+ WHERE emp.id = @EmpresaId
+   AND COALESCE(NULLIF(c.status_atendimento, ''), '') = 'empresa_pausada'
+ ORDER BY COALESCE(u.ultima_mensagem_em, c.data_atualizacao, c.data_criacao) DESC;";
+
+            await using var connection = new NpgsqlConnection(_connectionString);
+            var rows = await connection.QueryAsync<GestaoContatoPausadoRow>(sql, new { EmpresaId = empresaId });
+            return rows.ToArray();
         }
 
         public async Task<IReadOnlyCollection<GestaoEstabelecimentoRow>> ListarEstabelecimentosAsync(Guid? empresaId, Guid? estabelecimentoId)
@@ -1289,6 +1364,28 @@ UPDATE usuario_empresas uemp
 
             await connection.ExecuteAsync(sqlDesativar, new { EmpresaId = empresaId }, transaction);
             await connection.ExecuteAsync(sqlReativar, new { EmpresaId = empresaId }, transaction);
+        }
+
+        private void EnsureEmpresaOperacionalSchema()
+        {
+            if (_empresaOperacionalSchemaEnsured)
+            {
+                return;
+            }
+
+            try
+            {
+                using var connection = new NpgsqlConnection(_connectionString);
+                connection.Open();
+                connection.Execute("ALTER TABLE empresas ADD COLUMN IF NOT EXISTS ativo boolean NOT NULL DEFAULT TRUE;");
+                connection.Execute("ALTER TABLE empresas ADD COLUMN IF NOT EXISTS pausada boolean NOT NULL DEFAULT FALSE;");
+                connection.Execute("CREATE INDEX IF NOT EXISTS ix_empresas_operacional ON empresas (ativo, pausada);");
+                _empresaOperacionalSchemaEnsured = true;
+            }
+            catch
+            {
+                // Mantem compatibilidade com ambientes onde o usuario de conexao nao pode executar DDL.
+            }
         }
 
         private sealed class PermissaoPadraoRow

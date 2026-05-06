@@ -23,6 +23,7 @@ namespace APIBack.Automation.Services
     public class ConversationProcessor
     {
         private const string AvisoReinicioPorExpiracao = "Seu atendimento anterior expirou por inatividade, entao reiniciei nossa conversa por aqui.";
+        private const string AvisoEmpresaPausada = "Estamos enfrentando uma instabilidade temporaria no atendimento. Assim que possivel, retornaremos por aqui.";
 
         private static string MontarAvisoEncerramentoManual(DateTime dataFechamento)
         {
@@ -59,6 +60,8 @@ namespace APIBack.Automation.Services
         private readonly IConversationRepository _conversationRepository;
         private readonly IClienteRepository _clienteRepository;
         private readonly IMessageRepository _mensagemRepository;
+        private readonly IMessageService _mensagemService;
+        private readonly WhatsAppSender _whatsAppSender;
         private readonly PromptAssembler _promptAssembler;
         private readonly CentralRoutingService _centralRouting;
         private readonly ServicoCatalogProvider _servicoCatalogProvider;
@@ -90,6 +93,8 @@ namespace APIBack.Automation.Services
             IConversationRepository conversationRepository,
             IClienteRepository clienteRepository,
             IMessageRepository mensagemRepository,
+            IMessageService mensagemService,
+            WhatsAppSender whatsAppSender,
             PromptAssembler promptAssembler,
             CentralRoutingService centralRouting,
             ServicoCatalogProvider servicoCatalogProvider,
@@ -108,6 +113,8 @@ namespace APIBack.Automation.Services
             _conversationRepository = conversationRepository;
             _clienteRepository = clienteRepository;
             _mensagemRepository = mensagemRepository;
+            _mensagemService = mensagemService;
+            _whatsAppSender = whatsAppSender;
             _promptAssembler = promptAssembler;
             _centralRouting = centralRouting;
             _servicoCatalogProvider = servicoCatalogProvider;
@@ -152,6 +159,16 @@ namespace APIBack.Automation.Services
 
             var criada = ingresso.Mensagem;
             criada.CriadaPor ??= "cliente";
+
+            if (ingresso.EmpresaPausada)
+            {
+                await EnviarAvisoEmpresaPausadaAsync(criada, input);
+                _logger.LogInformation(
+                    "[Conversa={Conversa}] Entrada registrada com empresa pausada; IA e automacoes suprimidas",
+                    criada.IdConversa);
+                return new ConversationProcessingResult(true, criada, criada.IdConversa, Array.Empty<AssistantChatTurn>(), null, new HandoverContextDto(), textoUsuario, input.PhoneNumberDisplay, input.PhoneNumberId);
+            }
+
             await _fila.PublicarEntradaAsync(criada);
 
             var tarefaContexto = ObterContextoAsync(criada.IdConversa, input.PhoneNumberDisplay, input.PhoneNumberId);
@@ -198,6 +215,33 @@ namespace APIBack.Automation.Services
             }
 
             return false;
+        }
+
+        private async Task EnviarAvisoEmpresaPausadaAsync(Message entrada, ConversationProcessingInput input)
+        {
+            var telefoneDestino = NormalizarTelefoneContato(input.Mensagem?.De) ?? SanitizarNumero(input.Mensagem?.De);
+            if (string.IsNullOrWhiteSpace(telefoneDestino) || string.IsNullOrWhiteSpace(input.PhoneNumberId))
+            {
+                _logger.LogWarning(
+                    "[Conversa={Conversa}] Aviso de empresa pausada nao enviado por telefone ou phone_number_id ausente",
+                    entrada.IdConversa);
+                return;
+            }
+
+            var saida = MessageFactory.CreateMessage(
+                entrada.IdConversa,
+                AvisoEmpresaPausada,
+                DirecaoMensagem.Saida,
+                "sistema",
+                tipoOrigem: "text");
+
+            await _mensagemService.AdicionarMensagemAsync(saida, input.PhoneNumberDisplay, telefoneDestino);
+            await _whatsAppSender.SendTextAsync(
+                entrada.IdConversa,
+                input.PhoneNumberId,
+                telefoneDestino,
+                AvisoEmpresaPausada,
+                input.PhoneNumberDisplay);
         }
 
         private static string? NormalizarTelefoneContato(string? numero)

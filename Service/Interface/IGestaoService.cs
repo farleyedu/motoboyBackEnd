@@ -11,6 +11,8 @@ namespace APIBack.Service.Interface
         Task<GestaoEmpresaDto> CriarEmpresaAsync(int userId, Guid? empresaId, Guid? estabelecimentoId, string? companyRole, string? establishmentRole, bool isSuperAdmin, SalvarEmpresaRequest request);
         Task<GestaoEmpresaDto> AtualizarEmpresaAsync(int userId, Guid? empresaId, Guid? estabelecimentoId, string? companyRole, string? establishmentRole, bool isSuperAdmin, Guid targetEmpresaId, SalvarEmpresaRequest request);
         Task AtualizarStatusEmpresaAsync(int userId, Guid? empresaId, Guid? estabelecimentoId, string? companyRole, string? establishmentRole, bool isSuperAdmin, Guid targetEmpresaId, bool ativa);
+        Task AtualizarPausaEmpresaAsync(int userId, Guid? empresaId, Guid? estabelecimentoId, string? companyRole, string? establishmentRole, bool isSuperAdmin, Guid targetEmpresaId, bool pausada);
+        Task<IReadOnlyCollection<GestaoContatoPausadoDto>> ListarContatosPausadosAsync(int userId, Guid? empresaId, Guid? estabelecimentoId, string? companyRole, string? establishmentRole, bool isSuperAdmin, Guid targetEmpresaId);
 
         Task<IReadOnlyCollection<GestaoEstabelecimentoDto>> ListarEstabelecimentosAsync(int userId, Guid? empresaId, Guid? estabelecimentoId, string? companyRole, string? establishmentRole, bool isSuperAdmin);
         Task<GestaoEstabelecimentoDto> CriarEstabelecimentoAsync(int userId, Guid? empresaId, Guid? estabelecimentoId, string? companyRole, string? establishmentRole, bool isSuperAdmin, SalvarEstabelecimentoRequest request);
