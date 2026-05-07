@@ -66,39 +66,78 @@ ALTER TABLE cliente_nautica ADD COLUMN IF NOT EXISTS ultima_pergunta TEXT;";
             var tamanhoNormalizado = tamanhoPagina < 1 ? 20 : tamanhoPagina;
             var offset = (paginaNormalizada - 1) * tamanhoNormalizado;
 
-            // Normalizar alias legado de status
             var statusNormalizado = NormalizarStatus(LimparFiltro(status));
 
             const string sql = @"
-WITH base AS (
-    SELECT cn.*
+WITH unified AS (
+    SELECT cn.id,
+           cn.id_conversa AS IdConversa,
+           cn.id_cliente AS IdCliente,
+           COALESCE(cn.telefone_e164, '') AS Telefone,
+           cn.nome_cliente AS NomeCliente,
+           cn.nome_empresa AS NomeEmpresa,
+           cn.cnpj AS Cnpj,
+           cn.etapa_atual AS EtapaAtual,
+           cn.ultima_pergunta AS UltimaPergunta,
+           COALESCE(cn.status, '') AS Status,
+           FALSE AS CapturadoDurantePausa,
+           COALESCE(cn.data_conclusao, cn.data_atualizacao, cn.data_criacao) AS Data
       FROM cliente_nautica cn
      WHERE cn.id_estabelecimento = @IdEstabelecimento
-       AND (@Status IS NULL OR cn.status = @Status)
+
+    UNION ALL
+
+    SELECT c.id,
+           c.id AS IdConversa,
+           c.id_cliente AS IdCliente,
+           COALESCE(cl.telefone_e164, '') AS Telefone,
+           cl.nome AS NomeCliente,
+           NULL::text AS NomeEmpresa,
+           NULL::text AS Cnpj,
+           NULL::text AS EtapaAtual,
+           NULL::text AS UltimaPergunta,
+           'pausado' AS Status,
+           TRUE AS CapturadoDurantePausa,
+           COALESCE(c.data_ultima_mensagem, c.data_ultima_entrada, c.data_atualizacao, c.data_criacao) AS Data
+      FROM conversas c
+      JOIN clientes cl ON cl.id = c.id_cliente
+     WHERE c.id_estabelecimento = @IdEstabelecimento
+       AND COALESCE(NULLIF(c.status_atendimento, ''), '') = 'empresa_pausada'
+       AND NOT EXISTS (
+            SELECT 1
+              FROM cliente_nautica cn2
+             WHERE cn2.id_estabelecimento = c.id_estabelecimento
+               AND cn2.id_conversa = c.id
+       )
+),
+base AS (
+    SELECT *
+      FROM unified
+     WHERE (@Status IS NULL OR Status = @Status)
        AND (
             @Busca IS NULL OR @Busca = '' OR
-            COALESCE(cn.nome_cliente, '') ILIKE '%' || @Busca || '%' OR
-            COALESCE(cn.nome_empresa, '') ILIKE '%' || @Busca || '%' OR
-            COALESCE(cn.telefone_e164, '') ILIKE '%' || @Busca || '%' OR
-            COALESCE(cn.cnpj, '') ILIKE '%' || @Busca || '%' OR
-            COALESCE(cn.cidade_estado, '') ILIKE '%' || @Busca || '%'
+            COALESCE(NomeCliente, '') ILIKE '%' || @Busca || '%' OR
+            COALESCE(NomeEmpresa, '') ILIKE '%' || @Busca || '%' OR
+            COALESCE(Telefone, '') ILIKE '%' || @Busca || '%' OR
+            COALESCE(Cnpj, '') ILIKE '%' || @Busca || '%'
        )
 ),
 tot AS (
     SELECT COUNT(*)::int AS total FROM base
 )
 SELECT b.id,
-       COALESCE(b.telefone_e164, '') AS Telefone,
-       b.nome_cliente AS NomeCliente,
-       b.nome_empresa AS NomeEmpresa,
-       b.cnpj AS Cnpj,
-       b.etapa_atual AS EtapaAtual,
-       b.ultima_pergunta AS UltimaPergunta,
-       COALESCE(b.status, '') AS Status,
-       COALESCE(b.data_conclusao, b.data_atualizacao, b.data_criacao) AS Data,
+       b.Telefone,
+       b.NomeCliente,
+       b.NomeEmpresa,
+       b.Cnpj,
+       b.EtapaAtual,
+       b.UltimaPergunta,
+       b.Status,
+       b.CapturadoDurantePausa,
+       b.Data,
        (SELECT total FROM tot) AS TotalRegistros
   FROM base b
- ORDER BY COALESCE(b.data_conclusao, b.data_atualizacao, b.data_criacao) DESC
+ ORDER BY b.Data DESC
  LIMIT @Limit OFFSET @Offset;";
 
             await using var connection = new NpgsqlConnection(_connectionString);
@@ -122,6 +161,7 @@ SELECT b.id,
                 EtapaAtual = r.EtapaAtual,
                 UltimaPergunta = r.UltimaPergunta,
                 Status = r.Status,
+                CapturadoDurantePausa = r.CapturadoDurantePausa,
                 Data = r.Data
             }).ToList();
 
@@ -135,19 +175,44 @@ SELECT b.id,
             await EnsureColunasAsync();
 
             const string sql = @"
-SELECT COALESCE(cn.status, '') AS Status,
+WITH unified AS (
+    SELECT COALESCE(cn.status, '') AS Status,
+           cn.nome_cliente AS NomeCliente,
+           cn.nome_empresa AS NomeEmpresa,
+           cn.telefone_e164 AS Telefone,
+           cn.cnpj AS Cnpj
+      FROM cliente_nautica cn
+     WHERE cn.id_estabelecimento = @IdEstabelecimento
+
+    UNION ALL
+
+    SELECT 'pausado' AS Status,
+           cl.nome AS NomeCliente,
+           NULL::text AS NomeEmpresa,
+           cl.telefone_e164 AS Telefone,
+           NULL::text AS Cnpj
+      FROM conversas c
+      JOIN clientes cl ON cl.id = c.id_cliente
+     WHERE c.id_estabelecimento = @IdEstabelecimento
+       AND COALESCE(NULLIF(c.status_atendimento, ''), '') = 'empresa_pausada'
+       AND NOT EXISTS (
+            SELECT 1
+              FROM cliente_nautica cn2
+             WHERE cn2.id_estabelecimento = c.id_estabelecimento
+               AND cn2.id_conversa = c.id
+       )
+)
+SELECT Status,
        COUNT(*)::int AS Total
-  FROM cliente_nautica cn
- WHERE cn.id_estabelecimento = @IdEstabelecimento
-   AND (
+  FROM unified
+ WHERE (
         @Busca IS NULL OR @Busca = '' OR
-        COALESCE(cn.nome_cliente, '') ILIKE '%' || @Busca || '%' OR
-        COALESCE(cn.nome_empresa, '') ILIKE '%' || @Busca || '%' OR
-        COALESCE(cn.telefone_e164, '') ILIKE '%' || @Busca || '%' OR
-        COALESCE(cn.cnpj, '') ILIKE '%' || @Busca || '%' OR
-        COALESCE(cn.cidade_estado, '') ILIKE '%' || @Busca || '%'
+        COALESCE(NomeCliente, '') ILIKE '%' || @Busca || '%' OR
+        COALESCE(NomeEmpresa, '') ILIKE '%' || @Busca || '%' OR
+        COALESCE(Telefone, '') ILIKE '%' || @Busca || '%' OR
+        COALESCE(Cnpj, '') ILIKE '%' || @Busca || '%'
    )
- GROUP BY cn.status;";
+ GROUP BY Status;";
 
             await using var connection = new NpgsqlConnection(_connectionString);
             var rows = await connection.QueryAsync<NauticaLeadStatusCountDto>(sql, new
@@ -188,7 +253,51 @@ SELECT cn.id,
  LIMIT 1;";
 
             await using var connection = new NpgsqlConnection(_connectionString);
-            return await connection.QueryFirstOrDefaultAsync<NauticaLeadDetailDto>(sql, new
+            var lead = await connection.QueryFirstOrDefaultAsync<NauticaLeadDetailDto>(sql, new
+            {
+                IdEstabelecimento = idEstabelecimento,
+                IdLead = idLead
+            });
+
+            if (lead != null)
+            {
+                return lead;
+            }
+
+            const string pausedSql = @"
+SELECT c.id,
+       c.id AS IdConversa,
+       c.id_cliente AS IdCliente,
+       COALESCE(cl.telefone_e164, '') AS Telefone,
+       cl.nome AS NomeCliente,
+       NULL::text AS NomeEmpresa,
+       NULL::text AS Cnpj,
+       NULL::text AS EtapaAtual,
+       NULL::text AS UltimaPergunta,
+       NULL::boolean AS TemLojaFisica,
+       NULL::boolean AS ConsegueMinimo,
+       NULL::text AS CidadeEstado,
+       'pausado' AS Status,
+       FALSE AS ViaNumeroCentral,
+       TRUE AS CapturadoDurantePausa,
+       COALESCE(c.data_ultima_mensagem, c.data_ultima_entrada, c.data_atualizacao, c.data_criacao) AS Data,
+       c.data_criacao AS DataCriacao,
+       c.data_atualizacao AS DataAtualizacao,
+       NULL::timestamp AS DataConclusao
+  FROM conversas c
+  JOIN clientes cl ON cl.id = c.id_cliente
+ WHERE c.id_estabelecimento = @IdEstabelecimento
+   AND c.id = @IdLead
+   AND COALESCE(NULLIF(c.status_atendimento, ''), '') = 'empresa_pausada'
+   AND NOT EXISTS (
+        SELECT 1
+          FROM cliente_nautica cn2
+         WHERE cn2.id_estabelecimento = c.id_estabelecimento
+           AND cn2.id_conversa = c.id
+   )
+ LIMIT 1;";
+
+            return await connection.QueryFirstOrDefaultAsync<NauticaLeadDetailDto>(pausedSql, new
             {
                 IdEstabelecimento = idEstabelecimento,
                 IdLead = idLead
@@ -222,6 +331,141 @@ UPDATE cliente_nautica
             }) > 0;
         }
 
+        public async Task<PromoverContatoPausadoResponseDto?> PromoverContatoPausadoAsync(Guid idEstabelecimento, Guid idConversa)
+        {
+            await EnsureColunasAsync();
+
+            const string selectSql = @"
+SELECT c.id AS IdConversa,
+       c.id_cliente AS IdCliente,
+       c.id_estabelecimento AS IdEstabelecimento,
+       COALESCE(cl.telefone_e164, '') AS Telefone,
+       cl.nome AS NomeCliente,
+       c.data_criacao AS DataCriacao
+  FROM conversas c
+  JOIN clientes cl ON cl.id = c.id_cliente
+ WHERE c.id_estabelecimento = @IdEstabelecimento
+   AND c.id = @IdConversa
+   AND COALESCE(NULLIF(c.status_atendimento, ''), '') = 'empresa_pausada'
+ LIMIT 1;";
+
+            const string existingSql = @"
+SELECT id
+  FROM cliente_nautica
+ WHERE id_estabelecimento = @IdEstabelecimento
+   AND (id_conversa = @IdConversa OR (telefone_e164 = @Telefone AND status = 'incompleto'))
+ ORDER BY CASE WHEN id_conversa = @IdConversa THEN 0 ELSE 1 END, data_criacao DESC
+ LIMIT 1;";
+
+            const string insertSql = @"
+INSERT INTO cliente_nautica (
+    id,
+    id_estabelecimento,
+    id_conversa,
+    id_cliente,
+    telefone_e164,
+    nome_cliente,
+    etapa_atual,
+    ultima_pergunta,
+    status,
+    via_numero_central,
+    data_conclusao,
+    data_criacao,
+    data_atualizacao
+) VALUES (
+    @Id,
+    @IdEstabelecimento,
+    @IdConversa,
+    @IdCliente,
+    @Telefone,
+    @NomeCliente,
+    NULL,
+    NULL,
+    'incompleto',
+    FALSE,
+    NULL,
+    NOW(),
+    NOW()
+);";
+
+            const string updateLeadSql = @"
+UPDATE cliente_nautica
+   SET id_conversa = @IdConversa,
+       id_cliente = @IdCliente,
+       telefone_e164 = @Telefone,
+       nome_cliente = COALESCE(NULLIF(nome_cliente, ''), @NomeCliente),
+       status = 'incompleto',
+       data_conclusao = NULL,
+       data_atualizacao = NOW()
+ WHERE id = @IdLead;";
+
+            const string updateConversationSql = @"
+UPDATE conversas
+   SET status_atendimento = 'em_andamento',
+       motivo_fechamento = NULL,
+       data_atualizacao = NOW()
+ WHERE id_estabelecimento = @IdEstabelecimento
+   AND id = @IdConversa;";
+
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+
+            var row = await connection.QueryFirstOrDefaultAsync<ContatoPausadoRow>(
+                selectSql,
+                new { IdEstabelecimento = idEstabelecimento, IdConversa = idConversa },
+                transaction);
+
+            if (row == null || string.IsNullOrWhiteSpace(row.Telefone))
+            {
+                await transaction.RollbackAsync();
+                return null;
+            }
+
+            var leadId = await connection.ExecuteScalarAsync<Guid?>(
+                existingSql,
+                new { IdEstabelecimento = idEstabelecimento, IdConversa = idConversa, row.Telefone },
+                transaction);
+
+            if (leadId.HasValue)
+            {
+                await connection.ExecuteAsync(
+                    updateLeadSql,
+                    new { IdLead = leadId.Value, row.IdConversa, row.IdCliente, row.Telefone, row.NomeCliente },
+                    transaction);
+            }
+            else
+            {
+                leadId = Guid.NewGuid();
+                await connection.ExecuteAsync(
+                    insertSql,
+                    new
+                    {
+                        Id = leadId.Value,
+                        IdEstabelecimento = idEstabelecimento,
+                        row.IdConversa,
+                        row.IdCliente,
+                        row.Telefone,
+                        row.NomeCliente
+                    },
+                    transaction);
+            }
+
+            await connection.ExecuteAsync(
+                updateConversationSql,
+                new { IdEstabelecimento = idEstabelecimento, IdConversa = idConversa },
+                transaction);
+
+            await transaction.CommitAsync();
+
+            return new PromoverContatoPausadoResponseDto
+            {
+                IdLead = leadId.Value,
+                IdConversa = idConversa,
+                Status = "incompleto"
+            };
+        }
+
         private static string? LimparFiltro(string? valor)
         {
             return string.IsNullOrWhiteSpace(valor) ? null : valor.Trim();
@@ -246,8 +490,17 @@ UPDATE cliente_nautica
             public string? EtapaAtual { get; set; }
             public string? UltimaPergunta { get; set; }
             public string Status { get; set; } = string.Empty;
+            public bool CapturadoDurantePausa { get; set; }
             public DateTime Data { get; set; }
             public int TotalRegistros { get; set; }
+        }
+
+        private sealed class ContatoPausadoRow
+        {
+            public Guid IdConversa { get; set; }
+            public Guid IdCliente { get; set; }
+            public string Telefone { get; set; } = string.Empty;
+            public string? NomeCliente { get; set; }
         }
     }
 }

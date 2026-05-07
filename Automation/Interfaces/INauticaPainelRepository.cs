@@ -21,5 +21,7 @@ namespace APIBack.Automation.Interfaces
         Task<NauticaLeadDetailDto?> ObterLeadDetalheAsync(Guid idEstabelecimento, Guid idLead);
 
         Task<bool> AtualizarStatusLeadAsync(Guid idEstabelecimento, Guid idLead, string status);
+
+        Task<PromoverContatoPausadoResponseDto?> PromoverContatoPausadoAsync(Guid idEstabelecimento, Guid idConversa);
     }
 }

@@ -13,6 +13,7 @@ namespace APIBack.Automation.Dtos
         public string? EtapaAtual { get; set; }
         public string? UltimaPergunta { get; set; }
         public string Status { get; set; } = string.Empty;
+        public bool CapturadoDurantePausa { get; set; }
         public DateTime Data { get; set; }
     }
 
@@ -47,5 +48,12 @@ namespace APIBack.Automation.Dtos
     public class UpdateNauticaLeadStatusRequest
     {
         public string Status { get; set; } = string.Empty;
+    }
+
+    public class PromoverContatoPausadoResponseDto
+    {
+        public Guid IdLead { get; set; }
+        public Guid IdConversa { get; set; }
+        public string Status { get; set; } = "incompleto";
     }
 }

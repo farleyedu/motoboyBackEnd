@@ -56,6 +56,7 @@ namespace APIBack.Automation.Controllers
                 ["consumidor_final"] = 0,
                 ["lojista"] = 0,
                 ["lojista_qualificado"] = 0,
+                ["pausado"] = 0,
                 ["cancelado"] = 0
             };
 
@@ -125,6 +126,21 @@ namespace APIBack.Automation.Controllers
 
             var detalhe = await _repository.ObterLeadDetalheAsync(estabelecimentoId, idLead);
             return detalhe == null ? Ok() : Ok(detalhe);
+        }
+
+        [HttpPatch("{idConversa:guid}/pausado/incompleto")]
+        [RequirePermission("Leads", "mudar_status")]
+        public async Task<IActionResult> PromoverContatoPausado(Guid idConversa, [FromQuery] Guid? idEstabelecimento = null)
+        {
+            if (!TryResolveEstabelecimento(idEstabelecimento, out var estabelecimentoId, out var error))
+            {
+                return error!;
+            }
+
+            var promovido = await _repository.PromoverContatoPausadoAsync(estabelecimentoId, idConversa);
+            return promovido == null
+                ? NotFound(new { success = false, error = "Contato pausado nao encontrado." })
+                : Ok(promovido);
         }
 
         private bool TryResolveEstabelecimento(Guid? requestedId, out Guid effectiveId, out IActionResult? error)
