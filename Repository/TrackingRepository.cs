@@ -111,7 +111,7 @@ CREATE INDEX IF NOT EXISTS ix_pedido_id_estabelecimento
         {
             await EnsureSchemaAsync();
 
-            const string sql = @"
+            const string resolveSql = @"
 SELECT
     m.id AS MotoboyId,
     m.id_usuario AS UsuarioId,
@@ -129,8 +129,62 @@ ORDER BY
 LIMIT 1;";
 
             await using var connection = new NpgsqlConnection(_connectionString);
+            var identity = await connection.QueryFirstOrDefaultAsync<MotoboyTrackingIdentity>(
+                resolveSql,
+                new { UserId = userId, EstabelecimentoId = estabelecimentoId });
+
+            if (identity != null)
+            {
+                return identity;
+            }
+
+            const string createSql = @"
+WITH user_access AS (
+    SELECT u.id AS usuario_id, COALESCE(NULLIF(TRIM(u.nome), ''), u.email, 'Motoboy') AS nome
+      FROM usuario u
+      JOIN usuario_estabelecimentos ue ON ue.id_usuario = u.id
+     WHERE u.id = @UserId
+       AND u.deleted_at IS NULL
+       AND ue.id_estabelecimento = @EstabelecimentoId
+       AND LOWER(COALESCE(ue.tipo_acesso, '')) = 'motoboy'
+       AND COALESCE(ue.ativo, TRUE) = TRUE
+       AND LOWER(COALESCE(ue.status, 'ativo')) = 'ativo'
+     LIMIT 1
+),
+updated AS (
+    UPDATE motoboy m
+       SET nome = user_access.nome,
+           id_usuario = @UserId,
+           id_estabelecimento = @EstabelecimentoId
+      FROM user_access
+     WHERE (m.id_usuario = @UserId AND (m.id_estabelecimento = @EstabelecimentoId OR m.id_estabelecimento IS NULL))
+        OR (m.id_usuario IS NULL AND LOWER(COALESCE(m.nome, '')) = LOWER(user_access.nome) AND (m.id_estabelecimento = @EstabelecimentoId OR m.id_estabelecimento IS NULL))
+ RETURNING m.id AS MotoboyId,
+           @UserId AS UsuarioId,
+           @EstabelecimentoId AS EstabelecimentoId,
+           COALESCE(m.nome, '') AS Nome,
+           m.avatar AS Avatar,
+           COALESCE(m.status, 2) AS Status
+),
+inserted AS (
+    INSERT INTO motoboy (nome, status, id_usuario, id_estabelecimento)
+    SELECT nome, 2, @UserId, @EstabelecimentoId
+      FROM user_access
+     WHERE NOT EXISTS (SELECT 1 FROM updated)
+ RETURNING id AS MotoboyId,
+           id_usuario AS UsuarioId,
+           id_estabelecimento AS EstabelecimentoId,
+           nome AS Nome,
+           avatar AS Avatar,
+           status AS Status
+)
+SELECT * FROM updated
+UNION ALL
+SELECT * FROM inserted
+LIMIT 1;";
+
             return await connection.QueryFirstOrDefaultAsync<MotoboyTrackingIdentity>(
-                sql,
+                createSql,
                 new { UserId = userId, EstabelecimentoId = estabelecimentoId });
         }
 

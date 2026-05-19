@@ -263,6 +263,11 @@ VALUES (
                     TipoAcesso = command.EstablishmentRole,
                     command.CreatedByUserId
                 }, transaction);
+
+                if (string.Equals(command.EstablishmentRole, "motoboy", StringComparison.OrdinalIgnoreCase))
+                {
+                    await EnsureMotoboyProfileAsync(connection, transaction, userId, estabelecimentoId, command.Nome);
+                }
             }
 
             const string sqlSummary = @"
@@ -300,6 +305,52 @@ SELECT  emp.nome_fantasia       AS EmpresaNome,
                 CompanyRole = command.CompanyRole == "colaborador" ? null : command.CompanyRole,
                 Estabelecimentos = establishmentRows.ToList()
             };
+        }
+
+        private static async Task EnsureMotoboyProfileAsync(
+            NpgsqlConnection connection,
+            NpgsqlTransaction transaction,
+            int userId,
+            Guid estabelecimentoId,
+            string nome)
+        {
+            if (estabelecimentoId == Guid.Empty)
+            {
+                return;
+            }
+
+            await EnsureMotoboySchemaAsync(connection, transaction);
+
+            const string sql = @"
+WITH updated AS (
+    UPDATE motoboy
+       SET nome = @Nome,
+           id_usuario = @UserId,
+           id_estabelecimento = @EstabelecimentoId
+     WHERE (id_usuario = @UserId AND (id_estabelecimento = @EstabelecimentoId OR id_estabelecimento IS NULL))
+        OR (id_usuario IS NULL AND LOWER(COALESCE(nome, '')) = LOWER(@Nome) AND (id_estabelecimento = @EstabelecimentoId OR id_estabelecimento IS NULL))
+ RETURNING id
+)
+INSERT INTO motoboy (nome, status, id_usuario, id_estabelecimento)
+SELECT @Nome, 2, @UserId, @EstabelecimentoId
+WHERE NOT EXISTS (SELECT 1 FROM updated);";
+
+            await connection.ExecuteAsync(sql, new
+            {
+                Nome = string.IsNullOrWhiteSpace(nome) ? "Motoboy" : nome.Trim(),
+                UserId = userId,
+                EstabelecimentoId = estabelecimentoId
+            }, transaction);
+        }
+
+        private static Task EnsureMotoboySchemaAsync(NpgsqlConnection connection, NpgsqlTransaction transaction)
+        {
+            const string sql = @"
+ALTER TABLE IF EXISTS motoboy
+    ADD COLUMN IF NOT EXISTS id_usuario INTEGER,
+    ADD COLUMN IF NOT EXISTS id_estabelecimento UUID;";
+
+            return connection.ExecuteAsync(sql, transaction: transaction);
         }
     }
 }
