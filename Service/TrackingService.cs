@@ -150,9 +150,13 @@ namespace APIBack.Service
             return evt;
         }
 
-        public Task<MotoboyLocationResult> ReceiveLocationAsync(int userId, Guid estabelecimentoId, MotoboyLocationRequest request)
+        public Task<MotoboyLocationResult> ReceiveLocationAsync(
+            int userId,
+            Guid estabelecimentoId,
+            MotoboyLocationRequest request,
+            bool allowSimulatorJump = false)
         {
-            return ProcessLocationAsync(userId, estabelecimentoId, request, allowHistoricalStale: false);
+            return ProcessLocationAsync(userId, estabelecimentoId, request, allowHistoricalStale: false, allowSimulatorJump);
         }
 
         public async Task<MotoboyLocationResult> ReceiveSimulatorLocationAsync(
@@ -167,7 +171,7 @@ namespace APIBack.Service
             }
 
             var identity = await ResolveMotoboyIdentityAsync(estabelecimentoId, motoboyId);
-            return await ProcessLocationForIdentityAsync(identity, estabelecimentoId, request, allowHistoricalStale: false);
+            return await ProcessLocationForIdentityAsync(identity, estabelecimentoId, request, allowHistoricalStale: false, allowSimulatorJump: true);
         }
 
         public async Task<MotoboyLocationBatchResult> ReceiveLocationBatchAsync(
@@ -183,7 +187,7 @@ namespace APIBack.Service
 
             foreach (var location in locations)
             {
-                var item = await ProcessLocationAsync(userId, estabelecimentoId, location, allowHistoricalStale: true);
+                var item = await ProcessLocationAsync(userId, estabelecimentoId, location, allowHistoricalStale: true, allowSimulatorJump: false);
                 result.Results.Add(item);
 
                 if (item.Accepted)
@@ -216,7 +220,8 @@ namespace APIBack.Service
             int userId,
             Guid estabelecimentoId,
             MotoboyLocationRequest request,
-            bool allowHistoricalStale)
+            bool allowHistoricalStale,
+            bool allowSimulatorJump)
         {
             var validationError = ValidateLocationRequest(request);
             if (validationError != null)
@@ -225,14 +230,15 @@ namespace APIBack.Service
             }
 
             var identity = await ResolveIdentityAsync(userId, estabelecimentoId);
-            return await ProcessLocationForIdentityAsync(identity, estabelecimentoId, request, allowHistoricalStale);
+            return await ProcessLocationForIdentityAsync(identity, estabelecimentoId, request, allowHistoricalStale, allowSimulatorJump);
         }
 
         private async Task<MotoboyLocationResult> ProcessLocationForIdentityAsync(
             MotoboyTrackingIdentity identity,
             Guid estabelecimentoId,
             MotoboyLocationRequest request,
-            bool allowHistoricalStale)
+            bool allowHistoricalStale,
+            bool allowSimulatorJump)
         {
             var previousState = await _repository.GetLocationStateAsync(identity.MotoboyId);
             var trackingMode = NormalizeTrackingMode(request.TrackingMode);
@@ -240,7 +246,7 @@ namespace APIBack.Service
             var serverTimestamp = DateTimeOffset.UtcNow;
             var localDate = await ResolveLocalDateAsync(estabelecimentoId, clientTimestamp);
 
-            if (IsOutOfOrder(previousState, request.Sequence, clientTimestamp))
+            if (!allowSimulatorJump && IsOutOfOrder(previousState, request.Sequence, clientTimestamp))
             {
                 if (allowHistoricalStale && clientTimestamp.Date == DateTimeOffset.UtcNow.Date)
                 {
@@ -256,12 +262,12 @@ namespace APIBack.Service
                 return Reject("out_of_order");
             }
 
-            if (IsDuplicateOrFlood(previousState, request, clientTimestamp))
+            if (!allowSimulatorJump && IsDuplicateOrFlood(previousState, request, clientTimestamp))
             {
                 return Reject("throttled");
             }
 
-            if (IsImplausibleJump(previousState, request, clientTimestamp))
+            if (!allowSimulatorJump && IsImplausibleJump(previousState, request, clientTimestamp))
             {
                 _logger.LogWarning(
                     "Rejected implausible motoboy location. MotoboyId={MotoboyId} Lat={Latitude} Lng={Longitude}",

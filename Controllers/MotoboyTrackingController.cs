@@ -48,7 +48,9 @@ namespace APIBack.Controllers
 
             try
             {
-                var result = await _trackingService.ReceiveLocationAsync(userId, estabelecimentoId, request);
+                var payload = HttpContext.GetJwtPayload();
+                var allowSimulatorJump = string.Equals(payload.ClientType, "simulator", StringComparison.OrdinalIgnoreCase);
+                var result = await _trackingService.ReceiveLocationAsync(userId, estabelecimentoId, request, allowSimulatorJump);
                 return Ok(ApiResponse<MotoboyLocationResult>.Ok(result));
             }
             catch (UnauthorizedAccessException ex)

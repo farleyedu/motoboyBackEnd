@@ -9,7 +9,7 @@ namespace APIBack.Service.Interface
     {
         Task<MotoboyStatusRealtimeDto> SetStatusAsync(int userId, Guid estabelecimentoId, MotoboyStatusRequest request);
         Task<MotoboyStatusRealtimeDto> SetSimulatorStatusAsync(Guid estabelecimentoId, int motoboyId, MotoboyStatusRequest request);
-        Task<MotoboyLocationResult> ReceiveLocationAsync(int userId, Guid estabelecimentoId, MotoboyLocationRequest request);
+        Task<MotoboyLocationResult> ReceiveLocationAsync(int userId, Guid estabelecimentoId, MotoboyLocationRequest request, bool allowSimulatorJump = false);
         Task<MotoboyLocationResult> ReceiveSimulatorLocationAsync(Guid estabelecimentoId, int motoboyId, MotoboyLocationRequest request);
         Task<MotoboyLocationBatchResult> ReceiveLocationBatchAsync(int userId, Guid estabelecimentoId, MotoboyLocationBatchRequest request);
         Task<MotoboyMapDto> CreateSimulatorMotoboyAsync(Guid estabelecimentoId, CreateSimulatorMotoboyRequest request);
