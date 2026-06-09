@@ -87,14 +87,23 @@ namespace APIBack.Middleware
 
         private static async Task<bool> IsPayloadStillAllowedAsync(JwtPayload payload, IConfiguration configuration)
         {
-            if (payload.IsSuperAdmin || !payload.EmpresaId.HasValue)
+            var connectionString = configuration.GetConnectionString("DefaultConnection")
+                                   ?? configuration["ConnectionStrings:DefaultConnection"];
+            if (string.IsNullOrWhiteSpace(connectionString))
             {
                 return true;
             }
 
-            var connectionString = configuration.GetConnectionString("DefaultConnection")
-                                   ?? configuration["ConnectionStrings:DefaultConnection"];
-            if (string.IsNullOrWhiteSpace(connectionString))
+            if (payload.MotoboySessionId.HasValue)
+            {
+                var sessionAllowed = await IsMotoboySessionActiveAsync(payload, connectionString);
+                if (!sessionAllowed)
+                {
+                    return false;
+                }
+            }
+
+            if (payload.IsSuperAdmin || !payload.EmpresaId.HasValue)
             {
                 return true;
             }
@@ -126,6 +135,53 @@ SELECT COALESCE(emp.ativo, TRUE) = TRUE
                     });
 
                 return allowed == true;
+            }
+            catch
+            {
+                return true;
+            }
+        }
+
+        private static async Task<bool> IsMotoboySessionActiveAsync(JwtPayload payload, string connectionString)
+        {
+            if (!payload.MotoboySessionId.HasValue || !payload.MotoboyId.HasValue)
+            {
+                return true;
+            }
+
+            try
+            {
+                await using var connection = new NpgsqlConnection(connectionString);
+                await connection.ExecuteAsync(@"
+CREATE TABLE IF NOT EXISTS motoboy_active_sessions (
+    session_id UUID PRIMARY KEY,
+    motoboy_id INTEGER NOT NULL,
+    id_usuario INTEGER NULL,
+    id_estabelecimento UUID NOT NULL,
+    device_type TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    revoked_at TIMESTAMPTZ NULL,
+    revoke_reason TEXT NULL
+);
+
+CREATE INDEX IF NOT EXISTS ix_motoboy_active_sessions_motoboy
+    ON motoboy_active_sessions (motoboy_id, revoked_at);");
+
+                var active = await connection.ExecuteScalarAsync<bool?>(@"
+UPDATE motoboy_active_sessions
+   SET last_seen_at = NOW()
+ WHERE session_id = @SessionId
+   AND motoboy_id = @MotoboyId
+   AND revoked_at IS NULL
+RETURNING TRUE;",
+                    new
+                    {
+                        SessionId = payload.MotoboySessionId,
+                        MotoboyId = payload.MotoboyId
+                    });
+
+                return active == true;
             }
             catch
             {

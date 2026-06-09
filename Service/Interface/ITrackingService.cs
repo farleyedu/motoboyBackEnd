@@ -13,6 +13,7 @@ namespace APIBack.Service.Interface
         Task<MotoboyLocationResult> ReceiveSimulatorLocationAsync(Guid estabelecimentoId, int motoboyId, MotoboyLocationRequest request);
         Task<MotoboyLocationBatchResult> ReceiveLocationBatchAsync(int userId, Guid estabelecimentoId, MotoboyLocationBatchRequest request);
         Task<MotoboyMapDto> CreateSimulatorMotoboyAsync(Guid estabelecimentoId, CreateSimulatorMotoboyRequest request);
+        Task<SimulatorMotoboySessionResponse> StartSimulatorSessionAsync(Guid estabelecimentoId, int motoboyId);
         Task<DeliveryMapStateDto> GetMapStateAsync(Guid estabelecimentoId);
         Task<IReadOnlyCollection<MotoboyLocationHistoryPointDto>> GetLocationHistoryAsync(Guid estabelecimentoId, int motoboyId, DateOnly localDate);
     }

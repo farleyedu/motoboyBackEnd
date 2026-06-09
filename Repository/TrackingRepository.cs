@@ -81,6 +81,18 @@ CREATE TABLE IF NOT EXISTS motoboy_location_history_daily (
     sequence BIGINT NULL
 );
 
+CREATE TABLE IF NOT EXISTS motoboy_active_sessions (
+    session_id UUID PRIMARY KEY,
+    motoboy_id INTEGER NOT NULL,
+    id_usuario INTEGER NULL,
+    id_estabelecimento UUID NOT NULL,
+    device_type TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    revoked_at TIMESTAMPTZ NULL,
+    revoke_reason TEXT NULL
+);
+
 CREATE INDEX IF NOT EXISTS ix_motoboy_location_state_estabelecimento
     ON motoboy_location_state (id_estabelecimento);
 
@@ -95,6 +107,9 @@ CREATE INDEX IF NOT EXISTS ix_motoboy_id_estabelecimento
 
 CREATE INDEX IF NOT EXISTS ix_pedido_id_estabelecimento
     ON pedido (id_estabelecimento);
+
+CREATE INDEX IF NOT EXISTS ix_motoboy_active_sessions_motoboy
+    ON motoboy_active_sessions (motoboy_id, revoked_at);
 ";
 
                 await using var connection = new NpgsqlConnection(_connectionString);
@@ -236,6 +251,41 @@ RETURNING
                 Telefone = string.IsNullOrWhiteSpace(telefone) ? null : telefone.Trim(),
                 EstabelecimentoId = estabelecimentoId
             });
+        }
+
+        public async Task<Guid> StartMotoboySessionAsync(
+            MotoboyTrackingIdentity identity,
+            Guid estabelecimentoId,
+            string deviceType)
+        {
+            await EnsureSchemaAsync();
+
+            var sessionId = Guid.NewGuid();
+
+            const string sql = @"
+UPDATE motoboy_active_sessions
+   SET revoked_at = NOW(),
+       revoke_reason = 'replaced'
+ WHERE motoboy_id = @MotoboyId
+   AND revoked_at IS NULL;
+
+INSERT INTO motoboy_active_sessions (
+    session_id, motoboy_id, id_usuario, id_estabelecimento, device_type, created_at, last_seen_at
+) VALUES (
+    @SessionId, @MotoboyId, @UsuarioId, @EstabelecimentoId, @DeviceType, NOW(), NOW()
+);";
+
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.ExecuteAsync(sql, new
+            {
+                SessionId = sessionId,
+                identity.MotoboyId,
+                identity.UsuarioId,
+                EstabelecimentoId = estabelecimentoId,
+                DeviceType = string.IsNullOrWhiteSpace(deviceType) ? "mobile" : deviceType.Trim().ToLowerInvariant()
+            });
+
+            return sessionId;
         }
 
         public async Task SetMotoboyStatusAsync(int motoboyId, int userId, Guid estabelecimentoId, int status)

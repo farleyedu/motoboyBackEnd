@@ -20,6 +20,9 @@ namespace APIBack.Model.Auth
         public string? TipoAcesso { get; set; }
         public Guid? VinculoId { get; set; }
         public Dictionary<string, List<string>> Permissoes { get; set; } = new();
+        public Guid? MotoboySessionId { get; set; }
+        public int? MotoboyId { get; set; }
+        public string? ClientType { get; set; }
         public DateTime ExpiresAt { get; set; }
         public DateTime IssuedAt { get; set; }
     }

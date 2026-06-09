@@ -15,6 +15,15 @@ namespace APIBack.DTOs.Tracking
         public string? Telefone { get; set; }
     }
 
+    public class SimulatorMotoboySessionResponse
+    {
+        public string AccessToken { get; set; } = string.Empty;
+        public string TokenType { get; set; } = "Bearer";
+        public int ExpiresIn { get; set; }
+        public Guid SessionId { get; set; }
+        public MotoboyMapDto Motoboy { get; set; } = new();
+    }
+
     public class MotoboyLocationRequest
     {
         public double Latitude { get; set; }

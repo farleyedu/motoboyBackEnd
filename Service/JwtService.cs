@@ -202,6 +202,21 @@ namespace APIBack.Service
                 claims.Add(new Claim("permissoes", json));
             }
 
+            if (payload.MotoboySessionId.HasValue)
+            {
+                claims.Add(new Claim("motoboy_session_id", payload.MotoboySessionId.Value.ToString()));
+            }
+
+            if (payload.MotoboyId.HasValue)
+            {
+                claims.Add(new Claim("motoboy_id", payload.MotoboyId.Value.ToString()));
+            }
+
+            if (!string.IsNullOrWhiteSpace(payload.ClientType))
+            {
+                claims.Add(new Claim("client_type", payload.ClientType));
+            }
+
             claims.Add(new Claim("exp_at", payload.ExpiresAt.ToUniversalTime().ToString("O")));
             claims.Add(new Claim("iat_at", payload.IssuedAt.ToUniversalTime().ToString("O")));
 
@@ -287,6 +302,21 @@ namespace APIBack.Service
                         break;
                     case "permissoes":
                         permissionsJson = claim.Value;
+                        break;
+                    case "motoboy_session_id":
+                        if (Guid.TryParse(claim.Value, out var motoboySessionId))
+                        {
+                            payload.MotoboySessionId = motoboySessionId;
+                        }
+                        break;
+                    case "motoboy_id":
+                        if (int.TryParse(claim.Value, out var motoboyId))
+                        {
+                            payload.MotoboyId = motoboyId;
+                        }
+                        break;
+                    case "client_type":
+                        payload.ClientType = claim.Value;
                         break;
                     case "exp_at":
                         if (DateTime.TryParse(claim.Value, null, System.Globalization.DateTimeStyles.RoundtripKind, out var expAt))

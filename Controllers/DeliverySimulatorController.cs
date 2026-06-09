@@ -68,6 +68,25 @@ namespace APIBack.Controllers
             }
         }
 
+        [HttpPost("motoboys/{motoboyId:int}/session")]
+        public async Task<IActionResult> StartSession([FromRoute] int motoboyId)
+        {
+            if (!TryGetEstabelecimentoId(out var estabelecimentoId, out var error))
+            {
+                return error!;
+            }
+
+            try
+            {
+                var result = await _trackingService.StartSimulatorSessionAsync(estabelecimentoId, motoboyId);
+                return Ok(ApiResponse<SimulatorMotoboySessionResponse>.Ok(result));
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                return StatusCode(403, ApiResponse<object>.Fail(ex.Message));
+            }
+        }
+
         [HttpPost("motoboys/{motoboyId:int}/location")]
         public async Task<IActionResult> SendLocation([FromRoute] int motoboyId, [FromBody] MotoboyLocationRequest request)
         {

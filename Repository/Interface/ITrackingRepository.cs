@@ -12,6 +12,7 @@ namespace APIBack.Repository.Interface
         Task<MotoboyTrackingIdentity?> ResolveMotoboyForUserAsync(int userId, Guid estabelecimentoId);
         Task<MotoboyTrackingIdentity?> ResolveMotoboyByIdAsync(int motoboyId, Guid estabelecimentoId);
         Task<MotoboyTrackingIdentity> CreateSimulatorMotoboyAsync(Guid estabelecimentoId, string nome, string? telefone);
+        Task<Guid> StartMotoboySessionAsync(MotoboyTrackingIdentity identity, Guid estabelecimentoId, string deviceType);
         Task SetMotoboyStatusAsync(int motoboyId, int userId, Guid estabelecimentoId, int status);
         Task SetMotoboyStatusAsync(int motoboyId, Guid estabelecimentoId, int status);
         Task<MotoboyLocationState?> GetLocationStateAsync(int motoboyId);

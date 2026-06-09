@@ -4,10 +4,12 @@ using System.Linq;
 using System.Threading.Tasks;
 using APIBack.DTOs.Tracking;
 using APIBack.Hubs;
+using APIBack.Model.Auth;
 using APIBack.Model.Enum;
 using APIBack.Model.Tracking;
 using APIBack.Repository.Interface;
 using APIBack.Service.Interface;
+using Microsoft.Extensions.Configuration;
 using Microsoft.AspNetCore.SignalR;
 using Microsoft.Extensions.Logging;
 
@@ -18,15 +20,21 @@ namespace APIBack.Service
         private const double MaxAcceptedSpeedMps = 70;
         private readonly ITrackingRepository _repository;
         private readonly IHubContext<DeliveryHub> _hubContext;
+        private readonly IJwtService _jwtService;
+        private readonly IConfiguration _configuration;
         private readonly ILogger<TrackingService> _logger;
 
         public TrackingService(
             ITrackingRepository repository,
             IHubContext<DeliveryHub> hubContext,
+            IJwtService jwtService,
+            IConfiguration configuration,
             ILogger<TrackingService> logger)
         {
             _repository = repository;
             _hubContext = hubContext;
+            _jwtService = jwtService;
+            _configuration = configuration;
             _logger = logger;
         }
 
@@ -67,6 +75,46 @@ namespace APIBack.Service
                 Nome = identity.Nome,
                 Avatar = identity.Avatar,
                 Status = "offline"
+            };
+        }
+
+        public async Task<SimulatorMotoboySessionResponse> StartSimulatorSessionAsync(
+            Guid estabelecimentoId,
+            int motoboyId)
+        {
+            var identity = await ResolveMotoboyIdentityAsync(estabelecimentoId, motoboyId);
+            var sessionId = await _repository.StartMotoboySessionAsync(identity, estabelecimentoId, "simulator");
+            var userId = identity.UsuarioId ?? identity.MotoboyId;
+            var expirationMinutes = int.TryParse(_configuration["Jwt:ExpirationMinutes"], out var minutes)
+                ? minutes
+                : 60;
+
+            var payload = new JwtPayload
+            {
+                UserId = userId,
+                Nome = identity.Nome,
+                Email = $"motoboy-{identity.MotoboyId}@simulator.local",
+                IsSuperAdmin = false,
+                EstabelecimentoId = estabelecimentoId,
+                TipoAcesso = "motoboy",
+                MotoboySessionId = sessionId,
+                MotoboyId = identity.MotoboyId,
+                ClientType = "simulator",
+                Permissoes = new Dictionary<string, List<string>>()
+            };
+
+            return new SimulatorMotoboySessionResponse
+            {
+                AccessToken = _jwtService.GenerateToken(payload),
+                ExpiresIn = expirationMinutes * 60,
+                SessionId = sessionId,
+                Motoboy = new MotoboyMapDto
+                {
+                    Id = identity.MotoboyId,
+                    Nome = identity.Nome,
+                    Avatar = identity.Avatar,
+                    Status = ToStatusLabel(identity.Status)
+                }
             };
         }
 
@@ -489,6 +537,16 @@ namespace APIBack.Service
             }
 
             return (int)StatusMotoboy.Online;
+        }
+
+        private static string ToStatusLabel(int statusCode)
+        {
+            return statusCode switch
+            {
+                (int)StatusMotoboy.Online => "online",
+                (int)StatusMotoboy.Entregando => "delivering",
+                _ => "offline"
+            };
         }
 
         private static string ResolveQuality(MotoboyLocationRequest request)
