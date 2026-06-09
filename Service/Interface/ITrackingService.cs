@@ -8,8 +8,11 @@ namespace APIBack.Service.Interface
     public interface ITrackingService
     {
         Task<MotoboyStatusRealtimeDto> SetStatusAsync(int userId, Guid estabelecimentoId, MotoboyStatusRequest request);
+        Task<MotoboyStatusRealtimeDto> SetSimulatorStatusAsync(Guid estabelecimentoId, int motoboyId, MotoboyStatusRequest request);
         Task<MotoboyLocationResult> ReceiveLocationAsync(int userId, Guid estabelecimentoId, MotoboyLocationRequest request);
+        Task<MotoboyLocationResult> ReceiveSimulatorLocationAsync(Guid estabelecimentoId, int motoboyId, MotoboyLocationRequest request);
         Task<MotoboyLocationBatchResult> ReceiveLocationBatchAsync(int userId, Guid estabelecimentoId, MotoboyLocationBatchRequest request);
+        Task<MotoboyMapDto> CreateSimulatorMotoboyAsync(Guid estabelecimentoId, CreateSimulatorMotoboyRequest request);
         Task<DeliveryMapStateDto> GetMapStateAsync(Guid estabelecimentoId);
         Task<IReadOnlyCollection<MotoboyLocationHistoryPointDto>> GetLocationHistoryAsync(Guid estabelecimentoId, int motoboyId, DateOnly localDate);
     }

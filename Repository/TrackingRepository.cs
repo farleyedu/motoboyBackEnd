@@ -188,6 +188,56 @@ LIMIT 1;";
                 new { UserId = userId, EstabelecimentoId = estabelecimentoId });
         }
 
+        public async Task<MotoboyTrackingIdentity?> ResolveMotoboyByIdAsync(int motoboyId, Guid estabelecimentoId)
+        {
+            await EnsureSchemaAsync();
+
+            const string sql = @"
+SELECT
+    m.id AS MotoboyId,
+    m.id_usuario AS UsuarioId,
+    COALESCE(m.id_estabelecimento, @EstabelecimentoId) AS EstabelecimentoId,
+    COALESCE(m.nome, '') AS Nome,
+    m.avatar AS Avatar,
+    COALESCE(m.status, 2) AS Status
+FROM motoboy m
+WHERE m.id = @MotoboyId
+  AND (m.id_estabelecimento = @EstabelecimentoId OR m.id_estabelecimento IS NULL)
+LIMIT 1;";
+
+            await using var connection = new NpgsqlConnection(_connectionString);
+            return await connection.QueryFirstOrDefaultAsync<MotoboyTrackingIdentity>(
+                sql,
+                new { MotoboyId = motoboyId, EstabelecimentoId = estabelecimentoId });
+        }
+
+        public async Task<MotoboyTrackingIdentity> CreateSimulatorMotoboyAsync(
+            Guid estabelecimentoId,
+            string nome,
+            string? telefone)
+        {
+            await EnsureSchemaAsync();
+
+            const string sql = @"
+INSERT INTO motoboy (nome, telefone, status, id_estabelecimento)
+VALUES (@Nome, @Telefone, 2, @EstabelecimentoId)
+RETURNING
+    id AS MotoboyId,
+    id_usuario AS UsuarioId,
+    id_estabelecimento AS EstabelecimentoId,
+    COALESCE(nome, '') AS Nome,
+    avatar AS Avatar,
+    COALESCE(status, 2) AS Status;";
+
+            await using var connection = new NpgsqlConnection(_connectionString);
+            return await connection.QuerySingleAsync<MotoboyTrackingIdentity>(sql, new
+            {
+                Nome = string.IsNullOrWhiteSpace(nome) ? "Motoboy Simulado" : nome.Trim(),
+                Telefone = string.IsNullOrWhiteSpace(telefone) ? null : telefone.Trim(),
+                EstabelecimentoId = estabelecimentoId
+            });
+        }
+
         public async Task SetMotoboyStatusAsync(int motoboyId, int userId, Guid estabelecimentoId, int status)
         {
             await EnsureSchemaAsync();
@@ -204,6 +254,26 @@ UPDATE motoboy
             {
                 Status = status,
                 UserId = userId,
+                EstabelecimentoId = estabelecimentoId,
+                MotoboyId = motoboyId
+            });
+        }
+
+        public async Task SetMotoboyStatusAsync(int motoboyId, Guid estabelecimentoId, int status)
+        {
+            await EnsureSchemaAsync();
+
+            const string sql = @"
+UPDATE motoboy
+   SET status = @Status,
+       id_estabelecimento = COALESCE(id_estabelecimento, @EstabelecimentoId)
+ WHERE id = @MotoboyId
+   AND (id_estabelecimento = @EstabelecimentoId OR id_estabelecimento IS NULL);";
+
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.ExecuteAsync(sql, new
+            {
+                Status = status,
                 EstabelecimentoId = estabelecimentoId,
                 MotoboyId = motoboyId
             });

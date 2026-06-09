@@ -33,11 +33,54 @@ namespace APIBack.Service
         public async Task<MotoboyStatusRealtimeDto> SetStatusAsync(int userId, Guid estabelecimentoId, MotoboyStatusRequest request)
         {
             var identity = await ResolveIdentityAsync(userId, estabelecimentoId);
+            return await SetStatusForIdentityAsync(identity, estabelecimentoId, request, userId);
+        }
+
+        public async Task<MotoboyStatusRealtimeDto> SetSimulatorStatusAsync(
+            Guid estabelecimentoId,
+            int motoboyId,
+            MotoboyStatusRequest request)
+        {
+            var identity = await ResolveMotoboyIdentityAsync(estabelecimentoId, motoboyId);
+            return await SetStatusForIdentityAsync(identity, estabelecimentoId, request, null);
+        }
+
+        public async Task<MotoboyMapDto> CreateSimulatorMotoboyAsync(
+            Guid estabelecimentoId,
+            CreateSimulatorMotoboyRequest request)
+        {
+            var identity = await _repository.CreateSimulatorMotoboyAsync(
+                estabelecimentoId,
+                request.Nome,
+                request.Telefone);
+
+            return new MotoboyMapDto
+            {
+                Id = identity.MotoboyId,
+                Nome = identity.Nome,
+                Avatar = identity.Avatar,
+                Status = "offline"
+            };
+        }
+
+        private async Task<MotoboyStatusRealtimeDto> SetStatusForIdentityAsync(
+            MotoboyTrackingIdentity identity,
+            Guid estabelecimentoId,
+            MotoboyStatusRequest request,
+            int? userId)
+        {
             var normalizedStatus = NormalizeStatus(request.Status);
             var trackingMode = NormalizeTrackingMode(request.TrackingMode);
             var statusCode = ToStatusCode(normalizedStatus, trackingMode);
 
-            await _repository.SetMotoboyStatusAsync(identity.MotoboyId, userId, estabelecimentoId, statusCode);
+            if (userId.HasValue)
+            {
+                await _repository.SetMotoboyStatusAsync(identity.MotoboyId, userId.Value, estabelecimentoId, statusCode);
+            }
+            else
+            {
+                await _repository.SetMotoboyStatusAsync(identity.MotoboyId, estabelecimentoId, statusCode);
+            }
 
             var evt = new MotoboyStatusRealtimeDto
             {
@@ -55,6 +98,21 @@ namespace APIBack.Service
         public Task<MotoboyLocationResult> ReceiveLocationAsync(int userId, Guid estabelecimentoId, MotoboyLocationRequest request)
         {
             return ProcessLocationAsync(userId, estabelecimentoId, request, allowHistoricalStale: false);
+        }
+
+        public async Task<MotoboyLocationResult> ReceiveSimulatorLocationAsync(
+            Guid estabelecimentoId,
+            int motoboyId,
+            MotoboyLocationRequest request)
+        {
+            var validationError = ValidateLocationRequest(request);
+            if (validationError != null)
+            {
+                return Reject(validationError);
+            }
+
+            var identity = await ResolveMotoboyIdentityAsync(estabelecimentoId, motoboyId);
+            return await ProcessLocationForIdentityAsync(identity, estabelecimentoId, request, allowHistoricalStale: false);
         }
 
         public async Task<MotoboyLocationBatchResult> ReceiveLocationBatchAsync(
@@ -112,6 +170,15 @@ namespace APIBack.Service
             }
 
             var identity = await ResolveIdentityAsync(userId, estabelecimentoId);
+            return await ProcessLocationForIdentityAsync(identity, estabelecimentoId, request, allowHistoricalStale);
+        }
+
+        private async Task<MotoboyLocationResult> ProcessLocationForIdentityAsync(
+            MotoboyTrackingIdentity identity,
+            Guid estabelecimentoId,
+            MotoboyLocationRequest request,
+            bool allowHistoricalStale)
+        {
             var previousState = await _repository.GetLocationStateAsync(identity.MotoboyId);
             var trackingMode = NormalizeTrackingMode(request.TrackingMode);
             var clientTimestamp = (request.ClientTimestampUtc ?? DateTimeOffset.UtcNow).ToUniversalTime();
@@ -205,6 +272,17 @@ namespace APIBack.Service
             if (identity == null)
             {
                 throw new UnauthorizedAccessException("Usuario autenticado nao possui vinculo ativo com motoboy neste estabelecimento.");
+            }
+
+            return identity;
+        }
+
+        private async Task<MotoboyTrackingIdentity> ResolveMotoboyIdentityAsync(Guid estabelecimentoId, int motoboyId)
+        {
+            var identity = await _repository.ResolveMotoboyByIdAsync(motoboyId, estabelecimentoId);
+            if (identity == null)
+            {
+                throw new UnauthorizedAccessException("Motoboy nao encontrado ou nao vinculado ao estabelecimento ativo.");
             }
 
             return identity;
