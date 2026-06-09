@@ -54,6 +54,13 @@ namespace APIBack.Service
                 request.Nome,
                 request.Telefone);
 
+            await PublishAsync(DeliveryRealtimeEvents.DeliveryOrderUpdated, estabelecimentoId, new
+            {
+                MotoboyId = identity.MotoboyId,
+                EstabelecimentoId = estabelecimentoId,
+                UpdatedAtUtc = DateTimeOffset.UtcNow
+            });
+
             return new MotoboyMapDto
             {
                 Id = identity.MotoboyId,
