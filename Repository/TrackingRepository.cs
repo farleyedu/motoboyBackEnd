@@ -14,9 +14,6 @@ namespace APIBack.Repository
 {
     public class TrackingRepository : ITrackingRepository
     {
-        private static readonly SemaphoreSlim SchemaLock = new(1, 1);
-        private static bool _schemaEnsured;
-
         private readonly string _connectionString;
 
         public TrackingRepository(IConfiguration configuration)
@@ -25,102 +22,8 @@ namespace APIBack.Repository
                 ?? throw new InvalidOperationException("DefaultConnection nao configurada.");
         }
 
-        public async Task EnsureSchemaAsync()
-        {
-            if (_schemaEnsured)
-            {
-                return;
-            }
-
-            await SchemaLock.WaitAsync();
-            try
-            {
-                if (_schemaEnsured)
-                {
-                    return;
-                }
-
-                const string sql = @"
-ALTER TABLE IF EXISTS motoboy
-    ADD COLUMN IF NOT EXISTS id_usuario INTEGER,
-    ADD COLUMN IF NOT EXISTS id_estabelecimento UUID;
-
-ALTER TABLE IF EXISTS pedido
-    ADD COLUMN IF NOT EXISTS id_estabelecimento UUID;
-
-CREATE TABLE IF NOT EXISTS motoboy_location_state (
-    motoboy_id INTEGER PRIMARY KEY,
-    id_estabelecimento UUID NOT NULL,
-    latitude DOUBLE PRECISION NOT NULL,
-    longitude DOUBLE PRECISION NOT NULL,
-    accuracy_meters DOUBLE PRECISION NULL,
-    speed_mps DOUBLE PRECISION NULL,
-    heading_degrees DOUBLE PRECISION NULL,
-    tracking_mode TEXT NOT NULL DEFAULT 'online_idle',
-    quality TEXT NOT NULL DEFAULT 'unknown',
-    last_sequence BIGINT NULL,
-    client_timestamp_utc TIMESTAMPTZ NOT NULL,
-    server_received_at_utc TIMESTAMPTZ NOT NULL,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS motoboy_location_history_daily (
-    id BIGSERIAL PRIMARY KEY,
-    motoboy_id INTEGER NOT NULL,
-    id_estabelecimento UUID NOT NULL,
-    latitude DOUBLE PRECISION NOT NULL,
-    longitude DOUBLE PRECISION NOT NULL,
-    accuracy_meters DOUBLE PRECISION NULL,
-    speed_mps DOUBLE PRECISION NULL,
-    heading_degrees DOUBLE PRECISION NULL,
-    tracking_mode TEXT NOT NULL DEFAULT 'online_idle',
-    quality TEXT NOT NULL DEFAULT 'unknown',
-    client_timestamp_utc TIMESTAMPTZ NOT NULL,
-    server_received_at_utc TIMESTAMPTZ NOT NULL,
-    local_date DATE NOT NULL,
-    sequence BIGINT NULL
-);
-
-CREATE TABLE IF NOT EXISTS motoboy_active_sessions (
-    session_id UUID PRIMARY KEY,
-    motoboy_id INTEGER NOT NULL,
-    id_usuario INTEGER NULL,
-    id_estabelecimento UUID NOT NULL,
-    device_type TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    revoked_at TIMESTAMPTZ NULL,
-    revoke_reason TEXT NULL
-);
-
-CREATE INDEX IF NOT EXISTS ix_motoboy_location_state_estabelecimento
-    ON motoboy_location_state (id_estabelecimento);
-
-CREATE INDEX IF NOT EXISTS ix_motoboy_location_history_daily_lookup
-    ON motoboy_location_history_daily (id_estabelecimento, motoboy_id, local_date, client_timestamp_utc);
-
-CREATE INDEX IF NOT EXISTS ix_motoboy_id_usuario
-    ON motoboy (id_usuario);
-
-CREATE INDEX IF NOT EXISTS ix_motoboy_id_estabelecimento
-    ON motoboy (id_estabelecimento);
-
-CREATE INDEX IF NOT EXISTS ix_pedido_id_estabelecimento
-    ON pedido (id_estabelecimento);
-
-CREATE INDEX IF NOT EXISTS ix_motoboy_active_sessions_motoboy
-    ON motoboy_active_sessions (motoboy_id, revoked_at);
-";
-
-                await using var connection = new NpgsqlConnection(_connectionString);
-                await connection.ExecuteAsync(sql);
-                _schemaEnsured = true;
-            }
-            finally
-            {
-                SchemaLock.Release();
-            }
-        }
+        // Schema de delivery e aplicado exclusivamente pelas migrations versionadas.
+        public Task EnsureSchemaAsync() => Task.CompletedTask;
 
         public async Task<MotoboyTrackingIdentity?> ResolveMotoboyForUserAsync(int userId, Guid estabelecimentoId)
         {
@@ -258,34 +161,9 @@ RETURNING
             Guid estabelecimentoId,
             string deviceType)
         {
-            await EnsureSchemaAsync();
-
-            var sessionId = Guid.NewGuid();
-
-            const string sql = @"
-UPDATE motoboy_active_sessions
-   SET revoked_at = NOW(),
-       revoke_reason = 'replaced'
- WHERE motoboy_id = @MotoboyId
-   AND revoked_at IS NULL;
-
-INSERT INTO motoboy_active_sessions (
-    session_id, motoboy_id, id_usuario, id_estabelecimento, device_type, created_at, last_seen_at
-) VALUES (
-    @SessionId, @MotoboyId, @UsuarioId, @EstabelecimentoId, @DeviceType, NOW(), NOW()
-);";
-
-            await using var connection = new NpgsqlConnection(_connectionString);
-            await connection.ExecuteAsync(sql, new
-            {
-                SessionId = sessionId,
-                identity.MotoboyId,
-                identity.UsuarioId,
-                EstabelecimentoId = estabelecimentoId,
-                DeviceType = string.IsNullOrWhiteSpace(deviceType) ? "mobile" : deviceType.Trim().ToLowerInvariant()
-            });
-
-            return sessionId;
+            await Task.CompletedTask;
+            throw new NotSupportedException(
+                "Inicio de sessao legado desabilitado. Use o contrato operacional /api/v2.");
         }
 
         public async Task SetMotoboyStatusAsync(int motoboyId, int userId, Guid estabelecimentoId, int status)
@@ -552,8 +430,7 @@ SELECT
     p.horario_saida AS HorarioSaida,
     p.horario_entrega AS HorarioEntrega
 FROM pedido p
-WHERE p.id_estabelecimento = @EstabelecimentoId
-   OR p.id_estabelecimento IS NULL
+ WHERE p.id_estabelecimento = @EstabelecimentoId
 ORDER BY p.data_pedido DESC NULLS LAST, p.id DESC;";
 
             await using var connection = new NpgsqlConnection(_connectionString);

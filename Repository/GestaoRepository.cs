@@ -806,6 +806,16 @@ UPDATE usuario_empresas
    AND COALESCE(ativo, TRUE) = TRUE;", new { UserId = userId }, transaction);
 
                 await connection.ExecuteAsync(@"
+UPDATE motoboy_estabelecimento me
+   SET ativo = FALSE,
+       disabled_at_utc = NOW(),
+       updated_at_utc = NOW()
+  FROM motoboy alias
+ WHERE alias.id_usuario = @UserId
+   AND me.motoboy_id = alias.canonical_motoboy_id
+   AND me.ativo = TRUE;", new { UserId = userId }, transaction);
+
+                await connection.ExecuteAsync(@"
 UPDATE usuario_estabelecimentos
    SET ativo = FALSE,
        status = 'removido',
@@ -913,38 +923,51 @@ SET tipo_acesso              = EXCLUDED.tipo_acesso,
                 return;
             }
 
-            await EnsureMotoboySchemaAsync(connection, transaction);
+            var normalizedName = string.IsNullOrWhiteSpace(nome) ? "Motoboy" : nome.Trim();
+            var motoboyId = await connection.ExecuteScalarAsync<int?>(@"
+SELECT canonical_motoboy_id
+  FROM motoboy
+ WHERE id_usuario = @UserId
+ ORDER BY CASE WHEN canonical_motoboy_id = id THEN 0 ELSE 1 END, id
+ LIMIT 1
+ FOR UPDATE;", new { UserId = userId }, transaction);
 
-            const string sql = @"
-WITH updated AS (
-    UPDATE motoboy
-       SET nome = @Nome,
-           id_usuario = @UserId,
-           id_estabelecimento = @EstabelecimentoId
-     WHERE (id_usuario = @UserId AND (id_estabelecimento = @EstabelecimentoId OR id_estabelecimento IS NULL))
-        OR (id_usuario IS NULL AND LOWER(COALESCE(nome, '')) = LOWER(@Nome) AND (id_estabelecimento = @EstabelecimentoId OR id_estabelecimento IS NULL))
- RETURNING id
-)
-INSERT INTO motoboy (nome, status, id_usuario, id_estabelecimento)
-SELECT @Nome, 2, @UserId, @EstabelecimentoId
-WHERE NOT EXISTS (SELECT 1 FROM updated);";
-
-            await connection.ExecuteAsync(sql, new
+            if (!motoboyId.HasValue)
             {
-                Nome = string.IsNullOrWhiteSpace(nome) ? "Motoboy" : nome.Trim(),
+                motoboyId = await connection.ExecuteScalarAsync<int>(@"
+INSERT INTO motoboy (nome, status, id_usuario, id_estabelecimento, is_simulated)
+VALUES (@Nome, 2, @UserId, @EstabelecimentoId, FALSE)
+RETURNING id;", new
+                {
+                    Nome = normalizedName,
+                    UserId = userId,
+                    EstabelecimentoId = estabelecimentoId
+                }, transaction);
+            }
+
+            await connection.ExecuteAsync(@"
+UPDATE motoboy
+   SET canonical_motoboy_id = id,
+       nome = @Nome,
+       id_estabelecimento = COALESCE(id_estabelecimento, @EstabelecimentoId),
+       is_simulated = FALSE
+ WHERE id = @MotoboyId;
+
+INSERT INTO motoboy_estabelecimento (
+    motoboy_id, estabelecimento_id, ativo, simulator_enabled,
+    created_at_utc, updated_at_utc, disabled_at_utc)
+VALUES (@MotoboyId, @EstabelecimentoId, TRUE, FALSE, NOW(), NOW(), NULL)
+ON CONFLICT (motoboy_id, estabelecimento_id) DO UPDATE
+   SET ativo = TRUE,
+       simulator_enabled = FALSE,
+       updated_at_utc = NOW(),
+       disabled_at_utc = NULL;", new
+            {
+                MotoboyId = motoboyId.Value,
+                Nome = normalizedName,
                 UserId = userId,
                 EstabelecimentoId = estabelecimentoId
             }, transaction);
-        }
-
-        private static Task EnsureMotoboySchemaAsync(NpgsqlConnection connection, NpgsqlTransaction transaction)
-        {
-            const string sql = @"
-ALTER TABLE IF EXISTS motoboy
-    ADD COLUMN IF NOT EXISTS id_usuario INTEGER,
-    ADD COLUMN IF NOT EXISTS id_estabelecimento UUID;";
-
-            return connection.ExecuteAsync(sql, transaction: transaction);
         }
 
         public async Task AtualizarStatusUsuarioAsync(int userId, bool ativo)
@@ -953,7 +976,17 @@ ALTER TABLE IF EXISTS motoboy
 UPDATE usuario
    SET deleted_at = CASE WHEN @Ativo THEN NULL ELSE NOW() END,
        updated_at = NOW()
- WHERE id = @UserId;";
+ WHERE id = @UserId;
+
+UPDATE motoboy_estabelecimento me
+   SET ativo = FALSE,
+       disabled_at_utc = NOW(),
+       updated_at_utc = NOW()
+  FROM motoboy alias
+ WHERE @Ativo = FALSE
+   AND alias.id_usuario = @UserId
+   AND me.motoboy_id = alias.canonical_motoboy_id
+   AND me.ativo = TRUE;";
 
             await using var connection = new NpgsqlConnection(_connectionString);
             await connection.ExecuteAsync(sql, new { UserId = userId, Ativo = ativo });
@@ -988,6 +1021,16 @@ UPDATE usuario_estabelecimentos
        updated_at = NOW()
  WHERE id_usuario = @UserId
    AND COALESCE(ativo, TRUE) = TRUE;", new { UserId = userId }, transaction);
+
+            await connection.ExecuteAsync(@"
+UPDATE motoboy_estabelecimento me
+   SET ativo = FALSE,
+       disabled_at_utc = NOW(),
+       updated_at_utc = NOW()
+  FROM motoboy alias
+ WHERE alias.id_usuario = @UserId
+   AND me.motoboy_id = alias.canonical_motoboy_id
+   AND me.ativo = TRUE;", new { UserId = userId }, transaction);
 
             await transaction.CommitAsync();
         }

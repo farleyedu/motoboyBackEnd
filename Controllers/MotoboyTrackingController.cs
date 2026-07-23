@@ -22,60 +22,28 @@ namespace APIBack.Controllers
         [HttpPost("status")]
         public async Task<IActionResult> SetStatus([FromBody] MotoboyStatusRequest request)
         {
-            if (!TryResolveActor(out var userId, out var estabelecimentoId, out var error))
-            {
-                return error!;
-            }
-
-            try
-            {
-                var result = await _trackingService.SetStatusAsync(userId, estabelecimentoId, request);
-                return Ok(ApiResponse<MotoboyStatusRealtimeDto>.Ok(result));
-            }
-            catch (UnauthorizedAccessException ex)
-            {
-                return StatusCode(403, ApiResponse<object>.Fail(ex.Message));
-            }
+            await Task.CompletedTask;
+            return StatusCode(410, ApiResponse<object>.Fail(
+                "Endpoint legado desativado. Inicie uma sessao operacional em /api/v2/motoboys/me/session/start.",
+                "LEGACY_TRACKING_ENDPOINT_DISABLED"));
         }
 
         [HttpPost("location")]
         public async Task<IActionResult> SendLocation([FromBody] MotoboyLocationRequest request)
         {
-            if (!TryResolveActor(out var userId, out var estabelecimentoId, out var error))
-            {
-                return error!;
-            }
-
-            try
-            {
-                var payload = HttpContext.GetJwtPayload();
-                var allowSimulatorJump = string.Equals(payload.ClientType, "simulator", StringComparison.OrdinalIgnoreCase);
-                var result = await _trackingService.ReceiveLocationAsync(userId, estabelecimentoId, request, allowSimulatorJump);
-                return Ok(ApiResponse<MotoboyLocationResult>.Ok(result));
-            }
-            catch (UnauthorizedAccessException ex)
-            {
-                return StatusCode(403, ApiResponse<object>.Fail(ex.Message));
-            }
+            await Task.CompletedTask;
+            return StatusCode(410, ApiResponse<object>.Fail(
+                "Endpoint legado desativado. Use /api/v2/motoboys/me/session/location.",
+                "LEGACY_TRACKING_ENDPOINT_DISABLED"));
         }
 
         [HttpPost("location/batch")]
         public async Task<IActionResult> SendLocationBatch([FromBody] MotoboyLocationBatchRequest request)
         {
-            if (!TryResolveActor(out var userId, out var estabelecimentoId, out var error))
-            {
-                return error!;
-            }
-
-            try
-            {
-                var result = await _trackingService.ReceiveLocationBatchAsync(userId, estabelecimentoId, request);
-                return Ok(ApiResponse<MotoboyLocationBatchResult>.Ok(result));
-            }
-            catch (UnauthorizedAccessException ex)
-            {
-                return StatusCode(403, ApiResponse<object>.Fail(ex.Message));
-            }
+            await Task.CompletedTask;
+            return StatusCode(410, ApiResponse<object>.Fail(
+                "Endpoint legado desativado. Envie amostras sequenciadas pelo contrato /api/v2.",
+                "LEGACY_TRACKING_ENDPOINT_DISABLED"));
         }
 
         private bool TryResolveActor(out int userId, out Guid estabelecimentoId, out IActionResult? error)

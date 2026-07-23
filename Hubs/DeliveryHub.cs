@@ -13,6 +13,7 @@ namespace APIBack.Hubs
         public const string DeliveryRouteAssigned = "delivery.route.assigned";
 
         public static string EstablishmentGroup(Guid estabelecimentoId) => $"establishment:{estabelecimentoId:N}";
+        public static string SessionGroup(Guid sessionId) => $"delivery-session:{sessionId:N}";
     }
 
     public class DeliveryHub : Hub
@@ -26,6 +27,17 @@ namespace APIBack.Hubs
             if (!userId.HasValue || !estabelecimentoId.HasValue || estabelecimentoId.Value == Guid.Empty)
             {
                 Context.Abort();
+                return;
+            }
+
+            var payload = httpContext!.GetJwtPayload();
+            if (string.Equals(payload.TokenUse, "delivery_operational", StringComparison.Ordinal) &&
+                payload.MotoboySessionId.HasValue)
+            {
+                await Groups.AddToGroupAsync(
+                    Context.ConnectionId,
+                    DeliveryRealtimeEvents.SessionGroup(payload.MotoboySessionId.Value));
+                await base.OnConnectedAsync();
                 return;
             }
 

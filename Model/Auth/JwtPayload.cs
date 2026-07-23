@@ -23,6 +23,9 @@ namespace APIBack.Model.Auth
         public Guid? MotoboySessionId { get; set; }
         public int? MotoboyId { get; set; }
         public string? ClientType { get; set; }
+        public string TokenUse { get; set; } = "identity";
+        public long? SessionEpoch { get; set; }
+        public string? Scope { get; set; }
         public DateTime ExpiresAt { get; set; }
         public DateTime IssuedAt { get; set; }
     }

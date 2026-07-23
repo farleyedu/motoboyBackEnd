@@ -24,4 +24,8 @@
     <!-- ================= ZIPPYGO AUTOMATION SECTION (END) =================== -->
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="Migrations\Delivery\*.sql" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

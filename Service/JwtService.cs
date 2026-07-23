@@ -28,6 +28,13 @@ namespace APIBack.Service
 
             _secretKey = jwtSection["SecretKey"]
                          ?? throw new InvalidOperationException("Jwt:SecretKey n\u00e3o configurado.");
+            if (string.IsNullOrWhiteSpace(_secretKey) ||
+                _secretKey.StartsWith("__SET_IN_ENV", StringComparison.Ordinal) ||
+                _secretKey.Length < 32)
+            {
+                throw new InvalidOperationException(
+                    "Jwt:SecretKey deve ser fornecido por variavel de ambiente e possuir ao menos 32 caracteres.");
+            }
             _issuer = jwtSection["Issuer"] ?? "ZippyGo";
             _audience = jwtSection["Audience"] ?? "ZippyGoAPI";
             _expirationMinutes = int.TryParse(jwtSection["ExpirationMinutes"], out var minutes)
@@ -40,8 +47,16 @@ namespace APIBack.Service
 
         public string GenerateToken(JwtPayload payload)
         {
+            return GenerateToken(payload, TimeSpan.FromMinutes(_expirationMinutes));
+        }
+
+        public string GenerateToken(JwtPayload payload, TimeSpan lifetime)
+        {
+            if (payload == null) throw new ArgumentNullException(nameof(payload));
+            if (lifetime <= TimeSpan.Zero) throw new ArgumentOutOfRangeException(nameof(lifetime));
+
             var now = DateTime.UtcNow;
-            var expires = now.AddMinutes(_expirationMinutes);
+            var expires = now.Add(lifetime);
 
             payload.IssuedAt = now;
             payload.ExpiresAt = expires;
@@ -217,6 +232,18 @@ namespace APIBack.Service
                 claims.Add(new Claim("client_type", payload.ClientType));
             }
 
+            claims.Add(new Claim("token_use", string.IsNullOrWhiteSpace(payload.TokenUse) ? "identity" : payload.TokenUse));
+
+            if (payload.SessionEpoch.HasValue)
+            {
+                claims.Add(new Claim("session_epoch", payload.SessionEpoch.Value.ToString()));
+            }
+
+            if (!string.IsNullOrWhiteSpace(payload.Scope))
+            {
+                claims.Add(new Claim("scope", payload.Scope));
+            }
+
             claims.Add(new Claim("exp_at", payload.ExpiresAt.ToUniversalTime().ToString("O")));
             claims.Add(new Claim("iat_at", payload.IssuedAt.ToUniversalTime().ToString("O")));
 
@@ -317,6 +344,18 @@ namespace APIBack.Service
                         break;
                     case "client_type":
                         payload.ClientType = claim.Value;
+                        break;
+                    case "token_use":
+                        payload.TokenUse = string.IsNullOrWhiteSpace(claim.Value) ? "identity" : claim.Value;
+                        break;
+                    case "session_epoch":
+                        if (long.TryParse(claim.Value, out var sessionEpoch))
+                        {
+                            payload.SessionEpoch = sessionEpoch;
+                        }
+                        break;
+                    case "scope":
+                        payload.Scope = claim.Value;
                         break;
                     case "exp_at":
                         if (DateTime.TryParse(claim.Value, null, System.Globalization.DateTimeStyles.RoundtripKind, out var expAt))

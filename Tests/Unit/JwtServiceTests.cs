@@ -55,5 +55,32 @@ namespace APIBack.Tests.Unit
             Assert.Contains("WhatsApp", validated.EstabelecimentoModulosAtivos);
             Assert.Contains("Nautica", validated.EstabelecimentoModulosAtivos);
         }
+
+        [Fact]
+        public void OperationalToken_DevePreservarSessaoEpocaETipo()
+        {
+            var sessionId = Guid.NewGuid();
+            var payload = new JwtPayload
+            {
+                UserId = 7,
+                MotoboyId = 91,
+                MotoboySessionId = sessionId,
+                SessionEpoch = 12,
+                EstabelecimentoId = Guid.NewGuid(),
+                TokenUse = "delivery_operational",
+                Scope = "delivery:tracking",
+                ClientType = "simulator"
+            };
+
+            var token = _service.GenerateToken(payload, TimeSpan.FromMinutes(5));
+            var validated = _service.ValidateToken(token);
+
+            Assert.Equal("delivery_operational", validated.TokenUse);
+            Assert.Equal(sessionId, validated.MotoboySessionId);
+            Assert.Equal(91, validated.MotoboyId);
+            Assert.Equal(12, validated.SessionEpoch);
+            Assert.Equal("delivery:tracking", validated.Scope);
+            Assert.Equal("simulator", validated.ClientType);
+        }
     }
 }

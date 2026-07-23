@@ -13,6 +13,7 @@ using APIBack.DTOs.Auth;
 using APIBack.Model.Auth;
 using APIBack.Model.Gestao;
 using APIBack.Options;
+using APIBack.Repository.Interface;
 using APIBack.Security;
 using APIBack.Service.Interface;
 using Dapper;
@@ -35,6 +36,8 @@ namespace APIBack.Service
         private readonly GoogleOAuthOptions _googleOAuthOptions;
         private readonly TimeSpan _oauthStateLifetime;
         private readonly ILogger<AuthService> _logger;
+        private readonly IOperationalSessionRepository _operationalSessionRepository;
+        private readonly bool _deliveryTrackingEnabled;
         private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
         private const string GoogleProvider = "google";
         private const string GoogleAuthEndpoint = "https://accounts.google.com/o/oauth2/v2/auth";
@@ -50,7 +53,9 @@ namespace APIBack.Service
             IHttpClientFactory httpClientFactory,
             IMemoryCache memoryCache,
             IOptions<GoogleOAuthOptions> googleOAuthOptions,
-            ILogger<AuthService> logger)
+            IOptions<DeliveryTrackingOptions> deliveryTrackingOptions,
+            ILogger<AuthService> logger,
+            IOperationalSessionRepository operationalSessionRepository)
         {
             _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
             _jwtService = jwtService ?? throw new ArgumentNullException(nameof(jwtService));
@@ -66,6 +71,9 @@ namespace APIBack.Service
             var ttlMinutes = _googleOAuthOptions.StateTtlMinutes <= 0 ? 5 : _googleOAuthOptions.StateTtlMinutes;
             _oauthStateLifetime = TimeSpan.FromMinutes(ttlMinutes);
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _operationalSessionRepository = operationalSessionRepository
+                ?? throw new ArgumentNullException(nameof(operationalSessionRepository));
+            _deliveryTrackingEnabled = deliveryTrackingOptions?.Value?.Enabled == true;
             _connectionString = configuration.GetConnectionString("DefaultConnection")
                                ?? configuration["ConnectionStrings:DefaultConnection"]
                                ?? throw new InvalidOperationException("Connection string 'DefaultConnection' n\u00e3o encontrada.");
@@ -111,15 +119,7 @@ SELECT id,
 
             // Super admin sem estabelecimento: token básico sem contexto de estabelecimento
             var estabelecimentoId = await ResolverEstabelecimentoParaTokenAsync(connection, usuario);
-            var isMotoboyLogin = estabelecimentoId.HasValue &&
-                                  await IsMotoboyAccessAsync(connection, usuario.Id, estabelecimentoId.Value);
-
             var response = await BuildTokenResponseAsync(connection, usuario, estabelecimentoId);
-            if (isMotoboyLogin)
-            {
-                await RevokeAllRefreshTokensAsync(connection, usuario.Id, null, "single_motoboy_session_login");
-            }
-
             await PersistRefreshTokenAsync(connection, usuario.Id, response.RefreshToken, null, null);
             return response;
         }
@@ -201,6 +201,10 @@ SELECT id,
             if (request.LogoutFromAllDevices || string.IsNullOrWhiteSpace(request.RefreshToken))
             {
                 await RevokeAllRefreshTokensAsync(connection, userId, ipAddress, "logout");
+                if (_deliveryTrackingEnabled)
+                {
+                    await _operationalSessionRepository.EndActiveMobileSessionsForUserAsync(userId, "logout");
+                }
                 return;
             }
 
@@ -213,6 +217,10 @@ SELECT id,
             }
 
             await RevokeRefreshTokenAsync(connection, token.Id, ipAddress, null, "logout");
+            if (_deliveryTrackingEnabled)
+            {
+                await _operationalSessionRepository.EndActiveMobileSessionsForUserAsync(userId, "logout");
+            }
         }
 
         public Task<OAuthAuthorizationResponse> IniciarLoginGoogleAsync(string? redirectUri)
@@ -929,19 +937,6 @@ SELECT ue.id_estabelecimento
                     Permissoes = permissoes
                 };
 
-                if (string.Equals(contexto.TipoAcesso, "motoboy", StringComparison.OrdinalIgnoreCase))
-                {
-                    var motoboySession = await StartMotoboySessionForLoginAsync(
-                        connection,
-                        usuario.Id,
-                        contexto.EstabelecimentoId,
-                        usuario.Nome ?? usuario.Email ?? "Motoboy");
-
-                    payload.MotoboySessionId = motoboySession.SessionId;
-                    payload.MotoboyId = motoboySession.MotoboyId;
-                    payload.ClientType = "mobile";
-                }
-
                 var tipoAcessoTela = RoleCatalog.ResolveScreenRole(
                     contexto.TipoAcessoEmpresa,
                     contexto.TipoAcesso,
@@ -998,118 +993,6 @@ SELECT ue.id_estabelecimento
                     EstabelecimentoAtual = estabelecimentoInfo
                 }
             };
-        }
-
-        private static async Task<bool> IsMotoboyAccessAsync(
-            NpgsqlConnection connection,
-            int userId,
-            Guid estabelecimentoId)
-        {
-            const string sql = @"
-SELECT EXISTS (
-    SELECT 1
-      FROM usuario_estabelecimentos ue
-     WHERE ue.id_usuario = @UserId
-       AND ue.id_estabelecimento = @EstabelecimentoId
-       AND LOWER(COALESCE(ue.tipo_acesso, '')) = 'motoboy'
-       AND COALESCE(ue.ativo, TRUE) = TRUE
-       AND LOWER(COALESCE(ue.status, 'ativo')) = 'ativo'
-);";
-
-            try
-            {
-                return await connection.ExecuteScalarAsync<bool>(sql, new
-                {
-                    UserId = userId,
-                    EstabelecimentoId = estabelecimentoId
-                });
-            }
-            catch
-            {
-                return false;
-            }
-        }
-
-        private static async Task<(Guid SessionId, int MotoboyId)> StartMotoboySessionForLoginAsync(
-            NpgsqlConnection connection,
-            int userId,
-            Guid estabelecimentoId,
-            string nome)
-        {
-            await connection.ExecuteAsync(@"
-ALTER TABLE IF EXISTS motoboy
-    ADD COLUMN IF NOT EXISTS id_usuario INTEGER,
-    ADD COLUMN IF NOT EXISTS id_estabelecimento UUID;
-
-CREATE TABLE IF NOT EXISTS motoboy_active_sessions (
-    session_id UUID PRIMARY KEY,
-    motoboy_id INTEGER NOT NULL,
-    id_usuario INTEGER NULL,
-    id_estabelecimento UUID NOT NULL,
-    device_type TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    revoked_at TIMESTAMPTZ NULL,
-    revoke_reason TEXT NULL
-);
-
-CREATE INDEX IF NOT EXISTS ix_motoboy_active_sessions_motoboy
-    ON motoboy_active_sessions (motoboy_id, revoked_at);");
-
-            var motoboyId = await connection.ExecuteScalarAsync<int>(@"
-WITH user_access AS (
-    SELECT @UserId::INTEGER AS usuario_id, COALESCE(NULLIF(TRIM(@Nome), ''), 'Motoboy') AS nome
-),
-updated AS (
-    UPDATE motoboy m
-       SET nome = user_access.nome,
-           id_usuario = @UserId,
-           id_estabelecimento = @EstabelecimentoId
-      FROM user_access
-     WHERE (m.id_usuario = @UserId AND (m.id_estabelecimento = @EstabelecimentoId OR m.id_estabelecimento IS NULL))
-        OR (m.id_usuario IS NULL AND LOWER(COALESCE(m.nome, '')) = LOWER(user_access.nome) AND (m.id_estabelecimento = @EstabelecimentoId OR m.id_estabelecimento IS NULL))
- RETURNING m.id
-),
-inserted AS (
-    INSERT INTO motoboy (nome, status, id_usuario, id_estabelecimento)
-    SELECT nome, 2, @UserId, @EstabelecimentoId
-      FROM user_access
-     WHERE NOT EXISTS (SELECT 1 FROM updated)
- RETURNING id
-)
-SELECT id FROM updated
-UNION ALL
-SELECT id FROM inserted
-LIMIT 1;",
-                new
-                {
-                    UserId = userId,
-                    EstabelecimentoId = estabelecimentoId,
-                    Nome = nome
-                });
-
-            var sessionId = Guid.NewGuid();
-            await connection.ExecuteAsync(@"
-UPDATE motoboy_active_sessions
-   SET revoked_at = NOW(),
-       revoke_reason = 'replaced'
- WHERE motoboy_id = @MotoboyId
-   AND revoked_at IS NULL;
-
-INSERT INTO motoboy_active_sessions (
-    session_id, motoboy_id, id_usuario, id_estabelecimento, device_type, created_at, last_seen_at
-) VALUES (
-    @SessionId, @MotoboyId, @UserId, @EstabelecimentoId, 'mobile', NOW(), NOW()
-);",
-                new
-                {
-                    SessionId = sessionId,
-                    MotoboyId = motoboyId,
-                    UserId = userId,
-                    EstabelecimentoId = estabelecimentoId
-                });
-
-            return (sessionId, motoboyId);
         }
 
         private async Task<EstabelecimentoContextoDb> ObterContextoEstabelecimentoAsync(

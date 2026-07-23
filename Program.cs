@@ -25,6 +25,9 @@ using System.Net;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using APIBack.Hubs;
+using APIBack.Services;
+using System.Threading.RateLimiting;
+using Microsoft.AspNetCore.RateLimiting;
 // ================= ADIÇÕES NECESSÁRIAS (BEGIN) ========================
 using Npgsql;
 using APIBack.Model; // Namespace onde seu enum ReservaStatus está
@@ -104,12 +107,14 @@ builder.Services.AddScoped<IAgendaDisponibilidadeRepository, AgendaDisponibilida
 builder.Services.AddScoped<IPedidoService, PedidoService>();
 builder.Services.AddScoped<IMotoboyRepository, MotoboyRepository>();
 builder.Services.AddScoped<ITrackingRepository, TrackingRepository>();
+builder.Services.AddScoped<IOperationalSessionRepository, OperationalSessionRepository>();
 builder.Services.AddScoped<IReservaRepository, ReservaRepository>();
 builder.Services.AddScoped<IReservasRepository, ReservasRepository>();
 builder.Services.AddScoped<IOficinaAgendamentoRepository, OficinaAgendamentoRepository>();
 builder.Services.AddScoped<IMotoboyService, MotoboyService>();
 builder.Services.AddScoped<ILocalizacaoService, LocalizacaoService>();
 builder.Services.AddScoped<ITrackingService, TrackingService>();
+builder.Services.AddScoped<IOperationalSessionService, OperationalSessionService>();
 builder.Services.AddScoped<IReservasService, ReservasService>();
 builder.Services.AddScoped<IOficinaAgendamentoService, OficinaAgendamentoService>();
 builder.Services.AddScoped<IEstabelecimentoFaqService, EstabelecimentoFaqService>();
@@ -123,6 +128,45 @@ builder.Services.AddScoped<IAgendaDisponibilidadeService, AgendaDisponibilidadeS
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddSingleton<IJwtService, JwtService>();
 builder.Services.Configure<GoogleOAuthOptions>(builder.Configuration.GetSection("GoogleOAuth"));
+builder.Services.Configure<DeliveryTrackingOptions>(builder.Configuration.GetSection(DeliveryTrackingOptions.SectionName));
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = async (context, cancellationToken) =>
+    {
+        context.HttpContext.Response.ContentType = "application/json";
+        var body = APIBack.DTOs.Common.ApiResponse<object>.Fail(
+            "Muitas requisicoes em pouco tempo. Aguarde e tente novamente.",
+            "RATE_LIMITED");
+        await context.HttpContext.Response.WriteAsync(
+            System.Text.Json.JsonSerializer.Serialize(body),
+            cancellationToken);
+    };
+    options.AddPolicy("delivery-location", httpContext =>
+    {
+        var payload = httpContext.Items.TryGetValue("JwtPayload", out var rawPayload)
+            ? rawPayload as APIBack.Model.Auth.JwtPayload
+            : null;
+        var partitionKey = payload?.MotoboySessionId?.ToString("N")
+            ?? httpContext.Connection.RemoteIpAddress?.ToString()
+            ?? "anonymous";
+
+        return RateLimitPartition.GetTokenBucketLimiter(
+            partitionKey,
+            _ => new TokenBucketRateLimiterOptions
+            {
+                TokenLimit = 10,
+                TokensPerPeriod = 10,
+                ReplenishmentPeriod = TimeSpan.FromSeconds(1),
+                AutoReplenishment = true,
+                QueueLimit = 0,
+                QueueProcessingOrder = QueueProcessingOrder.OldestFirst
+            });
+    });
+});
+builder.Services.AddHostedService<DeliveryMigrationHostedService>();
+builder.Services.AddHostedService<DeliveryTrackingMaintenanceWorker>();
+builder.Services.AddHostedService<DeliveryOutboxPublisher>();
 builder.Services.Configure<AsaasCheckoutOptions>(builder.Configuration.GetSection("Payments:Asaas"));
 
 
@@ -279,10 +323,12 @@ if (app.Environment.IsDevelopment() || app.Environment.IsProduction())
 // Do not force HTTPS redirection; webhook expects HTTP on port 7137
 
 // Usar o middleware de CORS
+app.UseRouting();
 app.UseCors("AllowAll");
 app.UseStaticFiles();
 
 app.UseMiddleware<JwtAuthenticationMiddleware>();
+app.UseRateLimiter();
 app.UseAuthorization();
 
 app.MapControllers();

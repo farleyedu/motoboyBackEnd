@@ -50,7 +50,8 @@ namespace APIBack.Attributes
                 context.Result = new JsonResult(new
                 {
                     success = false,
-                    error = "Não autorizado."
+                    error = "Não autorizado.",
+                    code = "UNAUTHENTICATED"
                 })
                 {
                     StatusCode = StatusCodes.Status401Unauthorized
@@ -81,7 +82,8 @@ namespace APIBack.Attributes
             context.Result = new JsonResult(new
             {
                 success = false,
-                error = "Acesso negado."
+                error = "Acesso negado.",
+                code = "PERMISSION_DENIED"
             })
             {
                 StatusCode = StatusCodes.Status403Forbidden

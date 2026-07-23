@@ -5,7 +5,10 @@ using APIBack.DTOs.Common;
 using APIBack.DTOs.Tracking;
 using APIBack.Extensions;
 using APIBack.Service.Interface;
+using APIBack.Options;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
+using System.Linq;
 
 namespace APIBack.Controllers
 {
@@ -14,10 +17,17 @@ namespace APIBack.Controllers
     public class DeliveryTrackingController : ControllerBase
     {
         private readonly ITrackingService _trackingService;
+        private readonly IOperationalSessionService _operationalSessionService;
+        private readonly DeliveryTrackingOptions _options;
 
-        public DeliveryTrackingController(ITrackingService trackingService)
+        public DeliveryTrackingController(
+            ITrackingService trackingService,
+            IOperationalSessionService operationalSessionService,
+            IOptions<DeliveryTrackingOptions> options)
         {
             _trackingService = trackingService;
+            _operationalSessionService = operationalSessionService;
+            _options = options.Value;
         }
 
         [HttpGet("map-state")]
@@ -31,6 +41,27 @@ namespace APIBack.Controllers
             }
 
             var result = await _trackingService.GetMapStateAsync(estabelecimentoId.Value);
+            if (_options.Enabled)
+            {
+                var snapshot = await _operationalSessionService.GetSnapshotAsync(estabelecimentoId.Value);
+                result.ServerTimeUtc = snapshot.ServerTimeUtc;
+                result.Motoboys = snapshot.Motoboys.Select(m => new MotoboyMapDto
+                {
+                    Id = m.MotoboyId,
+                    Nome = m.Nome,
+                    Avatar = m.Avatar,
+                    Status = m.Status,
+                    Latitude = m.Location?.Latitude,
+                    Longitude = m.Location?.Longitude,
+                    AccuracyMeters = m.Location?.AccuracyMeters,
+                    SpeedMps = m.Location?.SpeedMps,
+                    HeadingDegrees = m.Location?.HeadingDegrees,
+                    TrackingMode = m.Location?.TrackingMode ?? "online_idle",
+                    Quality = m.Location?.Quality ?? "unknown",
+                    ClientTimestampUtc = m.Location?.CapturedAtUtc,
+                    ServerReceivedAtUtc = m.Location?.ReceivedAtUtc
+                }).ToList();
+            }
             return Ok(ApiResponse<DeliveryMapStateDto>.Ok(result));
         }
 

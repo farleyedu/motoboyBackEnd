@@ -54,8 +54,16 @@ namespace APIBack.Middleware
             {
                 var payload = jwtService.ValidateToken(token);
 
-                if (!await IsPayloadStillAllowedAsync(payload, configuration))
+                var allowEndedOperationalSession =
+                    HttpMethods.IsDelete(context.Request.Method) &&
+                    string.Equals(
+                        context.Request.Path.Value,
+                        "/api/v2/motoboys/me/session",
+                        StringComparison.OrdinalIgnoreCase);
+
+                if (!await IsPayloadStillAllowedAsync(payload, configuration, allowEndedOperationalSession))
                 {
+                    context.Items["AuthenticationFailureCode"] = "TOKEN_CONTEXT_REJECTED";
                     return;
                 }
 
@@ -85,18 +93,24 @@ namespace APIBack.Middleware
             return;
         }
 
-        private static async Task<bool> IsPayloadStillAllowedAsync(JwtPayload payload, IConfiguration configuration)
+        private static async Task<bool> IsPayloadStillAllowedAsync(
+            JwtPayload payload,
+            IConfiguration configuration,
+            bool allowEndedOperationalSession)
         {
             var connectionString = configuration.GetConnectionString("DefaultConnection")
                                    ?? configuration["ConnectionStrings:DefaultConnection"];
             if (string.IsNullOrWhiteSpace(connectionString))
             {
-                return true;
+                return false;
             }
 
             if (payload.MotoboySessionId.HasValue)
             {
-                var sessionAllowed = await IsMotoboySessionActiveAsync(payload, connectionString);
+                var sessionAllowed = await IsMotoboySessionAllowedAsync(
+                    payload,
+                    connectionString,
+                    allowEndedOperationalSession);
                 if (!sessionAllowed)
                 {
                     return false;
@@ -138,11 +152,14 @@ SELECT COALESCE(emp.ativo, TRUE) = TRUE
             }
             catch
             {
-                return true;
+                return false;
             }
         }
 
-        private static async Task<bool> IsMotoboySessionActiveAsync(JwtPayload payload, string connectionString)
+        private static async Task<bool> IsMotoboySessionAllowedAsync(
+            JwtPayload payload,
+            string connectionString,
+            bool allowEndedOperationalSession)
         {
             if (!payload.MotoboySessionId.HasValue || !payload.MotoboyId.HasValue)
             {
@@ -152,40 +169,64 @@ SELECT COALESCE(emp.ativo, TRUE) = TRUE
             try
             {
                 await using var connection = new NpgsqlConnection(connectionString);
-                await connection.ExecuteAsync(@"
-CREATE TABLE IF NOT EXISTS motoboy_active_sessions (
-    session_id UUID PRIMARY KEY,
-    motoboy_id INTEGER NOT NULL,
-    id_usuario INTEGER NULL,
-    id_estabelecimento UUID NOT NULL,
-    device_type TEXT NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    revoked_at TIMESTAMPTZ NULL,
-    revoke_reason TEXT NULL
-);
-
-CREATE INDEX IF NOT EXISTS ix_motoboy_active_sessions_motoboy
-    ON motoboy_active_sessions (motoboy_id, revoked_at);");
-
                 var active = await connection.ExecuteScalarAsync<bool?>(@"
-UPDATE motoboy_active_sessions
-   SET last_seen_at = NOW()
- WHERE session_id = @SessionId
-   AND motoboy_id = @MotoboyId
-   AND revoked_at IS NULL
-RETURNING TRUE;",
+SELECT TRUE
+  FROM motoboy_active_sessions s
+ WHERE s.session_id = @SessionId
+   AND s.motoboy_id = COALESCE(
+       (SELECT m.canonical_motoboy_id FROM motoboy m WHERE m.id = @MotoboyId),
+       @MotoboyId)
+   AND (@SessionEpoch IS NULL OR s.session_epoch = @SessionEpoch)
+   AND (@EstabelecimentoId IS NULL OR s.id_estabelecimento = @EstabelecimentoId)
+   AND (
+       @AllowEndedOperationalSession = TRUE
+       OR (
+           s.ended_at_utc IS NULL
+           AND s.revoked_at IS NULL
+           AND s.expires_at_utc > NOW()
+           AND EXISTS (
+               SELECT 1
+                 FROM motoboy_estabelecimento me
+                 JOIN estabelecimentos e ON e.id = me.estabelecimento_id
+                 JOIN motoboy m ON m.id = me.motoboy_id
+                WHERE me.motoboy_id = s.motoboy_id
+                  AND me.estabelecimento_id = s.id_estabelecimento
+                  AND me.ativo = TRUE
+                  AND COALESCE(e.ativo, TRUE) = TRUE
+                  AND LOWER(COALESCE(e.status, 'ativo')) IN ('ativo', 'trial')
+                  AND (
+                      (s.origin = 'simulator' AND me.simulator_enabled = TRUE AND m.is_simulated = TRUE)
+                      OR (
+                          s.origin = 'mobile'
+                          AND EXISTS (
+                              SELECT 1
+                                FROM usuario_estabelecimentos ue
+                               WHERE ue.id_usuario = s.id_usuario
+                                 AND ue.id_estabelecimento = s.id_estabelecimento
+                                 AND LOWER(COALESCE(ue.tipo_acesso, '')) = 'motoboy'
+                                 AND COALESCE(ue.ativo, TRUE) = TRUE
+                                 AND LOWER(COALESCE(ue.status, 'ativo')) = 'ativo'
+                          )
+                      )
+                  )
+           )
+       )
+   )
+ LIMIT 1;",
                     new
                     {
                         SessionId = payload.MotoboySessionId,
-                        MotoboyId = payload.MotoboyId
+                        MotoboyId = payload.MotoboyId,
+                        SessionEpoch = payload.SessionEpoch,
+                        EstabelecimentoId = payload.EstabelecimentoId,
+                        AllowEndedOperationalSession = allowEndedOperationalSession
                     });
 
                 return active == true;
             }
             catch
             {
-                return true;
+                return false;
             }
         }
 

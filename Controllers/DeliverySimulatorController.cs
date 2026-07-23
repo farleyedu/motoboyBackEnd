@@ -12,14 +12,14 @@ namespace APIBack.Controllers
 {
     [Route("api/delivery/simulator")]
     [ApiController]
-    [RequirePermission("Delivery", "visualizar")]
+    [RequirePermission("Delivery", "gestao_motoboy")]
     public class DeliverySimulatorController : ControllerBase
     {
-        private readonly ITrackingService _trackingService;
+        private readonly IOperationalSessionService _operationalSessionService;
 
-        public DeliverySimulatorController(ITrackingService trackingService)
+        public DeliverySimulatorController(IOperationalSessionService operationalSessionService)
         {
-            _trackingService = trackingService;
+            _operationalSessionService = operationalSessionService;
         }
 
         [HttpGet("motoboys")]
@@ -30,11 +30,24 @@ namespace APIBack.Controllers
                 return error!;
             }
 
-            var state = await _trackingService.GetMapStateAsync(estabelecimentoId);
-            return Ok(ApiResponse<object>.Ok(new
+            try
             {
-                motoboys = state.Motoboys.OrderBy(m => m.Nome).ToList()
-            }));
+                var candidates = await _operationalSessionService.GetSimulatorCandidatesAsync(estabelecimentoId);
+                return Ok(ApiResponse<object>.Ok(new
+                {
+                    motoboys = candidates.Select(candidate => new MotoboyMapDto
+                    {
+                        Id = candidate.MotoboyId,
+                        Nome = candidate.Nome,
+                        Avatar = candidate.Avatar,
+                        Status = candidate.Eligible ? "offline" : "online"
+                    }).ToList()
+                }));
+            }
+            catch (APIBack.Service.DeliveryDomainException ex)
+            {
+                return StatusCode(ex.StatusCode, ApiResponse<object>.Fail(ex.Message, ex.Code, ex.Details));
+            }
         }
 
         [HttpPost("motoboys")]
@@ -45,8 +58,15 @@ namespace APIBack.Controllers
                 return error!;
             }
 
-            var motoboy = await _trackingService.CreateSimulatorMotoboyAsync(estabelecimentoId, request);
-            return Ok(ApiResponse<MotoboyMapDto>.Ok(motoboy));
+            try
+            {
+                var motoboy = await _operationalSessionService.CreateSimulatorMotoboyAsync(estabelecimentoId, request);
+                return Ok(ApiResponse<MotoboyMapDto>.Ok(motoboy));
+            }
+            catch (APIBack.Service.DeliveryDomainException ex)
+            {
+                return StatusCode(ex.StatusCode, ApiResponse<object>.Fail(ex.Message, ex.Code, ex.Details));
+            }
         }
 
         [HttpPost("motoboys/{motoboyId:int}/status")]
@@ -57,15 +77,10 @@ namespace APIBack.Controllers
                 return error!;
             }
 
-            try
-            {
-                var result = await _trackingService.SetSimulatorStatusAsync(estabelecimentoId, motoboyId, request);
-                return Ok(ApiResponse<MotoboyStatusRealtimeDto>.Ok(result));
-            }
-            catch (UnauthorizedAccessException ex)
-            {
-                return StatusCode(403, ApiResponse<object>.Fail(ex.Message));
-            }
+            await Task.CompletedTask;
+            return StatusCode(410, ApiResponse<object>.Fail(
+                "Status do simulador agora deriva da sessao operacional.",
+                "LEGACY_SIMULATOR_ENDPOINT_DISABLED"));
         }
 
         [HttpPost("motoboys/{motoboyId:int}/session")]
@@ -76,15 +91,10 @@ namespace APIBack.Controllers
                 return error!;
             }
 
-            try
-            {
-                var result = await _trackingService.StartSimulatorSessionAsync(estabelecimentoId, motoboyId);
-                return Ok(ApiResponse<SimulatorMotoboySessionResponse>.Ok(result));
-            }
-            catch (UnauthorizedAccessException ex)
-            {
-                return StatusCode(403, ApiResponse<object>.Fail(ex.Message));
-            }
+            await Task.CompletedTask;
+            return StatusCode(410, ApiResponse<object>.Fail(
+                "Selecao por motoboyId foi desativada. Use /api/v2/delivery/simulator/sessions/auto-start.",
+                "LEGACY_SIMULATOR_ENDPOINT_DISABLED"));
         }
 
         [HttpPost("motoboys/{motoboyId:int}/location")]
@@ -95,15 +105,10 @@ namespace APIBack.Controllers
                 return error!;
             }
 
-            try
-            {
-                var result = await _trackingService.ReceiveSimulatorLocationAsync(estabelecimentoId, motoboyId, request);
-                return Ok(ApiResponse<MotoboyLocationResult>.Ok(result));
-            }
-            catch (UnauthorizedAccessException ex)
-            {
-                return StatusCode(403, ApiResponse<object>.Fail(ex.Message));
-            }
+            await Task.CompletedTask;
+            return StatusCode(410, ApiResponse<object>.Fail(
+                "GPS direto do simulador foi desativado. Use o token operacional no endpoint /api/v2.",
+                "LEGACY_SIMULATOR_ENDPOINT_DISABLED"));
         }
 
         private bool TryGetEstabelecimentoId(out Guid estabelecimentoId, out IActionResult? error)
