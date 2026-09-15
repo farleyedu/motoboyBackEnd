@@ -14,7 +14,11 @@ WITH candidate_links AS (
      WHERE p.id_estabelecimento IS NULL
 ),
 unambiguous AS (
-    SELECT pedido_id, MIN(estabelecimento_id) AS estabelecimento_id
+    -- O HAVING abaixo ja garante um unico estabelecimento distinto por pedido, entao
+    -- qualquer elemento serve. Usamos array_agg em vez de MIN() porque o agregado
+    -- min(uuid) so existe a partir do PostgreSQL 17 -- em versoes anteriores a query
+    -- falha com 42883 e aborta a transacao inteira da migration.
+    SELECT pedido_id, (array_agg(DISTINCT estabelecimento_id))[1] AS estabelecimento_id
       FROM candidate_links
      GROUP BY pedido_id
     HAVING COUNT(DISTINCT estabelecimento_id) = 1
