@@ -7,7 +7,7 @@ namespace APIBack.Service.Interface
     {
         IEnumerable<Motoboy> GetMotoboy();
         IEnumerable<Motoboy> ConvidarMotoboy();
-        IEnumerable<MotoboyComPedidosDTO> GetMotoboysOnline();
+        IEnumerable<MotoboyComPedidosDTO> GetMotoboysOnline(Guid estabelecimentoId);
         Task<ResultadoUploadAvatar> UploadAvatarAsync(int id, IFormFile avatar);
     }
 }

@@ -12,43 +12,28 @@ namespace APIBack.Service
         {
             _pedidoRepository = pedidoRepository;
         }
-        public IEnumerable<Pedido> GetPedidos()
+        public IEnumerable<Pedido> GetPedidos(Guid estabelecimentoId)
         {
-            return _pedidoRepository.GetPedidos();
+            return _pedidoRepository.GetPedidos(estabelecimentoId);
         }
-        public async Task CriarPedidosIfood(PedidoCapturado pedidos)
+        public async Task<bool> CriarPedidosIfood(PedidoCapturado pedidos, Guid estabelecimentoId)
         {
-            // Pode virar async de verdade futuramente
-            _pedidoRepository.InserirPedidosIfood(pedidos);
+            var inserted = _pedidoRepository.InserirPedidosIfood(pedidos, estabelecimentoId);
             await Task.CompletedTask;
+            return inserted;
         }
 
-        public EnviarPedidosParaRotaDTO GetPedidosId(int Id)
+        public EnviarPedidosParaRotaDTO GetPedidosId(int Id, Guid estabelecimentoId)
         {
-            return _pedidoRepository.GetPedidosId(Id);
+            return _pedidoRepository.GetPedidosId(Id, estabelecimentoId);
         }
-        public IEnumerable<PedidoDTOs> GetPedidosMaps()
+        public IEnumerable<PedidoDTOs> GetPedidosMaps(Guid estabelecimentoId)
         {
-            return _pedidoRepository.GetPedidosMaps();
+            return _pedidoRepository.GetPedidosMaps(estabelecimentoId);
         }
         public IEnumerable<Pedido> CriarPedido()
         {
             return _pedidoRepository.CriarPedido();
-        }
-        public async Task AtribuirMotoboy(EnviarPedidosParaRotaDTO dto)
-        {
-            foreach (var id in dto.PedidosIds)
-            {
-                var pedido = _pedidoRepository.GetPedidosId(id);
-                if (pedido == null) continue;
-
-                pedido.StatusPedido = dto.StatusPedido;
-                pedido.MotoboyResponsavel = dto.MotoboyResponsavel;
-                pedido.HorarioSaida = DateTime.UtcNow.ToString("HH:mm:ss");
-
-                await _pedidoRepository.AtribuirMotoboy(pedido);
-            }
-            await Task.CompletedTask;
         }
         public IEnumerable<Pedido> CancelarPedido()
         {
@@ -68,18 +53,18 @@ namespace APIBack.Service
         /// </summary>
         /// <param name="id">ID do pedido</param>
         /// <returns>Dados completos do pedido ou null se não encontrado</returns>
-        public async Task<PedidoCompletoResponse?> GetPedidoCompleto(int id)
+        public async Task<PedidoCompletoResponse?> GetPedidoCompleto(int id, Guid estabelecimentoId)
         {
-            return await _pedidoRepository.GetPedidoCompleto(id);
+            return await _pedidoRepository.GetPedidoCompleto(id, estabelecimentoId);
         }
 
         /// <summary>
         /// Obtém todos os pedidos completos com todos os detalhes
         /// </summary>
         /// <returns>Lista com todos os pedidos completos</returns>
-        public async Task<List<PedidoCompletoResponse>> GetTodosPedidosCompletos()
+        public async Task<List<PedidoCompletoResponse>> GetTodosPedidosCompletos(Guid estabelecimentoId)
         {
-            return await _pedidoRepository.GetTodosPedidosCompletos();
+            return await _pedidoRepository.GetTodosPedidosCompletos(estabelecimentoId);
         }
 
     }

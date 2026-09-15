@@ -36,6 +36,35 @@ namespace APIBack.Tests.Unit
             Assert.Contains("UNIQUE (session_id, sequence)", sql, StringComparison.Ordinal);
         }
 
+        [Fact]
+        public void Part2Schema_HasRouteStopsWithActivePositionUniqueness()
+        {
+            var sql = ReadMigration("20260723_02_schema.sql");
+
+            Assert.Contains("delivery_route_stops", sql, StringComparison.Ordinal);
+            Assert.Contains("delivery_motoboy_route", sql, StringComparison.Ordinal);
+            Assert.Contains("stop_status", sql, StringComparison.Ordinal);
+        }
+
+        [Fact]
+        public void Part2Backfill_OnlyFillsUnambiguousLinksAndNeverDeletesPedido()
+        {
+            var sql = ReadMigration("20260723_03_backfill.sql");
+
+            Assert.Contains("COUNT(DISTINCT estabelecimento_id) = 1", sql, StringComparison.Ordinal);
+            Assert.DoesNotContain("DELETE FROM pedido", sql, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public void Part2Constraints_EnforceOneEnRoutePerMotoboyAndPedidoIfoodUniqueness()
+        {
+            var sql = ReadMigration("20260723_04_constraints.sql");
+
+            Assert.Contains("ux_delivery_route_stop_en_route_per_motoboy", sql, StringComparison.Ordinal);
+            Assert.Contains("ux_delivery_route_stop_pedido_active", sql, StringComparison.Ordinal);
+            Assert.Contains("ux_pedido_id_ifood", sql, StringComparison.Ordinal);
+        }
+
         private static string ReadMigration(string fileName)
         {
             var path = Path.Combine(AppContext.BaseDirectory, "Migrations", "Delivery", fileName);

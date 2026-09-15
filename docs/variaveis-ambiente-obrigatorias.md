@@ -40,6 +40,26 @@ convencao do ASP.NET Core: `Secao__Subsecao__Chave`.
 | `WhatsApp__AccessToken` | Access token do canal WhatsApp usado pelo fluxo de atendimento. |
 | `WhatsApp__CentralResetCommand` | Comando de reset do atendimento central (somente producao; ausente no template de Development). |
 
+## Delivery / tracking operacional (Parte 2)
+
+Estas nao sao segredos, mas sao **obrigatorias para o modulo de delivery funcionar**: com
+`Enabled=false` (o default do template) todo endpoint operacional responde `503
+DELIVERY_TRACKING_DISABLED`, o `DeliveryOutboxPublisher` nao publica eventos no SignalR e o
+`map-state` cai no caminho legado. O sintoma tipico e "o simulador nao sobe" sem erro obvio.
+
+| Variavel | Descricao |
+| --- | --- |
+| `DeliveryTracking__Enabled` | Liga o tracking operacional V2 (sessoes, heartbeat, localizacao, snapshot, outbox). Precisa ser `true` em qualquer ambiente que use o painel de delivery. |
+| `DeliveryTracking__SimulatorEnabled` | Libera o simulador de motoboy (`/api/v2/delivery/simulator/*`). Manter `true` apenas enquanto o app real nao existe. |
+| `DeliveryTracking__ApplyMigrationsOnStartup` | Aplica os `.sql` de `Migrations/Delivery/` no boot. Mantenha `false` em producao e rode as migrations no deploy. |
+| `Cors__AllowedOrigins__0`, `__1`, ... | Origens liberadas no CORS. O hub SignalR negocia com credenciais, entao a API nao pode responder `Access-Control-Allow-Origin: *`. Sem configurar, o default cobre `https://zippy-admin-one.vercel.app`, `localhost:3000` e previews `*.vercel.app`. |
+
+> Ao habilitar `DeliveryTracking__Enabled`, confirme antes que as migrations de
+> `Migrations/Delivery/` ja foram aplicadas no banco do ambiente — em especial as
+> `20260723_*`, que criam `delivery_route_stops`, `delivery_motoboy_route` e
+> `delivery_realtime_outbox`. Ligar a flag com o schema desatualizado troca os 503
+> por erros de SQL.
+
 ## Integracoes de IA / geocodificacao
 
 | Variavel | Descricao |

@@ -1,4 +1,6 @@
 using APIBack.DTOs;
+using APIBack.DTOs.Common;
+using APIBack.DTOs.Delivery;
 using APIBack.Model;
 using APIBack.Attributes;
 using APIBack.DTOs.Tracking;
@@ -16,21 +18,35 @@ namespace APIBack.Controllers
     public class PedidoController : Controller
     {
         readonly IPedidoService _pedidoService;
+        readonly IPedidoQueueService _pedidoQueueService;
         private readonly IHubContext<DeliveryHub> _deliveryHub;
 
-        // Simulação de repositório em memória (trocar pelo seu contexto do EF depois)
-        private static readonly List<string> PedidosRegistrados = new();
-        public PedidoController(IPedidoService pedidoService, IHubContext<DeliveryHub> deliveryHub)
+        public PedidoController(IPedidoService pedidoService, IPedidoQueueService pedidoQueueService, IHubContext<DeliveryHub> deliveryHub)
         {
             _pedidoService = pedidoService;
+            _pedidoQueueService = pedidoQueueService;
             _deliveryHub = deliveryHub;
         }
+
+        private bool TryGetEstabelecimentoId(out Guid estabelecimentoId, out ActionResult? error)
+        {
+            estabelecimentoId = HttpContext.GetEstabelecimentoId() ?? Guid.Empty;
+            if (estabelecimentoId == Guid.Empty)
+            {
+                error = Unauthorized(ApiResponse<object>.Fail("Contexto autenticado invalido.", "UNAUTHENTICATED"));
+                return false;
+            }
+            error = null;
+            return true;
+        }
+
         // GET: api/pedidos
         [HttpGet]
         [RequirePermission("Delivery", "visualizar")]
         public ActionResult<IEnumerable<Pedido>> GetPedidos()
         {
-            var pedidos = _pedidoService.GetPedidos();
+            if (!TryGetEstabelecimentoId(out var estabelecimentoId, out var error)) return error!;
+            var pedidos = _pedidoService.GetPedidos(estabelecimentoId);
             return Ok(pedidos);
         }
 
@@ -39,7 +55,8 @@ namespace APIBack.Controllers
         [RequirePermission("Delivery", "visualizar")]
         public ActionResult<Pedido> GetPedido(int id)
         {
-            var pedido = _pedidoService.GetPedidosId(id);
+            if (!TryGetEstabelecimentoId(out var estabelecimentoId, out var error)) return error!;
+            var pedido = _pedidoService.GetPedidosId(id, estabelecimentoId);
             if (pedido == null)
             {
                 return NotFound();
@@ -51,7 +68,8 @@ namespace APIBack.Controllers
         [RequirePermission("Delivery", "visualizar")]
         public ActionResult<IEnumerable<PedidoDTOs>> GetPedidosComMotoboy()
         {
-            var pedidos = _pedidoService.GetPedidosMaps();
+            if (!TryGetEstabelecimentoId(out var estabelecimentoId, out var error)) return error!;
+            var pedidos = _pedidoService.GetPedidosMaps(estabelecimentoId);
             return Ok(pedidos);
         }
 
@@ -60,6 +78,9 @@ namespace APIBack.Controllers
         [RequirePermission("Delivery", "criar_pedido")]
         public ActionResult<Pedido> PostPedido(Pedido pedido)
         {
+            // Criacao manual pelo atendente ainda nao foi implementada no backend
+            // (fora do escopo de fila/rota/atribuicao da Parte 2). CriarPedido()
+            // continua lancando NotImplementedException de proposito.
             _pedidoService.CriarPedido();
             return CreatedAtAction(nameof(GetPedido), new { id = pedido.Id }, pedido);
         }
@@ -68,14 +89,13 @@ namespace APIBack.Controllers
         /// Obtém pedido completo com todos os detalhes (endpoint riderlink)
         /// </summary>
         /// <param name="id">ID do pedido</param>
-        /// <returns>Dados completos do pedido</returns> 
+        /// <returns>Dados completos do pedido</returns>
         [HttpGet("{id}/riderlink")]
         [RequirePermission("Delivery", "visualizar")]
         public async Task<IActionResult> GetPedidoCompleto(int id)
         {
             try
             {
-                // Validação básica do ID
                 if (id < 1)
                 {
                     return BadRequest(new
@@ -86,9 +106,10 @@ namespace APIBack.Controllers
                     });
                 }
 
-                // Busca o pedido completo
-                var pedidoCompleto = await _pedidoService.GetPedidoCompleto(id);
-                
+                if (!TryGetEstabelecimentoId(out var estabelecimentoId, out var authError)) return authError!;
+
+                var pedidoCompleto = await _pedidoService.GetPedidoCompleto(id, estabelecimentoId);
+
                 if (pedidoCompleto == null)
                 {
                     return NotFound(new
@@ -99,7 +120,6 @@ namespace APIBack.Controllers
                     });
                 }
 
-                // Retorna o pedido completo
                 return Ok(new
                 {
                     success = true,
@@ -109,9 +129,8 @@ namespace APIBack.Controllers
             }
             catch (Exception ex)
             {
-                // Log estruturado do erro
                 Console.WriteLine($"❌ Erro ao buscar pedido completo {id}: {ex.Message}");
-                
+
                 return StatusCode(500, new
                 {
                     success = false,
@@ -122,10 +141,6 @@ namespace APIBack.Controllers
         }
 
         /// <summary>
-        /// Obtém o pedido completo mais recente com todos os detalhes (endpoint para motoboy)
-        /// </summary>
-        /// <returns>Dados completos do pedido</returns>
-        /// <summary>
         /// Obtém a lista completa de pedidos com todos os detalhes (endpoint para motoboy)
         /// </summary>
         /// <returns>Lista de dados completos dos pedidos</returns>
@@ -135,7 +150,9 @@ namespace APIBack.Controllers
         {
             try
             {
-                var pedidosCompletos = await _pedidoService.GetTodosPedidosCompletos();
+                if (!TryGetEstabelecimentoId(out var estabelecimentoId, out var authError)) return authError!;
+
+                var pedidosCompletos = await _pedidoService.GetTodosPedidosCompletos(estabelecimentoId);
 
                 if (pedidosCompletos == null || !pedidosCompletos.Any())
                 {
@@ -155,7 +172,7 @@ namespace APIBack.Controllers
                 });
             }
             catch (Exception ex)
-            {             
+            {
                 Console.WriteLine($"❌ Erro ao buscar lista de pedidos completos: {ex.Message}");
 
                 return StatusCode(500, new
@@ -172,7 +189,8 @@ namespace APIBack.Controllers
         [RequirePermission("Delivery", "editar_pedido")]
         public IActionResult PutPedido(int id, Pedido pedido)
         {
-            var pedidoExistente = _pedidoService.GetPedidosId(id);
+            if (!TryGetEstabelecimentoId(out var estabelecimentoId, out var error)) return error!;
+            var pedidoExistente = _pedidoService.GetPedidosId(id, estabelecimentoId);
             if (pedidoExistente == null)
             {
                 return NotFound();
@@ -182,6 +200,13 @@ namespace APIBack.Controllers
             return NoContent();
         }
 
+        /// <summary>
+        /// Endpoint legado mantido por compatibilidade. Agora delega para o comando
+        /// transacional de fila (IPedidoQueueService.AssignAsync), que valida tenant,
+        /// vinculo e sessao online do motoboy e mantem fila/posicao consistentes -
+        /// a UPDATE direta que existia aqui antes nao fazia nenhuma dessas checagens.
+        /// Novas integracoes devem usar POST /api/v2/delivery/pedidos/{id}/atribuir.
+        /// </summary>
         [HttpPut("AtribuirMotoboy")]
         [RequirePermission("Delivery", "atribuir_motoboy")]
         public async Task<IActionResult> AtribuirMotoboy([FromBody] EnviarPedidosParaRotaDTO dto)
@@ -189,32 +214,39 @@ namespace APIBack.Controllers
             if (dto.PedidosIds == null || !dto.PedidosIds.Any())
                 return BadRequest("Nenhum pedido informado.");
 
-            await _pedidoService.AtribuirMotoboy(dto);
+            if (!TryGetEstabelecimentoId(out var estabelecimentoId, out var error)) return error!;
+            var actorUserId = HttpContext.GetUserId() ?? 0;
 
-            var estabelecimentoId = HttpContext.GetEstabelecimentoId();
-            if (estabelecimentoId.HasValue && estabelecimentoId.Value != Guid.Empty)
+            foreach (var pedidoId in dto.PedidosIds)
             {
-                var evt = new DeliveryRouteAssignedRealtimeDto
+                try
                 {
-                    MotoboyId = dto.MotoboyResponsavel,
-                    EstabelecimentoId = estabelecimentoId.Value,
-                    PedidoIds = dto.PedidosIds.ToList(),
-                    UpdatedAtUtc = DateTimeOffset.UtcNow
-                };
-
-                await _deliveryHub.Clients
-                    .Group(DeliveryRealtimeEvents.EstablishmentGroup(estabelecimentoId.Value))
-                    .SendAsync(DeliveryRealtimeEvents.DeliveryRouteAssigned, evt);
-
-                await _deliveryHub.Clients
-                    .Group(DeliveryRealtimeEvents.EstablishmentGroup(estabelecimentoId.Value))
-                    .SendAsync(DeliveryRealtimeEvents.DeliveryOrderUpdated, evt);
+                    await _pedidoQueueService.AssignAsync(estabelecimentoId, actorUserId, dto.MotoboyResponsavel, pedidoId);
+                }
+                catch (DeliveryDomainException ex)
+                {
+                    return StatusCode(ex.StatusCode, ApiResponse<object>.Fail(ex.Message, ex.Code, ex.Details));
+                }
             }
+
+            var evt = new DeliveryRouteAssignedRealtimeDto
+            {
+                MotoboyId = dto.MotoboyResponsavel,
+                EstabelecimentoId = estabelecimentoId,
+                PedidoIds = dto.PedidosIds.ToList(),
+                UpdatedAtUtc = DateTimeOffset.UtcNow
+            };
+
+            await _deliveryHub.Clients
+                .Group(DeliveryRealtimeEvents.EstablishmentGroup(estabelecimentoId))
+                .SendAsync(DeliveryRealtimeEvents.DeliveryRouteAssigned, evt);
+
+            await _deliveryHub.Clients
+                .Group(DeliveryRealtimeEvents.EstablishmentGroup(estabelecimentoId))
+                .SendAsync(DeliveryRealtimeEvents.DeliveryOrderUpdated, evt);
 
             return NoContent();
         }
-
-
 
         [HttpPost("PedidoIfood")]
         [RequirePermission("Delivery", "integracao_ifood")]
@@ -223,8 +255,18 @@ namespace APIBack.Controllers
             if (pedidos == null)
                 return BadRequest("Lista vazia.");
 
-            await _pedidoService.CriarPedidosIfood(pedidos); // 👈 agora com await
-            return Ok(new {});
+            if (!TryGetEstabelecimentoId(out var estabelecimentoId, out var error)) return error!;
+
+            try
+            {
+                var created = await _pedidoService.CriarPedidosIfood(pedidos, estabelecimentoId);
+                return Ok(new { success = true, created });
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ Erro ao criar pedido iFood: {ex.Message}");
+                return StatusCode(500, new { success = false, error = "Erro interno do servidor" });
+            }
         }
 
     }

@@ -2,6 +2,7 @@ using System;
 using System.Threading.Tasks;
 using APIBack.Attributes;
 using APIBack.DTOs.Common;
+using APIBack.DTOs.Delivery;
 using APIBack.DTOs.Tracking;
 using APIBack.Extensions;
 using APIBack.Service;
@@ -16,10 +17,12 @@ namespace APIBack.Controllers
     public sealed class MotoboyTrackingV2Controller : ControllerBase
     {
         private readonly IOperationalSessionService _service;
+        private readonly IPedidoQueueService _queueService;
 
-        public MotoboyTrackingV2Controller(IOperationalSessionService service)
+        public MotoboyTrackingV2Controller(IOperationalSessionService service, IPedidoQueueService queueService)
         {
             _service = service;
+            _queueService = queueService;
         }
 
         [HttpPost("start")]
@@ -57,6 +60,22 @@ namespace APIBack.Controllers
             await ExecuteAsync(async () =>
                 ApiResponse<OperationalSessionDto?>.Ok(
                     await _service.GetSessionAsync(HttpContext.GetJwtPayload())));
+
+        [HttpGet("queue")]
+        [RequireOperationalSession]
+        public async Task<IActionResult> GetQueue()
+        {
+            var payload = HttpContext.GetJwtPayload();
+            var estabelecimentoId = HttpContext.GetEstabelecimentoId() ?? Guid.Empty;
+            if (!payload.MotoboyId.HasValue || estabelecimentoId == Guid.Empty)
+            {
+                return Unauthorized(ApiResponse<object>.Fail("Contexto operacional invalido.", "OPERATIONAL_TOKEN_REQUIRED"));
+            }
+
+            return await ExecuteAsync(async () =>
+                ApiResponse<MotoboyQueueDto>.Ok(
+                    await _queueService.GetQueueAsync(estabelecimentoId, payload.MotoboyId.Value)));
+        }
 
         [HttpPost("heartbeat")]
         [RequireOperationalSession]

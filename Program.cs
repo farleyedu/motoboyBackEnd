@@ -108,6 +108,8 @@ builder.Services.AddScoped<IPedidoService, PedidoService>();
 builder.Services.AddScoped<IMotoboyRepository, MotoboyRepository>();
 builder.Services.AddScoped<ITrackingRepository, TrackingRepository>();
 builder.Services.AddScoped<IOperationalSessionRepository, OperationalSessionRepository>();
+builder.Services.AddScoped<IPedidoQueueRepository, PedidoQueueRepository>();
+builder.Services.AddScoped<IPedidoQueueService, PedidoQueueService>();
 builder.Services.AddScoped<IReservaRepository, ReservaRepository>();
 builder.Services.AddScoped<IReservasRepository, ReservasRepository>();
 builder.Services.AddScoped<IOficinaAgendamentoRepository, OficinaAgendamentoRepository>();
@@ -264,13 +266,35 @@ builder.Services.AddHttpClient<IAsaasCheckoutClient, AsaasCheckoutClient>((servi
 
 
 // Configurar CORS
+// O hub SignalR (/hubs/delivery) negocia com credentials mode 'include', e o navegador
+// recusa 'Access-Control-Allow-Origin: *' nesse caso. Por isso a politica lista origens
+// explicitas e habilita AllowCredentials em vez de AllowAnyOrigin.
+var corsAllowedOrigins = builder.Configuration
+    .GetSection("Cors:AllowedOrigins")
+    .Get<string[]>() ?? new[]
+    {
+        "https://zippy-admin-one.vercel.app",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000"
+    };
+
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowAll", policy =>
     {
-        policy.AllowAnyOrigin()
+        policy.SetIsOriginAllowed(origin =>
+              {
+                  if (string.IsNullOrWhiteSpace(origin)) return false;
+                  if (corsAllowedOrigins.Contains(origin, StringComparer.OrdinalIgnoreCase)) return true;
+
+                  // Deploys de preview da Vercel trocam de subdominio a cada build.
+                  return Uri.TryCreate(origin, UriKind.Absolute, out var uri)
+                         && uri.Scheme == Uri.UriSchemeHttps
+                         && uri.Host.EndsWith(".vercel.app", StringComparison.OrdinalIgnoreCase);
+              })
               .AllowAnyMethod()
-              .AllowAnyHeader();
+              .AllowAnyHeader()
+              .AllowCredentials();
     });
 });
 

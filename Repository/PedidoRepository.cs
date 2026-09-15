@@ -22,15 +22,17 @@ namespace APIBack.Repository
             _connectionString = configuration.GetConnectionString("DefaultConnection");
         }
 
-        public IEnumerable<Pedido> GetPedidos()
+        public IEnumerable<Pedido> GetPedidos(Guid estabelecimentoId)
         {
             using var connection = new NpgsqlConnection(_connectionString);
             {
-                return connection.Query<Pedido>("SELECT * FROM pedido").ToList();
+                return connection.Query<Pedido>(
+                    "SELECT * FROM pedido WHERE id_estabelecimento = @EstabelecimentoId",
+                    new { EstabelecimentoId = estabelecimentoId }).ToList();
             }
         }
 
-        public IEnumerable<PedidoDTOs> GetPedidosMaps()
+        public IEnumerable<PedidoDTOs> GetPedidosMaps(Guid estabelecimentoId)
         {
             using var connection = new NpgsqlConnection(_connectionString);
             {
@@ -59,7 +61,8 @@ namespace APIBack.Repository
     m.avatar                 AS avatar,
     m.status                 AS status
 FROM pedido p
-LEFT JOIN motoboy m ON m.id = p.motoboy_responsavel;
+LEFT JOIN motoboy m ON m.id = p.motoboy_responsavel
+WHERE p.id_estabelecimento = @EstabelecimentoId;
 ";
 
                 var pedidos = connection.Query<PedidoDTOs, MotoboyDTO, PedidoDTOs>(
@@ -69,6 +72,7 @@ LEFT JOIN motoboy m ON m.id = p.motoboy_responsavel;
                        pedido.MotoboyResponsavel = motoboy;
                        return pedido;
                    },
+                   new { EstabelecimentoId = estabelecimentoId },
                    splitOn: "motoboyid"
                );
                 return pedidos;
@@ -76,39 +80,54 @@ LEFT JOIN motoboy m ON m.id = p.motoboy_responsavel;
         }
 
 
-        public IEnumerable<Pedido> GetPedidosPorMotoboy(int motoboyId)
+        public IEnumerable<Pedido> GetPedidosPorMotoboy(int motoboyId, Guid estabelecimentoId)
         {
             using var connection = new NpgsqlConnection(_connectionString);
             {
-                var sql = "SELECT *  FROM Pedido WHERE motoboy_responsavel = @motoboyId";
-                return connection.Query<Pedido>(sql, new { MotoboyId = motoboyId }).ToList();
+                var sql = "SELECT * FROM Pedido WHERE motoboy_responsavel = @MotoboyId AND id_estabelecimento = @EstabelecimentoId";
+                return connection.Query<Pedido>(sql, new { MotoboyId = motoboyId, EstabelecimentoId = estabelecimentoId }).ToList();
             }
         }
 
-        public void InserirPedidosIfood(PedidoCapturado pedido)
+        public bool InserirPedidosIfood(PedidoCapturado pedido, Guid estabelecimentoId)
         {
             using var connection = new NpgsqlConnection(_connectionString);
-            connection.Open(); // 👈 Importante
+            connection.Open();
+
+            // Idempotencia: um webhook repetido para o mesmo pedido iFood/estabelecimento
+            // nao deve duplicar a linha. Reforcado tambem por indice unico parcial
+            // (ux_pedido_id_ifood) adicionado na migracao 20260723_04_constraints.sql.
+            if (!string.IsNullOrWhiteSpace(pedido.DisplayId))
+            {
+                var existing = connection.ExecuteScalar<int?>(
+                    "SELECT id FROM pedido WHERE id_ifood = @IdIfood AND id_estabelecimento = @EstabelecimentoId LIMIT 1;",
+                    new { IdIfood = pedido.DisplayId, EstabelecimentoId = estabelecimentoId });
+                if (existing.HasValue)
+                {
+                    return false;
+                }
+            }
 
             var sql = @"
     INSERT INTO pedido (
-        nome_cliente, endereco_entrega, id_ifood, telefone_cliente, data_pedido, 
+        nome_cliente, endereco_entrega, id_ifood, telefone_cliente, data_pedido,
         status_pedido, horario_entrega, items, value, region,
         latitude, longitude, horario_pedido, previsao_entrega, horario_saida, localizador,
         entrega_rua, entrega_numero, entrega_bairro, entrega_cidade, entrega_estado, entrega_cep,
-        documento_cliente, tipo_pagamento
+        documento_cliente, tipo_pagamento, id_estabelecimento
     )
     VALUES (
-        @NomeCliente, @EnderecoEntrega, @IdIfood, @TelefoneCliente, @DataPedido, 
+        @NomeCliente, @EnderecoEntrega, @IdIfood, @TelefoneCliente, @DataPedido,
         @StatusPedido, @HorarioEntrega, @Items, @Value, @Region,
         @Latitude, @Longitude, @HorarioPedido, @PrevisaoEntrega, @HorarioSaida, @Localizador,
         @EntregaRua, @EntregaNumero, @EntregaBairro, @EntregaCidade, @EntregaEstado, @EntregaCep,
-        @DocumentoCliente, @TipoPagamento
-    );";
+        @DocumentoCliente, @TipoPagamento, @EstabelecimentoId
+    )
+    ON CONFLICT (id_ifood) WHERE id_ifood IS NOT NULL DO NOTHING;";
 
             try
             {
-                connection.Execute(sql, new
+                var rows = connection.Execute(sql, new
                 {
                     PedidoIdIfood = pedido.DisplayId,
                     NomeCliente = pedido.Cliente.Nome,
@@ -141,19 +160,21 @@ LEFT JOIN motoboy m ON m.id = p.motoboy_responsavel;
                     EntregaEstado = pedido.Endereco.Estado,
                     EntregaCep = pedido.Endereco.Cep,
                     DocumentoCliente = pedido.Cliente.Documento,
-                    TipoPagamento = pedido.TipoPagamento
+                    TipoPagamento = pedido.TipoPagamento,
+                    EstabelecimentoId = estabelecimentoId
                 });
+                return rows > 0;
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"❌ Erro ao inserir pedido {pedido.Id}: {ex.Message}");
+                throw;
             }
-
         }
 
 
 
-        public EnviarPedidosParaRotaDTO? GetPedidosId(int id)
+        public EnviarPedidosParaRotaDTO? GetPedidosId(int id, Guid estabelecimentoId)
         {
             using var connection = new NpgsqlConnection(_connectionString);
 
@@ -161,12 +182,12 @@ LEFT JOIN motoboy m ON m.id = p.motoboy_responsavel;
         SELECT p.*, m.id as MotoboyId, m.nome as NomeMotoboy, m.avatar, m.status
         FROM pedido p
         LEFT JOIN motoboy m ON m.id = p.motoboy_responsavel
-        WHERE p.id = @Id";
+        WHERE p.id = @Id AND p.id_estabelecimento = @EstabelecimentoId";
 
             var result = connection.Query<Pedido, MotoboyDTO, (Pedido, MotoboyDTO)>(
                 sql,
                 (pedido, motoboy) => (pedido, motoboy),
-                new { Id = id },
+                new { Id = id, EstabelecimentoId = estabelecimentoId },
                 splitOn: "MotoboyId"
             );
 
@@ -190,38 +211,6 @@ LEFT JOIN motoboy m ON m.id = p.motoboy_responsavel;
         {
             throw new NotImplementedException();
         }
-        public async Task AtribuirMotoboy(EnviarPedidosParaRotaDTO dto)
-        {
-            using var connection = new NpgsqlConnection(_connectionString);
-
-            const string sql = @"
-        UPDATE pedido
-        SET 
-            status_pedido = @StatusPedido,
-            motoboy_responsavel = @MotoboyResponsavel,
-            horario_saida = @HorarioSaida
-        WHERE id = ANY(@PedidosIds)
-    ";
-
-            try
-            {
-                await connection.ExecuteAsync(sql, new
-                {
-                    StatusPedido = (int)dto.StatusPedido,
-                    MotoboyResponsavel = dto.MotoboyResponsavel,
-                    HorarioSaida = string.IsNullOrWhiteSpace(dto.HorarioSaida)
-                        ? DateTime.UtcNow
-                        : DateTime.Parse(dto.HorarioSaida),
-                    PedidosIds = dto.PedidosIds.ToArray()
-                });
-
-            }
-            catch (Exception ex)
-            {
-                // Logar o erro se necessário
-                throw;
-            }
-        }
 
         public IEnumerable<Pedido> CancelarPedido()
         {
@@ -240,10 +229,10 @@ LEFT JOIN motoboy m ON m.id = p.motoboy_responsavel;
         /// Obtém pedido completo com todos os detalhes para o endpoint riderlink
         /// Utiliza QueryMultiple para otimizar as consultas ao banco
         /// </summary>
-        public async Task<PedidoCompletoResponse?> GetPedidoCompleto(int id)
+        public async Task<PedidoCompletoResponse?> GetPedidoCompleto(int id, Guid estabelecimentoId)
         {
             using var connection = new NpgsqlConnection(_connectionString);
-            
+
             // Query principal: pedido + cliente + endereço + pagamento + motoboy + coordenadas
             const string sqlPedido = @"
                 SELECT 
@@ -271,8 +260,8 @@ LEFT JOIN motoboy m ON m.id = p.motoboy_responsavel;
                     NULL AS ""Observacoes"" -- Campo não existe na tabela atual
                 FROM pedido p
                 LEFT JOIN motoboy m ON m.id = p.motoboy_responsavel
-                WHERE p.id = @Id;
-                
+                WHERE p.id = @Id AND p.id_estabelecimento = @EstabelecimentoId;
+
                 -- Query para itens do pedido (parseando texto simples)
                 SELECT 
                     ROW_NUMBER() OVER (ORDER BY (SELECT NULL)) AS ""Id"",
@@ -352,8 +341,8 @@ LEFT JOIN motoboy m ON m.id = p.motoboy_responsavel;
 
             try
             {
-                using var multi = await connection.QueryMultipleAsync(sqlPedido, new { Id = id });
-                
+                using var multi = await connection.QueryMultipleAsync(sqlPedido, new { Id = id, EstabelecimentoId = estabelecimentoId });
+
                 // Lê o pedido principal
                 var pedidoData = await multi.ReadFirstOrDefaultAsync<dynamic>();
                 if (pedidoData == null)
@@ -434,10 +423,10 @@ LEFT JOIN motoboy m ON m.id = p.motoboy_responsavel;
         /// Obtém todos os pedidos completos com todos os detalhes
         /// Utiliza QueryMultiple para otimizar as consultas ao banco
         /// </summary>
-        public async Task<List<PedidoCompletoResponse>> GetTodosPedidosCompletos()
+        public async Task<List<PedidoCompletoResponse>> GetTodosPedidosCompletos(Guid estabelecimentoId)
         {
             using var connection = new NpgsqlConnection(_connectionString);
-            
+
             // Query principal: todos os pedidos + cliente + endereço + pagamento + motoboy + coordenadas
             const string sqlPedidos = @"
                 SELECT 
@@ -465,8 +454,9 @@ LEFT JOIN motoboy m ON m.id = p.motoboy_responsavel;
                     NULL AS ""Observacoes"" -- Campo não existe na tabela atual
                 FROM pedido p
                 LEFT JOIN motoboy m ON m.id = p.motoboy_responsavel
+                WHERE p.id_estabelecimento = @EstabelecimentoId
                 ORDER BY p.data_pedido DESC;
-                
+
                 -- Query para todos os itens dos pedidos (parseando JSON)
                 SELECT 
                     jr.id AS ""PedidoId"",
@@ -570,8 +560,8 @@ LEFT JOIN motoboy m ON m.id = p.motoboy_responsavel;
 
             try
             {
-                using var multi = await connection.QueryMultipleAsync(sqlPedidos);
-                
+                using var multi = await connection.QueryMultipleAsync(sqlPedidos, new { EstabelecimentoId = estabelecimentoId });
+
                 // Lê todos os pedidos principais
                 var pedidosData = (await multi.ReadAsync<dynamic>()).ToList();
                 if (!pedidosData.Any())
@@ -678,17 +668,22 @@ LEFT JOIN motoboy m ON m.id = p.motoboy_responsavel;
         }
 
         /// <summary>
-        /// Mapeia o status numérico do banco para o formato string esperado
+        /// Mapeia o status numérico do banco para o vocabulario ja usado pelo endpoint
+        /// riderlink (consumido por tela do cliente final). Mantem o vocabulario
+        /// historico ("disponivel"/"em_entrega"/"entregue"/"cancelado") para nao quebrar
+        /// quem ja consome esses valores; apenas corrige a correspondencia com o enum
+        /// StatusPedido, que antes estava incorreta (3=Concluido e 4=Cancelado
+        /// apareciam ambos mapeados de forma trocada) e nao conhecia o novo Atribuido=5.
         /// </summary>
         private static string MapearStatusPedido(int statusNumerico)
         {
-            return statusNumerico switch
+            return StatusPedidoExtensions.FromDbValue(statusNumerico) switch
             {
-                1 => "disponivel",   // aguardando
-                2 => "em_entrega",   // saiu pra entrega / em rota
-                3 => "em_entrega",   // em andamento
-                4 => "entregue",     // entregue
-                5 => "cancelado",    // cancelado
+                StatusPedido.Pendente => "disponivel",
+                StatusPedido.Atribuido => "disponivel",
+                StatusPedido.EmRota => "em_entrega",
+                StatusPedido.Concluido => "entregue",
+                StatusPedido.Cancelado => "cancelado",
                 _ => "disponivel"
             };
         }

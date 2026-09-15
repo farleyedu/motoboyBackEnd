@@ -29,16 +29,16 @@ namespace APIBack.Service
             return _motoboyRepository.ConvidarMotoboy();
         }
 
-        public IEnumerable<MotoboyComPedidosDTO> GetMotoboysOnline()
+        public IEnumerable<MotoboyComPedidosDTO> GetMotoboysOnline(Guid estabelecimentoId)
         {
-            var motoboys = _motoboyRepository.ListarOnline();
+            var motoboys = _motoboyRepository.ListarOnline(estabelecimentoId);
             var result = new List<MotoboyComPedidosDTO>();
 
             try
             {
                 foreach (var motoboy in motoboys)
                 {
-                    var pedidos = _pedidoRepository.GetPedidosPorMotoboy(motoboy.Id ?? 0);
+                    var pedidos = _pedidoRepository.GetPedidosPorMotoboy(motoboy.Id ?? 0, estabelecimentoId);
 
                     result.Add(new MotoboyComPedidosDTO
                     {

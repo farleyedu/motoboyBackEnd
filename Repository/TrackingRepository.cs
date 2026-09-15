@@ -420,6 +420,7 @@ SELECT
         WHEN 2 THEN 'em_rota'
         WHEN 3 THEN 'concluido'
         WHEN 4 THEN 'cancelado'
+        WHEN 5 THEN 'atribuido'
         ELSE 'pendente'
     END AS StatusPedido,
     p.motoboy_responsavel AS AssignedDriver,
@@ -431,6 +432,10 @@ SELECT
     p.horario_entrega AS HorarioEntrega
 FROM pedido p
  WHERE p.id_estabelecimento = @EstabelecimentoId
+   -- Somente pedidos operacionalmente ativos (pendente/em_rota/atribuido). Sem este
+   -- filtro a consulta devolvia o historico inteiro do estabelecimento a cada refresh
+   -- do painel; concluido/cancelado ja eram descartados no cliente.
+   AND COALESCE(p.status_pedido, 1) IN (1, 2, 5)
 ORDER BY p.data_pedido DESC NULLS LAST, p.id DESC;";
 
             await using var connection = new NpgsqlConnection(_connectionString);

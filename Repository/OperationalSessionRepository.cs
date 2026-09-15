@@ -542,7 +542,14 @@ SELECT s.motoboy_id AS MotoboyId,
        lc.quality AS Quality,
        lc.sequence AS Sequence,
        lc.captured_at_utc AS CapturedAtUtc,
-       lc.received_at_utc AS ReceivedAtUtc
+       lc.received_at_utc AS ReceivedAtUtc,
+       EXISTS(
+           SELECT 1
+             FROM delivery_route_stops rs
+            WHERE rs.motoboy_id = s.motoboy_id
+              AND rs.estabelecimento_id = s.id_estabelecimento
+              AND rs.stop_status = 'en_route'
+       ) AS HasActiveRouteStop
   FROM motoboy_active_sessions s
   JOIN motoboy m ON m.id = s.motoboy_id
   JOIN motoboy_estabelecimento me
@@ -592,7 +599,11 @@ SELECT s.motoboy_id AS MotoboyId,
                     MotoboyId = row.MotoboyId,
                     Nome = row.Nome,
                     Avatar = row.Avatar,
-                    Status = string.Equals(row.TrackingMode, "active_route", StringComparison.OrdinalIgnoreCase)
+                    // A fila (delivery_route_stops) e a fonte de verdade sobre estar em rota.
+                    // O tracking_mode e declarado pelo cliente e serve apenas como reforco:
+                    // sozinho ele deixava o motoboy como "online" mesmo com entrega em rota.
+                    Status = row.HasActiveRouteStop
+                             || string.Equals(row.TrackingMode, "active_route", StringComparison.OrdinalIgnoreCase)
                         ? "delivering"
                         : "online",
                     SessionId = row.SessionId,
@@ -1165,6 +1176,7 @@ VALUES (
             public long? Sequence { get; set; }
             public DateTimeOffset? CapturedAtUtc { get; set; }
             public DateTimeOffset? ReceivedAtUtc { get; set; }
+            public bool HasActiveRouteStop { get; set; }
         }
     }
 }

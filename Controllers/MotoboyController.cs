@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using APIBack.Attributes;
 using APIBack.DTOs;
+using APIBack.Extensions;
 using APIBack.Model;
 using APIBack.Service.Interface;
 using Microsoft.AspNetCore.Http;
@@ -34,7 +35,13 @@ namespace APIBack.Controllers
         [RequirePermission("Delivery", "visualizar")]
         public ActionResult<MotoboyComPedidosDTO> GetMotoboysOnline()
         {
-            var motoboy = _motoboyService.GetMotoboysOnline();
+            var estabelecimentoId = HttpContext.GetEstabelecimentoId();
+            if (!estabelecimentoId.HasValue || estabelecimentoId.Value == Guid.Empty)
+            {
+                return Unauthorized(new { success = false, error = "Contexto autenticado invalido.", code = "UNAUTHENTICATED" });
+            }
+
+            var motoboy = _motoboyService.GetMotoboysOnline(estabelecimentoId.Value);
             if (motoboy == null)
             {
                 return NotFound();

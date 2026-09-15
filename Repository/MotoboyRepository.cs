@@ -38,12 +38,12 @@ namespace APIBack.Repository
                 return await connection.QueryFirstOrDefaultAsync<Motoboy>(sql, new { Id = id });
             }
         }
-        public IEnumerable<Motoboy> ListarOnline()
+        public IEnumerable<Motoboy> ListarOnline(Guid estabelecimentoId)
         {
             using var connection = new NpgsqlConnection(_connectionString);
             {
-                var sql = "SELECT * FROM motoboy WHERE status = 1";
-                return connection.Query<Motoboy>(sql).ToList();
+                var sql = "SELECT * FROM motoboy WHERE status = 1 AND id_estabelecimento = @EstabelecimentoId";
+                return connection.Query<Motoboy>(sql, new { EstabelecimentoId = estabelecimentoId }).ToList();
             }
         }
 
