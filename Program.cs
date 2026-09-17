@@ -62,6 +62,10 @@ builder.Host.UseSerilog();
 // Ensure Dapper maps snake_case columns to PascalCase properties
 DefaultTypeMap.MatchNamesWithUnderscores = true;
 
+// O Npgsql materializa timestamptz como DateTime(Kind=Utc); sem este handler o Dapper
+// estoura com InvalidCastException em toda propriedade DateTimeOffset do delivery.
+SqlMapper.AddTypeHandler(new APIBack.Infrastructure.DateTimeOffsetTypeHandler());
+
 // ================= CONFIGURAÇÃO DO NPGSQL (BEGIN) ======================
 // 1. Pega a connection string do appsettings.json
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
