@@ -50,15 +50,17 @@ namespace APIBack.Tests.Unit
         }
 
         [Fact]
-        public void SetValue_WritesUtcDateTime_SoNonZeroOffsetsAreAccepted()
+        public void SetValue_WritesTimestamptzWithZeroOffset()
         {
             var parameter = new StubParameter();
 
             _handler.SetValue(parameter, new DateTimeOffset(2026, 9, 17, 15, 0, 0, TimeSpan.FromHours(-3)));
 
-            var written = Assert.IsType<DateTime>(parameter.Value);
-            Assert.Equal(DateTimeKind.Utc, written.Kind);
-            Assert.Equal(new DateTime(2026, 9, 17, 18, 0, 0, DateTimeKind.Utc), written);
+            // DbType.DateTime seria "timestamp without time zone" no Npgsql.
+            Assert.Equal(DbType.DateTimeOffset, parameter.DbType);
+            var written = Assert.IsType<DateTimeOffset>(parameter.Value);
+            Assert.Equal(TimeSpan.Zero, written.Offset);
+            Assert.Equal(new DateTime(2026, 9, 17, 18, 0, 0, DateTimeKind.Utc), written.UtcDateTime);
         }
 
         private sealed class StubParameter : IDbDataParameter

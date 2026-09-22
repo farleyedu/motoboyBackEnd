@@ -43,10 +43,14 @@ namespace APIBack.Infrastructure
 
         public override void SetValue(IDbDataParameter parameter, DateTimeOffset value)
         {
-            // UtcDateTime carrega Kind=Utc, que o Npgsql mapeia para timestamptz.
-            // Enviar o DateTimeOffset cru falha quando o offset nao e zero.
-            parameter.DbType = DbType.DateTime;
-            parameter.Value = value.UtcDateTime;
+            // Hoje o Dapper NAO chama este metodo: DateTimeOffset esta no typeMap nativo
+            // dele, que tem precedencia para parametros (coberto em
+            // DapperDateTimeOffsetMappingTests). Fica correto para o caso de alguem
+            // remover o tipo do typeMap: DbType.DateTimeOffset e o que o Npgsql mapeia
+            // para timestamptz (DbType.DateTime viraria "timestamp without time zone"),
+            // e o Npgsql so aceita offset zero.
+            parameter.DbType = DbType.DateTimeOffset;
+            parameter.Value = value.ToUniversalTime();
         }
     }
 }

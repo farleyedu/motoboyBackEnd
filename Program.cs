@@ -59,12 +59,10 @@ Log.Logger = new LoggerConfiguration()
 builder.Host.UseSerilog();
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
 
-// Ensure Dapper maps snake_case columns to PascalCase properties
-DefaultTypeMap.MatchNamesWithUnderscores = true;
-
-// O Npgsql materializa timestamptz como DateTime(Kind=Utc); sem este handler o Dapper
-// estoura com InvalidCastException em toda propriedade DateTimeOffset do delivery.
-SqlMapper.AddTypeHandler(new APIBack.Infrastructure.DateTimeOffsetTypeHandler());
+// Dapper: snake_case -> PascalCase e conversao timestamptz -> DateTimeOffset (sem o
+// handler, toda propriedade DateTimeOffset do delivery estoura InvalidCastException).
+// Centralizado para os testes exercitarem exatamente o mesmo registro.
+APIBack.Infrastructure.DapperConfiguration.Configure();
 
 // ================= CONFIGURAÇÃO DO NPGSQL (BEGIN) ======================
 // 1. Pega a connection string do appsettings.json
