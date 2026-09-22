@@ -319,8 +319,8 @@ WHERE p.id_estabelecimento = @EstabelecimentoId;
                            END AS horario,
                            'Em trânsito' AS local,
                            CASE 
-                               WHEN p.status_pedido = 3 THEN 'em_andamento'
-                               WHEN p.status_pedido = 2 THEN 'concluido'
+                               WHEN p.status_pedido = 2 THEN 'em_andamento' -- 2 = EmRota: e a entrega atual
+                               WHEN p.status_pedido = 3 THEN 'concluido'    -- 3 = Concluido (StatusPedido); 4 agora e Cancelado
                                ELSE 'pendente' 
                            END AS status
                     FROM pedido p WHERE p.id = @Id
@@ -333,7 +333,7 @@ WHERE p.id_estabelecimento = @EstabelecimentoId;
                                ELSE '--:--'
                            END AS horario,
                            p.endereco_entrega AS local,
-                            CASE WHEN p.status_pedido = 4 THEN 'concluido' ELSE 'pendente' END AS status
+                            CASE WHEN p.status_pedido = 3 THEN 'concluido' ELSE 'pendente' END AS status -- entregue = Concluido (3), nao 4
                     FROM pedido p WHERE p.id = @Id
                 ) timeline_data
                 ORDER BY evento_ordem;
@@ -538,8 +538,8 @@ WHERE p.id_estabelecimento = @EstabelecimentoId;
                            END AS horario,
                            'Em trânsito' AS local,
                             CASE 
-                                WHEN p.status_pedido = 3 THEN 'em_andamento'
-                                WHEN p.status_pedido = 2 THEN 'concluido'
+                                WHEN p.status_pedido = 2 THEN 'em_andamento' -- 2 = EmRota: e a entrega atual
+                                WHEN p.status_pedido = 3 THEN 'concluido'    -- 3 = Concluido (StatusPedido); 4 agora e Cancelado
                                 ELSE 'pendente' 
                             END AS status
                     FROM pedido p
@@ -552,7 +552,7 @@ WHERE p.id_estabelecimento = @EstabelecimentoId;
                                ELSE '--:--'
                            END AS horario,
                            p.endereco_entrega AS local,
-                            CASE WHEN p.status_pedido = 4 THEN 'concluido' ELSE 'pendente' END AS status
+                            CASE WHEN p.status_pedido = 3 THEN 'concluido' ELSE 'pendente' END AS status -- entregue = Concluido (3), nao 4
                     FROM pedido p
                 ) timeline_data
                 ORDER BY ""PedidoId"", ""Id"";
