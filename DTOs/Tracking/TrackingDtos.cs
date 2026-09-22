@@ -13,6 +13,11 @@ namespace APIBack.DTOs.Tracking
     {
         public string Nome { get; set; } = "Motoboy Simulado";
         public string? Telefone { get; set; }
+        /// <summary>
+        /// Estabelecimento ao qual o motoboy fica vinculado. Vazio = estabelecimento ativo.
+        /// Validado contra os vinculos do usuario (super admin: qualquer ativo).
+        /// </summary>
+        public Guid? EstabelecimentoId { get; set; }
     }
 
     public class SimulatorMotoboySessionResponse
@@ -65,6 +70,8 @@ namespace APIBack.DTOs.Tracking
         // e o simulador oferece como ponto de partida do motoboy.
         public double? EstabelecimentoLatitude { get; set; }
         public double? EstabelecimentoLongitude { get; set; }
+        public DeliveryDayMetricsDto Metrics { get; set; } = new();
+        public List<MotoboyDayStatsDto> MotoboyStats { get; set; } = new();
         public List<MotoboyMapDto> Motoboys { get; set; } = new();
         public List<OrderMapDto> Pedidos { get; set; } = new();
     }
@@ -125,6 +132,45 @@ namespace APIBack.DTOs.Tracking
         public DateTime? PrevisaoEntrega { get; set; }
         public DateTime? HorarioSaida { get; set; }
         public DateTime? HorarioEntrega { get; set; }
+
+        // Pagamento e entrega (antes o painel mostrava "A confirmar" fixo).
+        public string? TipoPagamento { get; set; }
+        public string? StatusPagamento { get; set; }
+        public decimal? Troco { get; set; }
+        public decimal? DistanciaKm { get; set; }
+        public string? Observacoes { get; set; }
+        public string? EntregaRua { get; set; }
+        public string? EntregaNumero { get; set; }
+        public string? EntregaBairro { get; set; }
+        public string? EntregaCidade { get; set; }
+        public string? EntregaEstado { get; set; }
+        public string? EntregaCep { get; set; }
+
+        // Parada ativa na fila do motoboy: ordem real da rota e marcos da entrega.
+        public int? RoutePosition { get; set; }
+        public string? RouteStopStatus { get; set; }
+        public DateTimeOffset? PickedUpAtUtc { get; set; }
+        public DateTimeOffset? ArrivedAtUtc { get; set; }
+
+        // Ultima tentativa sem sucesso (nao entregue / recusado), para o atendente
+        // saber por que o pedido voltou a ficar pendente.
+        public string? LastFailureReason { get; set; }
+        public string? LastFailureKind { get; set; }
+        public DateTimeOffset? LastFailureAtUtc { get; set; }
+    }
+
+    public class DeliveryDayMetricsDto
+    {
+        public int DeliveredToday { get; set; }
+        public int FailedToday { get; set; }
+        public double? AvgDeliveryMinutesToday { get; set; }
+        public int PendingTransferApprovals { get; set; }
+    }
+
+    public class MotoboyDayStatsDto
+    {
+        public int MotoboyId { get; set; }
+        public int DeliveredToday { get; set; }
     }
 
     public class MotoboyLocationHistoryPointDto

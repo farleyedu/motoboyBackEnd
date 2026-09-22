@@ -60,7 +60,8 @@ namespace APIBack.Controllers
 
             try
             {
-                var motoboy = await _operationalSessionService.CreateSimulatorMotoboyAsync(estabelecimentoId, request);
+                var motoboy = await _operationalSessionService.CreateSimulatorMotoboyAsync(
+                    HttpContext.GetUserId() ?? 0, HttpContext.IsSuperAdmin(), estabelecimentoId, request);
                 return Ok(ApiResponse<MotoboyMapDto>.Ok(motoboy));
             }
             catch (APIBack.Service.DeliveryDomainException ex)

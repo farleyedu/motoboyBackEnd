@@ -20,11 +20,69 @@ namespace APIBack.Controllers
     public sealed class DeliveryOrdersV2Controller : ControllerBase
     {
         private readonly IPedidoQueueService _queueService;
+        private readonly IOperationalSessionService _sessionService;
 
-        public DeliveryOrdersV2Controller(IPedidoQueueService queueService)
+        public DeliveryOrdersV2Controller(IPedidoQueueService queueService, IOperationalSessionService sessionService)
         {
             _queueService = queueService;
+            _sessionService = sessionService;
         }
+
+        // ---- Pedido manual ------------------------------------------------------
+
+        [HttpPost("pedidos")]
+        [RequirePermission("Delivery", "criar_pedido")]
+        public Task<IActionResult> CreatePedido([FromBody] CreatePedidoRequest request) =>
+            ExecuteAsync((est, userId) => _queueService.CreatePedidoAsync(est, userId, request), created: true);
+
+        // ---- Transferencia ------------------------------------------------------
+
+        /// <summary>Atendente move o pedido para outro motoboy (sempre direto, sem aprovacao).</summary>
+        [HttpPost("pedidos/{pedidoId:int}/transferir")]
+        [RequirePermission("Delivery", "atribuir_motoboy")]
+        public Task<IActionResult> TransferPedido(int pedidoId, [FromBody] TransferPedidoRequest request) =>
+            ExecuteAsync((est, userId) => _queueService.TransferByOperatorAsync(est, userId, pedidoId, request.ParaMotoboyId, request.Motivo));
+
+        [HttpGet("transferencias")]
+        [RequirePermission("Delivery", "visualizar")]
+        public Task<IActionResult> ListTransfers([FromQuery] string? status, [FromQuery] int limit = 50) =>
+            ExecuteAsync((est, _) => _queueService.ListTransfersAsync(est, status, limit));
+
+        [HttpPost("transferencias/{transferId:long}/aprovar")]
+        [RequirePermission("Delivery", "atribuir_motoboy")]
+        public Task<IActionResult> ApproveTransfer(long transferId, [FromBody] TransferDecisionRequest? request) =>
+            ExecuteAsync((est, userId) => _queueService.ApproveTransferAsync(est, userId, transferId, request?.Observacao));
+
+        [HttpPost("transferencias/{transferId:long}/rejeitar")]
+        [RequirePermission("Delivery", "atribuir_motoboy")]
+        public Task<IActionResult> RejectTransfer(long transferId, [FromBody] TransferDecisionRequest? request) =>
+            ExecuteAsync((est, userId) => _queueService.RejectTransferAsync(est, userId, transferId, request?.Observacao));
+
+        // ---- Trajeto do dia -----------------------------------------------------
+
+        [HttpGet("motoboys/{motoboyId:int}/trajeto")]
+        [RequirePermission("Delivery", "visualizar")]
+        public async Task<IActionResult> GetTrajectory(int motoboyId, [FromQuery] string? date)
+        {
+            var localDate = OperationalDayWindow.Today(DateTimeOffset.UtcNow);
+            if (!string.IsNullOrWhiteSpace(date) && !DateOnly.TryParse(date, System.Globalization.CultureInfo.InvariantCulture, out localDate))
+            {
+                return BadRequest(ApiResponse<object>.Fail("Parametro date invalido. Use YYYY-MM-DD.", "INVALID_REQUEST"));
+            }
+            return await ExecuteAsync((est, _) => _sessionService.GetTrajectoryAsync(est, motoboyId, localDate));
+        }
+
+        // ---- Parametros do estabelecimento (a tela de parametros vira depois) ----
+
+        [HttpGet("configuracoes")]
+        [RequirePermission("Delivery", "visualizar")]
+        public Task<IActionResult> GetSettings() =>
+            ExecuteAsync((est, _) => _queueService.GetSettingsAsync(est));
+
+        [HttpPut("configuracoes")]
+        [RequirePermission("Delivery", "configurar")]
+        public Task<IActionResult> UpdateSettings([FromBody] UpdateDeliverySettingsRequest request) =>
+            ExecuteAsync((est, userId) => _queueService.UpdateSettingsAsync(est, userId, request));
 
         [HttpPost("pedidos/{pedidoId:int}/atribuir")]
         [RequirePermission("Delivery", "atribuir_motoboy")]
@@ -151,6 +209,22 @@ namespace APIBack.Controllers
 
             error = null;
             return true;
+        }
+
+        private async Task<IActionResult> ExecuteAsync<T>(Func<Guid, int, Task<T>> action, bool created = false)
+        {
+            if (!TryGetActor(out var actorUserId, out var estabelecimentoId, out var error)) return error!;
+            try
+            {
+                var result = await action(estabelecimentoId, actorUserId);
+                return created
+                    ? StatusCode(201, ApiResponse<T>.Ok(result))
+                    : Ok(ApiResponse<T>.Ok(result));
+            }
+            catch (DeliveryDomainException ex)
+            {
+                return DomainError(ex);
+            }
         }
 
         private IActionResult DomainError(DeliveryDomainException ex) =>

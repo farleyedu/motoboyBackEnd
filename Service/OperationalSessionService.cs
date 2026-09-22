@@ -93,7 +93,13 @@ namespace APIBack.Service
             }
 
             EnsureAttempt(request.AttemptId);
-            var session = await _repository.StartSimulatorSessionAsync(actorUserId, estabelecimentoId, request.AttemptId);
+            if (request.MotoboyId.HasValue && request.MotoboyId.Value <= 0)
+            {
+                throw new DeliveryDomainException(422, "INVALID_REQUEST", "motoboyId invalido.");
+            }
+
+            var session = await _repository.StartSimulatorSessionAsync(
+                actorUserId, estabelecimentoId, request.AttemptId, request.MotoboyId);
             return CreateTokenResponse<SimulatorAutoStartResponse>(session);
         }
 
@@ -178,13 +184,27 @@ namespace APIBack.Service
         }
 
         public async Task<MotoboyMapDto> CreateSimulatorMotoboyAsync(
-            Guid estabelecimentoId,
+            int actorUserId,
+            bool isSuperAdmin,
+            Guid activeEstabelecimentoId,
             CreateSimulatorMotoboyRequest request)
         {
             EnsureEnabled();
             if (!_options.SimulatorEnabled)
             {
                 throw new DeliveryDomainException(503, "SIMULATOR_DISABLED", "Simulador operacional desabilitado.");
+            }
+
+            // O operador escolhe o estabelecimento do motoboy. O ativo ja foi autorizado
+            // pela permissao da rota; outro precisa estar entre os vinculos do usuario.
+            var estabelecimentoId = request?.EstabelecimentoId is Guid escolhido && escolhido != Guid.Empty
+                ? escolhido
+                : activeEstabelecimentoId;
+            if (estabelecimentoId != activeEstabelecimentoId
+                && !await _repository.CanUserManageEstablishmentAsync(actorUserId, isSuperAdmin, estabelecimentoId))
+            {
+                throw new DeliveryDomainException(403, "ESTABLISHMENT_FORBIDDEN",
+                    "Voce nao tem acesso ao estabelecimento escolhido.");
             }
 
             var nome = string.IsNullOrWhiteSpace(request?.Nome) ? "Motoboy Simulado" : request.Nome.Trim();
@@ -203,6 +223,21 @@ namespace APIBack.Service
                 Status = "offline"
             };
         }
+
+        public Task<IReadOnlyCollection<MotoboyLocationHistoryPointDto>> GetTrajectoryAsync(
+            Guid estabelecimentoId, int motoboyId, DateOnly localDate)
+        {
+            EnsureEnabled();
+            if (motoboyId <= 0)
+            {
+                throw new DeliveryDomainException(422, "INVALID_REQUEST", "motoboyId invalido.");
+            }
+
+            var (fromUtc, toUtc) = OperationalDayWindow.ToUtcRange(localDate);
+            return _repository.GetTrajectoryAsync(estabelecimentoId, motoboyId, fromUtc, toUtc, TrajectoryPointLimit);
+        }
+
+        private const int TrajectoryPointLimit = 5000;
 
         private T CreateTokenResponse<T>(OperationalSessionRecord session)
             where T : OperationalSessionTokenResponse, new()

@@ -65,6 +65,32 @@ namespace APIBack.Tests.Unit
             Assert.Contains("ux_pedido_id_ifood", sql, StringComparison.Ordinal);
         }
 
+        [Fact]
+        public void Part3Schema_AddsTransferSettingsAndIsolatesQueuePerEstablishment()
+        {
+            var sql = ReadMigration("20260922_02_schema.sql");
+
+            Assert.Contains("CREATE TABLE IF NOT EXISTS delivery_settings", sql, StringComparison.Ordinal);
+            Assert.Contains("CREATE TABLE IF NOT EXISTS delivery_transfer_requests", sql, StringComparison.Ordinal);
+            Assert.Contains("PRIMARY KEY (motoboy_id, estabelecimento_id)", sql, StringComparison.Ordinal);
+            Assert.Contains("ADD COLUMN IF NOT EXISTS picked_up_at_utc", sql, StringComparison.Ordinal);
+            Assert.Contains("'20260922_02_schema'", sql, StringComparison.Ordinal);
+            Assert.DoesNotContain("DELETE FROM", sql, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public void Part3Constraints_AllowNewStopStatesAndOnePendingTransferPerPedido()
+        {
+            var sql = ReadMigration("20260922_04_constraints.sql");
+
+            Assert.Contains("'failed', 'refused', 'transferred'", sql, StringComparison.Ordinal);
+            Assert.Contains("ux_delivery_route_stop_position_active_v2", sql, StringComparison.Ordinal);
+            Assert.Contains("(motoboy_id, estabelecimento_id, position)", sql, StringComparison.Ordinal);
+            Assert.Contains("ux_delivery_transfer_pending_per_pedido", sql, StringComparison.Ordinal);
+            Assert.Contains("CHECK (transfer_policy IN ('direct', 'establishment_approval'))", sql, StringComparison.Ordinal);
+            Assert.Contains("'20260922_04_constraints'", sql, StringComparison.Ordinal);
+        }
+
         private static string ReadMigration(string fileName)
         {
             var path = Path.Combine(AppContext.BaseDirectory, "Migrations", "Delivery", fileName);

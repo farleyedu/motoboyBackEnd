@@ -19,7 +19,8 @@ namespace APIBack.Repository.Interface
         Task<OperationalSessionRecord> StartSimulatorSessionAsync(
             int actorUserId,
             Guid estabelecimentoId,
-            Guid attemptId);
+            Guid attemptId,
+            int? motoboyId);
 
         Task<OperationalSessionRecord?> GetSessionAsync(Guid sessionId);
         Task<OperationalSessionRecord> HeartbeatAsync(Guid sessionId, int motoboyId, long sessionEpoch);
@@ -33,6 +34,9 @@ namespace APIBack.Repository.Interface
         Task<DeliveryTrackingSnapshotDto> GetSnapshotAsync(Guid estabelecimentoId);
         Task<IReadOnlyCollection<SimulatorCandidateDto>> GetSimulatorCandidatesAsync(Guid estabelecimentoId);
         Task<OperationalMotoboyIdentity> CreateSimulatorMotoboyAsync(Guid estabelecimentoId, string nome, string? telefone);
+        Task<bool> CanUserManageEstablishmentAsync(int userId, bool isSuperAdmin, Guid estabelecimentoId);
+        Task<IReadOnlyCollection<MotoboyLocationHistoryPointDto>> GetTrajectoryAsync(
+            Guid estabelecimentoId, int motoboyId, DateTimeOffset fromUtc, DateTimeOffset toUtc, int limit);
         Task<int> ExpireDueSessionsAsync(int limit);
         Task<int> EndActiveMobileSessionsForUserAsync(int userId, string reason);
         Task<int> DeleteOldLocationsAsync(DateTimeOffset receivedBeforeUtc, int limit);

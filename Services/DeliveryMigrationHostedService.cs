@@ -32,7 +32,32 @@ namespace APIBack.Services
             _logger = logger;
         }
 
+        /// <summary>
+        /// Falha de migration do delivery NAO derruba a API: antes, uma migration com erro
+        /// (ex.: min(uuid) no PG &lt; 17) impedia o boot e tirava do ar WhatsApp, reservas e
+        /// todos os outros modulos. Agora o erro e registrado como critico, a transacao do
+        /// arquivo e desfeita pelo proprio Postgres e so o delivery fica comprometido ate a
+        /// correcao. A proxima subida retoma do arquivo que falhou (ledger).
+        /// </summary>
         public async Task StartAsync(CancellationToken cancellationToken)
+        {
+            try
+            {
+                await ApplyMigrationsAsync(cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogCritical(ex,
+                    "Migrations do delivery falharam. A API continua no ar, mas o modulo de delivery pode " +
+                    "falhar ate o SQL ser corrigido e o servico reiniciado.");
+            }
+        }
+
+        private async Task ApplyMigrationsAsync(CancellationToken cancellationToken)
         {
             if (!_options.ApplyMigrationsOnStartup)
             {

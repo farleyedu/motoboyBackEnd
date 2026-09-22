@@ -19,6 +19,8 @@ namespace APIBack.DTOs.Tracking
     public sealed class StartSimulatorSessionRequest
     {
         public Guid AttemptId { get; set; }
+        /// <summary>Motoboy simulado escolhido. Vazio = o primeiro elegivel (comportamento anterior).</summary>
+        public int? MotoboyId { get; set; }
     }
 
     public sealed class OperationalSessionDto

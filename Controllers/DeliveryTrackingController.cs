@@ -81,7 +81,17 @@ namespace APIBack.Controllers
                 return BadRequest(ApiResponse<object>.Fail("Parametro date invalido. Use YYYY-MM-DD."));
             }
 
-            var result = await _trackingService.GetLocationHistoryAsync(estabelecimentoId.Value, motoboyId, localDate);
+            // Le as amostras do fluxo operacional V2 (motoboy_location_samples). A tabela
+            // legada motoboy_location_history_daily nao recebe mais pontos.
+            IReadOnlyCollection<MotoboyLocationHistoryPointDto> result;
+            try
+            {
+                result = await _operationalSessionService.GetTrajectoryAsync(estabelecimentoId.Value, motoboyId, localDate);
+            }
+            catch (APIBack.Service.DeliveryDomainException ex)
+            {
+                return StatusCode(ex.StatusCode, ApiResponse<object>.Fail(ex.Message, ex.Code, ex.Details));
+            }
             return Ok(ApiResponse<object>.Ok(new
             {
                 motoboyId,

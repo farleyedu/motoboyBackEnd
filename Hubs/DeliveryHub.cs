@@ -12,6 +12,7 @@ namespace APIBack.Hubs
         public const string DeliveryOrderUpdated = "delivery.order.updated";
         public const string DeliveryRouteAssigned = "delivery.route.assigned";
         public const string DeliveryQueueUpdated = "delivery.queue.updated";
+        public const string DeliveryTransferUpdated = "delivery.transfer.updated";
 
         public static string EstablishmentGroup(Guid estabelecimentoId) => $"establishment:{estabelecimentoId:N}";
         public static string SessionGroup(Guid sessionId) => $"delivery-session:{sessionId:N}";

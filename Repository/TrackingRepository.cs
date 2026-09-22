@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using APIBack.DTOs.Tracking;
 using APIBack.Model.Tracking;
 using APIBack.Repository.Interface;
+using APIBack.Service;
 using Dapper;
 using Microsoft.Extensions.Configuration;
 using Npgsql;
@@ -404,17 +405,22 @@ WHERE
     OR s.id_estabelecimento = @EstabelecimentoId
 ORDER BY m.nome;";
 
-            const string pedidosSql = @"
+            const string numeric = @"'^-?[0-9]+(\.[0-9]+)?$'";
+
+            // Colunas legadas de pedido podem ser text/numeric/time/timestamp: tudo e lido
+            // como texto e convertido com seguranca em C#. Um valor mal formatado vira
+            // null naquele campo em vez de derrubar o painel inteiro com 500.
+            var pedidosSql = $@"
 SELECT
     p.id AS Id,
-    p.nome_cliente AS NomeCliente,
-    p.id_ifood AS IdIfood,
-    p.telefone_cliente AS TelefoneCliente,
-    p.data_pedido AS DataPedido,
-    p.endereco_entrega AS EnderecoEntrega,
-    p.items AS Items,
-    p.value AS Value,
-    p.region AS Region,
+    p.nome_cliente::text AS NomeCliente,
+    p.id_ifood::text AS IdIfood,
+    p.telefone_cliente::text AS TelefoneCliente,
+    p.data_pedido::text AS DataPedidoRaw,
+    p.endereco_entrega::text AS EnderecoEntrega,
+    p.items::text AS Items,
+    CASE WHEN p.value::text ~ {numeric} THEN p.value::text::NUMERIC END AS Value,
+    p.region::text AS Region,
     CASE COALESCE(p.status_pedido, 1)
         WHEN 1 THEN 'pendente'
         WHEN 2 THEN 'em_rota'
@@ -424,17 +430,47 @@ SELECT
         ELSE 'pendente'
     END AS StatusPedido,
     p.motoboy_responsavel AS AssignedDriver,
-    CASE WHEN p.latitude ~ '^-?[0-9]+(\.[0-9]+)?$' THEN p.latitude::DOUBLE PRECISION ELSE NULL END AS Latitude,
-    CASE WHEN p.longitude ~ '^-?[0-9]+(\.[0-9]+)?$' THEN p.longitude::DOUBLE PRECISION ELSE NULL END AS Longitude,
-    p.horario_pedido AS HorarioPedido,
-    p.previsao_entrega AS PrevisaoEntrega,
-    p.horario_saida AS HorarioSaida,
-    p.horario_entrega AS HorarioEntrega
+    CASE WHEN p.latitude::text ~ {numeric} THEN p.latitude::text::DOUBLE PRECISION END AS Latitude,
+    CASE WHEN p.longitude::text ~ {numeric} THEN p.longitude::text::DOUBLE PRECISION END AS Longitude,
+    p.horario_pedido::text AS HorarioPedidoRaw,
+    p.previsao_entrega::text AS PrevisaoEntregaRaw,
+    p.horario_saida::text AS HorarioSaidaRaw,
+    p.horario_entrega::text AS HorarioEntregaRaw,
+    p.tipo_pagamento::text AS TipoPagamento,
+    p.status_pagamento::text AS StatusPagamento,
+    CASE WHEN p.troco::text ~ {numeric} THEN p.troco::text::NUMERIC END AS Troco,
+    CASE WHEN p.distancia_km::text ~ {numeric} THEN p.distancia_km::text::NUMERIC END AS DistanciaKm,
+    p.observacoes::text AS Observacoes,
+    p.entrega_rua::text AS EntregaRua,
+    p.entrega_numero::text AS EntregaNumero,
+    p.entrega_bairro::text AS EntregaBairro,
+    p.entrega_cidade::text AS EntregaCidade,
+    p.entrega_estado::text AS EntregaEstado,
+    p.entrega_cep::text AS EntregaCep,
+    rs.position AS RoutePosition,
+    rs.stop_status AS RouteStopStatus,
+    rs.picked_up_at_utc AS PickedUpAtUtc,
+    rs.arrived_at_utc AS ArrivedAtUtc,
+    lf.reason AS LastFailureReason,
+    lf.kind AS LastFailureKind,
+    lf.at_utc AS LastFailureAtUtc
 FROM pedido p
+LEFT JOIN delivery_route_stops rs
+       ON rs.pedido_id = p.id
+      AND rs.estabelecimento_id = p.id_estabelecimento
+      AND rs.stop_status IN ('assigned', 'en_route')
+LEFT JOIN LATERAL (
+    SELECT CASE WHEN f.stop_status = 'failed' THEN f.failure_reason ELSE f.refusal_reason END AS reason,
+           f.stop_status AS kind,
+           COALESCE(f.failed_at_utc, f.refused_at_utc) AS at_utc
+      FROM delivery_route_stops f
+     WHERE f.pedido_id = p.id
+       AND f.stop_status IN ('failed', 'refused')
+     ORDER BY COALESCE(f.failed_at_utc, f.refused_at_utc) DESC NULLS LAST
+     LIMIT 1
+) lf ON COALESCE(p.status_pedido, 1) = 1
  WHERE p.id_estabelecimento = @EstabelecimentoId
-   -- Somente pedidos operacionalmente ativos (pendente/em_rota/atribuido). Sem este
-   -- filtro a consulta devolvia o historico inteiro do estabelecimento a cada refresh
-   -- do painel; concluido/cancelado ja eram descartados no cliente.
+   -- Somente pedidos operacionalmente ativos (pendente/em_rota/atribuido).
    AND COALESCE(p.status_pedido, 1) IN (1, 2, 5)
 ORDER BY p.data_pedido DESC NULLS LAST, p.id DESC;";
 
@@ -447,11 +483,41 @@ SELECT
 FROM estabelecimentos e
 WHERE e.id = @EstabelecimentoId;";
 
+            // Dia operacional no fuso do Brasil (o servidor roda em UTC).
+            const string metricsSql = @"
+SELECT
+    COUNT(*) FILTER (WHERE rs.stop_status = 'completed' AND rs.completed_at_utc >= @FromUtc AND rs.completed_at_utc < @ToUtc)::int AS DeliveredToday,
+    COUNT(*) FILTER (WHERE rs.stop_status = 'failed' AND rs.failed_at_utc >= @FromUtc AND rs.failed_at_utc < @ToUtc)::int AS FailedToday,
+    AVG(EXTRACT(EPOCH FROM (rs.completed_at_utc - COALESCE(rs.started_at_utc, rs.assigned_at_utc))) / 60.0)
+        FILTER (WHERE rs.stop_status = 'completed' AND rs.completed_at_utc >= @FromUtc AND rs.completed_at_utc < @ToUtc)::double precision AS AvgDeliveryMinutesToday,
+    (SELECT COUNT(*)::int FROM delivery_transfer_requests t
+      WHERE t.estabelecimento_id = @EstabelecimentoId AND t.status = 'pending_approval') AS PendingTransferApprovals
+FROM delivery_route_stops rs
+WHERE rs.estabelecimento_id = @EstabelecimentoId
+  AND COALESCE(rs.completed_at_utc, rs.failed_at_utc) >= @FromUtc;";
+
+            const string motoboyStatsSql = @"
+SELECT rs.motoboy_id AS MotoboyId, COUNT(*)::int AS DeliveredToday
+  FROM delivery_route_stops rs
+ WHERE rs.estabelecimento_id = @EstabelecimentoId
+   AND rs.stop_status = 'completed'
+   AND rs.completed_at_utc >= @FromUtc
+   AND rs.completed_at_utc < @ToUtc
+ GROUP BY rs.motoboy_id;";
+
+            var (fromUtc, toUtc) = OperationalDayWindow.ToUtcRange(OperationalDayWindow.Today(DateTimeOffset.UtcNow));
+            var dayParams = new { EstabelecimentoId = estabelecimentoId, FromUtc = fromUtc, ToUtc = toUtc };
+
             await using var connection = new NpgsqlConnection(_connectionString);
             var motoboys = (await connection.QueryAsync<MotoboyMapDto>(motoboysSql, new { EstabelecimentoId = estabelecimentoId })).ToList();
-            var pedidos = (await connection.QueryAsync<OrderMapDto>(pedidosSql, new { EstabelecimentoId = estabelecimentoId })).ToList();
+            var pedidos = (await connection.QueryAsync<OrderMapRow>(pedidosSql, new { EstabelecimentoId = estabelecimentoId }))
+                .Select(ToOrderMapDto)
+                .ToList();
             var estabelecimento = await connection.QuerySingleOrDefaultAsync<EstabelecimentoLocationRow>(
                 estabelecimentoSql, new { EstabelecimentoId = estabelecimentoId });
+            var metrics = await connection.QuerySingleOrDefaultAsync<DeliveryDayMetricsDto>(metricsSql, dayParams)
+                ?? new DeliveryDayMetricsDto();
+            var motoboyStats = (await connection.QueryAsync<MotoboyDayStatsDto>(motoboyStatsSql, dayParams)).ToList();
 
             var pedidosPorMotoboy = pedidos
                 .Where(p => p.AssignedDriver.HasValue)
@@ -467,6 +533,7 @@ WHERE e.id = @EstabelecimentoId;";
 
                 motoboy.Pedidos = pedidosDoMotoboy
                     .Where(p => p.Coordinates != null)
+                    .OrderBy(p => p.RoutePosition ?? int.MaxValue)
                     .Select(p => new DeliveryMapItemDto
                     {
                         Id = p.Id,
@@ -487,8 +554,102 @@ WHERE e.id = @EstabelecimentoId;";
                 ServerTimeUtc = DateTimeOffset.UtcNow,
                 EstabelecimentoLatitude = estabelecimento?.Latitude,
                 EstabelecimentoLongitude = estabelecimento?.Longitude,
+                Metrics = metrics,
+                MotoboyStats = motoboyStats,
                 Motoboys = motoboys,
                 Pedidos = pedidos
+            };
+        }
+
+        private sealed class OrderMapRow
+        {
+            public int Id { get; set; }
+            public string? NomeCliente { get; set; }
+            public string? IdIfood { get; set; }
+            public string? TelefoneCliente { get; set; }
+            public string? DataPedidoRaw { get; set; }
+            public string? EnderecoEntrega { get; set; }
+            public string? Items { get; set; }
+            public decimal? Value { get; set; }
+            public string? Region { get; set; }
+            public string StatusPedido { get; set; } = "pendente";
+            public int? AssignedDriver { get; set; }
+            public double? Latitude { get; set; }
+            public double? Longitude { get; set; }
+            public string? HorarioPedidoRaw { get; set; }
+            public string? PrevisaoEntregaRaw { get; set; }
+            public string? HorarioSaidaRaw { get; set; }
+            public string? HorarioEntregaRaw { get; set; }
+            public string? TipoPagamento { get; set; }
+            public string? StatusPagamento { get; set; }
+            public decimal? Troco { get; set; }
+            public decimal? DistanciaKm { get; set; }
+            public string? Observacoes { get; set; }
+            public string? EntregaRua { get; set; }
+            public string? EntregaNumero { get; set; }
+            public string? EntregaBairro { get; set; }
+            public string? EntregaCidade { get; set; }
+            public string? EntregaEstado { get; set; }
+            public string? EntregaCep { get; set; }
+            public int? RoutePosition { get; set; }
+            public string? RouteStopStatus { get; set; }
+            public DateTimeOffset? PickedUpAtUtc { get; set; }
+            public DateTimeOffset? ArrivedAtUtc { get; set; }
+            public string? LastFailureReason { get; set; }
+            public string? LastFailureKind { get; set; }
+            public DateTimeOffset? LastFailureAtUtc { get; set; }
+        }
+
+        private static OrderMapDto ToOrderMapDto(OrderMapRow row)
+        {
+            var dataPedido = DeliveryRules.ParseStoredDateTime(row.DataPedidoRaw);
+            var horarioPedido = DeliveryRules.ParseStoredDateTime(row.HorarioPedidoRaw, dataPedido);
+            var previsao = DeliveryRules.ParseStoredDateTime(row.PrevisaoEntregaRaw, dataPedido);
+            // Previsao so com horario, ancorada na data do pedido, pode cair "antes" do
+            // pedido quando passa da meia-noite (pedido 23:50, previsao 00:30).
+            if (previsao.HasValue && horarioPedido.HasValue && previsao.Value < horarioPedido.Value
+                && previsao.Value.Kind == DateTimeKind.Unspecified && horarioPedido.Value.Kind == DateTimeKind.Unspecified)
+            {
+                previsao = previsao.Value.AddDays(1);
+            }
+
+            return new OrderMapDto
+            {
+                Id = row.Id,
+                NomeCliente = row.NomeCliente,
+                IdIfood = row.IdIfood,
+                TelefoneCliente = row.TelefoneCliente,
+                DataPedido = dataPedido,
+                EnderecoEntrega = row.EnderecoEntrega,
+                Items = row.Items,
+                Value = row.Value,
+                Region = row.Region,
+                StatusPedido = row.StatusPedido,
+                AssignedDriver = row.AssignedDriver,
+                Latitude = row.Latitude,
+                Longitude = row.Longitude,
+                HorarioPedido = horarioPedido,
+                PrevisaoEntrega = previsao,
+                HorarioSaida = DeliveryRules.ParseStoredDateTime(row.HorarioSaidaRaw, dataPedido),
+                HorarioEntrega = DeliveryRules.ParseStoredDateTime(row.HorarioEntregaRaw, dataPedido),
+                TipoPagamento = row.TipoPagamento,
+                StatusPagamento = row.StatusPagamento,
+                Troco = row.Troco,
+                DistanciaKm = row.DistanciaKm,
+                Observacoes = row.Observacoes,
+                EntregaRua = row.EntregaRua,
+                EntregaNumero = row.EntregaNumero,
+                EntregaBairro = row.EntregaBairro,
+                EntregaCidade = row.EntregaCidade,
+                EntregaEstado = row.EntregaEstado,
+                EntregaCep = row.EntregaCep,
+                RoutePosition = row.RoutePosition,
+                RouteStopStatus = row.RouteStopStatus,
+                PickedUpAtUtc = row.PickedUpAtUtc,
+                ArrivedAtUtc = row.ArrivedAtUtc,
+                LastFailureReason = row.LastFailureReason,
+                LastFailureKind = row.LastFailureKind,
+                LastFailureAtUtc = row.LastFailureAtUtc
             };
         }
 

@@ -54,6 +54,8 @@ else
 // Serilog basic console logger
 Log.Logger = new LoggerConfiguration()
     .Enrich.FromLogContext()
+    // Mascara access_token (JWT do SignalR) e afins antes de qualquer log sair.
+    .Enrich.With(new APIBack.Infrastructure.Logging.SensitiveQueryStringEnricher())
     .WriteTo.Console()
     .CreateLogger();
 builder.Host.UseSerilog();

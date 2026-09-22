@@ -100,6 +100,82 @@ namespace APIBack.Controllers
                 ApiResponse<OperationalSessionDto>.Ok(
                     await _service.EndSessionAsync(HttpContext.GetJwtPayload(), reason ?? "client_end")));
 
+        // =====================================================================
+        // Acoes do motoboy sobre a propria fila. Motoboy e estabelecimento vem do
+        // token operacional; nenhum ID arbitrario de motoboy e aceito.
+        // =====================================================================
+
+        [HttpPost("stops/current/pickup")]
+        [RequireOperationalSession]
+        public Task<IActionResult> PickUp() =>
+            WithOperationalContextAsync((est, motoboyId, _) => _queueService.MarkPickedUpAsync(est, motoboyId));
+
+        [HttpPost("stops/current/arrive")]
+        [RequireOperationalSession]
+        public Task<IActionResult> Arrive() =>
+            WithOperationalContextAsync((est, motoboyId, _) => _queueService.MarkArrivedAsync(est, motoboyId));
+
+        [HttpPost("stops/current/deliver")]
+        [RequireOperationalSession]
+        public Task<IActionResult> Deliver([FromBody] DeliverStopRequest? request) =>
+            WithOperationalContextAsync((est, motoboyId, _) => _queueService.DeliverCurrentAsync(est, motoboyId, request?.Codigo));
+
+        [HttpPost("stops/current/fail")]
+        [RequireOperationalSession]
+        public Task<IActionResult> Fail([FromBody] FailStopRequest? request) =>
+            WithOperationalContextAsync((est, motoboyId, _) => _queueService.FailCurrentAsync(est, motoboyId, request?.Motivo));
+
+        [HttpPost("stops/{pedidoId:int}/refuse")]
+        [RequireOperationalSession]
+        public Task<IActionResult> Refuse(int pedidoId, [FromBody] RefuseStopRequest? request) =>
+            WithOperationalContextAsync((est, motoboyId, _) => _queueService.RefuseAsync(est, motoboyId, pedidoId, request?.Motivo));
+
+        [HttpPut("queue/reorder")]
+        [RequireOperationalSession]
+        public Task<IActionResult> Reorder([FromBody] ReorderQueueRequest request) =>
+            WithOperationalContextAsync((est, motoboyId, _) =>
+                _queueService.ReorderByMotoboyAsync(est, motoboyId, request.ExpectedVersion, request.PedidoIdsOrdenados));
+
+        [HttpPost("queue/resume")]
+        [RequireOperationalSession]
+        public Task<IActionResult> ResumeQueue() =>
+            WithOperationalContextAsync((est, motoboyId, _) => _queueService.ResumeByMotoboyAsync(est, motoboyId));
+
+        [HttpGet("transfer-targets")]
+        [RequireOperationalSession]
+        public Task<IActionResult> GetTransferTargets() =>
+            WithOperationalContextAsync((est, motoboyId, _) => _queueService.GetTransferTargetsAsync(est, motoboyId));
+
+        [HttpPost("stops/{pedidoId:int}/transfer")]
+        [RequireOperationalSession]
+        public Task<IActionResult> Transfer(int pedidoId, [FromBody] TransferPedidoRequest request) =>
+            WithOperationalContextAsync((est, motoboyId, userId) =>
+                _queueService.RequestTransferByMotoboyAsync(est, motoboyId, userId, pedidoId, request.ParaMotoboyId, request.Motivo));
+
+        [HttpGet("transfers")]
+        [RequireOperationalSession]
+        public Task<IActionResult> GetTransfers([FromQuery] int limit = 20) =>
+            WithOperationalContextAsync((est, motoboyId, _) => _queueService.ListMotoboyTransfersAsync(est, motoboyId, limit));
+
+        [HttpDelete("transfers/{transferId:long}")]
+        [RequireOperationalSession]
+        public Task<IActionResult> CancelTransfer(long transferId) =>
+            WithOperationalContextAsync((est, motoboyId, _) => _queueService.CancelTransferByMotoboyAsync(est, motoboyId, transferId));
+
+        private async Task<IActionResult> WithOperationalContextAsync<T>(Func<Guid, int, int, Task<T>> action)
+        {
+            var payload = HttpContext.GetJwtPayload();
+            var estabelecimentoId = HttpContext.GetEstabelecimentoId() ?? Guid.Empty;
+            var userId = HttpContext.GetUserId() ?? 0;
+            if (!payload.MotoboyId.HasValue || estabelecimentoId == Guid.Empty)
+            {
+                return Unauthorized(ApiResponse<object>.Fail("Contexto operacional invalido.", "OPERATIONAL_TOKEN_REQUIRED"));
+            }
+
+            return await ExecuteAsync(async () =>
+                ApiResponse<T>.Ok(await action(estabelecimentoId, payload.MotoboyId.Value, userId)));
+        }
+
         private async Task<IActionResult> ExecuteAsync<T>(Func<Task<ApiResponse<T>>> action)
         {
             try

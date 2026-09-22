@@ -28,7 +28,10 @@ namespace APIBack.Service.Interface
         Task<OperationalSessionDto?> GetSessionAsync(JwtPayload payload);
         Task<DeliveryTrackingSnapshotDto> GetSnapshotAsync(Guid estabelecimentoId);
         Task<IReadOnlyCollection<SimulatorCandidateDto>> GetSimulatorCandidatesAsync(Guid estabelecimentoId);
-        Task<MotoboyMapDto> CreateSimulatorMotoboyAsync(Guid estabelecimentoId, CreateSimulatorMotoboyRequest request);
+        Task<MotoboyMapDto> CreateSimulatorMotoboyAsync(
+            int actorUserId, bool isSuperAdmin, Guid activeEstabelecimentoId, CreateSimulatorMotoboyRequest request);
+        Task<IReadOnlyCollection<MotoboyLocationHistoryPointDto>> GetTrajectoryAsync(
+            Guid estabelecimentoId, int motoboyId, DateOnly localDate);
     }
 }
 

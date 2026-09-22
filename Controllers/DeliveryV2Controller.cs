@@ -61,10 +61,11 @@ namespace APIBack.Controllers
         [RequirePermission("Delivery", "gestao_motoboy")]
         public async Task<IActionResult> CreateSimulatorMotoboy([FromBody] CreateSimulatorMotoboyRequest request)
         {
-            if (!TryGetActor(out _, out var estabelecimentoId, out var error)) return error!;
+            if (!TryGetActor(out var actorUserId, out var estabelecimentoId, out var error)) return error!;
             try
             {
-                var response = await _service.CreateSimulatorMotoboyAsync(estabelecimentoId, request);
+                var response = await _service.CreateSimulatorMotoboyAsync(
+                    actorUserId, HttpContext.IsSuperAdmin(), estabelecimentoId, request);
                 return StatusCode(201, ApiResponse<MotoboyMapDto>.Ok(response));
             }
             catch (DeliveryDomainException ex)

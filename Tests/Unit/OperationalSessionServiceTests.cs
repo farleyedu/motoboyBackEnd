@@ -32,7 +32,7 @@ namespace APIBack.Tests.Unit
         {
             var session = CreateSession("simulator");
             JwtPayload? capturedPayload = null;
-            _repository.Setup(r => r.StartSimulatorSessionAsync(7, session.EstabelecimentoId, It.IsAny<Guid>()))
+            _repository.Setup(r => r.StartSimulatorSessionAsync(7, session.EstabelecimentoId, It.IsAny<Guid>(), null))
                 .ReturnsAsync(session);
             _jwtService.Setup(j => j.GenerateToken(It.IsAny<JwtPayload>(), It.IsAny<TimeSpan>()))
                 .Callback<JwtPayload, TimeSpan>((payload, _) => capturedPayload = payload)
@@ -92,6 +92,83 @@ namespace APIBack.Tests.Unit
 
             Assert.Equal("DELIVERY_TRACKING_DISABLED", exception.Code);
             _repository.VerifyNoOtherCalls();
+        }
+
+        [Fact]
+        public async Task AutoStart_PassesChosenMotoboyToRepository()
+        {
+            var session = CreateSession("simulator");
+            _repository.Setup(r => r.StartSimulatorSessionAsync(7, session.EstabelecimentoId, It.IsAny<Guid>(), 42))
+                .ReturnsAsync(session);
+            _jwtService.Setup(j => j.GenerateToken(It.IsAny<JwtPayload>(), It.IsAny<TimeSpan>())).Returns("token");
+            var service = CreateService();
+
+            await service.AutoStartSimulatorSessionAsync(
+                7,
+                session.EstabelecimentoId,
+                new StartSimulatorSessionRequest { AttemptId = Guid.NewGuid(), MotoboyId = 42 });
+
+            _repository.Verify(r => r.StartSimulatorSessionAsync(7, session.EstabelecimentoId, It.IsAny<Guid>(), 42), Times.Once);
+        }
+
+        [Fact]
+        public async Task AutoStart_RejectsInvalidChosenMotoboy()
+        {
+            var service = CreateService();
+
+            var exception = await Assert.ThrowsAsync<DeliveryDomainException>(() =>
+                service.AutoStartSimulatorSessionAsync(
+                    7,
+                    Guid.NewGuid(),
+                    new StartSimulatorSessionRequest { AttemptId = Guid.NewGuid(), MotoboyId = 0 }));
+
+            Assert.Equal("INVALID_REQUEST", exception.Code);
+        }
+
+        [Fact]
+        public async Task CreateSimulatorMotoboy_OtherEstablishmentRequiresAccess()
+        {
+            var active = Guid.NewGuid();
+            var other = Guid.NewGuid();
+            _repository.Setup(r => r.CanUserManageEstablishmentAsync(7, false, other)).ReturnsAsync(false);
+            var service = CreateService();
+
+            var exception = await Assert.ThrowsAsync<DeliveryDomainException>(() =>
+                service.CreateSimulatorMotoboyAsync(7, false, active,
+                    new CreateSimulatorMotoboyRequest { Nome = "Teste", EstabelecimentoId = other }));
+
+            Assert.Equal("ESTABLISHMENT_FORBIDDEN", exception.Code);
+            _repository.Verify(r => r.CreateSimulatorMotoboyAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string?>()), Times.Never);
+        }
+
+        [Fact]
+        public async Task CreateSimulatorMotoboy_UsesChosenEstablishmentWhenAllowed()
+        {
+            var active = Guid.NewGuid();
+            var other = Guid.NewGuid();
+            _repository.Setup(r => r.CanUserManageEstablishmentAsync(7, true, other)).ReturnsAsync(true);
+            _repository.Setup(r => r.CreateSimulatorMotoboyAsync(other, "Teste", null))
+                .ReturnsAsync(new OperationalMotoboyIdentity { MotoboyId = 9, EstabelecimentoId = other, Nome = "Teste" });
+            var service = CreateService();
+
+            var result = await service.CreateSimulatorMotoboyAsync(7, true, active,
+                new CreateSimulatorMotoboyRequest { Nome = "Teste", EstabelecimentoId = other });
+
+            Assert.Equal(9, result.Id);
+            _repository.Verify(r => r.CreateSimulatorMotoboyAsync(other, "Teste", null), Times.Once);
+        }
+
+        [Fact]
+        public async Task CreateSimulatorMotoboy_DefaultsToActiveEstablishmentWithoutAccessCheck()
+        {
+            var active = Guid.NewGuid();
+            _repository.Setup(r => r.CreateSimulatorMotoboyAsync(active, "Teste", null))
+                .ReturnsAsync(new OperationalMotoboyIdentity { MotoboyId = 3, EstabelecimentoId = active, Nome = "Teste" });
+            var service = CreateService();
+
+            await service.CreateSimulatorMotoboyAsync(7, false, active, new CreateSimulatorMotoboyRequest { Nome = "Teste" });
+
+            _repository.Verify(r => r.CanUserManageEstablishmentAsync(It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<Guid>()), Times.Never);
         }
 
         private OperationalSessionService CreateService() => new(

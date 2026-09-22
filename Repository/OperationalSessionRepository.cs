@@ -112,7 +112,8 @@ SELECT s.session_id AS SessionId,
         public async Task<OperationalSessionRecord> StartSimulatorSessionAsync(
             int actorUserId,
             Guid estabelecimentoId,
-            Guid attemptId)
+            Guid attemptId,
+            int? motoboyId)
         {
             await using var connection = await _dataSource.OpenConnectionAsync();
             await using var transaction = await connection.BeginTransactionAsync();
@@ -155,20 +156,27 @@ SELECT m.id AS MotoboyId,
           AND s.revoked_at IS NULL
           AND s.expires_at_utc > NOW()
    )
+   -- Motoboy escolhido pelo operador; sem escolha, o primeiro elegivel.
+   AND (@MotoboyId::int IS NULL OR m.id = @MotoboyId)
  ORDER BY me.created_at_utc, me.motoboy_id
  FOR UPDATE OF m SKIP LOCKED
  LIMIT 1;";
 
             var candidate = await connection.QueryFirstOrDefaultAsync<OperationalMotoboyIdentity>(
                 candidateSql,
-                new { EstabelecimentoId = estabelecimentoId },
+                new { EstabelecimentoId = estabelecimentoId, MotoboyId = motoboyId },
                 transaction);
             if (candidate == null)
             {
-                throw new DeliveryDomainException(
-                    409,
-                    "NO_ELIGIBLE_MOTOBOY",
-                    "Nenhum motoboy simulado esta elegivel para iniciar uma sessao.");
+                throw motoboyId.HasValue
+                    ? new DeliveryDomainException(
+                        409,
+                        "MOTOBOY_NOT_ELIGIBLE",
+                        "Este motoboy simulado nao esta disponivel: ja tem sessao aberta ou nao pertence ao estabelecimento.")
+                    : new DeliveryDomainException(
+                        409,
+                        "NO_ELIGIBLE_MOTOBOY",
+                        "Nenhum motoboy simulado esta elegivel para iniciar uma sessao.");
             }
 
             var staleSession = await GetOpenSessionForUpdateAsync(connection, transaction, candidate.MotoboyId);
@@ -704,6 +712,63 @@ VALUES (@MotoboyId, @EstabelecimentoId, TRUE, TRUE, NOW(), NOW());",
                 IsSimulated = true,
                 SimulatorEnabled = true
             };
+        }
+
+        public async Task<bool> CanUserManageEstablishmentAsync(int userId, bool isSuperAdmin, Guid estabelecimentoId)
+        {
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            return await connection.ExecuteScalarAsync<bool>(@"
+SELECT EXISTS (
+    SELECT 1
+      FROM estabelecimentos e
+     WHERE e.id = @EstabelecimentoId
+       AND COALESCE(e.ativo, TRUE) = TRUE
+       AND LOWER(COALESCE(e.status, 'ativo')) IN ('ativo', 'trial')
+       AND (
+           @IsSuperAdmin
+           OR EXISTS (
+               SELECT 1
+                 FROM usuario_estabelecimentos ue
+                WHERE ue.id_usuario = @UserId
+                  AND ue.id_estabelecimento = e.id
+                  AND COALESCE(ue.ativo, TRUE) = TRUE
+                  AND LOWER(COALESCE(ue.status, 'ativo')) = 'ativo'
+                  AND LOWER(COALESCE(ue.tipo_acesso, '')) <> 'motoboy'
+           )
+       )
+);", new { UserId = userId, IsSuperAdmin = isSuperAdmin, EstabelecimentoId = estabelecimentoId });
+        }
+
+        public async Task<IReadOnlyCollection<MotoboyLocationHistoryPointDto>> GetTrajectoryAsync(
+            Guid estabelecimentoId, int motoboyId, DateTimeOffset fromUtc, DateTimeOffset toUtc, int limit)
+        {
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            return (await connection.QueryAsync<MotoboyLocationHistoryPointDto>(@"
+SELECT motoboy_id AS MotoboyId,
+       latitude AS Latitude,
+       longitude AS Longitude,
+       accuracy_meters AS AccuracyMeters,
+       speed_mps AS SpeedMps,
+       heading_degrees AS HeadingDegrees,
+       tracking_mode AS TrackingMode,
+       quality AS Quality,
+       captured_at_utc AS ClientTimestampUtc,
+       received_at_utc AS ServerReceivedAtUtc
+  FROM motoboy_location_samples
+ WHERE estabelecimento_id = @EstabelecimentoId
+   AND motoboy_id = @MotoboyId
+   AND captured_at_utc >= @FromUtc
+   AND captured_at_utc < @ToUtc
+ ORDER BY captured_at_utc, sequence
+ LIMIT @Limit;",
+                new
+                {
+                    EstabelecimentoId = estabelecimentoId,
+                    MotoboyId = motoboyId,
+                    FromUtc = fromUtc,
+                    ToUtc = toUtc,
+                    Limit = Math.Clamp(limit, 1, 20000)
+                })).ToArray();
         }
 
         public async Task<int> ExpireDueSessionsAsync(int limit)
