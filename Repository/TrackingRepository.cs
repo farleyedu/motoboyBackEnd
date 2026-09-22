@@ -438,9 +438,20 @@ FROM pedido p
    AND COALESCE(p.status_pedido, 1) IN (1, 2, 5)
 ORDER BY p.data_pedido DESC NULLS LAST, p.id DESC;";
 
+            // Mesmo tratamento defensivo das coordenadas de pedido/motoboy: so converte o
+            // que for numero valido, para nao derrubar o mapa por um cadastro mal preenchido.
+            const string estabelecimentoSql = @"
+SELECT
+    CASE WHEN e.latitude::text ~ '^-?[0-9]+(\.[0-9]+)?$' THEN e.latitude::text::DOUBLE PRECISION ELSE NULL END AS Latitude,
+    CASE WHEN e.longitude::text ~ '^-?[0-9]+(\.[0-9]+)?$' THEN e.longitude::text::DOUBLE PRECISION ELSE NULL END AS Longitude
+FROM estabelecimentos e
+WHERE e.id = @EstabelecimentoId;";
+
             await using var connection = new NpgsqlConnection(_connectionString);
             var motoboys = (await connection.QueryAsync<MotoboyMapDto>(motoboysSql, new { EstabelecimentoId = estabelecimentoId })).ToList();
             var pedidos = (await connection.QueryAsync<OrderMapDto>(pedidosSql, new { EstabelecimentoId = estabelecimentoId })).ToList();
+            var estabelecimento = await connection.QuerySingleOrDefaultAsync<EstabelecimentoLocationRow>(
+                estabelecimentoSql, new { EstabelecimentoId = estabelecimentoId });
 
             var pedidosPorMotoboy = pedidos
                 .Where(p => p.AssignedDriver.HasValue)
@@ -474,9 +485,17 @@ ORDER BY p.data_pedido DESC NULLS LAST, p.id DESC;";
             return new DeliveryMapStateDto
             {
                 ServerTimeUtc = DateTimeOffset.UtcNow,
+                EstabelecimentoLatitude = estabelecimento?.Latitude,
+                EstabelecimentoLongitude = estabelecimento?.Longitude,
                 Motoboys = motoboys,
                 Pedidos = pedidos
             };
+        }
+
+        private sealed class EstabelecimentoLocationRow
+        {
+            public double? Latitude { get; set; }
+            public double? Longitude { get; set; }
         }
 
         public async Task<IReadOnlyCollection<MotoboyLocationHistoryPointDto>> GetLocationHistoryAsync(

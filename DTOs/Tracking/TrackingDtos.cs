@@ -60,6 +60,11 @@ namespace APIBack.DTOs.Tracking
     public class DeliveryMapStateDto
     {
         public DateTimeOffset ServerTimeUtc { get; set; } = DateTimeOffset.UtcNow;
+        // Posicao cadastrada do restaurante. O painel usa como centro do mapa quando
+        // ainda nao ha pedido nem motoboy com coordenada (antes o mapa nem era criado),
+        // e o simulador oferece como ponto de partida do motoboy.
+        public double? EstabelecimentoLatitude { get; set; }
+        public double? EstabelecimentoLongitude { get; set; }
         public List<MotoboyMapDto> Motoboys { get; set; } = new();
         public List<OrderMapDto> Pedidos { get; set; } = new();
     }
