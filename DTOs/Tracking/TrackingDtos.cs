@@ -70,6 +70,8 @@ namespace APIBack.DTOs.Tracking
         // e o simulador oferece como ponto de partida do motoboy.
         public double? EstabelecimentoLatitude { get; set; }
         public double? EstabelecimentoLongitude { get; set; }
+        public string? EstabelecimentoCidade { get; set; }
+        public string? EstabelecimentoUf { get; set; }
         public DeliveryDayMetricsDto Metrics { get; set; } = new();
         public List<MotoboyDayStatsDto> MotoboyStats { get; set; } = new();
         public List<MotoboyMapDto> Motoboys { get; set; } = new();

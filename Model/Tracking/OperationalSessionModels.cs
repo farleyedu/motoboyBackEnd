@@ -34,6 +34,7 @@ namespace APIBack.Model.Tracking
         public string Nome { get; set; } = string.Empty;
         public string? Avatar { get; set; }
         public int Status { get; set; }
+        public long NextLocationSequence { get; set; } = 1;
     }
 
     public sealed class OperationalLocationWrite
@@ -67,4 +68,3 @@ namespace APIBack.Model.Tracking
         public string Payload { get; set; } = "{}";
     }
 }
-

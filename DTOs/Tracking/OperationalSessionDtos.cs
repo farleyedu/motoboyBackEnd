@@ -49,6 +49,7 @@ namespace APIBack.DTOs.Tracking
 
     public sealed class SimulatorAutoStartResponse : OperationalSessionTokenResponse
     {
+        public long NextLocationSequence { get; set; } = 1;
     }
 
     public sealed class OperationalSessionConflictDto

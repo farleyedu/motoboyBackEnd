@@ -35,9 +35,11 @@ SELECT s.session_id AS SessionId,
        s.version AS Version,
        COALESCE(m.nome, '') AS Nome,
        m.avatar AS Avatar,
-       COALESCE(m.status, 2) AS Status
+       COALESCE(m.status, 2) AS Status,
+       COALESCE(lc.sequence, 0) + 1 AS NextLocationSequence
   FROM motoboy_active_sessions s
-  JOIN motoboy m ON m.id = s.motoboy_id ";
+  JOIN motoboy m ON m.id = s.motoboy_id
+  LEFT JOIN motoboy_location_current lc ON lc.session_id = s.session_id ";
 
         private readonly NpgsqlDataSource _dataSource;
         private readonly DeliveryTrackingOptions _options;
@@ -298,6 +300,30 @@ RETURNING version;";
 
             if (!session.EndedAtUtc.HasValue)
             {
+                var hasPendingWork = await connection.ExecuteScalarAsync<bool>(@"
+SELECT
+    EXISTS (
+        SELECT 1
+          FROM delivery_route_stops rs
+         WHERE rs.motoboy_id = @MotoboyId
+           AND rs.stop_status IN ('assigned', 'en_route')
+    )
+    OR EXISTS (
+        SELECT 1
+          FROM delivery_transfer_requests tr
+         WHERE tr.status = 'pending_approval'
+           AND (tr.from_motoboy_id = @MotoboyId OR tr.to_motoboy_id = @MotoboyId)
+    );",
+                    new { MotoboyId = motoboyId },
+                    transaction);
+                if (hasPendingWork)
+                {
+                    throw new DeliveryDomainException(
+                        409,
+                        "MOTOBOY_HAS_PENDING_WORK",
+                        "O motoboy possui pedidos em rota, na fila ou transferencias pendentes e nao pode ficar offline.");
+                }
+
                 session = await EndLockedSessionAsync(
                     connection,
                     transaction,

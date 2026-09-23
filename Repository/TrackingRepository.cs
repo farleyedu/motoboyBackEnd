@@ -479,7 +479,9 @@ ORDER BY p.data_pedido DESC NULLS LAST, p.id DESC;";
             const string estabelecimentoSql = @"
 SELECT
     CASE WHEN e.latitude::text ~ '^-?[0-9]+(\.[0-9]+)?$' THEN e.latitude::text::DOUBLE PRECISION ELSE NULL END AS Latitude,
-    CASE WHEN e.longitude::text ~ '^-?[0-9]+(\.[0-9]+)?$' THEN e.longitude::text::DOUBLE PRECISION ELSE NULL END AS Longitude
+    CASE WHEN e.longitude::text ~ '^-?[0-9]+(\.[0-9]+)?$' THEN e.longitude::text::DOUBLE PRECISION ELSE NULL END AS Longitude,
+    NULLIF(BTRIM(e.cidade::text), '') AS Cidade,
+    NULLIF(BTRIM(e.uf::text), '') AS Uf
 FROM estabelecimentos e
 WHERE e.id = @EstabelecimentoId;";
 
@@ -554,6 +556,8 @@ SELECT rs.motoboy_id AS MotoboyId, COUNT(*)::int AS DeliveredToday
                 ServerTimeUtc = DateTimeOffset.UtcNow,
                 EstabelecimentoLatitude = estabelecimento?.Latitude,
                 EstabelecimentoLongitude = estabelecimento?.Longitude,
+                EstabelecimentoCidade = estabelecimento?.Cidade,
+                EstabelecimentoUf = estabelecimento?.Uf,
                 Metrics = metrics,
                 MotoboyStats = motoboyStats,
                 Motoboys = motoboys,
@@ -657,6 +661,8 @@ SELECT rs.motoboy_id AS MotoboyId, COUNT(*)::int AS DeliveredToday
         {
             public double? Latitude { get; set; }
             public double? Longitude { get; set; }
+            public string? Cidade { get; set; }
+            public string? Uf { get; set; }
         }
 
         public async Task<IReadOnlyCollection<MotoboyLocationHistoryPointDto>> GetLocationHistoryAsync(

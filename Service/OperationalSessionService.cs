@@ -100,7 +100,9 @@ namespace APIBack.Service
 
             var session = await _repository.StartSimulatorSessionAsync(
                 actorUserId, estabelecimentoId, request.AttemptId, request.MotoboyId);
-            return CreateTokenResponse<SimulatorAutoStartResponse>(session);
+            var response = CreateTokenResponse<SimulatorAutoStartResponse>(session);
+            response.NextLocationSequence = Math.Max(1, session.NextLocationSequence);
+            return response;
         }
 
         public async Task<OperationalHeartbeatResponse> HeartbeatAsync(JwtPayload payload)

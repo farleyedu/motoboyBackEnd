@@ -53,6 +53,33 @@ namespace APIBack.Tests.Unit
             Assert.Equal(session.SessionEpoch, capturedPayload.SessionEpoch);
             Assert.Equal(session.SessionId, capturedPayload.MotoboySessionId);
             Assert.Equal(7, capturedPayload.UserId);
+            Assert.Equal(session.NextLocationSequence, result.NextLocationSequence);
+        }
+
+        [Fact]
+        public async Task EndSession_PropagatesPendingWorkConflict()
+        {
+            var session = CreateSession("simulator");
+            var payload = new JwtPayload
+            {
+                TokenUse = "delivery_operational",
+                MotoboySessionId = session.SessionId,
+                MotoboyId = session.MotoboyId,
+                SessionEpoch = session.SessionEpoch
+            };
+            _repository
+                .Setup(r => r.EndSessionAsync(session.SessionId, session.MotoboyId, session.SessionEpoch, "client_end"))
+                .ThrowsAsync(new DeliveryDomainException(
+                    409,
+                    "MOTOBOY_HAS_PENDING_WORK",
+                    "O motoboy possui pendencias."));
+            var service = CreateService();
+
+            var exception = await Assert.ThrowsAsync<DeliveryDomainException>(() =>
+                service.EndSessionAsync(payload, "client_end"));
+
+            Assert.Equal(409, exception.StatusCode);
+            Assert.Equal("MOTOBOY_HAS_PENDING_WORK", exception.Code);
         }
 
         [Fact]
@@ -193,7 +220,8 @@ namespace APIBack.Tests.Unit
                 ExpiresAtUtc = now.AddSeconds(90),
                 Version = 1,
                 Nome = "Motoboy Teste",
-                Status = 2
+                Status = 2,
+                NextLocationSequence = 37
             };
         }
     }
