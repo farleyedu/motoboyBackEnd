@@ -91,7 +91,7 @@ namespace APIBack.Controllers
             return await ExecuteAsync((est, _) => _sessionService.GetTrajectoryAsync(est, motoboyId, localDate));
         }
 
-        // ---- Parametros do estabelecimento (a tela de parametros vira depois) ----
+        // ---- Configuracoes do estabelecimento (tela Delivery > Configuracoes) ----
 
         [HttpGet("configuracoes")]
         [RequirePermission("Delivery", "visualizar")]
