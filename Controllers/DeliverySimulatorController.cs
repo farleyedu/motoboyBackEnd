@@ -3,6 +3,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using APIBack.Attributes;
 using APIBack.DTOs.Common;
+using APIBack.DTOs.Delivery;
 using APIBack.DTOs.Tracking;
 using APIBack.Extensions;
 using APIBack.Service.Interface;
@@ -16,10 +17,36 @@ namespace APIBack.Controllers
     public class DeliverySimulatorController : ControllerBase
     {
         private readonly IOperationalSessionService _operationalSessionService;
+        private readonly IPedidoQueueService _queueService;
 
-        public DeliverySimulatorController(IOperationalSessionService operationalSessionService)
+        public DeliverySimulatorController(IOperationalSessionService operationalSessionService, IPedidoQueueService queueService)
         {
             _operationalSessionService = operationalSessionService;
+            _queueService = queueService;
+        }
+
+        /// <summary>
+        /// Altera qualquer dado do pedido para testes (endereco, itens, pagamento, prazo e
+        /// ate "feito ha N minutos"). Motoboy, fila e status continuam nos comandos de fila.
+        /// </summary>
+        [HttpPut("pedidos/{pedidoId:int}")]
+        public async Task<IActionResult> UpdatePedido([FromRoute] int pedidoId, [FromBody] SimulatorPedidoRequest request)
+        {
+            if (!TryGetEstabelecimentoId(out var estabelecimentoId, out var error))
+            {
+                return error!;
+            }
+
+            try
+            {
+                var result = await _queueService.UpdatePedidoForSimulatorAsync(
+                    estabelecimentoId, HttpContext.GetUserId() ?? 0, pedidoId, request);
+                return Ok(ApiResponse<CreatedPedidoDto>.Ok(result));
+            }
+            catch (APIBack.Service.DeliveryDomainException ex)
+            {
+                return StatusCode(ex.StatusCode, ApiResponse<object>.Fail(ex.Message, ex.Code, ex.Details));
+            }
         }
 
         [HttpGet("motoboys")]

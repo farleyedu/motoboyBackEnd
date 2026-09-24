@@ -7,6 +7,15 @@ namespace APIBack.Tests.Unit
     public sealed class DeliveryMigrationContractTests
     {
         [Fact]
+        public void OrderWindowMigration_AddsNullableJsonColumnIdempotently()
+        {
+            var sql = ReadMigration("20260924_02_schema.sql");
+
+            Assert.Contains("ADD COLUMN IF NOT EXISTS order_window JSONB NULL", sql, StringComparison.Ordinal);
+            Assert.DoesNotContain("DROP ", sql, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
         public void ConstraintsMigration_EnforcesGlobalSessionAndPerSessionSequence()
         {
             var sql = ReadMigration("20260722_04_constraints.sql");

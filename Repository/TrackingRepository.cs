@@ -518,12 +518,14 @@ LEFT JOIN LATERAL (
      LIMIT 1
 ) pt ON COALESCE(p.status_pedido, 1) IN (2, 5)
  WHERE p.id_estabelecimento = @EstabelecimentoId
-   -- Ativos (pendente/em_rota/atribuido) mais os desfechos do dia operacional
-   -- (concluido/cancelado): o painel mostra 'Entregue' em vez de sumir com o pedido.
+   -- Ativos (pendente/em_rota/atribuido) mais os desfechos (concluido/cancelado) a partir do
+   -- inicio da janela de pedidos: o painel mostra 'Entregue' em vez de sumir com o pedido.
+   -- O recorte fino pela janela configurada do estabelecimento e feito depois, em C#, porque
+   -- as colunas de horario do pedido sao legadas e de tipos misturados.
    AND (
         COALESCE(p.status_pedido, 1) IN (1, 2, 5)
-        OR (COALESCE(p.status_pedido, 1) = 3 AND dn.at_utc >= @FromUtc AND dn.at_utc < @ToUtc)
-        OR (COALESCE(p.status_pedido, 1) = 4 AND cn.at_utc >= @FromUtc AND cn.at_utc < @ToUtc)
+        OR (COALESCE(p.status_pedido, 1) = 3 AND dn.at_utc >= @WindowFromUtc)
+        OR (COALESCE(p.status_pedido, 1) = 4 AND cn.at_utc >= @WindowFromUtc)
    )
 ORDER BY p.data_pedido DESC NULLS LAST, p.id DESC;";
 
@@ -565,8 +567,14 @@ SELECT rs.motoboy_id AS MotoboyId, COUNT(*)::int AS DeliveredToday
 
             await using var connection = new NpgsqlConnection(_connectionString);
             var motoboys = (await connection.QueryAsync<MotoboyMapDto>(motoboysSql, new { EstabelecimentoId = estabelecimentoId })).ToList();
-            var pedidos = (await connection.QueryAsync<OrderMapRow>(pedidosSql, dayParams))
+            var orderWindow = await OrderWindowStore.ReadAsync(connection, estabelecimentoId);
+            var windowRange = OrderWindowRules.Resolve(orderWindow, DateTimeOffset.UtcNow);
+            // Sem inicio (janela so com fim), olha 7 dias para tras: mais que isso nao e operacao.
+            var windowFromUtc = windowRange.FromUtc ?? fromUtc.AddDays(-7);
+            var pedidos = (await connection.QueryAsync<OrderMapRow>(
+                    pedidosSql, new { EstabelecimentoId = estabelecimentoId, WindowFromUtc = windowFromUtc }))
                 .Select(ToOrderMapDto)
+                .Where(pedido => IsInOrderWindow(pedido, orderWindow, windowRange))
                 .ToList();
             var estabelecimento = await connection.QuerySingleOrDefaultAsync<EstabelecimentoLocationRow>(
                 estabelecimentoSql, new { EstabelecimentoId = estabelecimentoId });
@@ -616,6 +624,24 @@ SELECT rs.motoboy_id AS MotoboyId, COUNT(*)::int AS DeliveredToday
                 Motoboys = motoboys,
                 Pedidos = pedidos
             };
+        }
+
+        /// <summary>
+        /// Pedido em aberto aparece sempre (se a janela pedir); os demais, quando foram feitos
+        /// dentro da janela OU quando o desfecho (entrega/cancelamento) aconteceu nela. Sem
+        /// horario confiavel o pedido nao some: melhor sobrar um do que esconder um.
+        /// </summary>
+        internal static bool IsInOrderWindow(OrderMapDto pedido, DTOs.Delivery.OrderWindowDto window, OrderWindowRange range)
+        {
+            var open = pedido.StatusPedido is "pendente" or "atribuido" or "em_rota";
+            if (open && window.AlwaysShowOpenOrders) return true;
+
+            var placed = OrderWindowRules.PlacedAtUtc(pedido.HorarioPedido ?? pedido.DataPedido);
+            if (placed is null) return true;
+            if (range.Contains(placed.Value)) return true;
+
+            var finishedAt = pedido.CompletedAtUtc ?? pedido.CanceledAtUtc;
+            return !open && finishedAt is not null && range.Contains(finishedAt.Value);
         }
 
         private sealed class OrderMapRow

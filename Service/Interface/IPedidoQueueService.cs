@@ -37,6 +37,7 @@ namespace APIBack.Service.Interface
 
         // Pedido manual
         Task<CreatedPedidoDto> CreatePedidoAsync(Guid estabelecimentoId, int actorUserId, CreatePedidoRequest request);
+        Task<CreatedPedidoDto> UpdatePedidoForSimulatorAsync(Guid estabelecimentoId, int actorUserId, int pedidoId, SimulatorPedidoRequest request);
 
         // Parametros
         Task<DeliverySettingsDto> GetSettingsAsync(Guid estabelecimentoId);

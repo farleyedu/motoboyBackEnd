@@ -33,6 +33,8 @@ namespace APIBack.DTOs.Delivery
         public bool RequireDeliveryCode { get; set; }
         public bool AllowMotoboyReorder { get; set; } = true;
         public bool AllowMotoboyRefuse { get; set; } = true;
+        /// <summary>Quais pedidos o mapa mostra, pelo horario em que foram feitos.</summary>
+        public OrderWindowDto OrderWindow { get; set; } = new();
         /// <summary>true quando o estabelecimento nunca salvou parametros (valem os padroes).</summary>
         public bool IsDefault { get; set; }
         public DateTimeOffset? UpdatedAtUtc { get; set; }
@@ -52,6 +54,8 @@ namespace APIBack.DTOs.Delivery
         public bool RequireDeliveryCode { get; set; }
         public bool AllowMotoboyReorder { get; set; } = true;
         public bool AllowMotoboyRefuse { get; set; } = true;
+        /// <summary>Nulo = manter a janela atual.</summary>
+        public OrderWindowDto? OrderWindow { get; set; }
     }
 
     // ---- Acoes do motoboy ------------------------------------------------------

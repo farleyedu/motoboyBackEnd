@@ -73,6 +73,8 @@ SELECT t.id AS Id,
             await using var transaction = await connection.BeginTransactionAsync();
             var settings = await GetSettingsInternalAsync(connection, transaction, estabelecimentoId);
             await transaction.CommitAsync();
+            await using var windowConnection = await _dataSource.OpenConnectionAsync();
+            settings.OrderWindow = await OrderWindowStore.ReadAsync(windowConnection, estabelecimentoId);
             return settings;
         }
 
@@ -104,8 +106,17 @@ ON CONFLICT (estabelecimento_id) DO UPDATE SET
                     request.AllowMotoboyRefuse,
                     ActorUserId = actorUserId
                 }, transaction);
+            if (request.OrderWindow != null)
+            {
+                // Sem janela no pedido, a que estava salva continua valendo.
+                await connection.ExecuteAsync(
+                    "UPDATE delivery_settings SET order_window = @OrderWindow::jsonb WHERE estabelecimento_id = @EstabelecimentoId;",
+                    new { OrderWindow = OrderWindowRules.Serialize(request.OrderWindow), EstabelecimentoId = estabelecimentoId }, transaction);
+            }
             var settings = await GetSettingsInternalAsync(connection, transaction, estabelecimentoId);
             await transaction.CommitAsync();
+            await using var windowConnection = await _dataSource.OpenConnectionAsync();
+            settings.OrderWindow = await OrderWindowStore.ReadAsync(windowConnection, estabelecimentoId);
             return settings;
         }
 

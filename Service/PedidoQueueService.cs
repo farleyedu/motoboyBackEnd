@@ -199,6 +199,16 @@ namespace APIBack.Service
 
         // ---- Pedido manual -----------------------------------------------------
 
+        public Task<CreatedPedidoDto> UpdatePedidoForSimulatorAsync(Guid estabelecimentoId, int actorUserId, int pedidoId, SimulatorPedidoRequest request)
+        {
+            var patch = SimulatorOrderRules.Validate(request);
+            if (patch.IsEmpty)
+            {
+                throw new DeliveryDomainException(422, "INVALID_ORDER", "Nenhum campo para alterar.");
+            }
+            return _repository.UpdatePedidoForSimulatorAsync(estabelecimentoId, actorUserId, pedidoId, patch);
+        }
+
         public Task<CreatedPedidoDto> CreatePedidoAsync(Guid estabelecimentoId, int actorUserId, CreatePedidoRequest request) =>
             _repository.CreatePedidoAsync(estabelecimentoId, actorUserId, ManualOrderRules.Validate(request));
 
@@ -220,6 +230,10 @@ namespace APIBack.Service
                     $"transferPolicy invalida. Use '{TransferPolicies.Direct}' ou '{TransferPolicies.EstablishmentApproval}'.");
             }
             request.TransferPolicy = policy;
+            if (request.OrderWindow != null)
+            {
+                request.OrderWindow = OrderWindowRules.Validate(request.OrderWindow);
+            }
             return _repository.UpsertSettingsAsync(estabelecimentoId, actorUserId, request);
         }
 
