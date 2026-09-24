@@ -170,6 +170,10 @@ namespace APIBack.DTOs.Tracking
         public int? CompletedByMotoboyId { get; set; }
         public string? CompletedByMotoboyNome { get; set; }
         public DateTimeOffset? CanceledAtUtc { get; set; }
+
+        /// <summary>Ha transferencia aguardando aprovacao do estabelecimento para este pedido.</summary>
+        public bool HasPendingTransfer { get; set; }
+        public string? PendingTransferToNome { get; set; }
     }
 
     public class DeliveryDayMetricsDto

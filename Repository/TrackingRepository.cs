@@ -460,7 +460,9 @@ SELECT
     dn.at_utc AS CompletedAtUtc,
     dn.motoboy_id AS CompletedByMotoboyId,
     dn.motoboy_nome AS CompletedByMotoboyNome,
-    cn.at_utc AS CanceledAtUtc
+    cn.at_utc AS CanceledAtUtc,
+    COALESCE(pt.pending, FALSE) AS HasPendingTransfer,
+    pt.to_nome AS PendingTransferToNome
 FROM pedido p
 LEFT JOIN delivery_route_stops rs
        ON rs.pedido_id = p.id
@@ -504,6 +506,17 @@ LEFT JOIN LATERAL (
      ORDER BY c.canceled_at_utc DESC NULLS LAST
      LIMIT 1
 ) cn ON COALESCE(p.status_pedido, 1) = 4
+LEFT JOIN LATERAL (
+    SELECT TRUE AS pending,
+           tm.nome::text AS to_nome
+      FROM delivery_transfer_requests t
+      LEFT JOIN motoboy tm ON tm.id = t.to_motoboy_id
+     WHERE t.pedido_id = p.id
+       AND t.estabelecimento_id = p.id_estabelecimento
+       AND t.status = 'pending_approval'
+     ORDER BY t.requested_at_utc DESC
+     LIMIT 1
+) pt ON COALESCE(p.status_pedido, 1) IN (2, 5)
  WHERE p.id_estabelecimento = @EstabelecimentoId
    -- Ativos (pendente/em_rota/atribuido) mais os desfechos do dia operacional
    -- (concluido/cancelado): o painel mostra 'Entregue' em vez de sumir com o pedido.
@@ -649,6 +662,8 @@ SELECT rs.motoboy_id AS MotoboyId, COUNT(*)::int AS DeliveredToday
             public int? CompletedByMotoboyId { get; set; }
             public string? CompletedByMotoboyNome { get; set; }
             public DateTimeOffset? CanceledAtUtc { get; set; }
+            public bool? HasPendingTransfer { get; set; }
+            public string? PendingTransferToNome { get; set; }
         }
 
         private static OrderMapDto ToOrderMapDto(OrderMapRow row)
@@ -707,7 +722,9 @@ SELECT rs.motoboy_id AS MotoboyId, COUNT(*)::int AS DeliveredToday
                 CompletedAtUtc = row.CompletedAtUtc,
                 CompletedByMotoboyId = row.CompletedByMotoboyId,
                 CompletedByMotoboyNome = row.CompletedByMotoboyNome,
-                CanceledAtUtc = row.CanceledAtUtc
+                CanceledAtUtc = row.CanceledAtUtc,
+                HasPendingTransfer = row.HasPendingTransfer ?? false,
+                PendingTransferToNome = row.PendingTransferToNome
             };
         }
 
