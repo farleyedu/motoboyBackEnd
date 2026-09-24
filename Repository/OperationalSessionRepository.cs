@@ -127,6 +127,7 @@ SELECT s.session_id AS SessionId,
             {
                 EnsureAttemptScope(repeated, estabelecimentoId);
                 EnsureAttemptCanBeReturned(repeated);
+                await AttachLastKnownLocationAsync(connection, transaction, repeated);
                 await transaction.CommitAsync();
                 return repeated;
             }
@@ -211,8 +212,35 @@ SELECT m.id AS MotoboyId,
                 attemptId,
                 attemptId.ToString("D"),
                 "simulator");
+            await AttachLastKnownLocationAsync(connection, transaction, created);
             await transaction.CommitAsync();
             return created;
+        }
+
+        /// <summary>
+        /// A posicao do motoboy simulado so muda quando o operador o move. Uma sessao nova nao
+        /// pode "esquecer" onde ele estava (e o simulador recolocaria o pino no restaurante).
+        /// </summary>
+        private static async Task AttachLastKnownLocationAsync(
+            NpgsqlConnection connection,
+            NpgsqlTransaction transaction,
+            OperationalSessionRecord session)
+        {
+            var last = await connection.QueryFirstOrDefaultAsync<LastKnownLocationRow>(@"
+SELECT latitude AS Latitude, longitude AS Longitude
+  FROM motoboy_location_current
+ WHERE motoboy_id = @MotoboyId
+ ORDER BY received_at_utc DESC
+ LIMIT 1;", new { session.MotoboyId }, transaction);
+            if (last == null) return;
+            session.LastKnownLatitude = last.Latitude;
+            session.LastKnownLongitude = last.Longitude;
+        }
+
+        private sealed class LastKnownLocationRow
+        {
+            public double Latitude { get; set; }
+            public double Longitude { get; set; }
         }
 
         public async Task<OperationalSessionRecord?> GetSessionAsync(Guid sessionId)
@@ -608,7 +636,15 @@ SELECT s.motoboy_id AS MotoboyId,
     ON e.id = me.estabelecimento_id
    AND COALESCE(e.ativo, TRUE) = TRUE
    AND LOWER(COALESCE(e.status, 'ativo')) IN ('ativo', 'trial')
-  LEFT JOIN motoboy_location_current lc ON lc.session_id = s.session_id
+  -- Ultima posicao do motoboy em qualquer sessao: uma sessao nova (reabrir o simulador)
+  -- nao pode deixar o motoboy sem posicao ate o primeiro envio.
+  LEFT JOIN LATERAL (
+      SELECT c.*
+        FROM motoboy_location_current c
+       WHERE c.motoboy_id = s.motoboy_id
+       ORDER BY c.received_at_utc DESC
+       LIMIT 1
+  ) lc ON TRUE
  WHERE s.id_estabelecimento = @EstabelecimentoId
    AND s.ended_at_utc IS NULL
    AND s.revoked_at IS NULL
@@ -637,11 +673,14 @@ SELECT s.motoboy_id AS MotoboyId,
 
             var motoboys = rows.Select(row =>
             {
+                // O motoboy simulado fica onde o operador o deixou: a posicao nao "envelhece".
+                // No app real ela vem do GPS do aparelho, entao a janela de frescor continua valendo.
                 var fresh = row.ReceivedAtUtc.HasValue &&
-                            DeliveryTrackingPolicy.IsLocationFresh(
-                                row.ReceivedAtUtc.Value,
-                                serverNow,
-                                _options.LocationFreshnessSeconds);
+                            (string.Equals(row.Origin, "simulator", StringComparison.Ordinal) ||
+                             DeliveryTrackingPolicy.IsLocationFresh(
+                                 row.ReceivedAtUtc.Value,
+                                 serverNow,
+                                 _options.LocationFreshnessSeconds));
                 return new OnlineMotoboyDto
                 {
                     MotoboyId = row.MotoboyId,

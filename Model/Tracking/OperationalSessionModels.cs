@@ -35,6 +35,12 @@ namespace APIBack.Model.Tracking
         public string? Avatar { get; set; }
         public int Status { get; set; }
         public long NextLocationSequence { get; set; } = 1;
+        /// <summary>
+        /// Ultima posicao conhecida do motoboy, de qualquer sessao anterior. So e preenchida
+        /// ao iniciar uma sessao de simulador: quem reabre a pagina continua onde o pino ficou.
+        /// </summary>
+        public double? LastKnownLatitude { get; set; }
+        public double? LastKnownLongitude { get; set; }
     }
 
     public sealed class OperationalLocationWrite

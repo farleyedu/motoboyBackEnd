@@ -254,7 +254,9 @@ namespace APIBack.Service
                     Id = session.MotoboyId,
                     Nome = session.Nome,
                     Avatar = session.Avatar,
-                    Status = "online"
+                    Status = "online",
+                    Latitude = session.LastKnownLatitude,
+                    Longitude = session.LastKnownLongitude
                 },
                 Session = MapSession(session)
             };
