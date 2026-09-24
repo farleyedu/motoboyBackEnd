@@ -159,6 +159,17 @@ namespace APIBack.DTOs.Tracking
         public string? LastFailureReason { get; set; }
         public string? LastFailureKind { get; set; }
         public DateTimeOffset? LastFailureAtUtc { get; set; }
+        public int? LastFailureMotoboyId { get; set; }
+        public string? LastFailureMotoboyNome { get; set; }
+        /// <summary>Quantas vezes o pedido ja voltou a Pendente por nao entregue ou recusa.</summary>
+        public int AttemptCount { get; set; }
+
+        // Desfechos do dia: o mapa passou a devolver tambem os pedidos entregues e
+        // cancelados hoje, para o painel mostrar "Entregue" em vez de sumir com eles.
+        public DateTimeOffset? CompletedAtUtc { get; set; }
+        public int? CompletedByMotoboyId { get; set; }
+        public string? CompletedByMotoboyNome { get; set; }
+        public DateTimeOffset? CanceledAtUtc { get; set; }
     }
 
     public class DeliveryDayMetricsDto

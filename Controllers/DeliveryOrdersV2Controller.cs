@@ -4,6 +4,7 @@ using APIBack.Attributes;
 using APIBack.DTOs.Common;
 using APIBack.DTOs.Delivery;
 using APIBack.Extensions;
+using APIBack.Repository.Interface;
 using APIBack.Service;
 using APIBack.Service.Interface;
 using Microsoft.AspNetCore.Mvc;
@@ -21,12 +22,27 @@ namespace APIBack.Controllers
     {
         private readonly IPedidoQueueService _queueService;
         private readonly IOperationalSessionService _sessionService;
+        private readonly IPedidoHistoricoRepository _historicoRepository;
 
-        public DeliveryOrdersV2Controller(IPedidoQueueService queueService, IOperationalSessionService sessionService)
+        public DeliveryOrdersV2Controller(
+            IPedidoQueueService queueService,
+            IOperationalSessionService sessionService,
+            IPedidoHistoricoRepository historicoRepository)
         {
             _queueService = queueService;
             _sessionService = sessionService;
+            _historicoRepository = historicoRepository;
         }
+
+        // ---- Historico do pedido ------------------------------------------------
+
+        /// <summary>Linha do tempo do pedido: atribuicoes, coleta, chegada, desfecho e transferencias.</summary>
+        [HttpGet("pedidos/{pedidoId:int}/historico")]
+        [RequirePermission("Delivery", "visualizar")]
+        public Task<IActionResult> GetHistorico(int pedidoId) =>
+            ExecuteAsync(async (est, _) =>
+                await _historicoRepository.GetAsync(est, pedidoId)
+                ?? throw new DeliveryDomainException(404, "PEDIDO_NOT_FOUND", "Pedido nao encontrado."));
 
         // ---- Pedido manual ------------------------------------------------------
 

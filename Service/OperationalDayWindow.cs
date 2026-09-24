@@ -48,6 +48,13 @@ namespace APIBack.Service
             return (ToUtc(localDate), ToUtc(localDate.AddDays(1)));
         }
 
+        /// <summary>Hora local do estabelecimento (sem fuso) convertida para o instante UTC.</summary>
+        public static DateTimeOffset LocalToUtc(DateTime local)
+        {
+            var unspecified = DateTime.SpecifyKind(local, DateTimeKind.Unspecified);
+            return new DateTimeOffset(unspecified, Zone.Value.GetUtcOffset(unspecified)).ToUniversalTime();
+        }
+
         private static DateTimeOffset ToUtc(DateOnly localDate)
         {
             var localStart = localDate.ToDateTime(TimeOnly.MinValue, DateTimeKind.Unspecified);

@@ -114,6 +114,7 @@ builder.Services.AddScoped<ITrackingRepository, TrackingRepository>();
 builder.Services.AddScoped<IOperationalSessionRepository, OperationalSessionRepository>();
 builder.Services.AddScoped<IPedidoQueueRepository, PedidoQueueRepository>();
 builder.Services.AddScoped<IPedidoQueueService, PedidoQueueService>();
+builder.Services.AddScoped<IPedidoHistoricoRepository, PedidoHistoricoRepository>();
 builder.Services.AddScoped<IReservaRepository, ReservaRepository>();
 builder.Services.AddScoped<IReservasRepository, ReservasRepository>();
 builder.Services.AddScoped<IOficinaAgendamentoRepository, OficinaAgendamentoRepository>();

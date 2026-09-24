@@ -453,7 +453,14 @@ SELECT
     rs.arrived_at_utc AS ArrivedAtUtc,
     lf.reason AS LastFailureReason,
     lf.kind AS LastFailureKind,
-    lf.at_utc AS LastFailureAtUtc
+    lf.at_utc AS LastFailureAtUtc,
+    lf.motoboy_id AS LastFailureMotoboyId,
+    lf.motoboy_nome AS LastFailureMotoboyNome,
+    COALESCE(tries.total, 0) AS AttemptCount,
+    dn.at_utc AS CompletedAtUtc,
+    dn.motoboy_id AS CompletedByMotoboyId,
+    dn.motoboy_nome AS CompletedByMotoboyNome,
+    cn.at_utc AS CanceledAtUtc
 FROM pedido p
 LEFT JOIN delivery_route_stops rs
        ON rs.pedido_id = p.id
@@ -462,16 +469,49 @@ LEFT JOIN delivery_route_stops rs
 LEFT JOIN LATERAL (
     SELECT CASE WHEN f.stop_status = 'failed' THEN f.failure_reason ELSE f.refusal_reason END AS reason,
            f.stop_status AS kind,
-           COALESCE(f.failed_at_utc, f.refused_at_utc) AS at_utc
+           COALESCE(f.failed_at_utc, f.refused_at_utc) AS at_utc,
+           f.motoboy_id AS motoboy_id,
+           fm.nome::text AS motoboy_nome
       FROM delivery_route_stops f
+      LEFT JOIN motoboy fm ON fm.id = f.motoboy_id
      WHERE f.pedido_id = p.id
        AND f.stop_status IN ('failed', 'refused')
      ORDER BY COALESCE(f.failed_at_utc, f.refused_at_utc) DESC NULLS LAST
      LIMIT 1
 ) lf ON COALESCE(p.status_pedido, 1) = 1
+LEFT JOIN LATERAL (
+    SELECT COUNT(*)::int AS total
+      FROM delivery_route_stops a
+     WHERE a.pedido_id = p.id
+       AND a.stop_status IN ('failed', 'refused')
+) tries ON TRUE
+LEFT JOIN LATERAL (
+    SELECT d.completed_at_utc AS at_utc,
+           d.motoboy_id AS motoboy_id,
+           dm.nome::text AS motoboy_nome
+      FROM delivery_route_stops d
+      LEFT JOIN motoboy dm ON dm.id = d.motoboy_id
+     WHERE d.pedido_id = p.id
+       AND d.stop_status = 'completed'
+     ORDER BY d.completed_at_utc DESC NULLS LAST
+     LIMIT 1
+) dn ON COALESCE(p.status_pedido, 1) = 3
+LEFT JOIN LATERAL (
+    SELECT c.canceled_at_utc AS at_utc
+      FROM delivery_route_stops c
+     WHERE c.pedido_id = p.id
+       AND c.stop_status = 'canceled'
+     ORDER BY c.canceled_at_utc DESC NULLS LAST
+     LIMIT 1
+) cn ON COALESCE(p.status_pedido, 1) = 4
  WHERE p.id_estabelecimento = @EstabelecimentoId
-   -- Somente pedidos operacionalmente ativos (pendente/em_rota/atribuido).
-   AND COALESCE(p.status_pedido, 1) IN (1, 2, 5)
+   -- Ativos (pendente/em_rota/atribuido) mais os desfechos do dia operacional
+   -- (concluido/cancelado): o painel mostra 'Entregue' em vez de sumir com o pedido.
+   AND (
+        COALESCE(p.status_pedido, 1) IN (1, 2, 5)
+        OR (COALESCE(p.status_pedido, 1) = 3 AND dn.at_utc >= @FromUtc AND dn.at_utc < @ToUtc)
+        OR (COALESCE(p.status_pedido, 1) = 4 AND cn.at_utc >= @FromUtc AND cn.at_utc < @ToUtc)
+   )
 ORDER BY p.data_pedido DESC NULLS LAST, p.id DESC;";
 
             // Mesmo tratamento defensivo das coordenadas de pedido/motoboy: so converte o
@@ -512,7 +552,7 @@ SELECT rs.motoboy_id AS MotoboyId, COUNT(*)::int AS DeliveredToday
 
             await using var connection = new NpgsqlConnection(_connectionString);
             var motoboys = (await connection.QueryAsync<MotoboyMapDto>(motoboysSql, new { EstabelecimentoId = estabelecimentoId })).ToList();
-            var pedidos = (await connection.QueryAsync<OrderMapRow>(pedidosSql, new { EstabelecimentoId = estabelecimentoId }))
+            var pedidos = (await connection.QueryAsync<OrderMapRow>(pedidosSql, dayParams))
                 .Select(ToOrderMapDto)
                 .ToList();
             var estabelecimento = await connection.QuerySingleOrDefaultAsync<EstabelecimentoLocationRow>(
@@ -522,7 +562,7 @@ SELECT rs.motoboy_id AS MotoboyId, COUNT(*)::int AS DeliveredToday
             var motoboyStats = (await connection.QueryAsync<MotoboyDayStatsDto>(motoboyStatsSql, dayParams)).ToList();
 
             var pedidosPorMotoboy = pedidos
-                .Where(p => p.AssignedDriver.HasValue)
+                .Where(p => p.AssignedDriver.HasValue && (p.StatusPedido == "em_rota" || p.StatusPedido == "atribuido"))
                 .GroupBy(p => p.AssignedDriver!.Value)
                 .ToDictionary(g => g.Key, g => g.ToList());
 
@@ -602,6 +642,13 @@ SELECT rs.motoboy_id AS MotoboyId, COUNT(*)::int AS DeliveredToday
             public string? LastFailureReason { get; set; }
             public string? LastFailureKind { get; set; }
             public DateTimeOffset? LastFailureAtUtc { get; set; }
+            public int? LastFailureMotoboyId { get; set; }
+            public string? LastFailureMotoboyNome { get; set; }
+            public int AttemptCount { get; set; }
+            public DateTimeOffset? CompletedAtUtc { get; set; }
+            public int? CompletedByMotoboyId { get; set; }
+            public string? CompletedByMotoboyNome { get; set; }
+            public DateTimeOffset? CanceledAtUtc { get; set; }
         }
 
         private static OrderMapDto ToOrderMapDto(OrderMapRow row)
@@ -653,7 +700,14 @@ SELECT rs.motoboy_id AS MotoboyId, COUNT(*)::int AS DeliveredToday
                 ArrivedAtUtc = row.ArrivedAtUtc,
                 LastFailureReason = row.LastFailureReason,
                 LastFailureKind = row.LastFailureKind,
-                LastFailureAtUtc = row.LastFailureAtUtc
+                LastFailureAtUtc = row.LastFailureAtUtc,
+                LastFailureMotoboyId = row.LastFailureMotoboyId,
+                LastFailureMotoboyNome = row.LastFailureMotoboyNome,
+                AttemptCount = row.AttemptCount,
+                CompletedAtUtc = row.CompletedAtUtc,
+                CompletedByMotoboyId = row.CompletedByMotoboyId,
+                CompletedByMotoboyNome = row.CompletedByMotoboyNome,
+                CanceledAtUtc = row.CanceledAtUtc
             };
         }
 
