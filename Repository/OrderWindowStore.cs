@@ -15,6 +15,21 @@ namespace APIBack.Repository
     /// </summary>
     internal static class OrderWindowStore
     {
+        /// <summary>Prazo padrao (minutos) salvo, ou null se nao ha valor ou a coluna ainda nao existe.</summary>
+        public static async Task<int?> ReadDefaultDeliveryMinutesAsync(NpgsqlConnection connection, Guid estabelecimentoId)
+        {
+            try
+            {
+                return await connection.ExecuteScalarAsync<int?>(
+                    "SELECT default_delivery_minutes FROM delivery_settings WHERE estabelecimento_id = @EstabelecimentoId;",
+                    new { EstabelecimentoId = estabelecimentoId });
+            }
+            catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedColumn)
+            {
+                return null;
+            }
+        }
+
         public static async Task<OrderWindowDto> ReadAsync(NpgsqlConnection connection, Guid estabelecimentoId)
         {
             try

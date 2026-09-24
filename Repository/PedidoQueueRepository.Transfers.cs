@@ -73,8 +73,7 @@ SELECT t.id AS Id,
             await using var transaction = await connection.BeginTransactionAsync();
             var settings = await GetSettingsInternalAsync(connection, transaction, estabelecimentoId);
             await transaction.CommitAsync();
-            await using var windowConnection = await _dataSource.OpenConnectionAsync();
-            settings.OrderWindow = await OrderWindowStore.ReadAsync(windowConnection, estabelecimentoId);
+            await LoadSettingsExtrasAsync(settings, estabelecimentoId);
             return settings;
         }
 
@@ -113,11 +112,31 @@ ON CONFLICT (estabelecimento_id) DO UPDATE SET
                     "UPDATE delivery_settings SET order_window = @OrderWindow::jsonb WHERE estabelecimento_id = @EstabelecimentoId;",
                     new { OrderWindow = OrderWindowRules.Serialize(request.OrderWindow), EstabelecimentoId = estabelecimentoId }, transaction);
             }
+            if (request.DefaultDeliveryMinutes.HasValue)
+            {
+                await connection.ExecuteAsync(
+                    "UPDATE delivery_settings SET default_delivery_minutes = @Minutes WHERE estabelecimento_id = @EstabelecimentoId;",
+                    new { Minutes = request.DefaultDeliveryMinutes.Value, EstabelecimentoId = estabelecimentoId }, transaction);
+            }
             var settings = await GetSettingsInternalAsync(connection, transaction, estabelecimentoId);
             await transaction.CommitAsync();
-            await using var windowConnection = await _dataSource.OpenConnectionAsync();
-            settings.OrderWindow = await OrderWindowStore.ReadAsync(windowConnection, estabelecimentoId);
+            await LoadSettingsExtrasAsync(settings, estabelecimentoId);
             return settings;
+        }
+
+        /// <summary>
+        /// Parametros lidos a parte, com tolerancia: se a migration da coluna ainda nao rodou, valem os
+        /// padroes em vez de quebrar o comando. Tambem resolve a janela de pedidos para mostrar o efeito.
+        /// </summary>
+        private async Task LoadSettingsExtrasAsync(DeliverySettingsDto settings, Guid estabelecimentoId)
+        {
+            await using var extrasConnection = await _dataSource.OpenConnectionAsync();
+            settings.OrderWindow = await OrderWindowStore.ReadAsync(extrasConnection, estabelecimentoId);
+            settings.DefaultDeliveryMinutes = await OrderWindowStore.ReadDefaultDeliveryMinutesAsync(extrasConnection, estabelecimentoId)
+                ?? ManualOrderRules.DefaultPrevisaoMinutos;
+            var range = OrderWindowRules.Resolve(settings.OrderWindow, DateTimeOffset.UtcNow);
+            settings.OrderWindowFromUtc = range.FromUtc;
+            settings.OrderWindowToUtc = range.ToUtc;
         }
 
         /// <summary>Sem linha em delivery_settings valem os padroes (comportamento permissivo).</summary>
@@ -215,6 +234,11 @@ SELECT s.motoboy_id AS MotoboyId,
             await using var transaction = await connection.BeginTransactionAsync();
 
             var settings = await GetSettingsInternalAsync(connection, transaction, estabelecimentoId);
+            if (!TransferPolicies.AllowsMotoboyTransfer(settings.TransferPolicy))
+            {
+                throw new DeliveryDomainException(403, "TRANSFER_NOT_ALLOWED",
+                    "Este estabelecimento nao permite que o motoboy transfira pedidos. Peca ao atendente.");
+            }
             var fromVersion = await LockQueuesAsync(connection, transaction, estabelecimentoId, fromMotoboyId, toMotoboyId);
 
             var stop = await GetActiveStopForPedidoAsync(connection, transaction, estabelecimentoId, pedidoId, forUpdate: true);

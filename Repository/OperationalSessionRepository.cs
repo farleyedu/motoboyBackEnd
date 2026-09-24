@@ -733,15 +733,26 @@ SELECT m.id AS MotoboyId,
        COALESCE(m.nome, '') AS Nome,
        m.avatar AS Avatar,
        me.simulator_enabled AS SimulatorEnabled,
-       CASE WHEN s.session_id IS NULL THEN TRUE ELSE FALSE END AS Eligible,
-       CASE WHEN s.session_id IS NULL THEN NULL ELSE 'active_session' END AS UnavailableReason
+       -- Sessao de outro aparelho (app do motoboy) bloqueia. Sessao de simulador NAO: a
+       -- abertura de sessao (StartSimulatorSessionAsync) assume a anterior, porque quem a abriu
+       -- pode ter fechado a pagina sem encerra-la. A lista precisa dizer o mesmo que a abertura.
+       CASE WHEN blocking.session_id IS NULL THEN TRUE ELSE FALSE END AS Eligible,
+       CASE WHEN blocking.session_id IS NULL THEN NULL ELSE 'active_session' END AS UnavailableReason,
+       (previous.session_id IS NOT NULL) AS TakesOverSession
   FROM motoboy_estabelecimento me
   JOIN motoboy m ON m.id = me.motoboy_id
-  LEFT JOIN motoboy_active_sessions s
-    ON s.motoboy_id = m.id
-   AND s.ended_at_utc IS NULL
-   AND s.revoked_at IS NULL
-   AND s.expires_at_utc > NOW()
+  LEFT JOIN motoboy_active_sessions blocking
+    ON blocking.motoboy_id = m.id
+   AND blocking.ended_at_utc IS NULL
+   AND blocking.revoked_at IS NULL
+   AND blocking.expires_at_utc > NOW()
+   AND blocking.origin <> 'simulator'
+  LEFT JOIN motoboy_active_sessions previous
+    ON previous.motoboy_id = m.id
+   AND previous.ended_at_utc IS NULL
+   AND previous.revoked_at IS NULL
+   AND previous.expires_at_utc > NOW()
+   AND previous.origin = 'simulator'
  WHERE me.estabelecimento_id = @EstabelecimentoId
    AND me.ativo = TRUE
    AND me.simulator_enabled = TRUE

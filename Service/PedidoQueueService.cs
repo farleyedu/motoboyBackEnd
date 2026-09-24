@@ -209,8 +209,21 @@ namespace APIBack.Service
             return _repository.UpdatePedidoForSimulatorAsync(estabelecimentoId, actorUserId, pedidoId, patch);
         }
 
-        public Task<CreatedPedidoDto> CreatePedidoAsync(Guid estabelecimentoId, int actorUserId, CreatePedidoRequest request) =>
-            _repository.CreatePedidoAsync(estabelecimentoId, actorUserId, ManualOrderRules.Validate(request));
+        public async Task<CreatedPedidoDto> CreatePedidoAsync(Guid estabelecimentoId, int actorUserId, CreatePedidoRequest request)
+        {
+            // Sem previsao informada vale o prazo padrao do estabelecimento (configuravel). O pedido
+            // invalido e recusado antes, sem tocar no banco.
+            if (request != null && !request.PrevisaoMinutos.HasValue)
+            {
+                ManualOrderRules.Validate(request);
+                var settings = await _repository.GetSettingsAsync(estabelecimentoId);
+                if (settings != null)
+                {
+                    request.PrevisaoMinutos = settings.DefaultDeliveryMinutes;
+                }
+            }
+            return await _repository.CreatePedidoAsync(estabelecimentoId, actorUserId, ManualOrderRules.Validate(request));
+        }
 
         // ---- Parametros --------------------------------------------------------
 
@@ -227,9 +240,14 @@ namespace APIBack.Service
             if (!TransferPolicies.IsConfigurable(policy))
             {
                 throw new DeliveryDomainException(422, "INVALID_TRANSFER_POLICY",
-                    $"transferPolicy invalida. Use '{TransferPolicies.Direct}' ou '{TransferPolicies.EstablishmentApproval}'.");
+                    $"transferPolicy invalida. Use '{TransferPolicies.Direct}', '{TransferPolicies.EstablishmentApproval}' ou '{TransferPolicies.Disabled}'.");
             }
             request.TransferPolicy = policy;
+            if (request.DefaultDeliveryMinutes is < 1 or > 600)
+            {
+                throw new DeliveryDomainException(422, "INVALID_DEFAULT_DELIVERY_MINUTES",
+                    "O prazo padrao de entrega deve ficar entre 1 e 600 minutos.");
+            }
             if (request.OrderWindow != null)
             {
                 request.OrderWindow = OrderWindowRules.Validate(request.OrderWindow);

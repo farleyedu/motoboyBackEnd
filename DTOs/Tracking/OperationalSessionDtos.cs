@@ -101,6 +101,8 @@ namespace APIBack.DTOs.Tracking
         public bool SimulatorEnabled { get; set; }
         public bool Eligible { get; set; }
         public string? UnavailableReason { get; set; }
+        /// <summary>Ja ha uma sessao de simulador aberta: ao escolher o motoboy, ela e assumida.</summary>
+        public bool TakesOverSession { get; set; }
     }
 
     public sealed class SimulatorCandidatesResponse

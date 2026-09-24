@@ -13,9 +13,14 @@ namespace APIBack.DTOs.Delivery
         public const string EstablishmentApproval = "establishment_approval";
         /// <summary>Transferencia feita pelo atendente (sempre direta). So aparece no historico.</summary>
         public const string Operator = "operator";
+        /// <summary>O motoboy nao pode passar pedido para outro; so o atendente transfere.</summary>
+        public const string Disabled = "disabled";
 
         public static bool IsConfigurable(string? value) =>
-            value == Direct || value == EstablishmentApproval;
+            value == Direct || value == EstablishmentApproval || value == Disabled;
+
+        /// <summary>O motoboy pode pedir ou fazer a transferencia (direta ou com aprovacao).</summary>
+        public static bool AllowsMotoboyTransfer(string? value) => value != Disabled;
     }
 
     public sealed class DeliveryPoliciesDto
@@ -35,6 +40,11 @@ namespace APIBack.DTOs.Delivery
         public bool AllowMotoboyRefuse { get; set; } = true;
         /// <summary>Quais pedidos o mapa mostra, pelo horario em que foram feitos.</summary>
         public OrderWindowDto OrderWindow { get; set; } = new();
+        /// <summary>Inicio e fim (UTC) que a janela salva resolve AGORA; so leitura, para a tela mostrar o efeito.</summary>
+        public DateTimeOffset? OrderWindowFromUtc { get; set; }
+        public DateTimeOffset? OrderWindowToUtc { get; set; }
+        /// <summary>Prazo de entrega, em minutos, dos pedidos criados sem previsao informada.</summary>
+        public int DefaultDeliveryMinutes { get; set; } = APIBack.Service.ManualOrderRules.DefaultPrevisaoMinutos;
         /// <summary>true quando o estabelecimento nunca salvou parametros (valem os padroes).</summary>
         public bool IsDefault { get; set; }
         public DateTimeOffset? UpdatedAtUtc { get; set; }
@@ -56,6 +66,8 @@ namespace APIBack.DTOs.Delivery
         public bool AllowMotoboyRefuse { get; set; } = true;
         /// <summary>Nulo = manter a janela atual.</summary>
         public OrderWindowDto? OrderWindow { get; set; }
+        /// <summary>Nulo = manter o prazo atual.</summary>
+        public int? DefaultDeliveryMinutes { get; set; }
     }
 
     // ---- Acoes do motoboy ------------------------------------------------------

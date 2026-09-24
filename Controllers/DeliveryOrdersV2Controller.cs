@@ -23,15 +23,18 @@ namespace APIBack.Controllers
         private readonly IPedidoQueueService _queueService;
         private readonly IOperationalSessionService _sessionService;
         private readonly IPedidoHistoricoRepository _historicoRepository;
+        private readonly IRestaurantSettingsRepository _restaurantRepository;
 
         public DeliveryOrdersV2Controller(
             IPedidoQueueService queueService,
             IOperationalSessionService sessionService,
-            IPedidoHistoricoRepository historicoRepository)
+            IPedidoHistoricoRepository historicoRepository,
+            IRestaurantSettingsRepository restaurantRepository)
         {
             _queueService = queueService;
             _sessionService = sessionService;
             _historicoRepository = historicoRepository;
+            _restaurantRepository = restaurantRepository;
         }
 
         // ---- Historico do pedido ------------------------------------------------
@@ -94,6 +97,21 @@ namespace APIBack.Controllers
         [RequirePermission("Delivery", "visualizar")]
         public Task<IActionResult> GetSettings() =>
             ExecuteAsync((est, _) => _queueService.GetSettingsAsync(est));
+
+        /// <summary>Endereco, posicao no mapa, raio e regras de entrega do restaurante.</summary>
+        [HttpGet("configuracoes/restaurante")]
+        [RequirePermission("Delivery", "visualizar")]
+        public Task<IActionResult> GetRestaurantSettings() =>
+            ExecuteAsync(async (est, _) =>
+                await _restaurantRepository.GetAsync(est)
+                ?? throw new DeliveryDomainException(404, "ESTABELECIMENTO_NOT_FOUND", "Estabelecimento nao encontrado."));
+
+        [HttpPut("configuracoes/restaurante")]
+        [RequirePermission("Delivery", "configurar")]
+        public Task<IActionResult> UpdateRestaurantSettings([FromBody] UpdateRestaurantSettingsRequest request) =>
+            ExecuteAsync(async (est, _) =>
+                await _restaurantRepository.UpdateAsync(est, RestaurantSettingsRules.Validate(request))
+                ?? throw new DeliveryDomainException(404, "ESTABELECIMENTO_NOT_FOUND", "Estabelecimento nao encontrado."));
 
         [HttpPut("configuracoes")]
         [RequirePermission("Delivery", "configurar")]
