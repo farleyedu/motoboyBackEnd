@@ -441,6 +441,7 @@ SELECT
     CASE WHEN p.troco::text ~ {numeric} THEN p.troco::text::NUMERIC END AS Troco,
     CASE WHEN p.distancia_km::text ~ {numeric} THEN p.distancia_km::text::NUMERIC END AS DistanciaKm,
     p.observacoes::text AS Observacoes,
+    p.codigo_entrega::text AS CodigoEntrega,
     p.entrega_rua::text AS EntregaRua,
     p.entrega_numero::text AS EntregaNumero,
     p.entrega_bairro::text AS EntregaBairro,
@@ -668,6 +669,7 @@ SELECT rs.motoboy_id AS MotoboyId, COUNT(*)::int AS DeliveredToday
             public decimal? Troco { get; set; }
             public decimal? DistanciaKm { get; set; }
             public string? Observacoes { get; set; }
+            public string? CodigoEntrega { get; set; }
             public string? EntregaRua { get; set; }
             public string? EntregaNumero { get; set; }
             public string? EntregaBairro { get; set; }
@@ -729,6 +731,10 @@ SELECT rs.motoboy_id AS MotoboyId, COUNT(*)::int AS DeliveredToday
                 Troco = row.Troco,
                 DistanciaKm = row.DistanciaKm,
                 Observacoes = row.Observacoes,
+                // O codigo so importa enquanto o pedido esta em aberto: finalizado nao o expoe mais.
+                CodigoEntrega = row.StatusPedido is "pendente" or "atribuido" or "em_rota"
+                    ? (string.IsNullOrWhiteSpace(row.CodigoEntrega) ? null : row.CodigoEntrega.Trim())
+                    : null,
                 EntregaRua = row.EntregaRua,
                 EntregaNumero = row.EntregaNumero,
                 EntregaBairro = row.EntregaBairro,

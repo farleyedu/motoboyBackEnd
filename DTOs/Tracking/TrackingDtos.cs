@@ -141,6 +141,11 @@ namespace APIBack.DTOs.Tracking
         public decimal? Troco { get; set; }
         public decimal? DistanciaKm { get; set; }
         public string? Observacoes { get; set; }
+        /// <summary>
+        /// Codigo que o cliente informa ao motoboy; o operador o ve para poder passar ao cliente.
+        /// So vem em pedido em aberto.
+        /// </summary>
+        public string? CodigoEntrega { get; set; }
         public string? EntregaRua { get; set; }
         public string? EntregaNumero { get; set; }
         public string? EntregaBairro { get; set; }
