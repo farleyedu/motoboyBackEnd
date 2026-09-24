@@ -150,6 +150,8 @@ SELECT m.id AS MotoboyId,
    AND m.canonical_motoboy_id = m.id
    AND COALESCE(e.ativo, TRUE) = TRUE
    AND LOWER(COALESCE(e.status, 'ativo')) IN ('ativo', 'trial')
+   -- Sessao de simulador aberta nao bloqueia: ela nao expira sozinha, entao quem reabre a
+   -- pagina assume a sessao anterior (o cliente que a abriu pode ter sumido).
    AND NOT EXISTS (
        SELECT 1
          FROM motoboy_active_sessions s
@@ -157,6 +159,7 @@ SELECT m.id AS MotoboyId,
           AND s.ended_at_utc IS NULL
           AND s.revoked_at IS NULL
           AND s.expires_at_utc > NOW()
+          AND s.origin <> 'simulator'
    )
    -- Motoboy escolhido pelo operador; sem escolha, o primeiro elegivel.
    AND (@MotoboyId::int IS NULL OR m.id = @MotoboyId)
@@ -184,12 +187,20 @@ SELECT m.id AS MotoboyId,
             var staleSession = await GetOpenSessionForUpdateAsync(connection, transaction, candidate.MotoboyId);
             if (staleSession != null)
             {
-                if (staleSession.ExpiresAtUtc > await GetServerNowAsync(connection, transaction))
+                if (staleSession.Origin == "simulator")
                 {
-                    throw SessionConflict(staleSession);
+                    // Nao e "offline por vontade do motoboy": o mesmo simulador reassume a sessao.
+                    await EndLockedSessionAsync(connection, transaction, staleSession, "simulator_takeover", actorUserId);
                 }
+                else
+                {
+                    if (staleSession.ExpiresAtUtc > await GetServerNowAsync(connection, transaction))
+                    {
+                        throw SessionConflict(staleSession);
+                    }
 
-                await EndLockedSessionAsync(connection, transaction, staleSession, "heartbeat_timeout", null);
+                    await EndLockedSessionAsync(connection, transaction, staleSession, "heartbeat_timeout", null);
+                }
             }
 
             var created = await InsertSessionAsync(
@@ -222,7 +233,9 @@ SELECT m.id AS MotoboyId,
 UPDATE motoboy_active_sessions
    SET last_heartbeat_at_utc = @ServerNow,
        last_seen_at = @ServerNow,
-       expires_at_utc = @PresenceExpiresAtUtc,
+       expires_at_utc = CASE WHEN origin = 'simulator'
+                             THEN @SimulatorPresenceExpiresAtUtc
+                             ELSE @PresenceExpiresAtUtc END,
        version = version + 1
  WHERE session_id = @SessionId
    AND motoboy_id = @MotoboyId
@@ -263,7 +276,8 @@ RETURNING version;";
                 MotoboyId = motoboyId,
                 SessionEpoch = sessionEpoch,
                 ServerNow = serverNow,
-                PresenceExpiresAtUtc = serverNow.AddSeconds(_options.PresenceTtlSeconds)
+                PresenceExpiresAtUtc = serverNow.AddSeconds(_options.PresenceTtlSeconds),
+                SimulatorPresenceExpiresAtUtc = serverNow.AddSeconds(PresenceTtlSecondsFor("simulator"))
             }, transaction);
             if (!version.HasValue)
             {
@@ -797,6 +811,11 @@ SELECT motoboy_id AS MotoboyId,
                 })).ToArray();
         }
 
+        private int PresenceTtlSecondsFor(string origin) =>
+            origin == "simulator"
+                ? Math.Max(_options.PresenceTtlSeconds, _options.SimulatorPresenceTtlSeconds)
+                : _options.PresenceTtlSeconds;
+
         public async Task<int> ExpireDueSessionsAsync(int limit)
         {
             await using var connection = await _dataSource.OpenConnectionAsync();
@@ -960,7 +979,7 @@ SELECT canonical.id AS MotoboyId,
                 IdempotencyKey = attemptId,
                 StartedAtUtc = serverNow,
                 LastHeartbeatAtUtc = serverNow,
-                ExpiresAtUtc = serverNow.AddSeconds(_options.PresenceTtlSeconds),
+                ExpiresAtUtc = serverNow.AddSeconds(PresenceTtlSecondsFor(origin)),
                 Version = 1,
                 Nome = identity.Nome,
                 Avatar = identity.Avatar,
