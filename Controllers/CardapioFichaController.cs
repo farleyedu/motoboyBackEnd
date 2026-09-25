@@ -17,10 +17,12 @@ namespace APIBack.Controllers
     public class CardapioFichaController : EstabelecimentoScopedControllerBase
     {
         private readonly ICardapioFichaService _service;
+        private readonly ICardapioContractService _cardapio;
 
-        public CardapioFichaController(ICardapioFichaService service)
+        public CardapioFichaController(ICardapioFichaService service, ICardapioContractService cardapio)
         {
             _service = service;
+            _cardapio = cardapio;
         }
 
         [HttpGet("api/v2/cardapio/ficha")]
@@ -31,21 +33,41 @@ namespace APIBack.Controllers
             return await RunAsync(async () => Ok(ApiResponse<FichaAtendimentoDto>.Ok(await _service.GetAsync(estabelecimentoId))));
         }
 
-        [HttpGet("api/cardapio/produtos/{produtoId:guid}/atendimento")]
+        [HttpGet("api/cardapio/{estabelecimentoId:guid}/produtos/{produtoId:guid}/atendimento")]
         [RequirePermission("Cardapio", "visualizar")]
-        public async Task<IActionResult> GetAtendimento(Guid produtoId)
+        public async Task<IActionResult> GetAtendimento(Guid estabelecimentoId, Guid produtoId)
         {
-            if (!TryResolveCurrentEstabelecimentoAndModule("Cardapio", out var estabelecimentoId, out var error)) return error!;
+            var error = await ValidateScopeAsync(estabelecimentoId);
+            if (error != null) return error;
             return await RunAsync(async () => Ok(ApiResponse<ProdutoAtendimentoDto>.Ok(await _service.GetAtendimentoAsync(estabelecimentoId, produtoId))));
         }
 
-        [HttpPut("api/cardapio/produtos/{produtoId:guid}/atendimento")]
+        [HttpPut("api/cardapio/{estabelecimentoId:guid}/produtos/{produtoId:guid}/atendimento")]
         [RequirePermission("Cardapio", "editar")]
-        public async Task<IActionResult> SaveAtendimento(Guid produtoId, [FromBody] ProdutoAtendimentoDto? request)
+        public async Task<IActionResult> SaveAtendimento(Guid estabelecimentoId, Guid produtoId, [FromBody] ProdutoAtendimentoDto? request)
         {
-            if (!TryResolveCurrentEstabelecimentoAndModule("Cardapio", out var estabelecimentoId, out var error)) return error!;
+            var error = await ValidateScopeAsync(estabelecimentoId);
+            if (error != null) return error;
             return await RunAsync(async () => Ok(ApiResponse<ProdutoAtendimentoDto>.Ok(
                 await _service.SaveAtendimentoAsync(estabelecimentoId, produtoId, request!))));
+        }
+
+        private async Task<IActionResult?> ValidateScopeAsync(Guid estabelecimentoId)
+        {
+            if (!CurrentUserId.HasValue || CurrentUserId.Value <= 0) return UnauthorizedResponse();
+            if (!CurrentIsSuperAdmin)
+            {
+                if (!CurrentEstabelecimentoId.HasValue || CurrentEstabelecimentoId.Value == Guid.Empty)
+                {
+                    return Unauthorized(ApiResponse<object>.Fail("Sessao invalida para o estabelecimento atual."));
+                }
+                if (CurrentEstabelecimentoId.Value != estabelecimentoId) return ForbiddenResponse();
+            }
+            if (!await _cardapio.EstabelecimentoTemModuloAtivoAsync(estabelecimentoId, "Cardapio"))
+            {
+                return StatusCode(403, ApiResponse<object>.Fail("Modulo inativo para o estabelecimento informado."));
+            }
+            return null;
         }
 
         private async Task<IActionResult> RunAsync(Func<Task<IActionResult>> action)
