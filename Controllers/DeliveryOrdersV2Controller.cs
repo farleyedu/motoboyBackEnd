@@ -23,6 +23,7 @@ namespace APIBack.Controllers
         private readonly IPedidoQueueService _queueService;
         private readonly IPedidoCoreService _coreService;
         private readonly IPedidoConsultaRepository _consulta;
+        private readonly IRastreioRepository _rastreio;
         private readonly IOperationalSessionService _sessionService;
         private readonly IPedidoHistoricoRepository _historicoRepository;
         private readonly IRestaurantSettingsRepository _restaurantRepository;
@@ -31,6 +32,7 @@ namespace APIBack.Controllers
             IPedidoQueueService queueService,
             IPedidoCoreService coreService,
             IPedidoConsultaRepository consulta,
+            IRastreioRepository rastreio,
             IOperationalSessionService sessionService,
             IPedidoHistoricoRepository historicoRepository,
             IRestaurantSettingsRepository restaurantRepository)
@@ -38,6 +40,7 @@ namespace APIBack.Controllers
             _queueService = queueService;
             _coreService = coreService;
             _consulta = consulta;
+            _rastreio = rastreio;
             _sessionService = sessionService;
             _historicoRepository = historicoRepository;
             _restaurantRepository = restaurantRepository;
@@ -85,6 +88,11 @@ namespace APIBack.Controllers
             {
                 var idempotencyKey = Request.Headers["Idempotency-Key"].ToString();
                 var result = await _coreService.CreateAsync(estabelecimentoId, actorUserId, request, idempotencyKey);
+                if (request.RastreioOptIn == true && !result.JaExistia)
+                {
+                    // Aceite do cliente registrado junto do pedido (mesma origem do pedido).
+                    await _rastreio.SetOptInAsync(estabelecimentoId, result.Id, true, request.Origem ?? "atendente");
+                }
                 return result.JaExistia
                     ? Ok(ApiResponse<CreatedPedidoDto>.Ok(result))
                     : StatusCode(201, ApiResponse<CreatedPedidoDto>.Ok(result));

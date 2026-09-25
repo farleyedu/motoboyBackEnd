@@ -3,6 +3,8 @@ using System.Threading.Tasks;
 using APIBack.Attributes;
 using APIBack.DTOs.Atendimento;
 using APIBack.DTOs.Common;
+using APIBack.DTOs.Rastreio;
+using APIBack.Repository.Interface;
 using APIBack.DTOs.Delivery;
 using APIBack.DTOs.Tracking;
 using APIBack.Extensions;
@@ -20,9 +22,11 @@ namespace APIBack.Controllers
         private readonly IOperationalSessionService _service;
         private readonly IPedidoQueueService _queueService;
         private readonly AtendimentoService _atendimento;
+        private readonly IRastreioRepository _rastreio;
 
-        public MotoboyTrackingV2Controller(IOperationalSessionService service, IPedidoQueueService queueService, AtendimentoService atendimento)
+        public MotoboyTrackingV2Controller(IOperationalSessionService service, IPedidoQueueService queueService, AtendimentoService atendimento, IRastreioRepository rastreio)
         {
+            _rastreio = rastreio;
             _service = service;
             _queueService = queueService;
             _atendimento = atendimento;
@@ -149,6 +153,25 @@ namespace APIBack.Controllers
         [RequireOperationalSession]
         public Task<IActionResult> ArrivedAtStore() =>
             WithOperationalContextAsync((est, motoboyId, _) => _queueService.ArriveAtStoreAsync(est, motoboyId));
+
+        // ---- Preferencias do motoboy (Fase 6) --------------------------------------
+
+        /// <summary>O motoboy autorizou mostrar sua posicao ao cliente no link de rastreio?</summary>
+        [HttpGet("preferences")]
+        [RequireOperationalSession]
+        public Task<IActionResult> GetPreferences() =>
+            WithOperationalContextAsync(async (_, motoboyId, _) =>
+                new MotoboyPreferencesDto { CompartilharLocalizacaoCliente = await _rastreio.GetMotoboySharingAsync(motoboyId) });
+
+        [HttpPatch("preferences")]
+        [RequireOperationalSession]
+        public Task<IActionResult> SetPreferences([FromBody] MotoboyPreferencesRequest? request) =>
+            WithOperationalContextAsync(async (_, motoboyId, _) =>
+            {
+                if (request == null) throw new DeliveryDomainException(400, "INVALID_REQUEST", "Corpo da requisicao obrigatorio.");
+                await _rastreio.SetMotoboySharingAsync(motoboyId, request.CompartilharLocalizacaoCliente);
+                return new MotoboyPreferencesDto { CompartilharLocalizacaoCliente = request.CompartilharLocalizacaoCliente };
+            });
 
         // ---- Mensagens com o atendente (Fase 5) ----------------------------------
 

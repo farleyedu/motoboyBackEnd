@@ -118,6 +118,10 @@ builder.Services.AddScoped<IPedidoCoreService, PedidoCoreService>();
 builder.Services.AddScoped<IProdutoAtendimentoRepository, ProdutoAtendimentoRepository>();
 builder.Services.AddScoped<IPedidoConsultaRepository, PedidoConsultaRepository>();
 builder.Services.AddScoped<IAtendimentoRepository, AtendimentoRepository>();
+builder.Services.AddScoped<IRastreioRepository, RastreioRepository>();
+builder.Services.AddScoped<ITrackingNoticeSender, ConversationNoticeSender>();
+builder.Services.AddScoped<TrackingNoticeService>();
+builder.Services.AddHostedService<TrackingNoticeWorker>();
 builder.Services.AddScoped<AtendimentoService>();
 builder.Services.AddScoped<ICardapioFichaService, CardapioFichaService>();
 builder.Services.AddScoped<IPedidoHistoricoRepository, PedidoHistoricoRepository>();
@@ -156,6 +160,11 @@ builder.Services.AddRateLimiter(options =>
             System.Text.Json.JsonSerializer.Serialize(body),
             cancellationToken);
     };
+    // Link publico de rastreio: sem login, entao limita por IP (protege contra varredura de tokens).
+    options.AddPolicy("public-tracking", httpContext =>
+        RateLimitPartition.GetFixedWindowLimiter(
+            httpContext.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
+            _ => new FixedWindowRateLimiterOptions { PermitLimit = 60, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
     options.AddPolicy("delivery-location", httpContext =>
     {
         var payload = httpContext.Items.TryGetValue("JwtPayload", out var rawPayload)

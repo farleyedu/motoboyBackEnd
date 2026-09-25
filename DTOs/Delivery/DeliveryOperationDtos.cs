@@ -165,6 +165,8 @@ namespace APIBack.DTOs.Delivery
 
     public sealed class CreatePedidoRequest
     {
+        /// <summary>O cliente aceitou receber os avisos de rastreio (saiu da loja e motoboy chegando).</summary>
+        public bool? RastreioOptIn { get; set; }
         public string? NomeCliente { get; set; }
         public string? TelefoneCliente { get; set; }
         public string? Rua { get; set; }

@@ -652,6 +652,80 @@ namespace APIBack.Automation.Services
                 });
         }
 
+        /// <summary>
+        /// Aviso automatico do sistema ao cliente (Fase 6): grava a mensagem na conversa, marcada como "sistema",
+        /// e envia pelo WhatsApp SEM exigir que a conversa esteja assumida por um atendente. A janela de 24h
+        /// continua valendo: fora dela a conversa nao aceita texto livre e o envio e recusado (409).
+        /// </summary>
+        public async Task<Guid> SendSystemNoticeAsync(Guid requestedConversationId, Guid idEstabelecimento, string texto)
+        {
+            if (string.IsNullOrWhiteSpace(texto))
+            {
+                throw new ConversationManagementException(422, "Mensagem e obrigatoria.");
+            }
+
+            var controle = await EnsureControlAsync(requestedConversationId, idEstabelecimento);
+            if (string.Equals(controle.SendBlockReasonCode, WhatsAppWindowExpiredCode, StringComparison.OrdinalIgnoreCase))
+            {
+                throw new ConversationManagementException(409, WhatsAppWindowExpiredMessage, WhatsAppWindowExpiredCode);
+            }
+
+            var conversa = await _conversationRepository.ObterPorIdAsync(controle.ConversationId)
+                ?? throw new ConversationManagementException(404, "Conversa operacional nao encontrada.");
+            var numeroDestino = await _clienteRepository.ObterTelefoneClienteAsync(conversa.IdCliente, conversa.IdEstabelecimento);
+            if (string.IsNullOrWhiteSpace(numeroDestino))
+            {
+                throw new ConversationManagementException(422, "Telefone do cliente nao encontrado para envio.");
+            }
+
+            var displayPhone = await _wabaPhoneRepository.ObterDisplayPhonePorEstabelecimentoAsync(conversa.IdEstabelecimento);
+            var phoneNumberId = await _wabaPhoneRepository.ObterPhoneNumberIdPorEstabelecimentoAsync(conversa.IdEstabelecimento);
+            phoneNumberId ??= _configuration["Automation:Meta:PhoneNumberId"];
+
+            var agora = DateTime.UtcNow;
+            var mensagem = new Message
+            {
+                Id = Guid.NewGuid(),
+                IdConversa = controle.ConversationId,
+                IdMensagemWa = $"notice-{Guid.NewGuid():N}",
+                Direcao = DirecaoMensagem.Saida,
+                Conteudo = texto.Trim(),
+                DataHora = agora,
+                DataCriacao = agora,
+                DataEnvio = agora,
+                CriadaPor = "sistema",
+                TipoOriginal = "text",
+                Tipo = MessageTypeMapper.MapType("text", DirecaoMensagem.Saida, "sistema"),
+                Status = "fila"
+            };
+
+            var persisted = await _messageService.AdicionarMensagemAsync(mensagem, displayPhone, numeroDestino);
+            if (persisted == null)
+            {
+                throw new ConversationManagementException(409, "Nao foi possivel persistir a mensagem.");
+            }
+
+            if (string.IsNullOrWhiteSpace(phoneNumberId))
+            {
+                await _messageService.AtualizarStatusAsync(mensagem.Id, "falhou", "waba_not_configured", "PhoneNumberId nao configurado para o estabelecimento.");
+                throw new ConversationManagementException(422, "Configuracao do WhatsApp Business ausente para este estabelecimento.");
+            }
+
+            try
+            {
+                await _whatsAppSender.SendTextAsync(mensagem.IdConversa, phoneNumberId, numeroDestino, mensagem.Conteudo, displayPhone);
+                await _messageService.AtualizarStatusAsync(mensagem.Id, MessageStatusMapper.Enviada);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Falha ao enviar aviso automatico da conversa {Conversa}", mensagem.IdConversa);
+                await _messageService.AtualizarStatusAsync(mensagem.Id, "falhou", "send_failed", ex.Message);
+                throw new ConversationManagementException(422, $"Falha ao enviar mensagem pelo WhatsApp: {ex.Message}");
+            }
+
+            return mensagem.Id;
+        }
+
         private async Task<ConversationControlDto> EnsureControlAsync(Guid requestedConversationId, Guid idEstabelecimento)
         {
             var controle = await _conversationRepository.ObterControleConversaAsync(requestedConversationId, idEstabelecimento);
