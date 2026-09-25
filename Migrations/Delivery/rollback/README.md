@@ -57,3 +57,16 @@ Ordem de execucao dos rollbacks (inversa da aplicacao), cada um na propria trans
 `20260925_01_modulo_pedidos.sql` nao tem rollback: o Postgres nao remove valor de enum, e o valor
 `PEDIDOS` e inofensivo sem uso. Prefira, antes de qualquer rollback, deixar a API ignorar o
 recurso novo (o codigo tolera a ausencia das colunas novas apenas ate a proxima versao da API).
+
+## Seed de demonstracao (Uberlandia) - `20260927_90_seed_uberlandia`
+
+Dados ficticios (cardapio, clientes, conversas, mensagens, motoboys e pedidos) num estabelecimento
+que ja existe. So semeia estabelecimento ativo, com Delivery e **sem dado real**. Controle pelo ledger:
+
+- nunca semear (producao): `INSERT INTO delivery_tracking_schema_versions (version) VALUES ('seed_demo_desligado');`
+- escolher o alvo antes da subida: `... VALUES ('seed_demo_alvo:<uuid do estabelecimento>');`
+- ver o resultado: `SELECT * FROM delivery_tracking_schema_versions WHERE version LIKE 'seed_demo_%';`
+  (`seed_demo_alvo:<uuid>` = aplicado; `seed_demo_sem_alvo` = nenhum estabelecimento elegivel;
+  `seed_demo_erro: ...` = falhou, nada ficou pela metade e sera tentado na proxima subida)
+- semear de novo: apague `20260927_90_seed_uberlandia` e as linhas `seed_demo_%` do ledger.
+- desfazer: `20260927_90_seed_uberlandia.down.sql` (remove so o que o seed criou).
