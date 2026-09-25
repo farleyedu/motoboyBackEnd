@@ -31,5 +31,24 @@ SELECT data_type
 
             return DeliveryRules.LocalNowSql(dataType, minutesParameter);
         }
+
+        private static volatile bool _coreSchemaKnown;
+
+        /// <summary>
+        /// True quando as migracoes da Fase 2 foram aplicadas (colunas novas de pedido e pedido_item).
+        /// So cacheia o "sim": enquanto ausente, reconsulta, e o deploy da API antes da migration
+        /// nao derruba o fluxo antigo de criacao de pedido.
+        /// </summary>
+        public static async Task<bool> HasCoreSchemaAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction)
+        {
+            if (_coreSchemaKnown) return true;
+            var present = await connection.ExecuteScalarAsync<bool>(@"
+SELECT (SELECT COUNT(*) FROM information_schema.columns
+         WHERE table_schema = current_schema() AND table_name = 'pedido'
+           AND column_name IN ('origem', 'origem_ref', 'conversa_id', 'subtotal', 'taxa_entrega', 'desconto')) = 6
+   AND to_regclass('pedido_item') IS NOT NULL;", transaction: transaction);
+            if (present) _coreSchemaKnown = true;
+            return present;
+        }
     }
 }

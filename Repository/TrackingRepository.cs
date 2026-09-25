@@ -427,6 +427,7 @@ SELECT
         WHEN 3 THEN 'concluido'
         WHEN 4 THEN 'cancelado'
         WHEN 5 THEN 'atribuido'
+        WHEN 6 THEN 'rascunho'
         ELSE 'pendente'
     END AS StatusPedido,
     p.motoboy_responsavel AS AssignedDriver,

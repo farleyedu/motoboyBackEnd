@@ -78,11 +78,9 @@ namespace APIBack.Controllers
         [RequirePermission("Delivery", "criar_pedido")]
         public ActionResult<Pedido> PostPedido(Pedido pedido)
         {
-            // Criacao manual pelo atendente ainda nao foi implementada no backend
-            // (fora do escopo de fila/rota/atribuicao da Parte 2). CriarPedido()
-            // continua lancando NotImplementedException de proposito.
-            _pedidoService.CriarPedido();
-            return CreatedAtAction(nameof(GetPedido), new { id = pedido.Id }, pedido);
+            // Endpoint legado: a criacao passou para o nucleo de pedido (Fase 2).
+            return StatusCode(410, ApiResponse<object>.Fail(
+                "Endpoint substituido. Use POST /api/v2/delivery/pedidos.", "ENDPOINT_MOVED"));
         }
 
         /// <summary>
@@ -190,14 +188,9 @@ namespace APIBack.Controllers
         public IActionResult PutPedido(int id, Pedido pedido)
         {
             if (!TryGetEstabelecimentoId(out var estabelecimentoId, out var error)) return error!;
-            var pedidoExistente = _pedidoService.GetPedidosId(id, estabelecimentoId);
-            if (pedidoExistente == null)
-            {
-                return NotFound();
-            }
-
-            _pedidoService.AlteraPedido(id, pedido);
-            return NoContent();
+            // Endpoint legado: a edicao passou para o nucleo de pedido (Fase 2).
+            return StatusCode(410, ApiResponse<object>.Fail(
+                "Endpoint substituido. Use PUT /api/v2/delivery/pedidos/{id}.", "ENDPOINT_MOVED"));
         }
 
         /// <summary>

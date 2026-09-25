@@ -50,7 +50,8 @@ namespace APIBack.Repository.Interface
             int page,
             int pageSize);
         Task<IReadOnlyCollection<CardapioProduto>> ListarProdutosPublicosAsync(Guid idEstabelecimento, string? busca);
-        Task<IReadOnlyCollection<CardapioProduto>> ListarProdutosPublicosPorIdsAsync(Guid idEstabelecimento, IReadOnlyCollection<Guid> ids);
+        /// <param name="exigirPublicoWeb">True (padrao) so devolve produtos publicados no cardapio web; false devolve todo produto ativo e disponivel (venda pelo atendente/IA).</param>
+        Task<IReadOnlyCollection<CardapioProduto>> ListarProdutosPublicosPorIdsAsync(Guid idEstabelecimento, IReadOnlyCollection<Guid> ids, bool exigirPublicoWeb = true);
         Task<CardapioProduto?> ObterProdutoPorIdAsync(Guid idEstabelecimento, Guid id);
         Task<CardapioProduto?> ObterProdutoPublicoPorSlugAsync(Guid idEstabelecimento, string slug);
         Task<Guid> CriarProdutoAsync(CardapioProduto entity);

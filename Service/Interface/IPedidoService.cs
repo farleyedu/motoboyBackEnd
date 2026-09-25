@@ -8,12 +8,8 @@ namespace APIBack.Service.Interface
         IEnumerable<Pedido> GetPedidos(Guid estabelecimentoId);
         EnviarPedidosParaRotaDTO GetPedidosId(int id, Guid estabelecimentoId);
         IEnumerable<PedidoDTOs> GetPedidosMaps(Guid estabelecimentoId);
-        IEnumerable<Pedido> CriarPedido();
         // Atribuir motoboy passou a ser responsabilidade de IPedidoQueueService.AssignAsync
         // (comando transacional com validacao de tenant/vinculo/sessao). Ver Controllers/DeliveryOrdersV2Controller.cs.
-        IEnumerable<Pedido> CancelarPedido();
-        IEnumerable<Pedido> FinalizarPedido();
-        IEnumerable<Pedido> AlteraPedido(int id, Pedido pedido);
         /// <returns>true se criou; false se ja existia (repeticao idempotente do webhook).</returns>
         Task<bool> CriarPedidosIfood(PedidoCapturado pedidos, Guid estabelecimentoId);
 

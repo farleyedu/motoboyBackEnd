@@ -27,7 +27,7 @@ namespace APIBack.Repository
             using var connection = new NpgsqlConnection(_connectionString);
             {
                 return connection.Query<Pedido>(
-                    "SELECT * FROM pedido WHERE id_estabelecimento = @EstabelecimentoId",
+                    "SELECT * FROM pedido WHERE id_estabelecimento = @EstabelecimentoId AND COALESCE(status_pedido, 1) <> 6",
                     new { EstabelecimentoId = estabelecimentoId }).ToList();
             }
         }
@@ -62,7 +62,8 @@ namespace APIBack.Repository
     m.status                 AS status
 FROM pedido p
 LEFT JOIN motoboy m ON m.id = p.motoboy_responsavel
-WHERE p.id_estabelecimento = @EstabelecimentoId;
+WHERE p.id_estabelecimento = @EstabelecimentoId
+  AND COALESCE(p.status_pedido, 1) <> 6;  -- 6 = Rascunho: nao aparece em listas
 ";
 
                 var pedidos = connection.Query<PedidoDTOs, MotoboyDTO, PedidoDTOs>(
@@ -207,23 +208,6 @@ WHERE p.id_estabelecimento = @EstabelecimentoId;
 
 
 
-        public IEnumerable<Pedido> CriarPedido()
-        {
-            throw new NotImplementedException();
-        }
-
-        public IEnumerable<Pedido> CancelarPedido()
-        {
-            throw new NotImplementedException();
-        }
-        public IEnumerable<Pedido> FinalizarPedido()
-        {
-            throw new NotImplementedException();
-        }
-        public IEnumerable<Pedido> AlteraPedido(int Id, Pedido pedido)
-        {
-            throw new NotImplementedException();
-        }
 
         /// <summary>
         /// Obtém pedido completo com todos os detalhes para o endpoint riderlink
@@ -260,7 +244,8 @@ WHERE p.id_estabelecimento = @EstabelecimentoId;
                     NULL AS ""Observacoes"" -- Campo não existe na tabela atual
                 FROM pedido p
                 LEFT JOIN motoboy m ON m.id = p.motoboy_responsavel
-                WHERE p.id = @Id AND p.id_estabelecimento = @EstabelecimentoId;
+                WHERE p.id = @Id AND p.id_estabelecimento = @EstabelecimentoId
+                  AND COALESCE(p.status_pedido, 1) <> 6;  -- rascunho nao e exposto
 
                 -- Query para itens do pedido (parseando texto simples)
                 SELECT 
@@ -455,6 +440,7 @@ WHERE p.id_estabelecimento = @EstabelecimentoId;
                 FROM pedido p
                 LEFT JOIN motoboy m ON m.id = p.motoboy_responsavel
                 WHERE p.id_estabelecimento = @EstabelecimentoId
+                  AND COALESCE(p.status_pedido, 1) <> 6  -- rascunho nao e exposto
                 ORDER BY p.data_pedido DESC;
 
                 -- Query para todos os itens dos pedidos (parseando JSON)
@@ -684,6 +670,7 @@ WHERE p.id_estabelecimento = @EstabelecimentoId;
                 StatusPedido.EmRota => "em_entrega",
                 StatusPedido.Concluido => "entregue",
                 StatusPedido.Cancelado => "cancelado",
+                StatusPedido.Rascunho => "rascunho",
                 _ => "disponivel"
             };
         }

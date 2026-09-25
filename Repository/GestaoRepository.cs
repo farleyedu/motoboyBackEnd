@@ -392,6 +392,7 @@ SELECT slug
             var slugPreferencial = string.IsNullOrWhiteSpace(request.Slug) ? slugAtual : request.Slug;
             var slug = await GarantirSlugDisponivelAsync(connection, transaction, slugPreferencial, request.NomeFantasia, estabelecimentoId);
             var modulos = EstabelecimentoModuleMapper.ToDatabaseModules(request.ModulosAtivos, tipoEstabelecimentoSlug);
+            modulos = await FiltrarModulosConhecidosAsync(connection, transaction, modulos);
             var tipoUnidade = NormalizeTipoUnidade(request.TipoUnidade);
 
             const string sql = @"
@@ -1072,6 +1073,7 @@ RETURNING id;";
                 ?? NormalizeTypeSlug(request.TipoEstabelecimentoSlug, request.TipoEstabelecimentoNome);
             var slug = await GarantirSlugDisponivelAsync(connection, transaction, request.Slug, request.NomeFantasia, null);
             var modulos = EstabelecimentoModuleMapper.ToDatabaseModules(request.ModulosAtivos, tipoEstabelecimentoSlug);
+            modulos = await FiltrarModulosConhecidosAsync(connection, transaction, modulos);
             var tipoUnidade = NormalizeTipoUnidade(request.TipoUnidade);
 
             const string sql = @"
@@ -1267,6 +1269,19 @@ SELECT EXISTS(
         private static string NormalizeTipoUnidade(string? tipoUnidade)
         {
             return NormalizeToken(tipoUnidade) == "filial" ? "filial" : "matriz";
+        }
+
+        /// <summary>
+        /// estabelecimentos.modulos_ativos e modulo_enum[]: gravar um valor que o enum ainda nao
+        /// conhece derruba o salvamento. Enquanto uma migration nova nao foi aplicada (deploy fora
+        /// de ordem), o modulo novo e simplesmente ignorado, sem quebrar o resto do cadastro.
+        /// </summary>
+        private static async Task<string[]> FiltrarModulosConhecidosAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, string[] modulos)
+        {
+            var conhecidos = (await connection.QueryAsync<string>(
+                "SELECT unnest(enum_range(NULL::modulo_enum))::text;", transaction: transaction))
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            return modulos.Where(conhecidos.Contains).ToArray();
         }
 
         private static string NormalizeTypeSlug(string? slug, string? nome)

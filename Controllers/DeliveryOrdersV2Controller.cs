@@ -21,17 +21,20 @@ namespace APIBack.Controllers
     public sealed class DeliveryOrdersV2Controller : ControllerBase
     {
         private readonly IPedidoQueueService _queueService;
+        private readonly IPedidoCoreService _coreService;
         private readonly IOperationalSessionService _sessionService;
         private readonly IPedidoHistoricoRepository _historicoRepository;
         private readonly IRestaurantSettingsRepository _restaurantRepository;
 
         public DeliveryOrdersV2Controller(
             IPedidoQueueService queueService,
+            IPedidoCoreService coreService,
             IOperationalSessionService sessionService,
             IPedidoHistoricoRepository historicoRepository,
             IRestaurantSettingsRepository restaurantRepository)
         {
             _queueService = queueService;
+            _coreService = coreService;
             _sessionService = sessionService;
             _historicoRepository = historicoRepository;
             _restaurantRepository = restaurantRepository;
@@ -49,10 +52,41 @@ namespace APIBack.Controllers
 
         // ---- Pedido manual ------------------------------------------------------
 
+        /// <summary>
+        /// Cria um pedido pelo nucleo. Compativel com o formato antigo (items texto + value); com
+        /// itens[] o preco vem do cardapio. Cabecalho Idempotency-Key (ou origemRef) torna a chamada
+        /// repetivel: 201 quando cria, 200 com jaExistia = true quando o pedido ja existia.
+        /// </summary>
         [HttpPost("pedidos")]
         [RequirePermission("Delivery", "criar_pedido")]
-        public Task<IActionResult> CreatePedido([FromBody] CreatePedidoRequest request) =>
-            ExecuteAsync((est, userId) => _queueService.CreatePedidoAsync(est, userId, request), created: true);
+        public async Task<IActionResult> CreatePedido([FromBody] CreatePedidoRequest request)
+        {
+            if (!TryGetActor(out var actorUserId, out var estabelecimentoId, out var error)) return error!;
+            try
+            {
+                var idempotencyKey = Request.Headers["Idempotency-Key"].ToString();
+                var result = await _coreService.CreateAsync(estabelecimentoId, actorUserId, request, idempotencyKey);
+                return result.JaExistia
+                    ? Ok(ApiResponse<CreatedPedidoDto>.Ok(result))
+                    : StatusCode(201, ApiResponse<CreatedPedidoDto>.Ok(result));
+            }
+            catch (DeliveryDomainException ex)
+            {
+                return DomainError(ex);
+            }
+        }
+
+        /// <summary>Substitui os dados de um pedido em rascunho ou pendente (sem motoboy).</summary>
+        [HttpPut("pedidos/{pedidoId:int}")]
+        [RequirePermission("Delivery", "editar_pedido")]
+        public Task<IActionResult> UpdatePedido(int pedidoId, [FromBody] CreatePedidoRequest request) =>
+            ExecuteAsync((est, userId) => _coreService.UpdateAsync(est, userId, pedidoId, request));
+
+        /// <summary>Rascunho -> pendente (o pedido passa a aparecer no mapa e a poder entrar em rota).</summary>
+        [HttpPost("pedidos/{pedidoId:int}/confirmar")]
+        [RequirePermission("Delivery", "criar_pedido")]
+        public Task<IActionResult> ConfirmPedido(int pedidoId) =>
+            ExecuteAsync((est, userId) => _coreService.ConfirmAsync(est, userId, pedidoId));
 
         // ---- Transferencia ------------------------------------------------------
 

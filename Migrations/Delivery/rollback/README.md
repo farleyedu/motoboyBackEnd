@@ -44,3 +44,16 @@ DELETE FROM delivery_tracking_schema_versions
 - Dados coletados enquanto `DeliveryTracking:Enabled=true` (sessoes, amostras de
   localizacao, eventos). Os scripts de schema fazem `DROP TABLE`, entao esses dados
   sao perdidos ao rodar o passo 3. Se precisar preservar, faca backup/export antes.
+
+## Fase 2 (nucleo de pedido) - migracoes 20260925_*
+
+Ordem de execucao dos rollbacks (inversa da aplicacao), cada um na propria transacao:
+
+1. `20260925_05_constraints.down.sql`
+2. `20260925_04_modulo_backfill.down.sql` (retira o modulo PEDIDOS de todos os estabelecimentos)
+3. `20260925_03_backfill.down.sql`
+4. `20260925_02_schema.down.sql` (**destrutivo**: apaga `pedido_item` e as colunas novas de `pedido`)
+
+`20260925_01_modulo_pedidos.sql` nao tem rollback: o Postgres nao remove valor de enum, e o valor
+`PEDIDOS` e inofensivo sem uso. Prefira, antes de qualquer rollback, deixar a API ignorar o
+recurso novo (o codigo tolera a ausencia das colunas novas apenas ate a proxima versao da API).
