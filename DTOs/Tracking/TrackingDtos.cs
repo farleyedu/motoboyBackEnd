@@ -72,6 +72,8 @@ namespace APIBack.DTOs.Tracking
         public double? EstabelecimentoLongitude { get; set; }
         public string? EstabelecimentoCidade { get; set; }
         public string? EstabelecimentoUf { get; set; }
+        // Raio de entrega em km (0 ou nulo = sem limite): o painel desenha o circulo em volta da loja.
+        public decimal? EstabelecimentoRaioEntregaKm { get; set; }
         public DeliveryDayMetricsDto Metrics { get; set; } = new();
         public List<MotoboyDayStatsDto> MotoboyStats { get; set; } = new();
         public List<MotoboyMapDto> Motoboys { get; set; } = new();

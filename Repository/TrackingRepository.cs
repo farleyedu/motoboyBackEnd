@@ -539,7 +539,8 @@ SELECT
     CASE WHEN e.latitude::text ~ '^-?[0-9]+(\.[0-9]+)?$' THEN e.latitude::text::DOUBLE PRECISION ELSE NULL END AS Latitude,
     CASE WHEN e.longitude::text ~ '^-?[0-9]+(\.[0-9]+)?$' THEN e.longitude::text::DOUBLE PRECISION ELSE NULL END AS Longitude,
     NULLIF(BTRIM(e.cidade::text), '') AS Cidade,
-    NULLIF(BTRIM(e.uf::text), '') AS Uf
+    NULLIF(BTRIM(e.uf::text), '') AS Uf,
+    e.raio_entrega_km AS RaioEntregaKm
 FROM estabelecimentos e
 WHERE e.id = @EstabelecimentoId;";
 
@@ -626,6 +627,7 @@ SELECT rs.motoboy_id AS MotoboyId, COUNT(*)::int AS DeliveredToday
                 EstabelecimentoLongitude = estabelecimento?.Longitude,
                 EstabelecimentoCidade = estabelecimento?.Cidade,
                 EstabelecimentoUf = estabelecimento?.Uf,
+                EstabelecimentoRaioEntregaKm = estabelecimento?.RaioEntregaKm,
                 Metrics = metrics,
                 MotoboyStats = motoboyStats,
                 Motoboys = motoboys,
@@ -774,6 +776,7 @@ SELECT rs.motoboy_id AS MotoboyId, COUNT(*)::int AS DeliveredToday
             public double? Longitude { get; set; }
             public string? Cidade { get; set; }
             public string? Uf { get; set; }
+            public decimal? RaioEntregaKm { get; set; }
         }
 
         public async Task<IReadOnlyCollection<MotoboyLocationHistoryPointDto>> GetLocationHistoryAsync(
