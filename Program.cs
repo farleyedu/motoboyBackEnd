@@ -117,6 +117,8 @@ builder.Services.AddScoped<IPedidoQueueService, PedidoQueueService>();
 builder.Services.AddScoped<IPedidoCoreService, PedidoCoreService>();
 builder.Services.AddScoped<IProdutoAtendimentoRepository, ProdutoAtendimentoRepository>();
 builder.Services.AddScoped<IPedidoConsultaRepository, PedidoConsultaRepository>();
+builder.Services.AddScoped<IAtendimentoRepository, AtendimentoRepository>();
+builder.Services.AddScoped<AtendimentoService>();
 builder.Services.AddScoped<ICardapioFichaService, CardapioFichaService>();
 builder.Services.AddScoped<IPedidoHistoricoRepository, PedidoHistoricoRepository>();
 builder.Services.AddScoped<IRestaurantSettingsRepository, RestaurantSettingsRepository>();

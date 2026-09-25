@@ -78,6 +78,8 @@ namespace APIBack.DTOs.Delivery
         public string? Ate { get; set; }
         /// <summary>Numero do pedido, nome, telefone, endereco ou bairro.</summary>
         public string? Busca { get; set; }
+        /// <summary>Pedidos da conversa: ligados a ela ou feitos pelo telefone do cliente dela (Fase 5).</summary>
+        public string? ConversaId { get; set; }
         public int Page { get; set; } = 1;
         public int PageSize { get; set; } = 30;
     }

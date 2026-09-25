@@ -31,6 +31,19 @@ namespace APIBack.Repository
 
             var origemExpr = core ? "p.origem" : "CASE WHEN p.id_ifood IS NOT NULL THEN 'ifood' ELSE 'atendente' END";
             var (where, parameters) = BuildWhere(estabelecimentoId, filtro, origemExpr);
+            if (filtro.ConversaId.HasValue)
+            {
+                // Pedidos da conversa: os ligados a ela (coluna do nucleo) e os feitos pelo telefone do cliente dela.
+                var phone = await connection.ExecuteScalarAsync<string?>(@"
+SELECT cl.telefone_e164 FROM conversas c JOIN clientes cl ON cl.id = c.id_cliente
+ WHERE c.id = @ConversaId AND c.id_estabelecimento = @EstabelecimentoId;",
+                    new { ConversaId = filtro.ConversaId.Value, EstabelecimentoId = estabelecimentoId });
+                var key = PhoneKey.From(phone);
+                parameters.Add("ConversaId", filtro.ConversaId.Value);
+                parameters.Add("PhoneKey", key);
+                where += " AND (" + (core ? "p.conversa_id = @ConversaId OR " : "") +
+                    "(@PhoneKey::text IS NOT NULL AND RIGHT(regexp_replace(p.telefone_cliente::text, '[^0-9]', '', 'g'), 11) = @PhoneKey::text))";
+            }
 
             var total = await connection.ExecuteScalarAsync<int>($"SELECT COUNT(*) FROM pedido p WHERE {where};", parameters);
 

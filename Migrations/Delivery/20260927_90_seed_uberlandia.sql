@@ -523,6 +523,52 @@ BEGIN
   PERFORM pg_temp.seed_pedido(v_est, '{"ref":"seed-uberlandia-12","origem":"atendente","status":1,"cli":"thiago","conv":"thiago","moto":null,"min_ago":5,"prev_min":45,"nome_cliente":"Thiago Barbosa","telefone_cliente":"+5534991230012","endereco_entrega":"Rua dos Vinhedos, 95","region":"Jardim Karaiba","latitude":"-18.945","longitude":"-48.25","entrega_rua":"Rua dos Vinhedos","entrega_numero":"95","entrega_bairro":"Jardim Karaiba","entrega_cidade":"Uberlandia","entrega_estado":"MG","entrega_cep":"38411-186","tipo_pagamento":"Dinheiro","status_pagamento":"Pendente","items":"[{\"nome\":\"X-Salada + Ovo\",\"quantidade\":2,\"preco\":28.5},{\"nome\":\"Guarana Lata 350 ml\",\"quantidade\":2,\"preco\":6.5}]","value":"79.00","subtotal":"70.00","taxa":"9.00","itens":[{"prod":"x-salada","nome":"X-Salada","qtd":2,"preco":26,"obs":null,"adicionais":[{"key":"ovo","nome":"Ovo","preco":2.5}]},{"prod":"guarana-lata","nome":"Guarana Lata 350 ml","qtd":2,"preco":6.5,"obs":null,"adicionais":[]}],"troco":"50","observacoes":"Portao azul, tocar a campainha."}'::jsonb);
   PERFORM pg_temp.seed_pedido(v_est, '{"ref":"seed-uberlandia-13","origem":"atendente","status":6,"cli":"ana","conv":"ana","moto":null,"min_ago":8,"prev_min":45,"nome_cliente":"Ana Beatriz Ferreira","telefone_cliente":"+5534991230003","endereco_entrega":"Avenida Rondon Pacheco, 2500","region":"Tibery","latitude":"-18.8946","longitude":"-48.2517","entrega_rua":"Avenida Rondon Pacheco","entrega_numero":"2500","entrega_bairro":"Tibery","entrega_cidade":"Uberlandia","entrega_estado":"MG","entrega_cep":"38405-142","tipo_pagamento":"PIX","status_pagamento":"Pendente","items":"[{\"nome\":\"Porcao de Pao de Queijo\",\"quantidade\":1,\"preco\":22},{\"nome\":\"Suco de Caju 500 ml\",\"quantidade\":2,\"preco\":10}]","value":"50.00","subtotal":"42.00","taxa":"8.00","itens":[{"prod":"pao-queijo","nome":"Porcao de Pao de Queijo","qtd":1,"preco":22,"obs":null,"adicionais":[]},{"prod":"suco-caju","nome":"Suco de Caju 500 ml","qtd":2,"preco":10,"obs":null,"adicionais":[]}],"observacoes":"Rascunho: aguardando confirmacao do endereco."}'::jsonb);
   PERFORM pg_temp.seed_pedido(v_est, '{"ref":"seed-uberlandia-14","origem":"cardapio_web","status":1,"cli":"joao","conv":null,"moto":null,"min_ago":70,"prev_min":45,"nome_cliente":"Joao Pedro Almeida","telefone_cliente":"+5534991230002","endereco_entrega":"Avenida Joao Naves de Avila, 1800","region":"Santa Monica","latitude":"-18.916","longitude":"-48.259","entrega_rua":"Avenida Joao Naves de Avila","entrega_numero":"1800","entrega_bairro":"Santa Monica","entrega_cidade":"Uberlandia","entrega_estado":"MG","entrega_cep":"38408-144","tipo_pagamento":"Cartao","status_pagamento":"Pago","items":"[{\"nome\":\"Feijoada Mineira (individual)\",\"quantidade\":1,\"preco\":42},{\"nome\":\"Pudim de Leite\",\"quantidade\":1,\"preco\":12}]","value":"60.00","subtotal":"54.00","taxa":"6.00","itens":[{"prod":"feijoada-mineira","nome":"Feijoada Mineira (individual)","qtd":1,"preco":42,"obs":null,"adicionais":[]},{"prod":"pudim","nome":"Pudim de Leite","qtd":1,"preco":12,"obs":null,"adicionais":[]}]}'::jsonb);
+  INSERT INTO estabelecimento_atendimento_config (estabelecimento_id, modo, saudacao_humano, mensagem_fora_horario, horario_atendimento)
+  VALUES (v_est, 'humano', 'Ola! Aqui e do Sabor de Uberlandia. Como posso ajudar?', 'Estamos fechados agora. Atendemos todos os dias, das 11h as 23h.',
+    '{"dias":[{"dia":0,"abre":"11:00","fecha":"23:00"},{"dia":1,"abre":"11:00","fecha":"23:00"},{"dia":2,"abre":"11:00","fecha":"23:00"},{"dia":3,"abre":"11:00","fecha":"23:00"},{"dia":4,"abre":"11:00","fecha":"23:00"},{"dia":5,"abre":"11:00","fecha":"23:30"},{"dia":6,"abre":"11:00","fecha":"23:30"}]}'::jsonb)
+  ON CONFLICT (estabelecimento_id) DO NOTHING;
+  INSERT INTO atendimento_respostas_rapidas (id, estabelecimento_id, titulo, atalho, texto, ordem, ativo)
+  VALUES (pg_temp.sid(v_est, 'resp:saiu'), v_est, 'Saiu para entrega', 'saiu', 'Seu pedido {numero} saiu para entrega com {motoboy}. Previsao: {previsao}. Total {total}.', 1, TRUE)
+  ON CONFLICT DO NOTHING;
+  INSERT INTO atendimento_respostas_rapidas (id, estabelecimento_id, titulo, atalho, texto, ordem, ativo)
+  VALUES (pg_temp.sid(v_est, 'resp:recebido'), v_est, 'Pedido recebido', 'recebido', 'Recebemos seu pedido {numero}, {cliente}! Ja estamos preparando. Previsao: {previsao}.', 2, TRUE)
+  ON CONFLICT DO NOTHING;
+  INSERT INTO atendimento_respostas_rapidas (id, estabelecimento_id, titulo, atalho, texto, ordem, ativo)
+  VALUES (pg_temp.sid(v_est, 'resp:endereco'), v_est, 'Confirmar endereco', 'endereco', 'Pode confirmar o endereco de entrega e um ponto de referencia, {cliente}?', 3, TRUE)
+  ON CONFLICT DO NOTHING;
+  INSERT INTO atendimento_respostas_rapidas (id, estabelecimento_id, titulo, atalho, texto, ordem, ativo)
+  VALUES (pg_temp.sid(v_est, 'resp:pix'), v_est, 'Chave PIX', 'pix', 'Segue a chave PIX do {loja}: contato@saboruberlandia.example. Total do pedido {numero}: {total}.', 4, TRUE)
+  ON CONFLICT DO NOTHING;
+  INSERT INTO atendimento_respostas_rapidas (id, estabelecimento_id, titulo, atalho, texto, ordem, ativo)
+  VALUES (pg_temp.sid(v_est, 'resp:atraso'), v_est, 'Aviso de atraso', 'atraso', 'Pedimos desculpas, {cliente}: o pedido {numero} vai atrasar um pouco. Nova previsao: {previsao}.', 5, TRUE)
+  ON CONFLICT DO NOTHING;
+  INSERT INTO atendimento_respostas_rapidas (id, estabelecimento_id, titulo, atalho, texto, ordem, ativo)
+  VALUES (pg_temp.sid(v_est, 'resp:obrigado'), v_est, 'Agradecimento', 'obrigado', 'Obrigado pela preferencia, {cliente}! Qualquer coisa e so chamar aqui.', 6, TRUE)
+  ON CONFLICT DO NOTHING;
+  INSERT INTO delivery_motoboy_message (estabelecimento_id, motoboy_id, pedido_id, direction, body, quick_key, created_at_utc, read_at_utc)
+  SELECT v_est, m.id, (SELECT id FROM pedido WHERE id_estabelecimento = v_est AND origem_ref = 'seed-uberlandia-1' LIMIT 1),
+         'operator', 'Confira o endereco de entrega com o cliente antes de sair.', 'confira_endereco', NOW() - make_interval(mins => 285), NOW()
+    FROM motoboy m
+   WHERE m.id_estabelecimento = v_est AND m.nome = 'Diego Santos' AND m.is_simulated
+     AND NOT EXISTS (SELECT 1 FROM delivery_motoboy_message x WHERE x.estabelecimento_id = v_est AND x.motoboy_id = m.id AND x.body = 'Confira o endereco de entrega com o cliente antes de sair.');
+  INSERT INTO delivery_motoboy_message (estabelecimento_id, motoboy_id, pedido_id, direction, body, quick_key, created_at_utc, read_at_utc)
+  SELECT v_est, m.id, (SELECT id FROM pedido WHERE id_estabelecimento = v_est AND origem_ref = 'seed-uberlandia-1' LIMIT 1),
+         'motoboy', 'Ok, ja estou saindo.', NULL, NOW() - make_interval(mins => 284), NOW()
+    FROM motoboy m
+   WHERE m.id_estabelecimento = v_est AND m.nome = 'Diego Santos' AND m.is_simulated
+     AND NOT EXISTS (SELECT 1 FROM delivery_motoboy_message x WHERE x.estabelecimento_id = v_est AND x.motoboy_id = m.id AND x.body = 'Ok, ja estou saindo.');
+  INSERT INTO delivery_motoboy_message (estabelecimento_id, motoboy_id, pedido_id, direction, body, quick_key, created_at_utc, read_at_utc)
+  SELECT v_est, m.id, (SELECT id FROM pedido WHERE id_estabelecimento = v_est AND origem_ref = 'seed-uberlandia-2' LIMIT 1),
+         'motoboy', 'O cliente nao atende.', 'cliente_nao_atende', NOW() - make_interval(mins => 210), NOW()
+    FROM motoboy m
+   WHERE m.id_estabelecimento = v_est AND m.nome = 'Rafael Oliveira' AND m.is_simulated
+     AND NOT EXISTS (SELECT 1 FROM delivery_motoboy_message x WHERE x.estabelecimento_id = v_est AND x.motoboy_id = m.id AND x.body = 'O cliente nao atende.');
+  INSERT INTO delivery_motoboy_message (estabelecimento_id, motoboy_id, pedido_id, direction, body, quick_key, created_at_utc, read_at_utc)
+  SELECT v_est, m.id, (SELECT id FROM pedido WHERE id_estabelecimento = v_est AND origem_ref = 'seed-uberlandia-2' LIMIT 1),
+         'operator', 'O cliente nao esta atendendo. Tente ligar ou aguarde alguns minutos.', 'cliente_nao_atende', NOW() - make_interval(mins => 209), NOW()
+    FROM motoboy m
+   WHERE m.id_estabelecimento = v_est AND m.nome = 'Rafael Oliveira' AND m.is_simulated
+     AND NOT EXISTS (SELECT 1 FROM delivery_motoboy_message x WHERE x.estabelecimento_id = v_est AND x.motoboy_id = m.id AND x.body = 'O cliente nao esta atendendo. Tente ligar ou aguarde alguns minutos.');
 
     INSERT INTO delivery_tracking_schema_versions (version) VALUES ('seed_demo_alvo:' || v_est::text) ON CONFLICT (version) DO NOTHING;
     INSERT INTO delivery_tracking_schema_versions (version) VALUES ('20260927_90_seed_uberlandia') ON CONFLICT (version) DO NOTHING;

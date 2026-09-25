@@ -10,6 +10,16 @@ BEGIN
     FROM delivery_tracking_schema_versions WHERE version LIKE 'seed_demo_alvo:%' LIMIT 1;
   IF v_est IS NULL THEN RAISE NOTICE 'Nenhum seed registrado no ledger.'; RETURN; END IF;
 
+  -- Fase 5: mensagens ao motoboy (apontam para pedido/motoboy do seed), respostas rapidas e config.
+  IF to_regclass('delivery_motoboy_message') IS NOT NULL THEN
+    DELETE FROM delivery_motoboy_message WHERE estabelecimento_id = v_est
+       AND motoboy_id IN (SELECT id FROM motoboy WHERE id_estabelecimento = v_est AND is_simulated AND telefone LIKE '3499123010%');
+    DELETE FROM atendimento_respostas_rapidas WHERE estabelecimento_id = v_est
+       AND id = ANY (ARRAY[md5('zippy-seed-uberlandia:' || v_est::text || ':resp:${r[0]}')::uuid, md5('zippy-seed-uberlandia:' || v_est::text || ':resp:${r[0]}')::uuid, md5('zippy-seed-uberlandia:' || v_est::text || ':resp:${r[0]}')::uuid, md5('zippy-seed-uberlandia:' || v_est::text || ':resp:${r[0]}')::uuid, md5('zippy-seed-uberlandia:' || v_est::text || ':resp:${r[0]}')::uuid, md5('zippy-seed-uberlandia:' || v_est::text || ':resp:${r[0]}')::uuid]);
+    DELETE FROM estabelecimento_atendimento_config WHERE estabelecimento_id = v_est
+       AND saudacao_humano LIKE 'Ola! Aqui e do Sabor de Uberlandia%';
+  END IF;
+
   DELETE FROM delivery_route_stops WHERE estabelecimento_id = v_est
      AND pedido_id IN (SELECT id FROM pedido WHERE id_estabelecimento = v_est AND origem_ref LIKE 'seed-uberlandia-%');
   DELETE FROM pedido_item WHERE pedido_id IN (SELECT id FROM pedido WHERE id_estabelecimento = v_est AND origem_ref LIKE 'seed-uberlandia-%');

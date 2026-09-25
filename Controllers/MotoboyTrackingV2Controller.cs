@@ -1,6 +1,7 @@
 using System;
 using System.Threading.Tasks;
 using APIBack.Attributes;
+using APIBack.DTOs.Atendimento;
 using APIBack.DTOs.Common;
 using APIBack.DTOs.Delivery;
 using APIBack.DTOs.Tracking;
@@ -18,11 +19,13 @@ namespace APIBack.Controllers
     {
         private readonly IOperationalSessionService _service;
         private readonly IPedidoQueueService _queueService;
+        private readonly AtendimentoService _atendimento;
 
-        public MotoboyTrackingV2Controller(IOperationalSessionService service, IPedidoQueueService queueService)
+        public MotoboyTrackingV2Controller(IOperationalSessionService service, IPedidoQueueService queueService, AtendimentoService atendimento)
         {
             _service = service;
             _queueService = queueService;
+            _atendimento = atendimento;
         }
 
         [HttpPost("start")]
@@ -146,6 +149,27 @@ namespace APIBack.Controllers
         [RequireOperationalSession]
         public Task<IActionResult> ArrivedAtStore() =>
             WithOperationalContextAsync((est, motoboyId, _) => _queueService.ArriveAtStoreAsync(est, motoboyId));
+
+        // ---- Mensagens com o atendente (Fase 5) ----------------------------------
+
+        [HttpGet("messages")]
+        [RequireOperationalSession]
+        public Task<IActionResult> GetMessages([FromQuery] int limit = 50) =>
+            WithOperationalContextAsync((est, motoboyId, _) => _atendimento.ListMessagesAsync(est, motoboyId, null, limit));
+
+        [HttpPost("messages")]
+        [RequireOperationalSession]
+        public Task<IActionResult> SendMessage([FromBody] SendMotoboyMessageRequest? request) =>
+            WithOperationalContextAsync((est, motoboyId, _) => _atendimento.SendFromMotoboyAsync(est, motoboyId, request));
+
+        [HttpPost("messages/read")]
+        [RequireOperationalSession]
+        public Task<IActionResult> ReadMessages() =>
+            WithOperationalContextAsync(async (est, motoboyId, _) => new { marcadas = await _atendimento.MarkReadAsync(est, motoboyId, readerIsMotoboy: true) });
+
+        [HttpGet("message-shortcuts")]
+        [RequireOperationalSession]
+        public IActionResult MessageShortcuts() => Ok(ApiResponse<object>.Ok(AtendimentoService.Shortcuts(operatorSide: false)));
 
         [HttpGet("transfer-targets")]
         [RequireOperationalSession]

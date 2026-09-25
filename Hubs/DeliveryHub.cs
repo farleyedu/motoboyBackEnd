@@ -17,6 +17,8 @@ namespace APIBack.Hubs
         public const string DeliveryRouteReturning = "delivery.route.returning";
         /// <summary>O motoboy chegou a loja (raio ou acao manual): rota encerrada.</summary>
         public const string DeliveryRouteReturned = "delivery.route.returned";
+        /// <summary>Mensagem interna atendente <-> motoboy presa ao pedido (Fase 5).</summary>
+        public const string DeliveryMotoboyMessage = "delivery.motoboy.message";
 
         public static string EstablishmentGroup(Guid estabelecimentoId) => $"establishment:{estabelecimentoId:N}";
         public static string SessionGroup(Guid sessionId) => $"delivery-session:{sessionId:N}";
