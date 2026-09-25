@@ -29,6 +29,8 @@ namespace APIBack.DTOs.Delivery
         public bool RequireDeliveryCode { get; set; }
         public bool AllowMotoboyReorder { get; set; } = true;
         public bool AllowMotoboyRefuse { get; set; } = true;
+        /// <summary>A rota so termina quando o motoboy volta a loja (raio ou acao manual).</summary>
+        public bool RequireReturnToStore { get; set; }
     }
 
     public sealed class DeliverySettingsDto
@@ -38,6 +40,12 @@ namespace APIBack.DTOs.Delivery
         public bool RequireDeliveryCode { get; set; }
         public bool AllowMotoboyReorder { get; set; } = true;
         public bool AllowMotoboyRefuse { get; set; } = true;
+        /// <summary>Depois da ultima entrega o motoboy fica "retornando" ate chegar a loja.</summary>
+        public bool RequireReturnToStore { get; set; }
+        /// <summary>Raio (m) da loja que conta como "chegou".</summary>
+        public int StoreReturnRadiusM { get; set; } = APIBack.Service.ReturnToStoreRules.DefaultRadiusMeters;
+        /// <summary>Termina o retorno sozinho ao entrar no raio; se falso, so pela acao manual.</summary>
+        public bool AutoFinishRouteOnReturn { get; set; } = true;
         /// <summary>Quais pedidos o mapa mostra, pelo horario em que foram feitos.</summary>
         public OrderWindowDto OrderWindow { get; set; } = new();
         /// <summary>Inicio e fim (UTC) que a janela salva resolve AGORA; so leitura, para a tela mostrar o efeito.</summary>
@@ -54,7 +62,8 @@ namespace APIBack.DTOs.Delivery
             TransferPolicy = TransferPolicy,
             RequireDeliveryCode = RequireDeliveryCode,
             AllowMotoboyReorder = AllowMotoboyReorder,
-            AllowMotoboyRefuse = AllowMotoboyRefuse
+            AllowMotoboyRefuse = AllowMotoboyRefuse,
+            RequireReturnToStore = RequireReturnToStore
         };
     }
 
@@ -68,6 +77,12 @@ namespace APIBack.DTOs.Delivery
         public OrderWindowDto? OrderWindow { get; set; }
         /// <summary>Nulo = manter o prazo atual.</summary>
         public int? DefaultDeliveryMinutes { get; set; }
+        /// <summary>Nulo = manter.</summary>
+        public bool? RequireReturnToStore { get; set; }
+        /// <summary>Nulo = manter.</summary>
+        public int? StoreReturnRadiusM { get; set; }
+        /// <summary>Nulo = manter.</summary>
+        public bool? AutoFinishRouteOnReturn { get; set; }
     }
 
     // ---- Acoes do motoboy ------------------------------------------------------

@@ -16,12 +16,15 @@ namespace APIBack.Service
         private readonly IOperationalSessionRepository _repository;
         private readonly IJwtService _jwtService;
         private readonly DeliveryTrackingOptions _options;
+        private readonly IPedidoQueueRepository _queueRepository;
 
         public OperationalSessionService(
             IOperationalSessionRepository repository,
             IJwtService jwtService,
-            IOptions<DeliveryTrackingOptions> options)
+            IOptions<DeliveryTrackingOptions> options,
+            IPedidoQueueRepository queueRepository)
         {
+            _queueRepository = queueRepository ?? throw new ArgumentNullException(nameof(queueRepository));
             _repository = repository ?? throw new ArgumentNullException(nameof(repository));
             _jwtService = jwtService ?? throw new ArgumentNullException(nameof(jwtService));
             _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
@@ -144,6 +147,13 @@ namespace APIBack.Service
                 context.MotoboyId,
                 context.SessionEpoch,
                 location);
+            if (result.Outcome == "accepted" && payload.EstabelecimentoId.HasValue)
+            {
+                // Retorno a loja: se a rota esta "retornando" e a posicao entrou no raio da loja, encerra.
+                // Nunca lanca (a posicao ja foi aceita).
+                await _queueRepository.TryFinishReturnByLocationAsync(
+                    payload.EstabelecimentoId.Value, context.MotoboyId, location.Latitude, location.Longitude);
+            }
             return new OperationalLocationAckDto
             {
                 SampleId = location.SampleId,

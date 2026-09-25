@@ -201,7 +201,8 @@ namespace APIBack.Tests.Unit
         private OperationalSessionService CreateService() => new(
             _repository.Object,
             _jwtService.Object,
-            Microsoft.Extensions.Options.Options.Create(_options));
+            Microsoft.Extensions.Options.Options.Create(_options),
+            new Mock<APIBack.Repository.Interface.IPedidoQueueRepository>().Object);
 
         private static OperationalSessionRecord CreateSession(string origin)
         {

@@ -118,6 +118,7 @@ ON CONFLICT (estabelecimento_id) DO UPDATE SET
                     "UPDATE delivery_settings SET default_delivery_minutes = @Minutes WHERE estabelecimento_id = @EstabelecimentoId;",
                     new { Minutes = request.DefaultDeliveryMinutes.Value, EstabelecimentoId = estabelecimentoId }, transaction);
             }
+            await SaveReturnSettingsAsync(connection, transaction, estabelecimentoId, request);
             var settings = await GetSettingsInternalAsync(connection, transaction, estabelecimentoId);
             await transaction.CommitAsync();
             await LoadSettingsExtrasAsync(settings, estabelecimentoId);
@@ -131,6 +132,7 @@ ON CONFLICT (estabelecimento_id) DO UPDATE SET
         private async Task LoadSettingsExtrasAsync(DeliverySettingsDto settings, Guid estabelecimentoId)
         {
             await using var extrasConnection = await _dataSource.OpenConnectionAsync();
+            await ApplyReturnSettingsAsync(settings, extrasConnection, estabelecimentoId);
             settings.OrderWindow = await OrderWindowStore.ReadAsync(extrasConnection, estabelecimentoId);
             settings.DefaultDeliveryMinutes = await OrderWindowStore.ReadDefaultDeliveryMinutesAsync(extrasConnection, estabelecimentoId)
                 ?? ManualOrderRules.DefaultPrevisaoMinutos;
@@ -246,6 +248,7 @@ SELECT s.motoboy_id AS MotoboyId,
             {
                 throw new DeliveryDomainException(404, "PEDIDO_NOT_IN_YOUR_QUEUE", "Este pedido nao esta na sua fila.");
             }
+            RouteLockRules.EnsureNotLockedForMotoboy(await IsStopLockedAsync(connection, transaction, stop.Id), pedidoId, "transferido");
             await EnsureEligibleAsync(connection, transaction, toMotoboyId, estabelecimentoId);
 
             if (settings.TransferPolicy == TransferPolicies.EstablishmentApproval)

@@ -13,6 +13,17 @@ namespace APIBack.DTOs.Delivery
         public string? Motivo { get; set; }
     }
 
+    public sealed class LockPedidosRequest
+    {
+        public List<int> PedidoIds { get; set; } = new();
+    }
+
+    /// <summary>Filas afetadas (uma por motoboy) depois de travar/destravar.</summary>
+    public sealed class LockPedidosResultDto
+    {
+        public List<MotoboyQueueDto> Filas { get; set; } = new();
+    }
+
     public sealed class ReorderQueueRequest
     {
         public long ExpectedVersion { get; set; }
@@ -30,6 +41,8 @@ namespace APIBack.DTOs.Delivery
         public DateTimeOffset? PickedUpAtUtc { get; set; }
         /// <summary>Motoboy informou que chegou no cliente.</summary>
         public DateTimeOffset? ArrivedAtUtc { get; set; }
+        /// <summary>Pedido travado pelo estabelecimento: ancora na fila; so o estabelecimento destrava.</summary>
+        public bool Locked { get; set; }
         /// <summary>Tudo que o app precisa para executar a entrega.</summary>
         public DeliveryStopOrderDto? Pedido { get; set; }
     }
@@ -72,6 +85,9 @@ namespace APIBack.DTOs.Delivery
         public long Version { get; set; }
         public RouteStopDto? Current { get; set; }
         public List<RouteStopDto> Next { get; set; } = new();
+        /// <summary>'idle' ou 'returning' (voltando a loja depois da ultima entrega).</summary>
+        public string RouteState { get; set; } = "idle";
+        public DateTimeOffset? ReturningSinceUtc { get; set; }
         /// <summary>Regras do estabelecimento que o app precisa respeitar/exibir.</summary>
         public DeliveryPoliciesDto? Politicas { get; set; }
     }

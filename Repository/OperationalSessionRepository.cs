@@ -670,6 +670,7 @@ SELECT s.motoboy_id AS MotoboyId,
                 EstabelecimentoId = estabelecimentoId,
                 ServerNow = serverNow
             })).ToList();
+            var returning = await GetReturningMotoboyIdsAsync(connection, estabelecimentoId);
 
             var motoboys = rows.Select(row =>
             {
@@ -692,7 +693,8 @@ SELECT s.motoboy_id AS MotoboyId,
                     Status = row.HasActiveRouteStop
                              || string.Equals(row.TrackingMode, "active_route", StringComparison.OrdinalIgnoreCase)
                         ? "delivering"
-                        : "online",
+                        // Voltando a loja depois da ultima entrega (Fase 4): so quando o estabelecimento exige o retorno.
+                        : returning.Contains(row.MotoboyId) ? "returning" : "online",
                     SessionId = row.SessionId,
                     SessionEpoch = row.SessionEpoch,
                     Version = row.Version,
@@ -723,6 +725,22 @@ SELECT s.motoboy_id AS MotoboyId,
                 ServerTimeUtc = serverNow,
                 Motoboys = motoboys
             };
+        }
+
+        /// <summary>Motoboys com a rota em "retornando". Tolera o banco sem a migration da Fase 4 (coluna ausente = ninguem).</summary>
+        private static async Task<HashSet<int>> GetReturningMotoboyIdsAsync(NpgsqlConnection connection, Guid estabelecimentoId)
+        {
+            try
+            {
+                var ids = await connection.QueryAsync<int>(
+                    "SELECT motoboy_id FROM delivery_motoboy_route WHERE estabelecimento_id = @EstabelecimentoId AND route_state = 'returning';",
+                    new { EstabelecimentoId = estabelecimentoId });
+                return ids.ToHashSet();
+            }
+            catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedColumn)
+            {
+                return new HashSet<int>();
+            }
         }
 
         public async Task<IReadOnlyCollection<SimulatorCandidateDto>> GetSimulatorCandidatesAsync(Guid estabelecimentoId)

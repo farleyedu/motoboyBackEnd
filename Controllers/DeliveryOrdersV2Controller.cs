@@ -268,6 +268,53 @@ namespace APIBack.Controllers
             }
         }
 
+        /// <summary>Trava pedidos da fila: viram ancoras e o motoboy nao pode move-los, recusa-los nem transferi-los.</summary>
+        [HttpPost("pedidos/travar")]
+        [RequirePermission("Delivery", "atribuir_motoboy")]
+        public async Task<IActionResult> LockPedidos([FromBody] LockPedidosRequest? request)
+        {
+            if (!TryGetActor(out var actorUserId, out var estabelecimentoId, out var error)) return error!;
+            try
+            {
+                return Ok(ApiResponse<LockPedidosResultDto>.Ok(await _queueService.LockAsync(estabelecimentoId, actorUserId, request?.PedidoIds ?? new())));
+            }
+            catch (DeliveryDomainException ex)
+            {
+                return DomainError(ex);
+            }
+        }
+
+        [HttpPost("pedidos/destravar")]
+        [RequirePermission("Delivery", "atribuir_motoboy")]
+        public async Task<IActionResult> UnlockPedidos([FromBody] LockPedidosRequest? request)
+        {
+            if (!TryGetActor(out var actorUserId, out var estabelecimentoId, out var error)) return error!;
+            try
+            {
+                return Ok(ApiResponse<LockPedidosResultDto>.Ok(await _queueService.UnlockAsync(estabelecimentoId, actorUserId, request?.PedidoIds ?? new())));
+            }
+            catch (DeliveryDomainException ex)
+            {
+                return DomainError(ex);
+            }
+        }
+
+        /// <summary>Encerra o retorno a loja do motoboy (acao manual do atendente).</summary>
+        [HttpPost("motoboys/{motoboyId:int}/fila/chegou-loja")]
+        [RequirePermission("Delivery", "atribuir_motoboy")]
+        public async Task<IActionResult> ArriveAtStore(int motoboyId)
+        {
+            if (!TryGetActor(out _, out var estabelecimentoId, out var error)) return error!;
+            try
+            {
+                return Ok(ApiResponse<MotoboyQueueDto>.Ok(await _queueService.ArriveAtStoreAsync(estabelecimentoId, motoboyId)));
+            }
+            catch (DeliveryDomainException ex)
+            {
+                return DomainError(ex);
+            }
+        }
+
         [HttpPost("motoboys/{motoboyId:int}/fila/retomar")]
         [RequirePermission("Delivery", "atribuir_motoboy")]
         public async Task<IActionResult> Resume(int motoboyId)

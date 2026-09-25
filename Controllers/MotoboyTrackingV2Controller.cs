@@ -141,6 +141,12 @@ namespace APIBack.Controllers
         public Task<IActionResult> ResumeQueue() =>
             WithOperationalContextAsync((est, motoboyId, _) => _queueService.ResumeByMotoboyAsync(est, motoboyId));
 
+        /// <summary>Cheguei a loja: encerra o retorno da rota (alternativa ao raio automatico).</summary>
+        [HttpPost("queue/arrived-at-store")]
+        [RequireOperationalSession]
+        public Task<IActionResult> ArrivedAtStore() =>
+            WithOperationalContextAsync((est, motoboyId, _) => _queueService.ArriveAtStoreAsync(est, motoboyId));
+
         [HttpGet("transfer-targets")]
         [RequireOperationalSession]
         public Task<IActionResult> GetTransferTargets() =>

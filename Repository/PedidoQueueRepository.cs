@@ -322,6 +322,12 @@ namespace APIBack.Repository
                     "O pedido em rota (entrega atual) precisa continuar na primeira posicao.");
             }
 
+            // Pedidos travados sao ancoras: mantem a posicao que tem hoje na fila.
+            var lockedIds = await GetLockedPedidoIdsAsync(connection, transaction, estabelecimentoId, motoboyId);
+            RouteLockRules.ValidateReorder(
+                activeStops.Select(s => new RouteSlot(s.PedidoId, lockedIds.Contains(s.PedidoId), s.StopStatus == "en_route")).ToList(),
+                pedidoIdsOrdenados);
+
             await ApplyPositionsAsync(connection, transaction, estabelecimentoId, motoboyId, pedidoIdsOrdenados);
 
             var version = await BumpRouteVersionAsync(connection, transaction, estabelecimentoId, motoboyId);
@@ -373,10 +379,16 @@ namespace APIBack.Repository
                 await TryPromoteNextAsync(connection, transaction, estabelecimentoId, motoboyId);
             }
             await RenumberActiveStopsAsync(connection, transaction, estabelecimentoId, motoboyId);
+            var entersReturn = await EnterReturningIfIdleAsync(connection, transaction, estabelecimentoId, motoboyId);
 
             var version = await BumpRouteVersionAsync(connection, transaction, estabelecimentoId, motoboyId);
             await EmitQueueEventAsync(connection, transaction, estabelecimentoId, motoboyId, current.PedidoId,
                 completedBy == "motoboy" ? "delivered" : "completed", version, eligibility.SessionId);
+            if (entersReturn)
+            {
+                await EmitRouteStateEventAsync(connection, transaction, estabelecimentoId, motoboyId,
+                    DeliveryRealtimeEvents.DeliveryRouteReturning, RouteStates.Returning, "delivery", version, eligibility.SessionId);
+            }
             return await BuildSnapshotAsync(connection, transaction, estabelecimentoId, motoboyId, version);
         }
 
@@ -436,6 +448,8 @@ VALUES
                     PickedUpAtUtc = pickedUpAtUtc,
                     TransferRequestId = transferRequestId
                 }, transaction);
+
+            await ClearReturningAsync(connection, transaction, estabelecimentoId, motoboyId);
 
             var saidaNow = await PedidoColumnTypes.LocalNowSqlAsync(connection, transaction, "horario_saida");
             await connection.ExecuteAsync(
@@ -687,11 +701,13 @@ SELECT
             public string? PrevisaoEntregaRaw { get; set; }
             public string? DataPedidoRaw { get; set; }
             public bool HasDeliveryCode { get; set; }
+            public bool Locked { get; set; }
         }
 
         private static async Task<MotoboyQueueDto> BuildSnapshotAsync(
             NpgsqlConnection connection, NpgsqlTransaction transaction, Guid estabelecimentoId, int motoboyId, long version)
         {
+            var rules = await HasRouteRulesSchemaAsync(connection, transaction);
             // Colunas legadas podem ser text/numeric/time: le como texto e converte com
             // seguranca, para um cadastro mal preenchido nao derrubar a fila inteira.
             var rows = (await connection.QueryAsync<StopDetailRow>($@"
@@ -716,7 +732,8 @@ SELECT s.id AS Id, s.pedido_id AS PedidoId, s.position AS Position, s.stop_statu
        p.observacoes::text AS Observacoes,
        p.previsao_entrega::text AS PrevisaoEntregaRaw,
        p.data_pedido::text AS DataPedidoRaw,
-       (NULLIF(BTRIM(COALESCE(p.codigo_entrega::text, '')), '') IS NOT NULL) AS HasDeliveryCode
+       (NULLIF(BTRIM(COALESCE(p.codigo_entrega::text, '')), '') IS NOT NULL) AS HasDeliveryCode,
+       {(rules ? "s.locked" : "FALSE")} AS Locked
   FROM delivery_route_stops s
   JOIN pedido p ON p.id = s.pedido_id
  WHERE s.motoboy_id = @MotoboyId AND s.estabelecimento_id = @EstabelecimentoId AND s.stop_status IN {ActiveStatusesSql}
@@ -733,6 +750,7 @@ SELECT s.id AS Id, s.pedido_id AS PedidoId, s.position AS Position, s.stop_statu
                 AssignedAtUtc = row.AssignedAtUtc,
                 PickedUpAtUtc = row.PickedUpAtUtc,
                 ArrivedAtUtc = row.ArrivedAtUtc,
+                Locked = row.Locked,
                 Pedido = new DeliveryStopOrderDto
                 {
                     Id = row.PedidoId,
@@ -760,8 +778,11 @@ SELECT s.id AS Id, s.pedido_id AS PedidoId, s.position AS Position, s.stop_statu
             };
 
             var current = rows.FirstOrDefault(r => r.StopStatus == "en_route");
+            var routeState = await ReadRouteStateAsync(connection, transaction, estabelecimentoId, motoboyId, rules);
             return new MotoboyQueueDto
             {
+                RouteState = routeState.State,
+                ReturningSinceUtc = routeState.Since,
                 MotoboyId = motoboyId,
                 EstabelecimentoId = estabelecimentoId,
                 Version = version,

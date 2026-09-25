@@ -53,6 +53,18 @@ namespace APIBack.Service
             return _repository.ReorderAsync(estabelecimentoId, actorUserId, motoboyId, expectedVersion, pedidoIdsOrdenados);
         }
 
+        public Task<LockPedidosResultDto> LockAsync(Guid estabelecimentoId, int actorUserId, IReadOnlyList<int> pedidoIds) =>
+            _repository.SetLockedAsync(estabelecimentoId, actorUserId, RouteLockRules.NormalizeIds(pedidoIds), locked: true);
+
+        public Task<LockPedidosResultDto> UnlockAsync(Guid estabelecimentoId, int actorUserId, IReadOnlyList<int> pedidoIds) =>
+            _repository.SetLockedAsync(estabelecimentoId, actorUserId, RouteLockRules.NormalizeIds(pedidoIds), locked: false);
+
+        public Task<MotoboyQueueDto> ArriveAtStoreAsync(Guid estabelecimentoId, int motoboyId)
+        {
+            EnsurePositive(motoboyId, "motoboyId");
+            return _repository.ArriveAtStoreAsync(estabelecimentoId, motoboyId);
+        }
+
         public Task<MotoboyQueueDto> CompleteCurrentAsync(Guid estabelecimentoId, int actorUserId, int motoboyId)
         {
             EnsurePositive(motoboyId, "motoboyId");
@@ -251,6 +263,10 @@ namespace APIBack.Service
             if (request.OrderWindow != null)
             {
                 request.OrderWindow = OrderWindowRules.Validate(request.OrderWindow);
+            }
+            if (request.StoreReturnRadiusM.HasValue)
+            {
+                request.StoreReturnRadiusM = ReturnToStoreRules.NormalizeRadius(request.StoreReturnRadiusM);
             }
             return _repository.UpsertSettingsAsync(estabelecimentoId, actorUserId, request);
         }

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using APIBack.DTOs.Delivery;
+using APIBack.Hubs;
 using APIBack.Service;
 using Dapper;
 using Npgsql;
@@ -109,6 +110,7 @@ namespace APIBack.Repository
             {
                 throw new DeliveryDomainException(404, "PEDIDO_NOT_IN_YOUR_QUEUE", "Este pedido nao esta na sua fila.");
             }
+            RouteLockRules.EnsureNotLockedForMotoboy(await IsStopLockedAsync(connection, transaction, stop.Id), pedidoId, "recusado");
             if (stop.PickedUpAtUtc.HasValue)
             {
                 throw new DeliveryDomainException(409, "ALREADY_PICKED_UP",
@@ -160,8 +162,14 @@ namespace APIBack.Repository
                 await TryPromoteNextAsync(connection, transaction, estabelecimentoId, motoboyId);
             }
             await RenumberActiveStopsAsync(connection, transaction, estabelecimentoId, motoboyId);
+            var entersReturn = await EnterReturningIfIdleAsync(connection, transaction, estabelecimentoId, motoboyId);
             var version = await BumpRouteVersionAsync(connection, transaction, estabelecimentoId, motoboyId);
             await EmitQueueEventAsync(connection, transaction, estabelecimentoId, motoboyId, pedidoId, action, version, eligibility.SessionId);
+            if (entersReturn)
+            {
+                await EmitRouteStateEventAsync(connection, transaction, estabelecimentoId, motoboyId,
+                    DeliveryRealtimeEvents.DeliveryRouteReturning, RouteStates.Returning, "delivery", version, eligibility.SessionId);
+            }
             return await BuildSnapshotAsync(connection, transaction, estabelecimentoId, motoboyId, version);
         }
     }

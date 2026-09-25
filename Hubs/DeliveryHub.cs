@@ -13,6 +13,10 @@ namespace APIBack.Hubs
         public const string DeliveryRouteAssigned = "delivery.route.assigned";
         public const string DeliveryQueueUpdated = "delivery.queue.updated";
         public const string DeliveryTransferUpdated = "delivery.transfer.updated";
+        /// <summary>A rota do motoboy entrou em "retornando a loja".</summary>
+        public const string DeliveryRouteReturning = "delivery.route.returning";
+        /// <summary>O motoboy chegou a loja (raio ou acao manual): rota encerrada.</summary>
+        public const string DeliveryRouteReturned = "delivery.route.returned";
 
         public static string EstablishmentGroup(Guid estabelecimentoId) => $"establishment:{estabelecimentoId:N}";
         public static string SessionGroup(Guid sessionId) => $"delivery-session:{sessionId:N}";

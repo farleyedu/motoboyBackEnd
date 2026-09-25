@@ -15,6 +15,9 @@ namespace APIBack.Service.Interface
         Task<MotoboyQueueDto> ResumeAsync(Guid estabelecimentoId, int actorUserId, int motoboyId);
         Task<MotoboyQueueDto> CancelAsync(Guid estabelecimentoId, int actorUserId, int pedidoId, string? motivo);
         Task<MotoboyQueueDto> GetQueueAsync(Guid estabelecimentoId, int motoboyId);
+        Task<LockPedidosResultDto> LockAsync(Guid estabelecimentoId, int actorUserId, IReadOnlyList<int> pedidoIds);
+        Task<LockPedidosResultDto> UnlockAsync(Guid estabelecimentoId, int actorUserId, IReadOnlyList<int> pedidoIds);
+        Task<MotoboyQueueDto> ArriveAtStoreAsync(Guid estabelecimentoId, int motoboyId);
 
         // Motoboy
         Task<MotoboyQueueDto> MarkPickedUpAsync(Guid estabelecimentoId, int motoboyId);
