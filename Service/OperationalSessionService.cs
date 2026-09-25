@@ -236,6 +236,57 @@ namespace APIBack.Service
             };
         }
 
+        public async Task UpdateSimulatorMotoboyAsync(Guid estabelecimentoId, int motoboyId, UpdateSimulatorMotoboyRequest request)
+        {
+            EnsureEnabled();
+            if (!_options.SimulatorEnabled)
+            {
+                throw new DeliveryDomainException(503, "SIMULATOR_DISABLED", "Simulador operacional desabilitado.");
+            }
+
+            var nome = request?.Nome?.Trim();
+            if (string.IsNullOrEmpty(nome))
+            {
+                throw new DeliveryDomainException(422, "INVALID_SIMULATOR_MOTOBOY", "Informe o nome do motoboy.");
+            }
+            if (nome.Length > 120)
+            {
+                throw new DeliveryDomainException(422, "INVALID_SIMULATOR_MOTOBOY", "Nome excede 120 caracteres.");
+            }
+            var telefone = string.IsNullOrWhiteSpace(request?.Telefone) ? null : request!.Telefone!.Trim();
+            if (telefone is { Length: > 30 })
+            {
+                throw new DeliveryDomainException(422, "INVALID_SIMULATOR_MOTOBOY", "Telefone excede 30 caracteres.");
+            }
+
+            if (!await _repository.UpdateSimulatorMotoboyAsync(estabelecimentoId, motoboyId, nome, telefone))
+            {
+                throw new DeliveryDomainException(404, "SIMULATOR_MOTOBOY_NOT_FOUND",
+                    "Motoboy de teste nao encontrado neste estabelecimento.");
+            }
+        }
+
+        public async Task RemoveSimulatorMotoboyAsync(Guid estabelecimentoId, int motoboyId)
+        {
+            EnsureEnabled();
+            if (!_options.SimulatorEnabled)
+            {
+                throw new DeliveryDomainException(503, "SIMULATOR_DISABLED", "Simulador operacional desabilitado.");
+            }
+
+            var result = await _repository.RemoveSimulatorMotoboyAsync(estabelecimentoId, motoboyId);
+            if (result == SimulatorMotoboyRemoval.NotFound)
+            {
+                throw new DeliveryDomainException(404, "SIMULATOR_MOTOBOY_NOT_FOUND",
+                    "Motoboy de teste nao encontrado neste estabelecimento.");
+            }
+            if (result == SimulatorMotoboyRemoval.HasActiveOrders)
+            {
+                throw new DeliveryDomainException(409, "MOTOBOY_HAS_ACTIVE_ORDERS",
+                    "Este motoboy ainda tem pedido atribuido ou em rota. Transfira ou conclua antes de remover.");
+            }
+        }
+
         public Task<IReadOnlyCollection<MotoboyLocationHistoryPointDto>> GetTrajectoryAsync(
             Guid estabelecimentoId, int motoboyId, DateOnly localDate)
         {

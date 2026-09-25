@@ -9,6 +9,12 @@ namespace APIBack.DTOs.Tracking
         public string? TrackingMode { get; set; }
     }
 
+    public class UpdateSimulatorMotoboyRequest
+    {
+        public string? Nome { get; set; }
+        public string? Telefone { get; set; }
+    }
+
     public class CreateSimulatorMotoboyRequest
     {
         public string Nome { get; set; } = "Motoboy Simulado";

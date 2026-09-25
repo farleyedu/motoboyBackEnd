@@ -22,6 +22,10 @@ namespace APIBack.Model.Gestao
                     case "pedido":
                         modules.Add("PEDIDOS");
                         break;
+                    case "clientes":
+                    case "cliente":
+                        modules.Add("CLIENTES");
+                        break;
                     case "whatsapp":
                         modules.Add("WHATSAPP");
                         break;
@@ -98,6 +102,10 @@ namespace APIBack.Model.Gestao
                     case "pedidos":
                     case "pedido":
                         modules.Add("Pedidos");
+                        break;
+                    case "clientes":
+                    case "cliente":
+                        modules.Add("Clientes");
                         break;
                     case "whatsapp":
                         modules.Add("WhatsApp");

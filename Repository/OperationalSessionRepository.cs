@@ -750,6 +750,7 @@ SELECT s.motoboy_id AS MotoboyId,
 SELECT m.id AS MotoboyId,
        COALESCE(m.nome, '') AS Nome,
        m.avatar AS Avatar,
+       m.telefone AS Telefone,
        me.simulator_enabled AS SimulatorEnabled,
        -- Sessao de outro aparelho (app do motoboy) bloqueia. Sessao de simulador NAO: a
        -- abertura de sessao (StartSimulatorSessionAsync) assume a anterior, porque quem a abriu
@@ -820,6 +821,61 @@ VALUES (@MotoboyId, @EstabelecimentoId, TRUE, TRUE, NOW(), NOW());",
                 IsSimulated = true,
                 SimulatorEnabled = true
             };
+        }
+
+        public async Task<bool> UpdateSimulatorMotoboyAsync(Guid estabelecimentoId, int motoboyId, string nome, string? telefone)
+        {
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            // So motoboy de teste (is_simulated) vinculado a este estabelecimento: nunca um real.
+            var affected = await connection.ExecuteAsync(@"
+UPDATE motoboy m
+   SET nome = @Nome,
+       telefone = @Telefone
+ WHERE m.id = @MotoboyId
+   AND m.is_simulated = TRUE
+   AND EXISTS (SELECT 1 FROM motoboy_estabelecimento me
+                WHERE me.motoboy_id = m.id AND me.estabelecimento_id = @EstabelecimentoId AND me.ativo = TRUE);",
+                new { MotoboyId = motoboyId, EstabelecimentoId = estabelecimentoId, Nome = nome, Telefone = telefone });
+            return affected > 0;
+        }
+
+        public async Task<SimulatorMotoboyRemoval> RemoveSimulatorMotoboyAsync(Guid estabelecimentoId, int motoboyId)
+        {
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+
+            var isTestMotoboy = await connection.ExecuteScalarAsync<bool>(@"
+SELECT EXISTS (
+    SELECT 1 FROM motoboy m
+      JOIN motoboy_estabelecimento me ON me.motoboy_id = m.id
+     WHERE m.id = @MotoboyId AND m.is_simulated = TRUE
+       AND me.estabelecimento_id = @EstabelecimentoId AND me.ativo = TRUE);",
+                new { MotoboyId = motoboyId, EstabelecimentoId = estabelecimentoId }, transaction);
+            if (!isTestMotoboy) return SimulatorMotoboyRemoval.NotFound;
+
+            // Atribuido (5) ou em rota (2): tirar o motoboy deixaria o pedido orfao.
+            var hasActiveOrders = await connection.ExecuteScalarAsync<bool>(@"
+SELECT EXISTS (
+    SELECT 1 FROM pedido
+     WHERE motoboy_responsavel = @MotoboyId
+       AND id_estabelecimento = @EstabelecimentoId
+       AND status_pedido IN (2, 5));",
+                new { MotoboyId = motoboyId, EstabelecimentoId = estabelecimentoId }, transaction);
+            if (hasActiveOrders) return SimulatorMotoboyRemoval.HasActiveOrders;
+
+            await connection.ExecuteAsync(@"
+UPDATE motoboy_active_sessions
+   SET ended_at_utc = NOW(), end_reason = 'simulator_motoboy_removed', revoked_at = NOW(),
+       revoke_reason = 'simulator_motoboy_removed', version = version + 1
+ WHERE motoboy_id = @MotoboyId AND ended_at_utc IS NULL AND revoked_at IS NULL;
+
+-- Soft: o historico de pedidos e amostras de GPS continua apontando para o motoboy.
+UPDATE motoboy_estabelecimento
+   SET ativo = FALSE, simulator_enabled = FALSE, updated_at_utc = NOW()
+ WHERE motoboy_id = @MotoboyId AND estabelecimento_id = @EstabelecimentoId;",
+                new { MotoboyId = motoboyId, EstabelecimentoId = estabelecimentoId }, transaction);
+            await transaction.CommitAsync();
+            return SimulatorMotoboyRemoval.Removed;
         }
 
         public async Task<bool> CanUserManageEstablishmentAsync(int userId, bool isSuperAdmin, Guid estabelecimentoId)

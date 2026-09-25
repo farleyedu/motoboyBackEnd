@@ -73,4 +73,14 @@ namespace APIBack.Model.Tracking
         public string TargetGroup { get; set; } = string.Empty;
         public string Payload { get; set; } = "{}";
     }
+
+    /// <summary>Resultado de tirar um motoboy de teste do estabelecimento.</summary>
+    public enum SimulatorMotoboyRemoval
+    {
+        Removed,
+        /// <summary>Nao existe, nao e de teste ou nao pertence ao estabelecimento.</summary>
+        NotFound,
+        /// <summary>Ainda tem pedido atribuido ou em rota: transfira ou conclua antes.</summary>
+        HasActiveOrders
+    }
 }

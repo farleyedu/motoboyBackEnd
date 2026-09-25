@@ -126,6 +126,9 @@ builder.Services.AddScoped<AtendimentoService>();
 builder.Services.AddScoped<ICardapioFichaService, CardapioFichaService>();
 builder.Services.AddScoped<IPedidoHistoricoRepository, PedidoHistoricoRepository>();
 builder.Services.AddScoped<IRestaurantSettingsRepository, RestaurantSettingsRepository>();
+builder.Services.AddScoped<IClienteCadastroRepository, ClienteCadastroRepository>();
+builder.Services.AddScoped<ISimulatedCustomerGuard, SimulatedCustomerGuard>();
+builder.Services.AddScoped<IClienteSimulatorService, ClienteSimulatorService>();
 builder.Services.AddScoped<IReservaRepository, ReservaRepository>();
 builder.Services.AddScoped<IReservasRepository, ReservasRepository>();
 builder.Services.AddScoped<IOficinaAgendamentoRepository, OficinaAgendamentoRepository>();
@@ -370,6 +373,7 @@ if (app.Environment.IsDevelopment() || app.Environment.IsProduction())
 // Usar o middleware de CORS
 app.UseRouting();
 app.UseCors("AllowAll");
+app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseStaticFiles();
 
 app.UseMiddleware<JwtAuthenticationMiddleware>();

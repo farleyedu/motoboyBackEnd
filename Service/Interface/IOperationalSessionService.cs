@@ -30,6 +30,8 @@ namespace APIBack.Service.Interface
         Task<IReadOnlyCollection<SimulatorCandidateDto>> GetSimulatorCandidatesAsync(Guid estabelecimentoId);
         Task<MotoboyMapDto> CreateSimulatorMotoboyAsync(
             int actorUserId, bool isSuperAdmin, Guid activeEstabelecimentoId, CreateSimulatorMotoboyRequest request);
+        Task UpdateSimulatorMotoboyAsync(Guid estabelecimentoId, int motoboyId, UpdateSimulatorMotoboyRequest request);
+        Task RemoveSimulatorMotoboyAsync(Guid estabelecimentoId, int motoboyId);
         Task<IReadOnlyCollection<MotoboyLocationHistoryPointDto>> GetTrajectoryAsync(
             Guid estabelecimentoId, int motoboyId, DateOnly localDate);
     }

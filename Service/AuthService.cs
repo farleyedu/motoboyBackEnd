@@ -145,7 +145,13 @@ SELECT id,
                 throw new UnauthorizedAccessException("Refresh token inválido.");
             }
 
-            if (tokenAtual.RevokedAt.HasValue)
+            // Tolerancia de rotacao: duas abas (ou uma repeticao apos timeout, comum quando a API acorda
+            // do repouso) apresentam o mesmo token quase junto. Um token trocado ha instantes ainda vale
+            // uma vez; passou da janela, ou foi revogado por outro motivo (logout), e recusado.
+            var rotatedRecently = tokenAtual.RevokedAt.HasValue
+                && string.Equals(tokenAtual.ReasonRevoked, "rotated", StringComparison.Ordinal)
+                && tokenAtual.RevokedAt.Value.ToUniversalTime() > DateTime.UtcNow - RefreshRotationGrace;
+            if (tokenAtual.RevokedAt.HasValue && !rotatedRecently)
             {
                 throw new UnauthorizedAccessException("Refresh token já foi revogado.");
             }
@@ -169,7 +175,8 @@ SELECT id,
             var newRefreshTokenHash = HashRefreshToken(response.RefreshToken);
             var novoRefreshTokenId = await PersistRefreshTokenAsync(connection, usuario.Id, response.RefreshToken, ipAddress, userAgent);
 
-            var rotacaoConcluida = await RevokeRefreshTokenAsync(
+            // Na janela de tolerancia o token antigo ja esta revogado: a sessao nova segue independente.
+            var rotacaoConcluida = rotatedRecently || await RevokeRefreshTokenAsync(
                 connection,
                 tokenAtual.Id,
                 ipAddress,
@@ -668,13 +675,16 @@ RETURNING id";
             return Base64UrlEncode(random);
         }
 
+        private static readonly TimeSpan RefreshRotationGrace = TimeSpan.FromMinutes(2);
+
         private DateTime GetRefreshTokenExpirationUtc()
         {
             var jwtSection = _configuration.GetSection("Jwt");
             var refreshTokenExpirationDays = int.TryParse(jwtSection["RefreshTokenExpirationDays"], out var days)
                 ? days
-                : 7;
+                : 90;
 
+            // Janela deslizante: cada renovacao gera um token novo com o prazo cheio.
             return DateTime.UtcNow.AddDays(refreshTokenExpirationDays);
         }
 

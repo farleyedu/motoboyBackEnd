@@ -22,14 +22,17 @@ namespace APIBack.Automation.Services
         private readonly IWabaPhoneRepository _wabaPhoneRepository;
         private readonly IConfiguration _configuration;
         private readonly ILogger<WhatsAppSender> _logger;
+        private readonly APIBack.Service.ISimulatedCustomerGuard _simulatedGuard;
 
         public WhatsAppSender(
             IHttpClientFactory httpFactory,
             IWhatsAppTokenProvider tokenProvider,
             IWabaPhoneRepository wabaPhoneRepository,
             IConfiguration configuration,
-            ILogger<WhatsAppSender> logger)
+            ILogger<WhatsAppSender> logger,
+            APIBack.Service.ISimulatedCustomerGuard simulatedGuard)
         {
+            _simulatedGuard = simulatedGuard;
             _httpFactory = httpFactory;
             _tokenProvider = tokenProvider;
             _wabaPhoneRepository = wabaPhoneRepository;
@@ -139,6 +142,13 @@ namespace APIBack.Automation.Services
 
         private async Task SendPayloadAsync(Guid idConversa, string phoneNumberId, object payload, string payloadType, string? displayPhone = null)
         {
+            // Cliente de teste (simulador): a conversa e gravada normalmente, mas nada sai para o WhatsApp de verdade.
+            if (await _simulatedGuard.IsSimulatedConversationAsync(idConversa))
+            {
+                _logger.LogInformation("[Conversa={Conversa}] Cliente de teste: envio real ao WhatsApp suprimido ({Tipo}).", idConversa, payloadType);
+                return;
+            }
+
             var lookupKey = !string.IsNullOrWhiteSpace(displayPhone) ? displayPhone : phoneNumberId;
             var perNumberToken = await _wabaPhoneRepository.ObterAccessTokenPorPhoneNumberIdAsync(lookupKey);
             var token = !string.IsNullOrWhiteSpace(perNumberToken) ? perNumberToken : _tokenProvider.GetAccessToken();
