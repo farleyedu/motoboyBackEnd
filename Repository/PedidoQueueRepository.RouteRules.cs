@@ -18,21 +18,8 @@ namespace APIBack.Repository
     /// </summary>
     public sealed partial class PedidoQueueRepository
     {
-        private static volatile bool _routeRulesKnown;
-
-        /// <summary>So cacheia o "sim": enquanto a migration nao roda, reconsulta.</summary>
-        private static async Task<bool> HasRouteRulesSchemaAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction)
-        {
-            if (_routeRulesKnown) return true;
-            var present = await connection.ExecuteScalarAsync<bool>(@"
-SELECT (SELECT COUNT(*) FROM information_schema.columns
-         WHERE table_schema = current_schema()
-           AND ((table_name = 'delivery_route_stops' AND column_name = 'locked')
-             OR (table_name = 'delivery_motoboy_route' AND column_name = 'route_state')
-             OR (table_name = 'delivery_settings' AND column_name = 'store_return_radius_m'))) = 3;", transaction: transaction);
-            if (present) _routeRulesKnown = true;
-            return present;
-        }
+        private static Task<bool> HasRouteRulesSchemaAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction) =>
+            PedidoColumnTypes.HasRouteRulesSchemaAsync(connection, transaction);
 
         private static DeliveryDomainException MigrationPending() =>
             new(503, "MIGRATION_PENDING", "As regras de rota ainda nao foram habilitadas neste ambiente (migration 20260927_01 pendente).");

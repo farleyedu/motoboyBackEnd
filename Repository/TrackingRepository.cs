@@ -453,6 +453,7 @@ SELECT
     rs.stop_status AS RouteStopStatus,
     rs.picked_up_at_utc AS PickedUpAtUtc,
     rs.arrived_at_utc AS ArrivedAtUtc,
+    FALSE AS Locked,
     lf.reason AS LastFailureReason,
     lf.kind AS LastFailureKind,
     lf.at_utc AS LastFailureAtUtc,
@@ -573,6 +574,10 @@ SELECT rs.motoboy_id AS MotoboyId, COUNT(*)::int AS DeliveredToday
             var windowRange = OrderWindowRules.Resolve(orderWindow, DateTimeOffset.UtcNow);
             // Sem inicio (janela so com fim), olha 7 dias para tras: mais que isso nao e operacao.
             var windowFromUtc = windowRange.FromUtc ?? fromUtc.AddDays(-7);
+            if (await PedidoColumnTypes.HasRouteRulesSchemaAsync(connection, null))
+            {
+                pedidosSql = pedidosSql.Replace("FALSE AS Locked", "COALESCE(rs.locked, FALSE) AS Locked");
+            }
             var pedidos = (await connection.QueryAsync<OrderMapRow>(
                     pedidosSql, new { EstabelecimentoId = estabelecimentoId, WindowFromUtc = windowFromUtc }))
                 .Select(ToOrderMapDto)
@@ -681,6 +686,7 @@ SELECT rs.motoboy_id AS MotoboyId, COUNT(*)::int AS DeliveredToday
             public string? RouteStopStatus { get; set; }
             public DateTimeOffset? PickedUpAtUtc { get; set; }
             public DateTimeOffset? ArrivedAtUtc { get; set; }
+            public bool Locked { get; set; }
             public string? LastFailureReason { get; set; }
             public string? LastFailureKind { get; set; }
             public DateTimeOffset? LastFailureAtUtc { get; set; }
@@ -746,6 +752,7 @@ SELECT rs.motoboy_id AS MotoboyId, COUNT(*)::int AS DeliveredToday
                 RouteStopStatus = row.RouteStopStatus,
                 PickedUpAtUtc = row.PickedUpAtUtc,
                 ArrivedAtUtc = row.ArrivedAtUtc,
+                Locked = row.Locked,
                 LastFailureReason = row.LastFailureReason,
                 LastFailureKind = row.LastFailureKind,
                 LastFailureAtUtc = row.LastFailureAtUtc,

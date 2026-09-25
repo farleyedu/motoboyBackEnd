@@ -158,6 +158,8 @@ namespace APIBack.DTOs.Tracking
         public string? RouteStopStatus { get; set; }
         public DateTimeOffset? PickedUpAtUtc { get; set; }
         public DateTimeOffset? ArrivedAtUtc { get; set; }
+        /// <summary>Pedido travado pelo estabelecimento (ancora na fila do motoboy).</summary>
+        public bool Locked { get; set; }
 
         // Ultima tentativa sem sucesso (nao entregue / recusado), para o atendente
         // saber por que o pedido voltou a ficar pendente.
