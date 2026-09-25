@@ -170,11 +170,50 @@ namespace APIBack.DTOs.Delivery
         public int? PrevisaoMinutos { get; set; }
         /// <summary>Codigo que o cliente informa ao motoboy (opcional).</summary>
         public string? CodigoEntrega { get; set; }
+
+        // ---- Nucleo de pedido (Fase 2) --------------------------------------------------
+        /// <summary>atendente (padrao), cardapio_web, ifood, ia_whatsapp ou simulador.</summary>
+        public string? Origem { get; set; }
+        /// <summary>
+        /// Referencia externa para idempotencia (ex.: id do pedido no iFood). O cabecalho
+        /// Idempotency-Key vale como origemRef quando este campo nao vem.
+        /// </summary>
+        public string? OrigemRef { get; set; }
+        /// <summary>Itens estruturados. Com produtoId, nome e preco vem do cardapio (o total e do servidor).</summary>
+        public List<PedidoItemRequest>? Itens { get; set; }
+        /// <summary>Pedido em montagem (status Rascunho): fora do mapa e da fila ate confirmar.</summary>
+        public bool Rascunho { get; set; }
+        /// <summary>Conversa de origem (Fase 5). Opcional.</summary>
+        public Guid? ConversaId { get; set; }
+        /// <summary>So origens que permitem sobrescrever a taxa (atendente, ifood, simulador).</summary>
+        public decimal? TaxaEntrega { get; set; }
+    }
+
+    /// <summary>Linha do pedido. Com ProdutoId o preco vem do cardapio; sem ele e linha avulsa.</summary>
+    public sealed class PedidoItemRequest
+    {
+        public Guid? ProdutoId { get; set; }
+        /// <summary>Obrigatorio na linha avulsa; ignorado quando ha ProdutoId.</summary>
+        public string? Nome { get; set; }
+        public int Quantidade { get; set; } = 1;
+        /// <summary>So na linha avulsa; ignorado quando ha ProdutoId.</summary>
+        public decimal? PrecoUnitario { get; set; }
+        public string? Observacao { get; set; }
+        public List<Guid>? AdicionalItemIds { get; set; }
     }
 
     public sealed class CreatedPedidoDto
     {
         public int Id { get; set; }
+        /// <summary>Status do pedido em minusculas: pendente, rascunho...</summary>
+        public string Status { get; set; } = "pendente";
+        public decimal? Subtotal { get; set; }
+        public decimal? TaxaEntrega { get; set; }
+        public decimal? Total { get; set; }
+        /// <summary>True quando a mesma origem/origemRef ja existia: nada foi criado de novo.</summary>
+        public bool JaExistia { get; set; }
+        /// <summary>Regras do estabelecimento que nao bloquearam (origem atendente), ex.: fora do raio.</summary>
+        public List<string> Avisos { get; set; } = new();
     }
 
     public sealed class TransferListResponse

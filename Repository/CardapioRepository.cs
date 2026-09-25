@@ -887,7 +887,7 @@ SELECT p.id,
             return itens.ToArray();
         }
 
-        public async Task<IReadOnlyCollection<CardapioProduto>> ListarProdutosPublicosPorIdsAsync(Guid idEstabelecimento, IReadOnlyCollection<Guid> ids)
+        public async Task<IReadOnlyCollection<CardapioProduto>> ListarProdutosPublicosPorIdsAsync(Guid idEstabelecimento, IReadOnlyCollection<Guid> ids, bool exigirPublicoWeb = true)
         {
             if (ids == null || ids.Count == 0)
             {
@@ -929,14 +929,15 @@ SELECT p.id,
    AND p.deleted_at IS NULL
    AND p.ativo = TRUE
    AND p.disponivel = TRUE
-   AND p.publico_web = TRUE
+   AND (@ExigirPublicoWeb = FALSE OR p.publico_web = TRUE)
    AND p.id = ANY(@Ids);";
 
             await using var connection = new NpgsqlConnection(_connectionString);
             var itens = (await connection.QueryAsync<CardapioProduto>(sql, new
             {
                 IdEstabelecimento = idEstabelecimento,
-                Ids = ids.Distinct().ToArray()
+                Ids = ids.Distinct().ToArray(),
+                ExigirPublicoWeb = exigirPublicoWeb
             })).ToList();
 
             await PreencherGruposPublicosDeProdutosAsync(connection, itens);

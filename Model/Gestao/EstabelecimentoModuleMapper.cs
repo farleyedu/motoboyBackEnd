@@ -18,6 +18,10 @@ namespace APIBack.Model.Gestao
                     case "delivery":
                         modules.Add("DELIVERY");
                         break;
+                    case "pedidos":
+                    case "pedido":
+                        modules.Add("PEDIDOS");
+                        break;
                     case "whatsapp":
                         modules.Add("WHATSAPP");
                         break;
@@ -77,7 +81,8 @@ namespace APIBack.Model.Gestao
                 }
             }
 
-            return modules.ToArray();
+            // Escolher um modulo obriga escolher os que ele exige (DELIVERY -> PEDIDOS etc.).
+            return ModuleDependencies.Close(modules).ToArray();
         }
 
         public static List<string> ToUiModules(string establishmentName, string[]? rawModules)
@@ -89,6 +94,10 @@ namespace APIBack.Model.Gestao
                 {
                     case "delivery":
                         modules.Add("Delivery");
+                        break;
+                    case "pedidos":
+                    case "pedido":
+                        modules.Add("Pedidos");
                         break;
                     case "whatsapp":
                         modules.Add("WhatsApp");

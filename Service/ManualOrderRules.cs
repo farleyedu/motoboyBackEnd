@@ -5,7 +5,7 @@ using APIBack.DTOs.Delivery;
 namespace APIBack.Service
 {
     /// <summary>Pedido manual validado e normalizado, pronto para gravar.</summary>
-    public sealed class ManualOrder
+    public sealed record ManualOrder
     {
         public string NomeCliente { get; init; } = string.Empty;
         public string? TelefoneCliente { get; init; }
@@ -25,6 +25,24 @@ namespace APIBack.Service
         public string? Observacoes { get; init; }
         public int PrevisaoMinutos { get; init; }
         public string? CodigoEntrega { get; init; }
+
+        // ---- Nucleo de pedido (Fase 2). Padroes = comportamento anterior (pedido manual pendente) ----
+        public string Origem { get; init; } = APIBack.Model.Delivery.PedidoOrigem.Atendente;
+        public string? OrigemRef { get; init; }
+        public Guid? ConversaId { get; init; }
+        /// <summary>Pedido em montagem (status Rascunho).</summary>
+        public bool Rascunho { get; init; }
+        /// <summary>Linhas precificadas pelo servidor; vazio = pedido no formato antigo (items texto + valor).</summary>
+        public System.Collections.Generic.IReadOnlyList<PricedLine> Lines { get; init; } = System.Array.Empty<PricedLine>();
+        public decimal? Subtotal { get; init; }
+        public decimal? TaxaEntrega { get; init; }
+        public decimal? Desconto { get; init; }
+        /// <summary>Regras do estabelecimento que nao bloquearam.</summary>
+        public System.Collections.Generic.IReadOnlyList<string> Avisos { get; init; } = System.Array.Empty<string>();
+
+        /// <summary>Usa recursos que exigem as migracoes da Fase 2 (colunas novas e pedido_item).</summary>
+        public bool NeedsCoreSchema => Lines.Count > 0 || OrigemRef != null || ConversaId != null || Rascunho
+            || Origem != APIBack.Model.Delivery.PedidoOrigem.Atendente || Subtotal.HasValue || TaxaEntrega.HasValue;
     }
 
     /// <summary>

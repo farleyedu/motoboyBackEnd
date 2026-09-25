@@ -6,7 +6,12 @@
         EmRota = 2,
         Concluido = 3,
         Cancelado = 4,
-        Atribuido = 5
+        Atribuido = 5,
+        /// <summary>
+        /// Pedido em montagem: nunca aparece no mapa, na fila, nas metricas nem nas listas.
+        /// Confirmar o torna Pendente.
+        /// </summary>
+        Rascunho = 6
     }
 
     public static class StatusPedidoExtensions
@@ -18,6 +23,7 @@
             3 => StatusPedido.Concluido,
             4 => StatusPedido.Cancelado,
             5 => StatusPedido.Atribuido,
+            6 => StatusPedido.Rascunho,
             _ => null
         };
 
@@ -28,6 +34,7 @@
             StatusPedido.Concluido => "concluido",
             StatusPedido.Cancelado => "cancelado",
             StatusPedido.Atribuido => "atribuido",
+            StatusPedido.Rascunho => "rascunho",
             _ => "pendente"
         };
 

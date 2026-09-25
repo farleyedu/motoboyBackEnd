@@ -8,12 +8,8 @@ namespace APIBack.Repository.Interface
 
         IEnumerable<Pedido> GetPedidos(Guid estabelecimentoId);
         EnviarPedidosParaRotaDTO? GetPedidosId(int id, Guid estabelecimentoId);
-        IEnumerable<Pedido> CriarPedido();
         IEnumerable<PedidoDTOs> GetPedidosMaps(Guid estabelecimentoId);
         // Atribuir motoboy passou a ser responsabilidade de IPedidoQueueRepository.
-        IEnumerable<Pedido> CancelarPedido();
-        IEnumerable<Pedido> FinalizarPedido();
-        IEnumerable<Pedido> AlteraPedido(int Id, Pedido pedido);
         IEnumerable<Pedido> GetPedidosPorMotoboy(int motoboyId, Guid estabelecimentoId);
         //void UpdateStatusLote(EnviarPedidosParaRotaDTO dto);
         /// <returns>true se inseriu; false se ja existia um pedido com o mesmo id_ifood/estabelecimento (repeticao idempotente).</returns>

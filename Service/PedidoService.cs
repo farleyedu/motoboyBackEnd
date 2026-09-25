@@ -31,22 +31,6 @@ namespace APIBack.Service
         {
             return _pedidoRepository.GetPedidosMaps(estabelecimentoId);
         }
-        public IEnumerable<Pedido> CriarPedido()
-        {
-            return _pedidoRepository.CriarPedido();
-        }
-        public IEnumerable<Pedido> CancelarPedido()
-        {
-            return _pedidoRepository.CancelarPedido();
-        }
-        public IEnumerable<Pedido> FinalizarPedido()
-        {
-            return _pedidoRepository.FinalizarPedido();
-        }
-        public IEnumerable<Pedido> AlteraPedido(int Id, Pedido pedido)
-        {
-            return _pedidoRepository.AlteraPedido(Id,pedido);
-        }
 
         /// <summary>
         /// Obtém pedido completo com todos os detalhes para o endpoint riderlink
