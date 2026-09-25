@@ -944,6 +944,50 @@ SELECT p.id,
             return itens.ToArray();
         }
 
+        public async Task<IReadOnlyCollection<CardapioProduto>> ListarProdutosParaFichaAsync(Guid idEstabelecimento)
+        {
+            const string sql = @"
+SELECT p.id,
+       p.id_estabelecimento AS IdEstabelecimento,
+       p.categoria_id AS CategoriaId,
+       c.nome AS CategoriaNome,
+       p.nome,
+       p.slug,
+       p.emoji,
+       p.descricao,
+       p.descricao_curta AS DescricaoCurta,
+       p.preco_base AS PrecoBase,
+       p.preco_de AS PrecoDe,
+       p.badge_desconto AS BadgeDesconto,
+       p.is_club AS IsClub,
+       p.imagem_url AS ImagemUrl,
+       p.eco_friendly AS EcoFriendly,
+       p.extras_titulo AS ExtrasTitulo,
+       p.extras_subtitulo AS ExtrasSubtitulo,
+       p.ordem,
+       p.ativo,
+       p.destaque,
+       p.disponivel,
+       p.publico_web AS PublicoWeb,
+       p.created_at AS CreatedAt,
+       p.updated_at AS UpdatedAt,
+       p.deleted_at AS DeletedAt
+  FROM cardapio_produto p
+  JOIN cardapio_categoria c
+    ON c.id = p.categoria_id
+   AND c.deleted_at IS NULL
+   AND c.ativo = TRUE
+ WHERE p.id_estabelecimento = @IdEstabelecimento
+   AND p.deleted_at IS NULL
+   AND p.ativo = TRUE
+ ORDER BY c.ordem, p.ordem, p.nome;";
+
+            await using var connection = new NpgsqlConnection(_connectionString);
+            var itens = (await connection.QueryAsync<CardapioProduto>(sql, new { IdEstabelecimento = idEstabelecimento })).ToList();
+            await PreencherGruposPublicosDeProdutosAsync(connection, itens);
+            return itens.ToArray();
+        }
+
         public async Task<CardapioProduto?> ObterProdutoPorIdAsync(Guid idEstabelecimento, Guid id)
         {
             const string sql = @"
