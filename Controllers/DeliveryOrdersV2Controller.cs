@@ -22,6 +22,7 @@ namespace APIBack.Controllers
     {
         private readonly IPedidoQueueService _queueService;
         private readonly IPedidoCoreService _coreService;
+        private readonly IPedidoConsultaRepository _consulta;
         private readonly IOperationalSessionService _sessionService;
         private readonly IPedidoHistoricoRepository _historicoRepository;
         private readonly IRestaurantSettingsRepository _restaurantRepository;
@@ -29,16 +30,34 @@ namespace APIBack.Controllers
         public DeliveryOrdersV2Controller(
             IPedidoQueueService queueService,
             IPedidoCoreService coreService,
+            IPedidoConsultaRepository consulta,
             IOperationalSessionService sessionService,
             IPedidoHistoricoRepository historicoRepository,
             IRestaurantSettingsRepository restaurantRepository)
         {
             _queueService = queueService;
             _coreService = coreService;
+            _consulta = consulta;
             _sessionService = sessionService;
             _historicoRepository = historicoRepository;
             _restaurantRepository = restaurantRepository;
         }
+
+        // ---- Lista e detalhe (tela de Pedidos) ----------------------------------
+
+        /// <summary>Lista pedidos do estabelecimento com filtros e paginacao; inclui rascunhos.</summary>
+        [HttpGet("pedidos")]
+        [RequirePermission("Delivery", "visualizar")]
+        public Task<IActionResult> ListPedidos([FromQuery] PedidoFiltroRequest filtro) =>
+            ExecuteAsync((est, _) => _consulta.ListAsync(est, PedidoFiltro.From(filtro)));
+
+        /// <summary>Detalhe do pedido com itens (estruturados ou lidos do texto legado).</summary>
+        [HttpGet("pedidos/{pedidoId:int}")]
+        [RequirePermission("Delivery", "visualizar")]
+        public Task<IActionResult> GetPedido(int pedidoId) =>
+            ExecuteAsync(async (est, _) =>
+                await _consulta.GetAsync(est, pedidoId)
+                ?? throw new DeliveryDomainException(404, "PEDIDO_NOT_FOUND", "Pedido nao encontrado."));
 
         // ---- Historico do pedido ------------------------------------------------
 

@@ -164,6 +164,13 @@ WHERE p.id_estabelecimento = @EstabelecimentoId
                     TipoPagamento = pedido.TipoPagamento,
                     EstabelecimentoId = estabelecimentoId
                 });
+                if (rows > 0 && PedidoColumnTypes.HasCoreSchemaAsync(connection, null).GetAwaiter().GetResult())
+                {
+                    // Origem do pedido no nucleo (Fase 2): o iFood entra por captura assistida.
+                    connection.Execute(
+                        "UPDATE pedido SET origem = 'ifood', origem_ref = @IdIfood WHERE id_ifood = @IdIfood AND id_estabelecimento = @EstabelecimentoId AND origem_ref IS NULL;",
+                        new { IdIfood = pedido.DisplayId, EstabelecimentoId = estabelecimentoId });
+                }
                 return rows > 0;
             }
             catch (Exception ex)
