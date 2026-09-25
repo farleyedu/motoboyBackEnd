@@ -24,16 +24,32 @@ namespace APIBack.Service
 
         public async Task<CardapioSnapshotDto> ObterSnapshotAsync(Guid idEstabelecimento)
         {
-            var categorias = await ListarCategoriasAsync(idEstabelecimento, null, null, 1, 500);
-            var grupos = await ListarGruposAsync(idEstabelecimento, null, null, 1, 500);
-            var produtos = await ListarProdutosAsync(idEstabelecimento, null, null, null, null, null, 1, 1000);
+            // Cada lista e paginada com teto de 100 por pagina: percorre todas as paginas para o
+            // snapshot nao cortar cardapios grandes.
+            var categorias = await ListarTodasAsync(page => ListarCategoriasAsync(idEstabelecimento, null, null, page, 100));
+            var grupos = await ListarTodasAsync(page => ListarGruposAsync(idEstabelecimento, null, null, page, 100));
+            var produtos = await ListarTodasAsync(page => ListarProdutosAsync(idEstabelecimento, null, null, null, null, null, page, 100));
 
             return new CardapioSnapshotDto
             {
-                Categorias = categorias.Itens.ToList(),
-                Grupos = grupos.Itens.ToList(),
-                Produtos = produtos.Itens.ToList()
+                Categorias = categorias,
+                Grupos = grupos,
+                Produtos = produtos
             };
+        }
+
+        private const int SnapshotMaxPages = 50;
+
+        private static async Task<List<T>> ListarTodasAsync<T>(Func<int, Task<PagedResultDto<T>>> fetch)
+        {
+            var all = new List<T>();
+            for (var page = 1; page <= SnapshotMaxPages; page++)
+            {
+                var result = await fetch(page);
+                all.AddRange(result.Itens);
+                if (result.Itens.Count == 0 || all.Count >= result.Total) break;
+            }
+            return all;
         }
 
         public async Task<PagedResultDto<CardapioCategoriaDto>> ListarCategoriasAsync(
