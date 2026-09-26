@@ -129,6 +129,9 @@ builder.Services.AddScoped<IRestaurantSettingsRepository, RestaurantSettingsRepo
 builder.Services.AddScoped<IClienteCadastroRepository, ClienteCadastroRepository>();
 builder.Services.AddScoped<ISimulatedCustomerGuard, SimulatedCustomerGuard>();
 builder.Services.AddScoped<IClienteSimulatorService, ClienteSimulatorService>();
+builder.Services.AddScoped<ISimuladorRepository, SimuladorRepository>();
+builder.Services.AddScoped<ISimuladorPedidoService, SimuladorPedidoService>();
+builder.Services.AddScoped<ISimuladorIntegracoes, SimuladorIntegracoes>();
 builder.Services.AddScoped<IReservaRepository, ReservaRepository>();
 builder.Services.AddScoped<IReservasRepository, ReservasRepository>();
 builder.Services.AddScoped<IOficinaAgendamentoRepository, OficinaAgendamentoRepository>();

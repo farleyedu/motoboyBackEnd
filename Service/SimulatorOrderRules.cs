@@ -29,6 +29,14 @@ namespace APIBack.Service
         public const int MaxFutureMinutes = 7 * 24 * 60;
         public const int MaxPastMinutes = 5 * 365 * 24 * 60;
 
+        /// <summary>
+        /// So pedido que ja acabou (concluido/cancelado) pode ser reaberto no simulador, e volta a pendente.
+        /// Atribuido e em rota exigem motoboy + parada de rota: nao se chega a eles por edicao, so pelos
+        /// comandos de fila, que criam os dois juntos.
+        /// </summary>
+        public static bool CanReopen(APIBack.Model.Enum.StatusPedido status) =>
+            status == APIBack.Model.Enum.StatusPedido.Concluido || status == APIBack.Model.Enum.StatusPedido.Cancelado;
+
         public static SimulatorOrderPatch Validate(SimulatorPedidoRequest? request)
         {
             if (request == null) throw Invalid("Corpo da requisicao obrigatorio.");

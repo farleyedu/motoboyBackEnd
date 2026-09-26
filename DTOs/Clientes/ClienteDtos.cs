@@ -23,6 +23,16 @@ namespace APIBack.DTOs.Clientes
         public bool Ativo { get; set; }
         /// <summary>Cliente de teste: pode ser simulado e nunca recebe WhatsApp de verdade.</summary>
         public bool Simulado { get; set; }
+        /// <summary>Foto (URL ou data URL pequena).</summary>
+        public string? Avatar { get; set; }
+        public string? Cpf { get; set; }
+        /// <summary>AAAA-MM-DD.</summary>
+        public string? DataNascimento { get; set; }
+        public string? Referencia { get; set; }
+        public string? CanalPreferido { get; set; }
+        public string? Origem { get; set; }
+        public string[] Tags { get; set; } = Array.Empty<string>();
+        public bool ConsentimentoWhatsapp { get; set; } = true;
         public DateTime CriadoEm { get; set; }
         public DateTime AtualizadoEm { get; set; }
     }
@@ -44,6 +54,17 @@ namespace APIBack.DTOs.Clientes
         public double? Latitude { get; set; }
         public double? Longitude { get; set; }
         public bool Simulado { get; set; }
+        public string? Avatar { get; set; }
+        public string? Cpf { get; set; }
+        public string? DataNascimento { get; set; }
+        public string? Referencia { get; set; }
+        public string? CanalPreferido { get; set; }
+        public string? Origem { get; set; }
+        public string[]? Tags { get; set; }
+        /// <summary>Nulo = manter o padrao (autorizado).</summary>
+        public bool? ConsentimentoWhatsapp { get; set; }
+        /// <summary>Nulo = ativo. Falso = cadastro inativo (some das listas).</summary>
+        public bool? Ativo { get; set; }
     }
 
     /// <summary>Corpo de "o cliente de teste manda uma mensagem" (simulador).</summary>

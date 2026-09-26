@@ -823,19 +823,20 @@ VALUES (@MotoboyId, @EstabelecimentoId, TRUE, TRUE, NOW(), NOW());",
             };
         }
 
-        public async Task<bool> UpdateSimulatorMotoboyAsync(Guid estabelecimentoId, int motoboyId, string nome, string? telefone)
+        public async Task<bool> UpdateSimulatorMotoboyAsync(Guid estabelecimentoId, int motoboyId, string nome, string? telefone, string? avatar = null)
         {
             await using var connection = await _dataSource.OpenConnectionAsync();
             // So motoboy de teste (is_simulated) vinculado a este estabelecimento: nunca um real.
             var affected = await connection.ExecuteAsync(@"
 UPDATE motoboy m
    SET nome = @Nome,
-       telefone = @Telefone
+       telefone = @Telefone,
+       avatar = CASE WHEN @AvatarSet THEN NULLIF(@Avatar, '') ELSE avatar END
  WHERE m.id = @MotoboyId
    AND m.is_simulated = TRUE
    AND EXISTS (SELECT 1 FROM motoboy_estabelecimento me
                 WHERE me.motoboy_id = m.id AND me.estabelecimento_id = @EstabelecimentoId AND me.ativo = TRUE);",
-                new { MotoboyId = motoboyId, EstabelecimentoId = estabelecimentoId, Nome = nome, Telefone = telefone });
+                new { MotoboyId = motoboyId, EstabelecimentoId = estabelecimentoId, Nome = nome, Telefone = telefone, Avatar = avatar, AvatarSet = avatar != null });
             return affected > 0;
         }
 

@@ -35,7 +35,7 @@ namespace APIBack.Repository.Interface
         Task<IReadOnlyCollection<SimulatorCandidateDto>> GetSimulatorCandidatesAsync(Guid estabelecimentoId);
         Task<OperationalMotoboyIdentity> CreateSimulatorMotoboyAsync(Guid estabelecimentoId, string nome, string? telefone);
         /// <summary>Renomeia/troca o telefone de um motoboy de teste do estabelecimento; false quando nao e de teste ou nao e dele.</summary>
-        Task<bool> UpdateSimulatorMotoboyAsync(Guid estabelecimentoId, int motoboyId, string nome, string? telefone);
+        Task<bool> UpdateSimulatorMotoboyAsync(Guid estabelecimentoId, int motoboyId, string nome, string? telefone, string? avatar = null);
         /// <summary>Tira o motoboy de teste do estabelecimento (encerra sessoes). Recusa se ainda tem pedido ativo.</summary>
         Task<SimulatorMotoboyRemoval> RemoveSimulatorMotoboyAsync(Guid estabelecimentoId, int motoboyId);
         Task<bool> CanUserManageEstablishmentAsync(int userId, bool isSuperAdmin, Guid estabelecimentoId);

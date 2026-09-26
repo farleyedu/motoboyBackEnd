@@ -49,6 +49,30 @@ namespace APIBack.Controllers
             }
         }
 
+        /// <summary>
+        /// Reabre pedido concluido ou cancelado (volta a pendente, sem motoboy). Para leva-lo a
+        /// "na fila" ou "em rota" e preciso atribuir a um motoboy pelos comandos de fila.
+        /// </summary>
+        [HttpPost("pedidos/{pedidoId:int}/reabrir")]
+        public async Task<IActionResult> ReopenPedido([FromRoute] int pedidoId)
+        {
+            if (!TryGetEstabelecimentoId(out var estabelecimentoId, out var error))
+            {
+                return error!;
+            }
+
+            try
+            {
+                var result = await _queueService.ReopenPedidoForSimulatorAsync(
+                    estabelecimentoId, HttpContext.GetUserId() ?? 0, pedidoId);
+                return Ok(ApiResponse<CreatedPedidoDto>.Ok(result));
+            }
+            catch (APIBack.Service.DeliveryDomainException ex)
+            {
+                return StatusCode(ex.StatusCode, ApiResponse<object>.Fail(ex.Message, ex.Code, ex.Details));
+            }
+        }
+
         [HttpGet("motoboys")]
         public async Task<IActionResult> GetMotoboys()
         {

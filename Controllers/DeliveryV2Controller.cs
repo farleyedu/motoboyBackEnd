@@ -132,10 +132,10 @@ namespace APIBack.Controllers
         [RequirePermission("Delivery", "gestao_motoboy")]
         public async Task<IActionResult> SendSimulatorClienteMessage(Guid clienteId, [FromBody] SimulatorClienteMessageRequest request)
         {
-            if (!TryGetActor(out _, out var estabelecimentoId, out var error)) return error!;
+            if (!TryGetActor(out var actorUserId, out var estabelecimentoId, out var error)) return error!;
             try
             {
-                var result = await _clientSimulator.SendMessageAsync(estabelecimentoId, clienteId, request?.Texto);
+                var result = await _clientSimulator.SendMessageAsync(estabelecimentoId, actorUserId, clienteId, request?.Texto);
                 return StatusCode(202, ApiResponse<SimulatedSendResult>.Ok(result));
             }
             catch (DeliveryDomainException ex)

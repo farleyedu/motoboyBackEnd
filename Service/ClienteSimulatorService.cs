@@ -9,6 +9,9 @@ using System.Threading.Tasks;
 using APIBack.Automation.Infra;
 using APIBack.Automation.Interfaces;
 using APIBack.DTOs.Clientes;
+using APIBack.DTOs.Simulador;
+using APIBack.Model.Enum;
+using APIBack.Repository;
 using Dapper;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -20,7 +23,11 @@ namespace APIBack.Service
     public interface IClienteSimulatorService
     {
         Task<IReadOnlyList<ClienteDto>> ListAsync(Guid estabelecimentoId);
-        Task<SimulatedSendResult> SendMessageAsync(Guid estabelecimentoId, Guid clienteId, string? texto);
+        Task<SimClienteListaDto> ListWithStatsAsync(Guid estabelecimentoId, string? busca, int page, int pageSize);
+        Task<SimClienteDto> GetAsync(Guid estabelecimentoId, Guid clienteId);
+        Task<SimConversaDto> GetConversaAsync(Guid estabelecimentoId, Guid clienteId);
+        Task<IReadOnlyList<SimPedidoResumoDto>> GetPedidosAsync(Guid estabelecimentoId, Guid clienteId, int limit);
+        Task<SimulatedSendResult> SendMessageAsync(Guid estabelecimentoId, int userId, Guid clienteId, string? texto);
         Task<IReadOnlyList<SimulatedMessageDto>> GetMessagesAsync(Guid estabelecimentoId, Guid clienteId, int limit);
     }
 
@@ -116,6 +123,7 @@ namespace APIBack.Service
         private readonly IHttpClientFactory _httpFactory;
         private readonly IConfiguration _configuration;
         private readonly ILogger<ClienteSimulatorService> _logger;
+        private readonly ISimuladorRepository _eventos;
 
         public ClienteSimulatorService(
             NpgsqlDataSource dataSource,
@@ -123,8 +131,10 @@ namespace APIBack.Service
             IOptions<AutomationOptions> automation,
             IHttpClientFactory httpFactory,
             IConfiguration configuration,
-            ILogger<ClienteSimulatorService> logger)
+            ILogger<ClienteSimulatorService> logger,
+            ISimuladorRepository eventos)
         {
+            _eventos = eventos;
             _dataSource = dataSource;
             _waba = waba;
             _automation = automation;
@@ -144,7 +154,7 @@ SELECT id AS Id, COALESCE(nome, '') AS Nome, telefone_e164 AS Telefone, ativo AS
  ORDER BY lower(COALESCE(nome, telefone_e164, ''));", new { EstabelecimentoId = estabelecimentoId })).ToList();
         }
 
-        public async Task<SimulatedSendResult> SendMessageAsync(Guid estabelecimentoId, Guid clienteId, string? texto)
+        public async Task<SimulatedSendResult> SendMessageAsync(Guid estabelecimentoId, int userId, Guid clienteId, string? texto)
         {
             var text = texto?.Trim();
             if (string.IsNullOrEmpty(text))
@@ -198,7 +208,149 @@ SELECT id AS Id, COALESCE(nome, '') AS Nome, telefone_e164 AS Telefone, ativo AS
                 throw new DeliveryDomainException(502, "WEBHOOK_UNREACHABLE", "Nao foi possivel entregar a mensagem ao webhook.");
             }
 
+            try
+            {
+                await _eventos.AddEventoAsync(estabelecimentoId, userId > 0 ? userId : null, null, new SimEventoInput(
+                    "cliente", clienteId.ToString(), "mensagem_cliente", "Cliente simulado enviou mensagem",
+                    text.Length > 200 ? text[..200] : text, "sucesso", null, null));
+            }
+            catch (PostgresException)
+            {
+                // O log e melhor esforco: migration pendente nao pode barrar a mensagem.
+            }
+
             return new SimulatedSendResult { MessageId = messageId };
+        }
+
+        // ------------------------------------------------------------------ lista, conversa e pedidos
+
+        private const string ClienteColumns = @"
+       id AS Id, COALESCE(nome, '') AS Nome, telefone_e164 AS Telefone, email AS Email, observacoes AS Observacoes,
+       cep AS Cep, logradouro AS Logradouro, numero AS Numero, complemento AS Complemento, bairro AS Bairro,
+       cidade AS Cidade, uf AS Uf, latitude AS Latitude, longitude AS Longitude, ativo AS Ativo, simulado AS Simulado,
+       avatar AS Avatar, cpf AS Cpf, data_nascimento::text AS DataNascimento, referencia AS Referencia,
+       canal_preferido AS CanalPreferido, origem AS Origem, tags AS Tags, consentimento_whatsapp AS ConsentimentoWhatsapp,
+       data_criacao AS CriadoEm, data_atualizacao AS AtualizadoEm";
+
+        private sealed class StatsRow
+        {
+            public Guid Id { get; set; }
+            public int TotalPedidos { get; set; }
+            public DateTime? Ultima { get; set; }
+            public Guid? ConversaId { get; set; }
+            public bool Humano { get; set; }
+        }
+
+        public async Task<SimClienteListaDto> ListWithStatsAsync(Guid estabelecimentoId, string? busca, int page, int pageSize)
+        {
+            var (safePage, safeSize) = ClienteRules.ClampPaging(page, pageSize);
+            var term = string.IsNullOrWhiteSpace(busca) ? null : busca.Trim();
+            var digits = term == null ? string.Empty : new string(term.Where(char.IsDigit).ToArray());
+
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            const string where = @"
+ WHERE id_estabelecimento = @Est AND simulado = TRUE AND ativo = TRUE
+   AND (@Term IS NULL OR COALESCE(nome, '') ILIKE '%' || @Term || '%'
+        OR (@Digits <> '' AND COALESCE(telefone_e164, '') LIKE '%' || @Digits || '%'))";
+            var p = new { Est = estabelecimentoId, Term = term, Digits = digits, Offset = (safePage - 1) * safeSize, Limit = safeSize };
+
+            var total = await connection.ExecuteScalarAsync<int>($"SELECT COUNT(*) FROM clientes{where};", p);
+            var clientes = (await connection.QueryAsync<ClienteDto>(
+                $"SELECT{ClienteColumns} FROM clientes{where} ORDER BY lower(COALESCE(nome, telefone_e164, '')), id LIMIT @Limit OFFSET @Offset;", p)).ToList();
+
+            var stats = await LoadStatsAsync(connection, estabelecimentoId, clientes.Select(item => item.Id).ToArray());
+            return new SimClienteListaDto
+            {
+                Itens = clientes.Select(item => ToSimCliente(item, stats.GetValueOrDefault(item.Id))).ToList(),
+                Total = total,
+                Page = safePage,
+                PageSize = safeSize
+            };
+        }
+
+        public async Task<SimClienteDto> GetAsync(Guid estabelecimentoId, Guid clienteId)
+        {
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            var cliente = await connection.QuerySingleOrDefaultAsync<ClienteDto>(
+                $"SELECT{ClienteColumns} FROM clientes WHERE id = @Id AND id_estabelecimento = @Est;", new { Id = clienteId, Est = estabelecimentoId });
+            if (cliente == null) throw new DeliveryDomainException(404, "CLIENT_NOT_FOUND", "Cliente nao encontrado.");
+            var stats = await LoadStatsAsync(connection, estabelecimentoId, new[] { clienteId });
+            return ToSimCliente(cliente, stats.GetValueOrDefault(clienteId));
+        }
+
+        private static SimClienteDto ToSimCliente(ClienteDto cliente, StatsRow? stats) => new()
+        {
+            Cliente = cliente,
+            TotalPedidos = stats?.TotalPedidos ?? 0,
+            UltimaAtividadeUtc = stats?.Ultima ?? cliente.AtualizadoEm,
+            ConversaId = stats?.ConversaId,
+            Etiqueta = SimuladorPedidoRules.ClienteEtiqueta(cliente.Ativo, cliente.Tags, stats?.Humano ?? false, stats?.TotalPedidos ?? 0)
+        };
+
+        private static async Task<Dictionary<Guid, StatsRow>> LoadStatsAsync(NpgsqlConnection connection, Guid est, Guid[] ids)
+        {
+            if (ids.Length == 0) return new Dictionary<Guid, StatsRow>();
+            var rows = await connection.QueryAsync<StatsRow>(@"
+SELECT cl.id AS Id,
+       (SELECT COUNT(*)::int FROM pedido p
+         WHERE p.id_estabelecimento = cl.id_estabelecimento AND COALESCE(p.status_pedido, 1) <> 6
+           AND RIGHT(regexp_replace(COALESCE(p.telefone_cliente::text, ''), '\D', '', 'g'), 10)
+             = RIGHT(regexp_replace(COALESCE(cl.telefone_e164, ''), '\D', '', 'g'), 10)) AS TotalPedidos,
+       conv.ultima AS Ultima, conv.id AS ConversaId, COALESCE(conv.humano, FALSE) AS Humano
+  FROM clientes cl
+  LEFT JOIN LATERAL (
+      SELECT c.id, COALESCE(c.data_ultima_mensagem, c.data_criacao) AS ultima, (c.id_agente_atribuido IS NOT NULL) AS humano
+        FROM conversas c
+       WHERE c.id_cliente = cl.id AND c.id_estabelecimento = cl.id_estabelecimento
+       ORDER BY c.data_criacao DESC LIMIT 1) conv ON TRUE
+ WHERE cl.id = ANY(@Ids) AND cl.id_estabelecimento = @Est;", new { Ids = ids, Est = est });
+            return rows.ToDictionary(row => row.Id);
+        }
+
+        public async Task<SimConversaDto> GetConversaAsync(Guid estabelecimentoId, Guid clienteId)
+        {
+            await GetSimulatedClientAsync(estabelecimentoId, clienteId);
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            var row = await connection.QuerySingleOrDefaultAsync<(Guid Id, string? Estado, bool Humano, int NaoLidas)?>(@"
+SELECT c.id, c.estado::text, (c.id_agente_atribuido IS NOT NULL), COALESCE(c.qtd_nao_lidas, 0)
+  FROM conversas c
+ WHERE c.id_cliente = @Cliente AND c.id_estabelecimento = @Est
+ ORDER BY c.data_criacao DESC LIMIT 1;", new { Cliente = clienteId, Est = estabelecimentoId });
+            return row is null
+                ? new SimConversaDto()
+                : new SimConversaDto { ConversaId = row.Value.Id, Estado = row.Value.Estado, Humano = row.Value.Humano, NaoLidas = row.Value.NaoLidas };
+        }
+
+        public async Task<IReadOnlyList<SimPedidoResumoDto>> GetPedidosAsync(Guid estabelecimentoId, Guid clienteId, int limit)
+        {
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            var telefone = await connection.QuerySingleOrDefaultAsync<string?>(
+                "SELECT telefone_e164 FROM clientes WHERE id = @Id AND id_estabelecimento = @Est;", new { Id = clienteId, Est = estabelecimentoId })
+                ?? throw new DeliveryDomainException(404, "CLIENT_NOT_FOUND", "Cliente nao encontrado.");
+
+            var rows = await connection.QueryAsync<(int Id, int Status, string? Origem, decimal? Total, string? Data, string? Nome)>(@"
+SELECT p.id, COALESCE(p.status_pedido, 1), p.origem, p.value, p.data_pedido::text, p.nome_cliente::text
+  FROM pedido p
+ WHERE p.id_estabelecimento = @Est AND COALESCE(p.status_pedido, 1) <> 6
+   AND RIGHT(regexp_replace(COALESCE(p.telefone_cliente::text, ''), '\D', '', 'g'), 10)
+     = RIGHT(regexp_replace(@Tel, '\D', '', 'g'), 10)
+ ORDER BY p.id DESC
+ LIMIT @Limit;", new { Est = estabelecimentoId, Tel = telefone, Limit = Math.Clamp(limit, 1, 50) });
+
+            return rows.Select(row =>
+            {
+                var simulado = string.Equals(row.Origem, "simulador", StringComparison.OrdinalIgnoreCase);
+                return new SimPedidoResumoDto
+                {
+                    Id = row.Id,
+                    IdExibicao = SimuladorPedidoRules.DisplayId(row.Id, simulado),
+                    Status = StatusPedidoExtensions.ToApiKey(row.Status),
+                    Origem = row.Origem ?? "atendente",
+                    Total = row.Total,
+                    CriadoEm = DeliveryRules.ParseStoredDateTime(row.Data),
+                    NomeCliente = row.Nome
+                };
+            }).ToList();
         }
 
         public async Task<IReadOnlyList<SimulatedMessageDto>> GetMessagesAsync(Guid estabelecimentoId, Guid clienteId, int limit)

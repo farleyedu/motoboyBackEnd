@@ -430,7 +430,11 @@ SELECT
         WHEN 6 THEN 'rascunho'
         ELSE 'pendente'
     END AS StatusPedido,
-    p.motoboy_responsavel AS AssignedDriver,
+    -- O dono do pedido e o da fila: se o pedido perdeu o motoboy_responsavel mas a parada de rota existe
+    -- (dado legado/inconsistente), vale a parada. Sem isto o painel dizia sem motoboy num pedido que
+    -- esta na fila de alguem.
+    COALESCE(p.motoboy_responsavel, rs.motoboy_id) AS AssignedDriver,
+    adm.nome::text AS AssignedDriverNome,
     CASE WHEN p.latitude::text ~ {numeric} THEN p.latitude::text::DOUBLE PRECISION END AS Latitude,
     CASE WHEN p.longitude::text ~ {numeric} THEN p.longitude::text::DOUBLE PRECISION END AS Longitude,
     p.horario_pedido::text AS HorarioPedidoRaw,
@@ -471,6 +475,7 @@ LEFT JOIN delivery_route_stops rs
        ON rs.pedido_id = p.id
       AND rs.estabelecimento_id = p.id_estabelecimento
       AND rs.stop_status IN ('assigned', 'en_route')
+LEFT JOIN motoboy adm ON adm.id = COALESCE(p.motoboy_responsavel, rs.motoboy_id)
 LEFT JOIN LATERAL (
     SELECT CASE WHEN f.stop_status = 'failed' THEN f.failure_reason ELSE f.refusal_reason END AS reason,
            f.stop_status AS kind,
@@ -586,9 +591,18 @@ SELECT rs.motoboy_id AS MotoboyId, COUNT(*)::int AS DeliveredToday
                 .ToList();
             var estabelecimento = await connection.QuerySingleOrDefaultAsync<EstabelecimentoLocationRow>(
                 estabelecimentoSql, new { EstabelecimentoId = estabelecimentoId });
-            var metrics = await connection.QuerySingleOrDefaultAsync<DeliveryDayMetricsDto>(metricsSql, dayParams)
+            // Pedido de teste (origem simulador) nao entra nas metricas reais do dia.
+            var metricsQuery = metricsSql;
+            var statsQuery = motoboyStatsSql;
+            if (await PedidoColumnTypes.HasCoreSchemaAsync(connection, null))
+            {
+                const string notSimulated = " AND NOT EXISTS (SELECT 1 FROM pedido px WHERE px.id = rs.pedido_id AND px.origem = 'simulador')";
+                metricsQuery = metricsQuery.Replace("AND COALESCE(rs.completed_at_utc, rs.failed_at_utc) >= @FromUtc;", "AND COALESCE(rs.completed_at_utc, rs.failed_at_utc) >= @FromUtc" + notSimulated + ";");
+                statsQuery = statsQuery.Replace("GROUP BY rs.motoboy_id;", notSimulated.TrimStart() + " GROUP BY rs.motoboy_id;");
+            }
+            var metrics = await connection.QuerySingleOrDefaultAsync<DeliveryDayMetricsDto>(metricsQuery, dayParams)
                 ?? new DeliveryDayMetricsDto();
-            var motoboyStats = (await connection.QueryAsync<MotoboyDayStatsDto>(motoboyStatsSql, dayParams)).ToList();
+            var motoboyStats = (await connection.QueryAsync<MotoboyDayStatsDto>(statsQuery, dayParams)).ToList();
 
             var pedidosPorMotoboy = pedidos
                 .Where(p => p.AssignedDriver.HasValue && (p.StatusPedido == "em_rota" || p.StatusPedido == "atribuido"))
@@ -666,6 +680,7 @@ SELECT rs.motoboy_id AS MotoboyId, COUNT(*)::int AS DeliveredToday
             public string? Region { get; set; }
             public string StatusPedido { get; set; } = "pendente";
             public int? AssignedDriver { get; set; }
+            public string? AssignedDriverNome { get; set; }
             public double? Latitude { get; set; }
             public double? Longitude { get; set; }
             public string? HorarioPedidoRaw { get; set; }
@@ -729,6 +744,7 @@ SELECT rs.motoboy_id AS MotoboyId, COUNT(*)::int AS DeliveredToday
                 Region = row.Region,
                 StatusPedido = row.StatusPedido,
                 AssignedDriver = row.AssignedDriver,
+                AssignedDriverNome = row.AssignedDriverNome,
                 Latitude = row.Latitude,
                 Longitude = row.Longitude,
                 HorarioPedido = horarioPedido,

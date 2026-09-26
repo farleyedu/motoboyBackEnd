@@ -259,7 +259,13 @@ namespace APIBack.Service
                 throw new DeliveryDomainException(422, "INVALID_SIMULATOR_MOTOBOY", "Telefone excede 30 caracteres.");
             }
 
-            if (!await _repository.UpdateSimulatorMotoboyAsync(estabelecimentoId, motoboyId, nome, telefone))
+            var avatar = request?.Avatar?.Trim();
+            if (avatar is { Length: > 300_000 })
+            {
+                throw new DeliveryDomainException(422, "INVALID_SIMULATOR_MOTOBOY", "Foto grande demais.");
+            }
+
+            if (!await _repository.UpdateSimulatorMotoboyAsync(estabelecimentoId, motoboyId, nome, telefone, avatar))
             {
                 throw new DeliveryDomainException(404, "SIMULATOR_MOTOBOY_NOT_FOUND",
                     "Motoboy de teste nao encontrado neste estabelecimento.");

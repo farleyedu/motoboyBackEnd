@@ -19,6 +19,64 @@ namespace APIBack.Repository
             public string? Bairro { get; set; }
         }
 
+        /// <summary>
+        /// Reabre um pedido ja concluido ou cancelado, para simular que ele volta ao fluxo. Volta a
+        /// PENDENTE e sem motoboy, nunca direto para atribuido/em rota: essas etapas exigem um motoboy e
+        /// uma parada de rota, que so os comandos reais de fila (atribuir) criam. Assim o pedido nunca
+        /// fica num estado que o resto do sistema nao sabe ler (em rota sem motoboy, na fila sem parada).
+        /// </summary>
+        public async Task<CreatedPedidoDto> ReopenPedidoForSimulatorAsync(Guid estabelecimentoId, int actorUserId, int pedidoId)
+        {
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+
+            var pedido = await GetPedidoAsync(connection, transaction, estabelecimentoId, pedidoId, forUpdate: true)
+                ?? throw new DeliveryDomainException(404, "PEDIDO_NOT_FOUND", "Pedido nao encontrado neste estabelecimento.");
+            var current = APIBack.Model.Enum.StatusPedidoExtensions.FromDbValue(pedido.StatusPedido)
+                ?? APIBack.Model.Enum.StatusPedido.Pendente;
+            if (!SimulatorOrderRules.CanReopen(current))
+            {
+                throw new DeliveryDomainException(409, "ORDER_NOT_REOPENABLE",
+                    "So pedido concluido ou cancelado pode ser reaberto. Para os demais use os comandos de fila.");
+            }
+
+            // Concluido/cancelado nao tem parada ativa; por seguranca, qualquer resto vira "removed".
+            await connection.ExecuteAsync(
+                "UPDATE delivery_route_stops SET stop_status = 'removed', removed_at_utc = NOW(), updated_at_utc = NOW() " +
+                "WHERE pedido_id = @PedidoId AND estabelecimento_id = @EstabelecimentoId AND stop_status IN ('assigned', 'en_route');",
+                new { PedidoId = pedidoId, EstabelecimentoId = estabelecimentoId }, transaction);
+            await connection.ExecuteAsync(
+                "UPDATE pedido SET status_pedido = @Pendente, motoboy_responsavel = NULL, horario_saida = NULL, horario_entrega = NULL " +
+                "WHERE id = @PedidoId AND id_estabelecimento = @EstabelecimentoId;",
+                new { Pendente = (int)APIBack.Model.Enum.StatusPedido.Pendente, PedidoId = pedidoId, EstabelecimentoId = estabelecimentoId },
+                transaction);
+
+            var payload = JsonSerializer.Serialize(new
+            {
+                schemaVersion = 2,
+                eventId = Guid.NewGuid(),
+                estabelecimentoId,
+                pedidoId,
+                action = "reopened",
+                updatedByUserId = actorUserId,
+                occurredAtUtc = DateTimeOffset.UtcNow
+            });
+            await InsertOutboxAsync(connection, transaction, DeliveryRealtimeEvents.DeliveryOrderUpdated,
+                estabelecimentoId, motoboyId: null, aggregateVersion: pedidoId, payload, Array.Empty<Guid>());
+
+            await transaction.CommitAsync();
+            return new CreatedPedidoDto { Id = pedidoId, Status = "pendente" };
+        }
+
+        /// <summary>Reemite o evento de pedido no tempo real (o painel recarrega): "injeta" o pedido de teste no painel.</summary>
+        public async Task PublishPedidoEventForSimulatorAsync(Guid estabelecimentoId, int actorUserId, int pedidoId, string action)
+        {
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            await PublishOrderEventAsync(connection, transaction, estabelecimentoId, actorUserId, pedidoId, action);
+            await transaction.CommitAsync();
+        }
+
         public async Task<CreatedPedidoDto> UpdatePedidoForSimulatorAsync(
             Guid estabelecimentoId, int actorUserId, int pedidoId, SimulatorOrderPatch patch)
         {

@@ -83,6 +83,17 @@ namespace APIBack.Tests.Unit
             Assert.True(SimulatorOrderRules.Validate(new SimulatorPedidoRequest()).IsEmpty);
         }
 
+        [Theory]
+        [InlineData(APIBack.Model.Enum.StatusPedido.Concluido, true)]
+        [InlineData(APIBack.Model.Enum.StatusPedido.Cancelado, true)]
+        // Atribuido/em rota exigem motoboy + parada de rota; pendente/rascunho ja estao "abertos".
+        [InlineData(APIBack.Model.Enum.StatusPedido.Atribuido, false)]
+        [InlineData(APIBack.Model.Enum.StatusPedido.EmRota, false)]
+        [InlineData(APIBack.Model.Enum.StatusPedido.Pendente, false)]
+        [InlineData(APIBack.Model.Enum.StatusPedido.Rascunho, false)]
+        public void Reopen_OnlyFinishedOrders_ComeBackAsPendingNeverAsInRoute(APIBack.Model.Enum.StatusPedido status, bool expected) =>
+            Assert.Equal(expected, SimulatorOrderRules.CanReopen(status));
+
         [Fact]
         public void ComposeAddress_MatchesTheManualOrderFormat()
         {

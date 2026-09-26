@@ -23,6 +23,16 @@ namespace APIBack.Service
         public double? Latitude { get; init; }
         public double? Longitude { get; init; }
         public bool Simulado { get; init; }
+        public string? Avatar { get; init; }
+        public string? Cpf { get; init; }
+        /// <summary>AAAA-MM-DD ja validado.</summary>
+        public string? DataNascimento { get; init; }
+        public string? Referencia { get; init; }
+        public string? CanalPreferido { get; init; }
+        public string? Origem { get; init; }
+        public string[] Tags { get; init; } = System.Array.Empty<string>();
+        public bool ConsentimentoWhatsapp { get; init; } = true;
+        public bool Ativo { get; init; } = true;
     }
 
     public static class ClienteRules
@@ -92,6 +102,14 @@ namespace APIBack.Service
                 }
             }
 
+            var (cpf, birth) = (Cpf(request.Cpf), Birth(request.DataNascimento));
+            var canal = Text(request.CanalPreferido, "canal preferido", 30)?.ToLowerInvariant();
+            if (canal != null && Array.IndexOf(Channels, canal) < 0)
+            {
+                throw Invalid($"Canal preferido invalido. Use: {string.Join(", ", Channels)}.");
+            }
+            var avatar = Text(request.Avatar, "foto", MaxAvatarLength);
+
             return new ClienteInput
             {
                 Nome = nome,
@@ -107,8 +125,64 @@ namespace APIBack.Service
                 Uf = uf,
                 Latitude = request.Latitude,
                 Longitude = request.Longitude,
-                Simulado = request.Simulado
+                Simulado = request.Simulado,
+                Avatar = avatar,
+                Cpf = cpf,
+                DataNascimento = birth,
+                Referencia = Text(request.Referencia, "referencia", 150),
+                CanalPreferido = canal,
+                Origem = Text(request.Origem, "origem", 50),
+                Tags = Tags(request.Tags),
+                ConsentimentoWhatsapp = request.ConsentimentoWhatsapp ?? true,
+                Ativo = request.Ativo ?? true
             };
+        }
+
+        public static readonly string[] Channels = { "whatsapp", "telefone", "email", "app" };
+        public const int MaxAvatarLength = 300_000;
+
+        /// <summary>CPF so com digitos (11) e digitos verificadores corretos; vazio = null.</summary>
+        public static string? Cpf(string? raw)
+        {
+            var digits = new string((raw ?? string.Empty).Where(char.IsDigit).ToArray());
+            if (digits.Length == 0) return null;
+            if (digits.Length != 11 || digits.Distinct().Count() == 1) throw Invalid("CPF invalido.");
+            int Check(int length)
+            {
+                var sum = 0;
+                for (var i = 0; i < length; i++) sum += (digits[i] - '0') * (length + 1 - i);
+                var rest = sum * 10 % 11;
+                return rest == 10 ? 0 : rest;
+            }
+            if (Check(9) != digits[9] - '0' || Check(10) != digits[10] - '0') throw Invalid("CPF invalido.");
+            return digits;
+        }
+
+        public static string? Birth(string? raw)
+        {
+            if (string.IsNullOrWhiteSpace(raw)) return null;
+            if (!DateOnly.TryParseExact(raw.Trim(), "yyyy-MM-dd", out var date))
+            {
+                throw Invalid("Data de nascimento invalida (use AAAA-MM-DD).");
+            }
+            if (date > DateOnly.FromDateTime(DateTime.UtcNow) || date.Year < 1900)
+            {
+                throw Invalid("Data de nascimento fora do intervalo.");
+            }
+            return date.ToString("yyyy-MM-dd");
+        }
+
+        /// <summary>Ate 10 tags de ate 30 caracteres, sem repetir (ignorando maiusculas).</summary>
+        public static string[] Tags(string[]? raw)
+        {
+            var tags = (raw ?? System.Array.Empty<string>())
+                .Select(tag => tag?.Trim() ?? string.Empty)
+                .Where(tag => tag.Length > 0)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (tags.Length > 10) throw Invalid("Use no maximo 10 tags.");
+            if (tags.Any(tag => tag.Length > 30)) throw Invalid("Cada tag tem no maximo 30 caracteres.");
+            return tags;
         }
 
         /// <summary>Pagina segura: o front nunca decide o tamanho do SELECT.</summary>

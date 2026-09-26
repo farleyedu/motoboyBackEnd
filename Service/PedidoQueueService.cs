@@ -211,6 +211,12 @@ namespace APIBack.Service
 
         // ---- Pedido manual -----------------------------------------------------
 
+        public Task PublishPedidoEventForSimulatorAsync(Guid estabelecimentoId, int actorUserId, int pedidoId, string action) =>
+            _repository.PublishPedidoEventForSimulatorAsync(estabelecimentoId, actorUserId, pedidoId, action);
+
+        public Task<CreatedPedidoDto> ReopenPedidoForSimulatorAsync(Guid estabelecimentoId, int actorUserId, int pedidoId) =>
+            _repository.ReopenPedidoForSimulatorAsync(estabelecimentoId, actorUserId, pedidoId);
+
         public Task<CreatedPedidoDto> UpdatePedidoForSimulatorAsync(Guid estabelecimentoId, int actorUserId, int pedidoId, SimulatorPedidoRequest request)
         {
             var patch = SimulatorOrderRules.Validate(request);

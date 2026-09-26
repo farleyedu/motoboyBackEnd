@@ -29,7 +29,9 @@ namespace APIBack.Repository
        id AS Id, COALESCE(nome, '') AS Nome, telefone_e164 AS Telefone, email AS Email, observacoes AS Observacoes,
        cep AS Cep, logradouro AS Logradouro, numero AS Numero, complemento AS Complemento,
        bairro AS Bairro, cidade AS Cidade, uf AS Uf, latitude AS Latitude, longitude AS Longitude,
-       ativo AS Ativo, simulado AS Simulado, data_criacao AS CriadoEm, data_atualizacao AS AtualizadoEm";
+       ativo AS Ativo, simulado AS Simulado, avatar AS Avatar, cpf AS Cpf, data_nascimento::text AS DataNascimento,
+       referencia AS Referencia, canal_preferido AS CanalPreferido, origem AS Origem, tags AS Tags,
+       consentimento_whatsapp AS ConsentimentoWhatsapp, data_criacao AS CriadoEm, data_atualizacao AS AtualizadoEm";
 
         public async Task<ClienteListaDto> ListAsync(Guid estabelecimentoId, string? q, bool incluirInativos, int page, int pageSize)
         {
@@ -100,7 +102,9 @@ SELECT id, ativo, nome FROM clientes
 UPDATE clientes
    SET nome = @Nome, email = @Email, observacoes = @Observacoes, cep = @Cep, logradouro = @Logradouro,
        numero = @Numero, complemento = @Complemento, bairro = @Bairro, cidade = @Cidade, uf = @Uf,
-       latitude = @Latitude, longitude = @Longitude, simulado = @Simulado, ativo = TRUE, data_atualizacao = NOW()
+       latitude = @Latitude, longitude = @Longitude, simulado = @Simulado, avatar = @Avatar, cpf = @Cpf,
+       data_nascimento = @DataNascimento::date, referencia = @Referencia, canal_preferido = @CanalPreferido,
+       origem = @Origem, tags = @Tags, consentimento_whatsapp = @ConsentimentoWhatsapp, ativo = @Ativo, data_atualizacao = NOW()
  WHERE id = @Id
 RETURNING{Columns};", Parameters(estabelecimentoId, existing.Value.Id, input, actorUserId), transaction);
                 }
@@ -108,10 +112,12 @@ RETURNING{Columns};", Parameters(estabelecimentoId, existing.Value.Id, input, ac
                 {
                     saved = await connection.QuerySingleAsync<ClienteDto>($@"
 INSERT INTO clientes (id, id_estabelecimento, nome, telefone_e164, email, observacoes, cep, logradouro, numero,
-                      complemento, bairro, cidade, uf, latitude, longitude, simulado, criado_por_usuario_id,
+                      complemento, bairro, cidade, uf, latitude, longitude, simulado, avatar, cpf, data_nascimento,
+                      referencia, canal_preferido, origem, tags, consentimento_whatsapp, ativo, criado_por_usuario_id,
                       data_criacao, data_atualizacao)
 VALUES (@Id, @EstabelecimentoId, @Nome, @Telefone, @Email, @Observacoes, @Cep, @Logradouro, @Numero,
-        @Complemento, @Bairro, @Cidade, @Uf, @Latitude, @Longitude, @Simulado, @ActorUserId, NOW(), NOW())
+        @Complemento, @Bairro, @Cidade, @Uf, @Latitude, @Longitude, @Simulado, @Avatar, @Cpf, @DataNascimento::date,
+        @Referencia, @CanalPreferido, @Origem, @Tags, @ConsentimentoWhatsapp, @Ativo, @ActorUserId, NOW(), NOW())
 RETURNING{Columns};", Parameters(estabelecimentoId, Guid.NewGuid(), input, actorUserId), transaction);
                 }
 
@@ -144,7 +150,10 @@ SELECT EXISTS (
 UPDATE clientes
    SET nome = @Nome, telefone_e164 = @Telefone, email = @Email, observacoes = @Observacoes, cep = @Cep,
        logradouro = @Logradouro, numero = @Numero, complemento = @Complemento, bairro = @Bairro,
-       cidade = @Cidade, uf = @Uf, latitude = @Latitude, longitude = @Longitude, simulado = @Simulado, data_atualizacao = NOW()
+       cidade = @Cidade, uf = @Uf, latitude = @Latitude, longitude = @Longitude, simulado = @Simulado,
+       avatar = @Avatar, cpf = @Cpf, data_nascimento = @DataNascimento::date, referencia = @Referencia,
+       canal_preferido = @CanalPreferido, origem = @Origem, tags = @Tags,
+       consentimento_whatsapp = @ConsentimentoWhatsapp, ativo = @Ativo, data_atualizacao = NOW()
  WHERE id = @Id AND id_estabelecimento = @EstabelecimentoId
 RETURNING{Columns};", Parameters(estabelecimentoId, clienteId, input, 0), transaction);
 
@@ -190,7 +199,16 @@ UPDATE clientes SET ativo = FALSE, data_atualizacao = NOW()
             input.Uf,
             input.Latitude,
             input.Longitude,
-            input.Simulado
+            input.Simulado,
+            input.Avatar,
+            input.Cpf,
+            input.DataNascimento,
+            input.Referencia,
+            input.CanalPreferido,
+            input.Origem,
+            input.Tags,
+            input.ConsentimentoWhatsapp,
+            input.Ativo
         };
 
         private static DeliveryDomainException PhoneTaken() =>

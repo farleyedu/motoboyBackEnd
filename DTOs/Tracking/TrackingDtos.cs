@@ -13,6 +13,8 @@ namespace APIBack.DTOs.Tracking
     {
         public string? Nome { get; set; }
         public string? Telefone { get; set; }
+        /// <summary>Foto (URL ou data URL pequena). Nulo = manter; vazio = remover.</summary>
+        public string? Avatar { get; set; }
     }
 
     public class CreateSimulatorMotoboyRequest
@@ -133,6 +135,8 @@ namespace APIBack.DTOs.Tracking
         public string? Region { get; set; }
         public string StatusPedido { get; set; } = "pendente";
         public int? AssignedDriver { get; set; }
+        /// <summary>Nome do motoboy dono do pedido (mesmo offline): o painel nao depende dele estar online para saber quem e.</summary>
+        public string? AssignedDriverNome { get; set; }
         public double? Latitude { get; set; }
         public double? Longitude { get; set; }
         public double[]? Coordinates => Longitude.HasValue && Latitude.HasValue
