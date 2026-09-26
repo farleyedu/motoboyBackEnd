@@ -246,6 +246,14 @@ SELECT id FROM clientes WHERE id_estabelecimento = @Est AND telefone_e164 = @Tel
                 : SimuladorPedidoRules.ParseAlvo(request.StatusAlvo)
                   ?? throw new DeliveryDomainException(422, "INVALID_TARGET", "Status alvo invalido.");
             var fill = allowFill && request.StatusAlvo != null; // "criar do nada": completa o que faltar com dados de teste
+            if (!SimuladorPedidoRules.TryNormalizePayment(request.TipoPagamento, out var pagamento))
+            {
+                throw new DeliveryDomainException(422, "INVALID_PAYMENT", $"Forma de pagamento invalida. Use: {string.Join(", ", SimuladorPedidoRules.PaymentTypes)}.");
+            }
+            if (!fill && request.Itens is not { Count: > 0 })
+            {
+                throw new DeliveryDomainException(422, "INVALID_ORDER_ITEMS", "Informe ao menos um item: pedido sem itens nao existe no fluxo real.");
+            }
 
             await using var connection = await _dataSource.OpenConnectionAsync();
 
@@ -319,8 +327,8 @@ SELECT id FROM conversas WHERE id_cliente = @Id AND id_estabelecimento = @Est OR
                 Latitude = lat, Longitude = lng,
                 Itens = itens,
                 Observacoes = request.Observacoes,
-                TipoPagamento = request.TipoPagamento,
-                Troco = request.Troco,
+                TipoPagamento = pagamento,
+                Troco = pagamento == "dinheiro" ? request.Troco : null,
                 TaxaEntrega = request.TaxaEntrega,
                 PrevisaoMinutos = request.PrevisaoMinutos,
                 ConversaId = conversaId,
@@ -334,6 +342,19 @@ SELECT id FROM conversas WHERE id_cliente = @Id AND id_estabelecimento = @Est OR
         public async Task<SimPedidoDetalheDto> CreateAsync(Guid est, int userId, SimPedidoCriarRequest request)
         {
             var (create, canal, alvo) = await PrepareAsync(est, request, allowFill: true);
+
+            // "Do nada" em rota/entregue exige motoboy: resolve e confere ANTES de criar, para nao deixar pedido pela metade.
+            int? motoboyEscolhido = request.MotoboyId;
+            if (SimuladorPedidoRules.RequiresMotoboy(alvo))
+            {
+                motoboyEscolhido ??= await PickMotoboyAsync(est);
+                if (alvo == SimAlvo.Entregue && await HasCurrentDeliveryAsync(motoboyEscolhido.Value))
+                {
+                    throw new DeliveryDomainException(409, "MOTOBOY_BUSY",
+                        "Este motoboy ja esta em outra entrega: o pedido ficaria na fila e nao poderia ser entregue agora. Conclua a entrega dele ou escolha outro motoboy.");
+                }
+            }
+
             await using var connection = await _dataSource.OpenConnectionAsync();
 
             var created = await _core.CreateAsync(est, userId, create, null);
@@ -345,9 +366,27 @@ SELECT id FROM conversas WHERE id_cliente = @Id AND id_estabelecimento = @Est OR
 
             if (alvo != SimAlvo.Recebido)
             {
-                return await ForceAsync(est, userId, created.Id, alvo, request.MotoboyId);
+                try
+                {
+                    return await ForceAsync(est, userId, created.Id, alvo, motoboyEscolhido);
+                }
+                catch (DeliveryDomainException)
+                {
+                    // Nao deixa um pedido "meio criado" no painel quando o status pedido nao pode ser alcancado.
+                    try { await _queue.RemoveAsync(est, userId, created.Id); } catch (DeliveryDomainException) { /* ja estava pendente */ }
+                    await using var cleanup = await _dataSource.OpenConnectionAsync();
+                    await cleanup.ExecuteAsync("DELETE FROM pedido_item WHERE pedido_id = @Id; DELETE FROM pedido WHERE id = @Id AND id_estabelecimento = @Est;", new { Id = created.Id, Est = est });
+                    throw;
+                }
             }
             return await GetAsync(est, created.Id);
+        }
+
+        /// <summary>O motoboy ja tem uma entrega em rota (a atual)? Entao um pedido novo entra na fila atras dela.</summary>
+        private async Task<bool> HasCurrentDeliveryAsync(int motoboyId)
+        {
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            return await connection.ExecuteScalarAsync<bool>("SELECT EXISTS (SELECT 1 FROM delivery_route_stops WHERE motoboy_id = @Id AND stop_status = 'en_route');", new { Id = motoboyId });
         }
 
         public async Task<SimPedidoDetalheDto> CloneAsync(Guid est, int userId, int pedidoId)

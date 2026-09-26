@@ -53,7 +53,9 @@ namespace APIBack.Middleware
                 context.Response.Clear();
                 context.Response.StatusCode = status;
                 context.Response.ContentType = "application/json; charset=utf-8";
-                var body = ApiResponse<object>.Fail(message, code, new { traceId });
+                var body = ApiResponse<object>.Fail(message, code, ex is PostgresException pg
+                    ? new { traceId, sqlState = pg.SqlState, table = pg.TableName, column = pg.ColumnName, constraint = pg.ConstraintName }
+                    : new { traceId, sqlState = (string?)null, table = (string?)null, column = (string?)null, constraint = (string?)null });
                 await context.Response.WriteAsync(JsonSerializer.Serialize(body, Json));
             }
         }
@@ -65,6 +67,13 @@ namespace APIBack.Middleware
             {
                 return (503, "MIGRATION_PENDING",
                     "O banco de dados ainda nao recebeu todas as migracoes do delivery. Aplique-as e tente de novo.");
+            }
+
+            // Valor maior que a coluna, restricao de checagem/unicidade/FK e tipo incompativel: o dado enviado nao cabe no banco.
+            if (ex is PostgresException { SqlState: "22001" or "23514" or "23505" or "23503" or "22P02" or "42804" or "22003" } data)
+            {
+                var onde = string.IsNullOrEmpty(data.ColumnName) ? data.ConstraintName : data.ColumnName;
+                return (422, "DATA_REJECTED", $"O banco recusou um dos valores enviados{(string.IsNullOrEmpty(onde) ? string.Empty : $" (campo {onde})")}. Confira os dados e tente de novo.");
             }
 
             return (500, "INTERNAL_ERROR", "Erro interno. Informe o codigo de rastreio ao suporte.");

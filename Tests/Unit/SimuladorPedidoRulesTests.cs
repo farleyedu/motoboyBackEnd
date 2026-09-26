@@ -129,5 +129,52 @@ namespace APIBack.Tests.Unit
             Assert.Equal("Frequente", SimuladorPedidoRules.ClienteEtiqueta(true, new string[0], false, 5));
             Assert.Equal("Novo", SimuladorPedidoRules.ClienteEtiqueta(true, new string[0], false, 4));
         }
+
+        [Theory]
+        [InlineData("Dinheiro", "dinheiro")]
+        [InlineData("dinheiro", "dinheiro")]
+        [InlineData("PIX", "pix")]
+        [InlineData("pix", "pix")]
+        [InlineData("Cartao", "cartao_entrega")]
+        [InlineData("Cartão de crédito", "cartao_entrega")]
+        [InlineData("Cartão de débito", "cartao_entrega")]
+        [InlineData("cartao credito", "cartao_entrega")]
+        [InlineData("Pago online", "link")]
+        [InlineData("pago ONLINE", "link")]
+        public void TryNormalizePayment_MapsEveryLabelToTheRealVocabulary(string raw, string expected)
+        {
+            Assert.True(SimuladorPedidoRules.TryNormalizePayment(raw, out var normalized));
+            Assert.Equal(expected, normalized);
+            Assert.Contains(normalized, SimuladorPedidoRules.PaymentTypes);
+        }
+
+        [Fact]
+        public void TryNormalizePayment_CoincidesWithTheCoreVocabulary()
+        {
+            foreach (var raw in new[] { "Dinheiro", "PIX", "Cartao" })
+            {
+                Assert.True(SimuladorPedidoRules.TryNormalizePayment(raw, out var mine));
+                Assert.Equal(OrderCoreRules.NormalizePayment(raw), mine);
+            }
+        }
+
+        [Theory]
+        [InlineData(null)]
+        [InlineData("")]
+        [InlineData("   ")]
+        public void TryNormalizePayment_BlankMeansNoPaymentInformed(string? raw)
+        {
+            Assert.True(SimuladorPedidoRules.TryNormalizePayment(raw, out var normalized));
+            Assert.Null(normalized);
+        }
+
+        [Theory]
+        [InlineData("cheque")]
+        [InlineData("fiado")]
+        [InlineData("boleto")]
+        public void TryNormalizePayment_RejectsWhatTheSystemDoesNotKnow(string raw)
+        {
+            Assert.False(SimuladorPedidoRules.TryNormalizePayment(raw, out _));
+        }
     }
 }

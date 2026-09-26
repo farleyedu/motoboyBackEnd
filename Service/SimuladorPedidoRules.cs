@@ -107,6 +107,36 @@ namespace APIBack.Service
         /// <summary>"TEST-7832": como o simulador chama o pedido de teste.</summary>
         public static string DisplayId(int pedidoId, bool simulado) => simulado ? $"TEST-{pedidoId}" : pedidoId.ToString();
 
+        /// <summary>Formas de pagamento canonicas do nucleo de pedido (OrderCoreRules.NormalizePayment): o simulador grava exatamente estas.</summary>
+        public static readonly string[] PaymentTypes = { "dinheiro", "pix", "cartao_entrega", "link" };
+
+        /// <summary>
+        /// Leva "Cartao de credito", "cartão", "PIX", "Pago Online", "Dinheiro"... para o vocabulario canonico do nucleo. Vazio = sem forma informada (null);
+        /// desconhecido = false, para o servidor recusar em vez de gravar um texto que o resto do sistema nao entende.
+        /// </summary>
+        public static bool TryNormalizePayment(string? value, out string? normalized)
+        {
+            normalized = null;
+            var text = RemoveDiacritics((value ?? string.Empty).Trim()).ToLowerInvariant();
+            if (text.Length == 0) return true;
+            if (text.Contains("dinheiro")) normalized = "dinheiro";
+            else if (text.Contains("pix")) normalized = "pix";
+            else if (text.Contains("online") || text.Contains("link")) normalized = "link";
+            else if (text.StartsWith("cart") || text.Contains("credito") || text.Contains("debito")) normalized = "cartao_entrega";
+            return normalized != null;
+        }
+
+        private static string RemoveDiacritics(string value)
+        {
+            var decomposed = value.Normalize(System.Text.NormalizationForm.FormD);
+            var builder = new System.Text.StringBuilder(decomposed.Length);
+            foreach (var c in decomposed)
+            {
+                if (System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c) != System.Globalization.UnicodeCategory.NonSpacingMark) builder.Append(c);
+            }
+            return builder.ToString().Normalize(System.Text.NormalizationForm.FormC);
+        }
+
         public static readonly string[] Channels = { "whatsapp", "app", "balcao" };
 
         /// <summary>Canais aceitos; vazio vira whatsapp. Null quando desconhecido.</summary>
