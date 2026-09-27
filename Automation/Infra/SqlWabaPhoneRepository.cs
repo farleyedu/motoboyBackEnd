@@ -149,18 +149,31 @@ SELECT id_estabelecimento
                 var insertColumns = new System.Collections.Generic.List<string> { "id_estabelecimento", "ativo", "descricao", "data_criacao", "data_atualizacao" };
                 var insertValues = new System.Collections.Generic.List<string> { "@IdEstabelecimento", "@Ativo", "@Descricao", "@DataCriacao", "@DataAtualizacao" };
 
-                if (columns.PhoneNumberId && !string.IsNullOrWhiteSpace(wabaPhone.PhoneNumberId))
+                // As duas colunas, quando existem nesta instalacao, entram sempre no INSERT (com
+                // COALESCE para string vazia): pelo menos uma delas tem NOT NULL na tabela legada
+                // (achado em producao - "null value in column display_phone_number violates not-null
+                // constraint" - so incluir a coluna quando o valor vinha preenchido deixava a outra
+                // de fora do INSERT quando so uma era informada, e o Postgres recusava a linha
+                // inteira). O UPDATE continua so tocando a coluna que realmente veio preenchida, pra
+                // nao apagar um valor ja salvo antes.
+                if (columns.PhoneNumberId)
                 {
-                    setColumns.Add("phone_number_id = @PhoneNumberId");
                     insertColumns.Add("phone_number_id");
-                    insertValues.Add("@PhoneNumberId");
+                    insertValues.Add("COALESCE(@PhoneNumberId, '')");
+                    if (!string.IsNullOrWhiteSpace(wabaPhone.PhoneNumberId))
+                    {
+                        setColumns.Add("phone_number_id = @PhoneNumberId");
+                    }
                 }
 
-                if (columns.DisplayPhoneNumber && !string.IsNullOrWhiteSpace(wabaPhone.DisplayPhoneNumber))
+                if (columns.DisplayPhoneNumber)
                 {
-                    setColumns.Add("display_phone_number = @DisplayPhoneNumber");
                     insertColumns.Add("display_phone_number");
-                    insertValues.Add("@DisplayPhoneNumber");
+                    insertValues.Add("COALESCE(@DisplayPhoneNumber, '')");
+                    if (!string.IsNullOrWhiteSpace(wabaPhone.DisplayPhoneNumber))
+                    {
+                        setColumns.Add("display_phone_number = @DisplayPhoneNumber");
+                    }
                 }
 
                 if (insertColumns.Count == 5)
