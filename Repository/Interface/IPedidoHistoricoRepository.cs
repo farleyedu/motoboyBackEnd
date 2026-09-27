@@ -8,5 +8,8 @@ namespace APIBack.Repository.Interface
     {
         /// <summary>Linha do tempo do pedido; null quando ele nao existe neste estabelecimento.</summary>
         Task<PedidoHistoricoDto?> GetAsync(Guid estabelecimentoId, int pedidoId);
+
+        /// <summary>Metricas reais dos ultimos 7 dias (tela "Delivery e operacao" - Impacto operacional).</summary>
+        Task<ImpactoOperacionalDto> ObterImpactoOperacionalAsync(Guid estabelecimentoId);
     }
 }

@@ -69,5 +69,23 @@ SELECT (SELECT COUNT(*) FROM information_schema.columns
             if (present) _coreSchemaKnown = true;
             return present;
         }
+
+        private static volatile bool _operacaoSchemaKnown;
+
+        /// <summary>
+        /// True quando a migration 20260928_04 (Fase 2 da reconstrucao de Configuracoes: zonas e
+        /// operacao) foi aplicada.
+        /// </summary>
+        public static async Task<bool> HasOperacaoSchemaAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction)
+        {
+            if (_operacaoSchemaKnown) return true;
+            var present = await connection.ExecuteScalarAsync<bool>(@"
+SELECT (SELECT COUNT(*) FROM information_schema.columns
+         WHERE table_schema = current_schema() AND table_name = 'delivery_settings'
+           AND column_name IN ('auto_confirmar_pedidos', 'autoatribuir_motoboy', 'bloquear_pedidos_fora_horario',
+                                'retirada_balcao_ativa', 'retirada_tempo_preparo_min')) = 5;", transaction: transaction);
+            if (present) _operacaoSchemaKnown = true;
+            return present;
+        }
     }
 }

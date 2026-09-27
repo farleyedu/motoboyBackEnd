@@ -163,6 +163,61 @@ UPDATE delivery_settings
                 transaction);
         }
 
+        // =====================================================================
+        // Fase 2 da reconstrucao de Configuracoes: pedidos automaticos, retirada, bloqueio por horario
+        // =====================================================================
+
+        private sealed class OperacaoSettingsRow
+        {
+            public bool AutoConfirmar { get; set; } = true;
+            public bool AutoatribuirMotoboy { get; set; }
+            public bool BloquearForaHorario { get; set; }
+            public bool RetiradaAtiva { get; set; }
+            public int? RetiradaTempoPreparoMin { get; set; }
+        }
+
+        private static async Task ApplyOperacaoSettingsAsync(DeliverySettingsDto settings, NpgsqlConnection connection, Guid estabelecimentoId)
+        {
+            if (!await PedidoColumnTypes.HasOperacaoSchemaAsync(connection, null)) return;
+            var row = await connection.QuerySingleOrDefaultAsync<OperacaoSettingsRow>(@"
+SELECT auto_confirmar_pedidos AS AutoConfirmar, autoatribuir_motoboy AS AutoatribuirMotoboy,
+       bloquear_pedidos_fora_horario AS BloquearForaHorario, retirada_balcao_ativa AS RetiradaAtiva,
+       retirada_tempo_preparo_min AS RetiradaTempoPreparoMin
+  FROM delivery_settings WHERE estabelecimento_id = @EstabelecimentoId;",
+                new { EstabelecimentoId = estabelecimentoId });
+            if (row == null) return;
+            settings.AutoConfirmarPedidos = row.AutoConfirmar;
+            settings.AutoatribuirMotoboy = row.AutoatribuirMotoboy;
+            settings.BloquearPedidosForaHorario = row.BloquearForaHorario;
+            settings.RetiradaBalcaoAtiva = row.RetiradaAtiva;
+            settings.RetiradaTempoPreparoMin = row.RetiradaTempoPreparoMin;
+        }
+
+        private static async Task SaveOperacaoSettingsAsync(
+            NpgsqlConnection connection, NpgsqlTransaction transaction, Guid estabelecimentoId, UpdateDeliverySettingsRequest request)
+        {
+            if (request.AutoConfirmarPedidos == null && request.AutoatribuirMotoboy == null && request.BloquearPedidosForaHorario == null
+                && request.RetiradaBalcaoAtiva == null && request.RetiradaTempoPreparoMin == null) return;
+            if (!await PedidoColumnTypes.HasOperacaoSchemaAsync(connection, transaction)) throw MigrationPending();
+            await connection.ExecuteAsync(@"
+UPDATE delivery_settings
+   SET auto_confirmar_pedidos = COALESCE(@AutoConfirmar, auto_confirmar_pedidos),
+       autoatribuir_motoboy = COALESCE(@Autoatribuir, autoatribuir_motoboy),
+       bloquear_pedidos_fora_horario = COALESCE(@BloquearForaHorario, bloquear_pedidos_fora_horario),
+       retirada_balcao_ativa = COALESCE(@RetiradaAtiva, retirada_balcao_ativa),
+       retirada_tempo_preparo_min = COALESCE(@RetiradaTempoPreparoMin, retirada_tempo_preparo_min)
+ WHERE estabelecimento_id = @EstabelecimentoId;",
+                new
+                {
+                    AutoConfirmar = request.AutoConfirmarPedidos,
+                    Autoatribuir = request.AutoatribuirMotoboy,
+                    BloquearForaHorario = request.BloquearPedidosForaHorario,
+                    RetiradaAtiva = request.RetiradaBalcaoAtiva,
+                    RetiradaTempoPreparoMin = request.RetiradaTempoPreparoMin,
+                    EstabelecimentoId = estabelecimentoId
+                }, transaction);
+        }
+
         private static async Task<(string State, DateTimeOffset? Since)> ReadRouteStateAsync(
             NpgsqlConnection connection, NpgsqlTransaction transaction, Guid estabelecimentoId, int motoboyId, bool rules)
         {

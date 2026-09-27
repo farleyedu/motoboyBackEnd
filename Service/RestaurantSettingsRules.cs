@@ -57,6 +57,7 @@ namespace APIBack.Service
                 TaxaEntregaFixa = Money(request.TaxaEntregaFixa, "taxa de entrega fixa", 10_000),
                 TaxaEntregaPorKm = Money(request.TaxaEntregaPorKm, "taxa de entrega por km", 1_000),
                 TempoPreparoMin = Minutes(request.TempoPreparoMin, "tempo de preparo", 600),
+                EntregaGratisAcimaDe = Money(request.EntregaGratisAcimaDe, "entrega gratis acima de", 100_000),
             };
         }
 

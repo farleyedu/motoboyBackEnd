@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using APIBack.DTOs.Delivery;
 using APIBack.Model.Delivery;
 
@@ -31,7 +32,8 @@ namespace APIBack.Service
             double latitude,
             double longitude,
             PedidoOrigem.OriginRules rules,
-            decimal? feeOverride)
+            decimal? feeOverride,
+            IReadOnlyList<DeliveryZonaDto>? zonas = null)
         {
             var warnings = new List<string>();
             void Violation(int status, string code, string message)
@@ -75,15 +77,41 @@ namespace APIBack.Service
             }
             else
             {
-                fee = ComputeFee(settings, distance);
+                fee = ComputeFee(settings, distance, zonas);
+                // Isencao so no caminho calculado: taxa informada manualmente (atendente) e uma decisao
+                // dele, a isencao automatica nao a sobrescreve.
+                if (settings.EntregaGratisAcimaDe is { } threshold && threshold > 0 && subtotal >= threshold)
+                {
+                    fee = 0m;
+                }
             }
 
             return new StoreRulesResult { DeliveryFee = fee, DistanceKm = distance, Warnings = warnings };
         }
 
-        /// <summary>Taxa fixa + taxa por km x distancia (so quando ha distancia). Arredondada a 2 casas.</summary>
-        public static decimal ComputeFee(RestaurantSettingsDto settings, double? distanceKm)
+        /// <summary>Zona ativa de menor raio que ainda cobre a distancia; null sem zona ou sem distancia.</summary>
+        public static DeliveryZonaDto? ResolveZone(IReadOnlyList<DeliveryZonaDto>? zonas, double? distanceKm)
         {
+            if (!distanceKm.HasValue || zonas is not { Count: > 0 }) return null;
+            return zonas
+                .Where(z => z.Ativo && (double)z.RaioAteKm >= distanceKm.Value)
+                .OrderBy(z => z.RaioAteKm)
+                .FirstOrDefault();
+        }
+
+        /// <summary>
+        /// Com zona ativa cobrindo a distancia, usa a taxa da zona (menor raio que ainda cobre).
+        /// Sem zona (ou sem distancia), cai no calculo antigo: taxa fixa + taxa por km x distancia.
+        /// Arredondada a 2 casas.
+        /// </summary>
+        public static decimal ComputeFee(RestaurantSettingsDto settings, double? distanceKm, IReadOnlyList<DeliveryZonaDto>? zonas = null)
+        {
+            var zona = ResolveZone(zonas, distanceKm);
+            if (zona != null)
+            {
+                return decimal.Round(zona.Taxa, 2);
+            }
+
             var fee = settings.TaxaEntregaFixa ?? 0m;
             var perKm = settings.TaxaEntregaPorKm ?? 0m;
             if (perKm > 0 && distanceKm.HasValue)

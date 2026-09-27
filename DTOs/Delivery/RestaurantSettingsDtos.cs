@@ -32,6 +32,8 @@ namespace APIBack.DTOs.Delivery
         public decimal? TaxaEntregaPorKm { get; set; }
         /// <summary>Tempo medio de preparo, em minutos.</summary>
         public int? TempoPreparoMin { get; set; }
+        /// <summary>Subtotal a partir do qual a taxa de entrega vira zero. Null = nunca isenta.</summary>
+        public decimal? EntregaGratisAcimaDe { get; set; }
     }
 
     /// <summary>Substitui todos os campos acima (menos id e nome): o formulario sempre manda o conjunto.</summary>
@@ -53,5 +55,6 @@ namespace APIBack.DTOs.Delivery
         public decimal? TaxaEntregaFixa { get; set; }
         public decimal? TaxaEntregaPorKm { get; set; }
         public int? TempoPreparoMin { get; set; }
+        public decimal? EntregaGratisAcimaDe { get; set; }
     }
 }

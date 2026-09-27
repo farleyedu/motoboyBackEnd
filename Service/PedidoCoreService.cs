@@ -23,21 +23,59 @@ namespace APIBack.Service
         private readonly IPedidoQueueRepository _queue;
         private readonly IRestaurantSettingsRepository _restaurant;
         private readonly ICardapioRepository _cardapio;
+        private readonly IDeliveryZonaRepository _zonas;
+        private readonly IHorarioOperacaoRepository _horarios;
 
         public PedidoCoreService(
             IPedidoQueueRepository queue,
             IRestaurantSettingsRepository restaurant,
-            ICardapioRepository cardapio)
+            ICardapioRepository cardapio,
+            IDeliveryZonaRepository zonas,
+            IHorarioOperacaoRepository horarios)
         {
             _queue = queue;
             _restaurant = restaurant;
             _cardapio = cardapio;
+            _zonas = zonas;
+            _horarios = horarios;
         }
 
         public async Task<CreatedPedidoDto> CreateAsync(Guid estabelecimentoId, int actorUserId, CreatePedidoRequest request, string? idempotencyKey)
         {
             var order = await BuildAsync(estabelecimentoId, request, idempotencyKey);
-            return await _queue.CreatePedidoAsync(estabelecimentoId, actorUserId, order);
+            var created = await _queue.CreatePedidoAsync(estabelecimentoId, actorUserId, order);
+            if (!created.JaExistia && string.Equals(created.Status, "pendente", StringComparison.OrdinalIgnoreCase))
+            {
+                await TryAutoAssignAsync(estabelecimentoId, actorUserId, created.Id);
+            }
+            return created;
+        }
+
+        /// <summary>
+        /// Autoatribuicao (Fase 2 de Configuracoes): so age quando ha EXATAMENTE um motoboy disponivel
+        /// (FindSingleAvailableMotoboyAsync nunca escolhe entre varios). E uma conveniencia: qualquer
+        /// falha aqui e ignorada, o pedido ja foi criado e continua na fila normal para o atendente
+        /// atribuir manualmente.
+        /// </summary>
+        private async Task TryAutoAssignAsync(Guid estabelecimentoId, int actorUserId, int pedidoId)
+        {
+            try
+            {
+                var delivery = await _queue.GetSettingsAsync(estabelecimentoId);
+                if (delivery is not { AutoatribuirMotoboy: true })
+                {
+                    return;
+                }
+                var motoboyId = await _queue.FindSingleAvailableMotoboyAsync(estabelecimentoId);
+                if (motoboyId.HasValue)
+                {
+                    await _queue.AssignAsync(estabelecimentoId, actorUserId, motoboyId.Value, pedidoId);
+                }
+            }
+            catch (DeliveryDomainException)
+            {
+                // Autoatribuicao e conveniencia; nunca derruba a criacao do pedido, que ja aconteceu.
+            }
         }
 
         public async Task<CreatedPedidoDto> UpdateAsync(Guid estabelecimentoId, int actorUserId, int pedidoId, CreatePedidoRequest request)
@@ -78,19 +116,33 @@ namespace APIBack.Service
 
             var restaurant = await _restaurant.GetAsync(estabelecimentoId)
                 ?? throw new DeliveryDomainException(404, "ESTABELECIMENTO_NOT_FOUND", "Estabelecimento nao encontrado.");
+            var delivery = await _queue.GetSettingsAsync(estabelecimentoId);
 
             // Sem previsao informada vale o prazo padrao do estabelecimento (mesma regra do pedido manual).
-            if (!request.PrevisaoMinutos.HasValue)
+            if (!request.PrevisaoMinutos.HasValue && delivery != null)
             {
-                var delivery = await _queue.GetSettingsAsync(estabelecimentoId);
-                if (delivery != null)
+                request.PrevisaoMinutos = delivery.DefaultDeliveryMinutes;
+            }
+
+            // So nas origens estritas (cliente/IA, sem atendente controlando): a loja pode recusar fora
+            // do horario e decidir se o pedido entra direto como Pendente ou precisa de confirmacao.
+            bool? forcarRascunho = null;
+            if (rules.EnforceStoreRules && delivery != null)
+            {
+                if (delivery.BloquearPedidosForaHorario
+                    && !await _horarios.EstaAbertoAgoraAsync(estabelecimentoId, DateTimeOffset.UtcNow, "America/Sao_Paulo"))
                 {
-                    request.PrevisaoMinutos = delivery.DefaultDeliveryMinutes;
+                    throw new DeliveryDomainException(409, "STORE_CLOSED", "O estabelecimento esta fechado no momento.");
+                }
+                if (!delivery.AutoConfirmarPedidos)
+                {
+                    forcarRascunho = true;
                 }
             }
 
             var manual = ManualOrderRules.Validate(request);
             var hasItems = request.Itens is { Count: > 0 };
+            var zonas = await _zonas.ListAtivasOrdenadasAsync(estabelecimentoId);
 
             if (!hasItems)
             {
@@ -100,13 +152,13 @@ namespace APIBack.Service
                         "Informe os itens do pedido: esta origem calcula o preco a partir do cardapio.");
                 }
                 // Formato antigo (items em texto + valor digitado): mantido como esta; so avisos.
-                var legacy = OrderCoreRules.Evaluate(restaurant, manual.Value, manual.Latitude, manual.Longitude, rules, feeOverride: null);
+                var legacy = OrderCoreRules.Evaluate(restaurant, manual.Value, manual.Latitude, manual.Longitude, rules, feeOverride: null, zonas);
                 return manual with
                 {
                     Origem = origin,
                     OrigemRef = origemRef,
                     ConversaId = request.ConversaId,
-                    Rascunho = request.Rascunho,
+                    Rascunho = forcarRascunho ?? request.Rascunho,
                     Avisos = legacy.Warnings
                 };
             }
@@ -128,7 +180,7 @@ namespace APIBack.Service
                     .ToDictionary(product => product.Id);
 
             var priced = PedidoPricing.Price(request.Itens, products, rules.AllowFreeLines);
-            var evaluation = OrderCoreRules.Evaluate(restaurant, priced.Subtotal, manual.Latitude, manual.Longitude, rules, request.TaxaEntrega);
+            var evaluation = OrderCoreRules.Evaluate(restaurant, priced.Subtotal, manual.Latitude, manual.Longitude, rules, request.TaxaEntrega, zonas);
             var total = decimal.Round(priced.Subtotal + evaluation.DeliveryFee, 2);
             if (total > OrderCoreRules.MaxMoney)
             {
@@ -140,7 +192,7 @@ namespace APIBack.Service
                 Origem = origin,
                 OrigemRef = origemRef,
                 ConversaId = request.ConversaId,
-                Rascunho = request.Rascunho,
+                Rascunho = forcarRascunho ?? request.Rascunho,
                 Lines = priced.Lines,
                 Subtotal = priced.Subtotal,
                 TaxaEntrega = evaluation.DeliveryFee,

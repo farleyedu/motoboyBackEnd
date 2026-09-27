@@ -119,6 +119,7 @@ ON CONFLICT (estabelecimento_id) DO UPDATE SET
                     new { Minutes = request.DefaultDeliveryMinutes.Value, EstabelecimentoId = estabelecimentoId }, transaction);
             }
             await SaveReturnSettingsAsync(connection, transaction, estabelecimentoId, request);
+            await SaveOperacaoSettingsAsync(connection, transaction, estabelecimentoId, request);
             var settings = await GetSettingsInternalAsync(connection, transaction, estabelecimentoId);
             await transaction.CommitAsync();
             await LoadSettingsExtrasAsync(settings, estabelecimentoId);
@@ -133,6 +134,7 @@ ON CONFLICT (estabelecimento_id) DO UPDATE SET
         {
             await using var extrasConnection = await _dataSource.OpenConnectionAsync();
             await ApplyReturnSettingsAsync(settings, extrasConnection, estabelecimentoId);
+            await ApplyOperacaoSettingsAsync(settings, extrasConnection, estabelecimentoId);
             settings.OrderWindow = await OrderWindowStore.ReadAsync(extrasConnection, estabelecimentoId);
             settings.DefaultDeliveryMinutes = await OrderWindowStore.ReadDefaultDeliveryMinutesAsync(extrasConnection, estabelecimentoId)
                 ?? ManualOrderRules.DefaultPrevisaoMinutos;

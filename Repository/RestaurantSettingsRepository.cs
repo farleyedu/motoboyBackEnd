@@ -35,7 +35,8 @@ SELECT e.id                  AS EstabelecimentoId,
        e.pedido_minimo       AS PedidoMinimo,
        e.taxa_entrega_fixa   AS TaxaEntregaFixa,
        e.taxa_entrega_por_km AS TaxaEntregaPorKm,
-       e.tempo_preparo_min   AS TempoPreparoMin
+       e.tempo_preparo_min   AS TempoPreparoMin,
+       e.entrega_gratis_acima_de AS EntregaGratisAcimaDe
   FROM estabelecimentos e
  WHERE e.id = @EstabelecimentoId;";
 
@@ -67,6 +68,7 @@ UPDATE estabelecimentos
        taxa_entrega_fixa = @TaxaEntregaFixa,
        taxa_entrega_por_km = @TaxaEntregaPorKm,
        tempo_preparo_min = @TempoPreparoMin,
+       entrega_gratis_acima_de = @EntregaGratisAcimaDe,
        data_atualizacao = NOW()
  WHERE id = @EstabelecimentoId;", new
             {
@@ -86,7 +88,8 @@ UPDATE estabelecimentos
                 request.PedidoMinimo,
                 request.TaxaEntregaFixa,
                 request.TaxaEntregaPorKm,
-                request.TempoPreparoMin
+                request.TempoPreparoMin,
+                request.EntregaGratisAcimaDe
             });
             return affected == 0 ? null : await GetAsync(estabelecimentoId);
         }

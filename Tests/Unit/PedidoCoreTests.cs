@@ -271,6 +271,55 @@ namespace APIBack.Tests.Unit
         {
             Assert.Equal(expected, OrderCoreRules.NormalizePayment(input));
         }
+
+        private static DeliveryZonaDto Zona(string nome, decimal ateKm, decimal taxa, bool ativo = true) =>
+            new() { Id = Guid.NewGuid(), Nome = nome, RaioAteKm = ateKm, Taxa = taxa, Ativo = ativo, Ordem = 0 };
+
+        [Fact]
+        public void Zonas_UsaTaxaDaMenorFaixaQueCobreADistancia()
+        {
+            // loja e endereco ~1,1 km de distancia (mesmo par de pontos do teste Strict_BlocksOutsideRadius)
+            var store = CoreFixtures.Restaurant(fixedFee: 99m, perKm: 99m, lat: -18.90, lon: -48.27);
+            var zonas = new[] { Zona("Zona 1", 2m, 6.90m), Zona("Zona 2", 5m, 8.90m) };
+
+            var result = OrderCoreRules.Evaluate(store, 50m, -18.91, -48.27, Strict, null, zonas);
+
+            Assert.Equal(6.90m, result.DeliveryFee);
+        }
+
+        [Fact]
+        public void Zonas_ForaDeTodasAsFaixas_CaiNoCalculoFixoPorKm()
+        {
+            var store = CoreFixtures.Restaurant(fixedFee: 5m, perKm: 0m, lat: -18.90, lon: -48.27);
+            var zonas = new[] { Zona("Zona 1", 0.5m, 6.90m) }; // endereco fica fora da unica zona (~1,1 km)
+
+            var result = OrderCoreRules.Evaluate(store, 50m, -18.91, -48.27, Strict, null, zonas);
+
+            Assert.Equal(5m, result.DeliveryFee);
+        }
+
+        [Fact]
+        public void Zonas_SemDistancia_IgnoraZonaUsaCalculoAntigo()
+        {
+            var store = CoreFixtures.Restaurant(fixedFee: 7m, lat: null, lon: null);
+            var zonas = new[] { Zona("Zona 1", 5m, 1m) };
+
+            var result = OrderCoreRules.Evaluate(store, 50m, -18.91, -48.27, Strict, null, zonas);
+
+            Assert.Equal(7m, result.DeliveryFee);
+        }
+
+        [Fact]
+        public void EntregaGratisAcimaDe_IsentaSoNoCalculoAutomatico()
+        {
+            var store = CoreFixtures.Restaurant(fixedFee: 10m);
+            store.EntregaGratisAcimaDe = 50m;
+
+            Assert.Equal(0m, OrderCoreRules.Evaluate(store, 50m, -18.91, -48.27, Strict, null).DeliveryFee);
+            Assert.Equal(10m, OrderCoreRules.Evaluate(store, 49.99m, -18.91, -48.27, Strict, null).DeliveryFee);
+            // taxa informada manualmente (atendente) nao e isenta automaticamente
+            Assert.Equal(3m, OrderCoreRules.Evaluate(store, 100m, -18.91, -48.27, Lenient, 3m).DeliveryFee);
+        }
     }
 
     public sealed class PedidoOrigemTests
@@ -352,7 +401,13 @@ namespace APIBack.Tests.Unit
             menu.Setup(m => m.ListarProdutosPublicosPorIdsAsync(It.IsAny<Guid>(), It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<bool>()))
                 .ReturnsAsync(product == null ? Array.Empty<CardapioProduto>() : new[] { product });
 
-            return (new PedidoCoreService(queue.Object, restaurantRepo.Object, menu.Object), queue, menu);
+            var zonas = new Mock<IDeliveryZonaRepository>();
+            zonas.Setup(z => z.ListAtivasOrdenadasAsync(It.IsAny<Guid>())).ReturnsAsync(Array.Empty<DeliveryZonaDto>());
+
+            var horarios = new Mock<IHorarioOperacaoRepository>();
+            horarios.Setup(h => h.EstaAbertoAgoraAsync(It.IsAny<Guid>(), It.IsAny<DateTimeOffset>(), It.IsAny<string>())).ReturnsAsync(true);
+
+            return (new PedidoCoreService(queue.Object, restaurantRepo.Object, menu.Object, zonas.Object, horarios.Object), queue, menu);
         }
 
         private static ManualOrder Captured(Mock<IPedidoQueueRepository> queue) =>

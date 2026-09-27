@@ -18,6 +18,49 @@ namespace APIBack.Repository
             _dataSource = dataSource ?? throw new ArgumentNullException(nameof(dataSource));
         }
 
+        public async Task<ImpactoOperacionalDto> ObterImpactoOperacionalAsync(Guid estabelecimentoId)
+        {
+            await using var connection = await _dataSource.OpenConnectionAsync();
+
+            var tempo = await connection.QuerySingleAsync<TempoRow>(@"
+SELECT
+    COUNT(*) FILTER (WHERE completed_at_utc >= NOW() - INTERVAL '7 days') AS QtdAtual,
+    AVG(EXTRACT(EPOCH FROM (completed_at_utc - assigned_at_utc)) / 60.0)
+        FILTER (WHERE completed_at_utc >= NOW() - INTERVAL '7 days') AS MediaAtual,
+    AVG(EXTRACT(EPOCH FROM (completed_at_utc - assigned_at_utc)) / 60.0)
+        FILTER (WHERE completed_at_utc >= NOW() - INTERVAL '14 days' AND completed_at_utc < NOW() - INTERVAL '7 days') AS MediaAnterior
+  FROM delivery_route_stops
+ WHERE estabelecimento_id = @Id AND stop_status = 'completed' AND completed_at_utc >= NOW() - INTERVAL '14 days';",
+                new { Id = estabelecimentoId });
+
+            decimal? custoMedio = null;
+            if (await PedidoColumnTypes.HasCoreSchemaAsync(connection, null))
+            {
+                custoMedio = await connection.ExecuteScalarAsync<decimal?>(@"
+SELECT AVG(p.taxa_entrega) FROM pedido p
+  JOIN delivery_route_stops s ON s.pedido_id = p.id
+ WHERE s.estabelecimento_id = @Id AND s.stop_status = 'completed' AND s.completed_at_utc >= NOW() - INTERVAL '7 days'
+   AND p.taxa_entrega IS NOT NULL;", new { Id = estabelecimentoId });
+            }
+
+            const int amostraMinima = 5;
+            return new ImpactoOperacionalDto
+            {
+                EntregasConcluidas7Dias = tempo.QtdAtual,
+                AmostraSuficiente = tempo.QtdAtual >= amostraMinima,
+                TempoMedioMinutos = tempo.QtdAtual >= amostraMinima ? tempo.MediaAtual : null,
+                TempoMedioMinutosSemanaAnterior = tempo.MediaAnterior,
+                CustoMedioEntrega = tempo.QtdAtual >= amostraMinima ? custoMedio : null,
+            };
+        }
+
+        private sealed class TempoRow
+        {
+            public int QtdAtual { get; set; }
+            public double? MediaAtual { get; set; }
+            public double? MediaAnterior { get; set; }
+        }
+
         public async Task<PedidoHistoricoDto?> GetAsync(Guid estabelecimentoId, int pedidoId)
         {
             await using var connection = await _dataSource.OpenConnectionAsync();

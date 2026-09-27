@@ -9,6 +9,9 @@ namespace APIBack.Repository.Interface
     {
         // Atendente
         Task<MotoboyQueueDto> AssignAsync(Guid estabelecimentoId, int actorUserId, int motoboyId, int pedidoId);
+        /// <summary>Para autoatribuicao: so devolve um motoboy quando ha EXATAMENTE um disponivel (online,
+        /// sem parada assigned/en_route) - com 0 ou mais de 1, devolve null e o pedido fica na fila normal.</summary>
+        Task<int?> FindSingleAvailableMotoboyAsync(Guid estabelecimentoId);
         Task<MotoboyQueueDto> RemoveAsync(Guid estabelecimentoId, int actorUserId, int pedidoId);
         Task<MotoboyQueueDto> ReorderAsync(Guid estabelecimentoId, int actorUserId, int motoboyId, long expectedVersion, IReadOnlyList<int> pedidoIdsOrdenados);
         Task<MotoboyQueueDto> CompleteCurrentAsync(Guid estabelecimentoId, int actorUserId, int motoboyId);

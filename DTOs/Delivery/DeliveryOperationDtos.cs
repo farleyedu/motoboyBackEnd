@@ -56,6 +56,14 @@ namespace APIBack.DTOs.Delivery
         /// <summary>true quando o estabelecimento nunca salvou parametros (valem os padroes).</summary>
         public bool IsDefault { get; set; }
         public DateTimeOffset? UpdatedAtUtc { get; set; }
+        /// <summary>Pedido de origem cardapio_web/ia_whatsapp entra direto como Pendente; false = entra como Rascunho, esperando confirmacao do atendente.</summary>
+        public bool AutoConfirmarPedidos { get; set; } = true;
+        /// <summary>Pedido Pendente sem motoboy tenta atribuir sozinho quando ha exatamente 1 motoboy disponivel sem rota ativa.</summary>
+        public bool AutoatribuirMotoboy { get; set; }
+        /// <summary>Recusa pedido de cardapio_web/ia_whatsapp fora do horario de funcionamento configurado.</summary>
+        public bool BloquearPedidosForaHorario { get; set; }
+        public bool RetiradaBalcaoAtiva { get; set; }
+        public int? RetiradaTempoPreparoMin { get; set; }
 
         public DeliveryPoliciesDto ToPolicies() => new()
         {
@@ -83,6 +91,16 @@ namespace APIBack.DTOs.Delivery
         public int? StoreReturnRadiusM { get; set; }
         /// <summary>Nulo = manter.</summary>
         public bool? AutoFinishRouteOnReturn { get; set; }
+        /// <summary>Nulo = manter.</summary>
+        public bool? AutoConfirmarPedidos { get; set; }
+        /// <summary>Nulo = manter.</summary>
+        public bool? AutoatribuirMotoboy { get; set; }
+        /// <summary>Nulo = manter.</summary>
+        public bool? BloquearPedidosForaHorario { get; set; }
+        /// <summary>Nulo = manter.</summary>
+        public bool? RetiradaBalcaoAtiva { get; set; }
+        /// <summary>Nulo = manter.</summary>
+        public int? RetiradaTempoPreparoMin { get; set; }
     }
 
     // ---- Acoes do motoboy ------------------------------------------------------

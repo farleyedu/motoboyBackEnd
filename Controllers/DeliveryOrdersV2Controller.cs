@@ -27,6 +27,8 @@ namespace APIBack.Controllers
         private readonly IOperationalSessionService _sessionService;
         private readonly IPedidoHistoricoRepository _historicoRepository;
         private readonly IRestaurantSettingsRepository _restaurantRepository;
+        private readonly IDeliveryZonaRepository _zonaRepository;
+        private readonly IHorarioOperacaoRepository _horarioRepository;
 
         public DeliveryOrdersV2Controller(
             IPedidoQueueService queueService,
@@ -35,7 +37,9 @@ namespace APIBack.Controllers
             IRastreioRepository rastreio,
             IOperationalSessionService sessionService,
             IPedidoHistoricoRepository historicoRepository,
-            IRestaurantSettingsRepository restaurantRepository)
+            IRestaurantSettingsRepository restaurantRepository,
+            IDeliveryZonaRepository zonaRepository,
+            IHorarioOperacaoRepository horarioRepository)
         {
             _queueService = queueService;
             _coreService = coreService;
@@ -44,6 +48,8 @@ namespace APIBack.Controllers
             _sessionService = sessionService;
             _historicoRepository = historicoRepository;
             _restaurantRepository = restaurantRepository;
+            _zonaRepository = zonaRepository;
+            _horarioRepository = horarioRepository;
         }
 
         // ---- Lista e detalhe (tela de Pedidos) ----------------------------------
@@ -178,6 +184,76 @@ namespace APIBack.Controllers
         [RequirePermission("Delivery", "configurar")]
         public Task<IActionResult> UpdateSettings([FromBody] UpdateDeliverySettingsRequest request) =>
             ExecuteAsync((est, userId) => _queueService.UpdateSettingsAsync(est, userId, request));
+
+        // ---- Zonas de entrega (faixa de raio com taxa propria) ------------------
+
+        [HttpGet("zonas")]
+        [RequirePermission("Delivery", "visualizar")]
+        public Task<IActionResult> ListZonas() => ExecuteAsync((est, _) => _zonaRepository.ListAsync(est));
+
+        [HttpPost("zonas")]
+        [RequirePermission("Delivery", "configurar")]
+        public Task<IActionResult> CreateZona([FromBody] SalvarZonaRequest request) =>
+            ExecuteAsync((est, _) => _zonaRepository.CreateAsync(est, DeliveryZonaRules.Validate(request)));
+
+        [HttpPut("zonas/{zonaId:guid}")]
+        [RequirePermission("Delivery", "configurar")]
+        public Task<IActionResult> UpdateZona(Guid zonaId, [FromBody] SalvarZonaRequest request) =>
+            ExecuteAsync(async (est, _) =>
+                await _zonaRepository.UpdateAsync(est, zonaId, DeliveryZonaRules.Validate(request))
+                ?? throw new DeliveryDomainException(404, "ZONA_NOT_FOUND", "Zona nao encontrada."));
+
+        [HttpDelete("zonas/{zonaId:guid}")]
+        [RequirePermission("Delivery", "configurar")]
+        public Task<IActionResult> DeleteZona(Guid zonaId) =>
+            ExecuteAsync(async (est, _) =>
+            {
+                var removed = await _zonaRepository.DeleteAsync(est, zonaId);
+                if (!removed) throw new DeliveryDomainException(404, "ZONA_NOT_FOUND", "Zona nao encontrada.");
+                return new { removida = true };
+            });
+
+        // ---- Horarios especiais (feriados/excecoes) ------------------------------
+
+        [HttpGet("horarios-especiais")]
+        [RequirePermission("Delivery", "visualizar")]
+        public Task<IActionResult> ListHorariosEspeciais() => ExecuteAsync((est, _) => _horarioRepository.ListarEspeciaisAsync(est));
+
+        [HttpPost("horarios-especiais")]
+        [RequirePermission("Delivery", "configurar")]
+        public Task<IActionResult> SaveHorarioEspecial([FromBody] SalvarHorarioEspecialRequest request) =>
+            ExecuteAsync((est, _) => _horarioRepository.SalvarEspecialAsync(est, request));
+
+        [HttpDelete("horarios-especiais/{id:long}")]
+        [RequirePermission("Delivery", "configurar")]
+        public Task<IActionResult> DeleteHorarioEspecial(long id) =>
+            ExecuteAsync(async (est, _) =>
+            {
+                var removed = await _horarioRepository.ExcluirEspecialAsync(est, id);
+                if (!removed) throw new DeliveryDomainException(404, "HORARIO_NOT_FOUND", "Excecao de horario nao encontrada.");
+                return new { removida = true };
+            });
+
+        // ---- Simulador de SLA (usa o mesmo calculo do nucleo de pedido) ---------
+
+        [HttpPost("simulador-sla")]
+        [RequirePermission("Delivery", "visualizar")]
+        public Task<IActionResult> SimularSla([FromBody] SimularSlaRequest request) =>
+            ExecuteAsync(async (est, _) =>
+            {
+                var restaurant = await _restaurantRepository.GetAsync(est)
+                    ?? throw new DeliveryDomainException(404, "ESTABELECIMENTO_NOT_FOUND", "Estabelecimento nao encontrado.");
+                var zonas = await _zonaRepository.ListAtivasOrdenadasAsync(est);
+                var aberto = await _horarioRepository.EstaAbertoAgoraAsync(est, DateTimeOffset.UtcNow, "America/Sao_Paulo");
+                return DeliverySlaSimulator.Simular(restaurant, zonas, request, aberto);
+            });
+
+        // ---- Impacto operacional (metricas reais dos ultimos 7 dias) ------------
+
+        [HttpGet("impacto-operacional")]
+        [RequirePermission("Delivery", "visualizar")]
+        public Task<IActionResult> GetImpactoOperacional() =>
+            ExecuteAsync((est, _) => _historicoRepository.ObterImpactoOperacionalAsync(est));
 
         [HttpPost("pedidos/{pedidoId:int}/atribuir")]
         [RequirePermission("Delivery", "atribuir_motoboy")]

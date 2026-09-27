@@ -126,6 +126,8 @@ builder.Services.AddScoped<AtendimentoService>();
 builder.Services.AddScoped<ICardapioFichaService, CardapioFichaService>();
 builder.Services.AddScoped<IPedidoHistoricoRepository, PedidoHistoricoRepository>();
 builder.Services.AddScoped<IRestaurantSettingsRepository, RestaurantSettingsRepository>();
+builder.Services.AddScoped<IDeliveryZonaRepository, DeliveryZonaRepository>();
+builder.Services.AddScoped<IHorarioOperacaoRepository, HorarioOperacaoRepository>();
 builder.Services.AddScoped<IClienteCadastroRepository, ClienteCadastroRepository>();
 builder.Services.AddScoped<ISimulatedCustomerGuard, SimulatedCustomerGuard>();
 builder.Services.AddScoped<IClienteSimulatorService, ClienteSimulatorService>();

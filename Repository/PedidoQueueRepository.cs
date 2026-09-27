@@ -77,6 +77,21 @@ namespace APIBack.Repository
         // Comandos do atendente
         // =====================================================================
 
+        public async Task<int?> FindSingleAvailableMotoboyAsync(Guid estabelecimentoId)
+        {
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            var ids = (await connection.QueryAsync<int>(@"
+SELECT m.id
+  FROM motoboy m
+  JOIN motoboy_estabelecimento me ON me.motoboy_id = m.id AND me.estabelecimento_id = @Est AND me.ativo = TRUE
+ WHERE EXISTS (SELECT 1 FROM motoboy_active_sessions s
+                WHERE s.motoboy_id = m.id AND s.ended_at_utc IS NULL AND s.revoked_at IS NULL AND s.expires_at_utc > NOW())
+   AND NOT EXISTS (SELECT 1 FROM delivery_route_stops rs
+                     WHERE rs.motoboy_id = m.id AND rs.stop_status IN ('assigned', 'en_route'))
+ LIMIT 2;", new { Est = estabelecimentoId })).ToList();
+            return ids.Count == 1 ? ids[0] : null;
+        }
+
         public async Task<MotoboyQueueDto> AssignAsync(Guid estabelecimentoId, int actorUserId, int motoboyId, int pedidoId)
         {
             await using var connection = await _dataSource.OpenConnectionAsync();
