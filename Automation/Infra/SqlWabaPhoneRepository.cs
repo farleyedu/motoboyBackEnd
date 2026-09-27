@@ -127,6 +127,9 @@ SELECT id_estabelecimento
             if (wabaPhone == null)
                 return false;
 
+            if (string.IsNullOrWhiteSpace(wabaPhone.PhoneNumberId) && string.IsNullOrWhiteSpace(wabaPhone.DisplayPhoneNumber))
+                return false;
+
             var criado = wabaPhone.DataCriacao != default ? DateTime.SpecifyKind(wabaPhone.DataCriacao, DateTimeKind.Utc) : DateTime.UtcNow;
             var atualizado = DateTime.UtcNow;
 
@@ -139,73 +142,61 @@ SELECT id_estabelecimento
                     return false;
                 }
 
-                var targetColumn =
-                    columns.PhoneNumberId && !string.IsNullOrWhiteSpace(wabaPhone.PhoneNumberId) ? "phone_number_id" :
-                    columns.DisplayPhoneNumber && !string.IsNullOrWhiteSpace(wabaPhone.DisplayPhoneNumber) ? "display_phone_number" :
-                    null;
-
-                if (string.IsNullOrWhiteSpace(targetColumn))
+                var setColumns = new System.Collections.Generic.List<string>
                 {
-                    return false;
-                }
-
-                var insertColumns = new System.Collections.Generic.List<string>();
-                var insertValues = new System.Collections.Generic.List<string>();
-                var updateSet = new System.Collections.Generic.List<string>();
+                    "id_estabelecimento = @IdEstabelecimento", "ativo = @Ativo", "descricao = @Descricao", "data_atualizacao = @DataAtualizacao"
+                };
+                var insertColumns = new System.Collections.Generic.List<string> { "id_estabelecimento", "ativo", "descricao", "data_criacao", "data_atualizacao" };
+                var insertValues = new System.Collections.Generic.List<string> { "@IdEstabelecimento", "@Ativo", "@Descricao", "@DataCriacao", "@DataAtualizacao" };
 
                 if (columns.PhoneNumberId && !string.IsNullOrWhiteSpace(wabaPhone.PhoneNumberId))
                 {
+                    setColumns.Add("phone_number_id = @PhoneNumberId");
                     insertColumns.Add("phone_number_id");
                     insertValues.Add("@PhoneNumberId");
-                    if (!string.Equals(targetColumn, "phone_number_id", StringComparison.Ordinal))
-                    {
-                        updateSet.Add("phone_number_id = COALESCE(EXCLUDED.phone_number_id, waba_phone.phone_number_id)");
-                    }
                 }
 
                 if (columns.DisplayPhoneNumber && !string.IsNullOrWhiteSpace(wabaPhone.DisplayPhoneNumber))
                 {
+                    setColumns.Add("display_phone_number = @DisplayPhoneNumber");
                     insertColumns.Add("display_phone_number");
                     insertValues.Add("@DisplayPhoneNumber");
-                    if (!string.Equals(targetColumn, "display_phone_number", StringComparison.Ordinal))
-                    {
-                        updateSet.Add("display_phone_number = COALESCE(EXCLUDED.display_phone_number, waba_phone.display_phone_number)");
-                    }
                 }
 
-                insertColumns.Add("id_estabelecimento");
-                insertColumns.Add("ativo");
-                insertColumns.Add("descricao");
-                insertColumns.Add("data_criacao");
-                insertColumns.Add("data_atualizacao");
-
-                insertValues.Add("@IdEstabelecimento");
-                insertValues.Add("@Ativo");
-                insertValues.Add("@Descricao");
-                insertValues.Add("@DataCriacao");
-                insertValues.Add("@DataAtualizacao");
-
-                updateSet.Add("id_estabelecimento = EXCLUDED.id_estabelecimento");
-                updateSet.Add("ativo = EXCLUDED.ativo");
-                updateSet.Add("descricao = EXCLUDED.descricao");
-                updateSet.Add("data_atualizacao = EXCLUDED.data_atualizacao");
-
-                var sql = $@"INSERT INTO waba_phone ({string.Join(", ", insertColumns)})
-                             VALUES ({string.Join(", ", insertValues)})
-                             ON CONFLICT ({targetColumn})
-                             DO UPDATE SET
-                               {string.Join(", ", updateSet)};";
-                var rows = await connection.ExecuteAsync(sql, new
+                if (insertColumns.Count == 5)
                 {
-                    PhoneNumberId = wabaPhone.PhoneNumberId,
-                    DisplayPhoneNumber = wabaPhone.DisplayPhoneNumber,
+                    // Nenhuma das colunas de identificacao do telefone existe nesta instalacao.
+                    return false;
+                }
+
+                var parameters = new
+                {
+                    wabaPhone.PhoneNumberId,
+                    wabaPhone.DisplayPhoneNumber,
                     IdEstabelecimento = wabaPhone.IdEstabelecimento,
                     Ativo = wabaPhone.Ativo,
                     Descricao = (object?)wabaPhone.Descricao,
                     DataCriacao = criado,
                     DataAtualizacao = atualizado
-                });
-                return rows > 0;
+                };
+
+                // Uma linha por estabelecimento: atualiza se ja existir, senao insere. Antes usava
+                // "ON CONFLICT (phone_number_id) DO UPDATE", que exige uma constraint UNIQUE nessa
+                // coluna - a tabela legada nao tem, entao o INSERT sempre lancava 42P10 (nenhuma
+                // constraint de exclusao ou unicidade corresponde a especificacao ON CONFLICT), o
+                // catch abaixo engolia o erro e o formulario "salvava" sem gravar nada.
+                var updated = await connection.ExecuteAsync(
+                    $"UPDATE waba_phone SET {string.Join(", ", setColumns)} WHERE id_estabelecimento = @IdEstabelecimento;",
+                    parameters);
+
+                if (updated == 0)
+                {
+                    await connection.ExecuteAsync(
+                        $"INSERT INTO waba_phone ({string.Join(", ", insertColumns)}) VALUES ({string.Join(", ", insertValues)});",
+                        parameters);
+                }
+
+                return true;
             }
             catch (Exception ex)
             {

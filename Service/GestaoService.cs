@@ -183,13 +183,18 @@ namespace APIBack.Service
 
             if (_wabaPhoneRepository != null && !string.IsNullOrWhiteSpace(request.WabaPhoneNumberId))
             {
-                await _wabaPhoneRepository.InserirOuAtualizarAsync(new WabaPhone
+                var wabaSaved = await _wabaPhoneRepository.InserirOuAtualizarAsync(new WabaPhone
                 {
                     PhoneNumberId = request.WabaPhoneNumberId,
                     IdEstabelecimento = createdId,
                     Ativo = true,
                     Descricao = request.NomeFantasia
                 });
+                if (!wabaSaved)
+                {
+                    throw new InvalidOperationException(
+                        "Estabelecimento criado, mas nao foi possivel salvar o numero de WhatsApp. Tente novamente em Editar estabelecimento.");
+                }
             }
 
             var created = await _repository.ObterEstabelecimentoAsync(createdId)
@@ -228,13 +233,18 @@ namespace APIBack.Service
 
             if (_wabaPhoneRepository != null && !string.IsNullOrWhiteSpace(request.WabaPhoneNumberId))
             {
-                await _wabaPhoneRepository.InserirOuAtualizarAsync(new WabaPhone
+                var wabaSaved = await _wabaPhoneRepository.InserirOuAtualizarAsync(new WabaPhone
                 {
                     PhoneNumberId = request.WabaPhoneNumberId,
                     IdEstabelecimento = targetEstabelecimentoId,
                     Ativo = true,
                     Descricao = request.NomeFantasia
                 });
+                if (!wabaSaved)
+                {
+                    throw new InvalidOperationException(
+                        "O restante do estabelecimento foi salvo, mas o numero de WhatsApp nao pode ser gravado. Tente novamente.");
+                }
             }
 
             var updated = await _repository.ObterEstabelecimentoAsync(targetEstabelecimentoId)
