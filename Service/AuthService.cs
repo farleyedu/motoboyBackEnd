@@ -1167,33 +1167,8 @@ SELECT  e.id                    AS EstabelecimentoId,
             string? permissoesCustomizadas,
             Guid estabelecimentoId)
         {
-            var permissoes = ParsePermissoesCustomizadas(permissoesCustomizadas);
-            var modulosUi = new List<string>();
-
-            if (estabelecimentoId != Guid.Empty)
-            {
-                var modulosAtivos = await ObterModulosAtivosAsync(connection, estabelecimentoId);
-                modulosUi = ResolveUiModules(string.Empty, modulosAtivos.ToArray());
-                if (modulosAtivos.Count > 0)
-                {
-                    var interseccao = permissoes.Keys
-                        .Where(k => modulosAtivos.Contains(k))
-                        .ToList();
-
-                    // Safety check: se houver ao menos um módulo em comum, filtrar pelo ativo.
-                    if (interseccao.Count > 0)
-                    {
-                        permissoes = permissoes
-                            .Where(kvp => modulosAtivos.Contains(kvp.Key))
-                            .ToDictionary(
-                                kvp => kvp.Key,
-                                kvp => kvp.Value,
-                                StringComparer.OrdinalIgnoreCase);
-                    }
-                }
-            }
-
-            return CardapioPermissionBridge.Apply(permissoes, modulosUi);
+            var modules = await ObterModulosAtivosAsync(connection, estabelecimentoId);
+            return EstablishmentPermissions.Resolve(permissoesCustomizadas, modules.ToArray());
         }
 
         private static Dictionary<string, List<string>> ParsePermissoesCustomizadas(string? raw)

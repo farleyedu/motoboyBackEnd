@@ -15,6 +15,8 @@ namespace APIBack.Attributes
     {
         private readonly string _modulo;
         private readonly string _acao;
+        public string Modulo => _modulo;
+        public string Acao => _acao;
 
         public RequirePermissionAttribute(string modulo, string acao)
         {

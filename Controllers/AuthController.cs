@@ -148,7 +148,6 @@ namespace APIBack.Controllers
 
         [HttpGet("me")]
         [Authorize]
-        [RequirePermission("Configuracoes", "visualizar")]
         [ProducesResponseType(typeof(ApiResponse<MeResponse>), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status401Unauthorized)]
         public IActionResult ObterUsuarioAtual()

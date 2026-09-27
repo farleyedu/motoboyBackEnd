@@ -54,6 +54,25 @@ namespace APIBack.Middleware
             {
                 var payload = jwtService.ValidateToken(token);
 
+                // Resolve permissions from the current membership on every request: old JWTs
+                // must not keep revoked grants or access to a disabled membership.
+                if (!payload.IsSuperAdmin && !payload.MotoboySessionId.HasValue && payload.VinculoId.HasValue)
+                {
+                    var repository = context.RequestServices.GetRequiredService<APIBack.Automation.Repository.Interface.IEstabelecimentoSelectionRepository>();
+                    var membership = await repository.ObterVinculoPorIdAsync(payload.VinculoId.Value);
+                    var user = payload.UserId.HasValue ? await repository.ObterUsuarioAsync(payload.UserId.Value) : null;
+                    if (membership == null || user == null || !user.IsAtivo ||
+                        membership.UsuarioId != payload.UserId || membership.EstabelecimentoId != payload.EstabelecimentoId ||
+                        membership.VinculoAtivo == false || !string.Equals(membership.Status, "ativo", StringComparison.OrdinalIgnoreCase))
+                        return;
+                    var establishment = await repository.ObterEstabelecimentoDetalheAsync(membership.EstabelecimentoId);
+                    if (establishment == null || establishment.Ativo == false) return;
+                    payload.TipoAcesso = APIBack.Security.RoleCatalog.Normalize(membership.TipoAcesso);
+                    payload.EstabelecimentoNome = establishment.Nome;
+                    payload.EstabelecimentoModulosAtivos = APIBack.Model.Gestao.EstabelecimentoModuleMapper.ToUiModules(establishment.Nome, establishment.ModulosAtivosRaw);
+                    payload.Permissoes = APIBack.Security.EstablishmentPermissions.Resolve(membership.PermissoesCustomizadas, establishment.ModulosAtivosRaw);
+                }
+
                 var allowEndedOperationalSession =
                     HttpMethods.IsDelete(context.Request.Method) &&
                     string.Equals(

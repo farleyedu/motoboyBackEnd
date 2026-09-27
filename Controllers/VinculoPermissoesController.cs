@@ -69,9 +69,9 @@ namespace APIBack.Controllers
             Guid vinculoId,
             [FromBody] AtualizarPermissoesVinculoRequest request)
         {
-            if (request?.Permissoes == null || request.Permissoes.Count == 0)
+            if (request?.Permissoes == null)
             {
-                return BadRequest(new { success = false, error = "Informe permissoes com pelo menos um modulo." });
+                return BadRequest(new { success = false, error = "Informe o mapa de permissões." });
             }
 
             var vinculo = await _repository.ObterVinculoPorIdAsync(vinculoId);
@@ -96,6 +96,14 @@ namespace APIBack.Controllers
                 return erroHierarquia!;
             }
 
+            var validation = EstablishmentPermissions.Validate(request.Permissoes,
+                HttpContext.GetPermissoes(), HttpContext.IsSuperAdmin(), ParsePermissoesStored(vinculo.PermissoesCustomizadas));
+            if (validation != null)
+                return BadRequest(new { success = false, error = validation });
+
+            // Explicit empty modules prevent the legacy cardapio bridge from restoring revoked actions.
+            foreach (var module in EstablishmentPermissions.Catalog().Keys)
+                request.Permissoes.TryAdd(module, new List<string>());
             var payload = JsonSerializer.Serialize(request.Permissoes);
             await _repository.AtualizarPermissoesCustomizadasAsync(vinculoId, payload);
 

@@ -97,15 +97,8 @@ namespace APIBack.Automation.Services
 
             var modulosUi = ResolveUiModules(estabelecimento.Nome, estabelecimento.ModulosAtivosRaw)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var permissoes = CardapioPermissionBridge.Apply(
-                ParsePermissoesCustomizadas(vinculo?.PermissoesCustomizadas),
-                modulosUi.ToArray());
-            if (modulosUi.Count > 0 && permissoes.Keys.Any(k => modulosUi.Contains(k)))
-            {
-                permissoes = permissoes
-                    .Where(kvp => modulosUi.Contains(kvp.Key))
-                    .ToDictionary(kvp => kvp.Key, kvp => kvp.Value, StringComparer.OrdinalIgnoreCase);
-            }
+            var permissoes = APIBack.Security.EstablishmentPermissions.Resolve(
+                vinculo?.PermissoesCustomizadas, estabelecimento.ModulosAtivosRaw);
             await TryEnsureAgenteSeNecessarioAsync(usuario.Id, permissoes);
 
             var payload = new JwtPayload
