@@ -129,7 +129,7 @@ FROM estabelecimentos WHERE id = @id", new { id });
         var unidades = (await connection.QueryAsync<UnidadeResumoDto>(@"
 SELECT e.id AS Id, e.nome_fantasia AS NomeFantasia, e.cidade AS Cidade, e.uf AS Uf, (e.id = @id) AS EhAtual
   FROM estabelecimentos e
- WHERE e.empresa_id = (SELECT empresa_id FROM estabelecimentos WHERE id = @id)
+ WHERE e.id_empresa = (SELECT id_empresa FROM estabelecimentos WHERE id = @id)
  ORDER BY e.nome_fantasia", new { id })).ToList();
 
         var itens = new List<CompletudeItemDto>
