@@ -1,8 +1,8 @@
 -- Seed pontual: preenche com dados coerentes SO os campos que ainda estao vazios do
 -- estabelecimento de teste "ZippyGo Restaurante" (id fixo, o mesmo usado nas sessoes de teste
 -- desta fundacao). So preenche o que esta NULL/vazio -- nunca sobrescreve o que ja foi editado a
--- mao. Idempotente (rodar de novo nao muda nada depois da primeira vez). Nao e aplicada
--- automaticamente.
+-- mao. Idempotente (rodar de novo nao muda nada depois da primeira vez). Aplicada
+-- automaticamente no boot.
 BEGIN;
 
 UPDATE estabelecimentos SET

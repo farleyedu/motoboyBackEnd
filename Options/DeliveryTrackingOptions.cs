@@ -26,5 +26,11 @@ namespace APIBack.Options
         public int OutboxPollIntervalMilliseconds { get; set; } = 1000;
         public int OutboxBatchSize { get; set; } = 100;
         public string MigrationsPath { get; set; } = "Migrations/Delivery";
+        /// <summary>
+        /// Pastas extras varridas junto com <see cref="MigrationsPath"/> no boot (mesmo lock,
+        /// mesmo ledger). Financeiro fica de fora de proposito: ainda nao tem seed/versionamento
+        /// e so deve rodar quando o modulo for ativado de verdade.
+        /// </summary>
+        public string[] AdditionalMigrationsPaths { get; set; } = new[] { "Migrations/Negocio" };
     }
 }

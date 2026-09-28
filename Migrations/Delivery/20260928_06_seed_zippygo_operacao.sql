@@ -1,6 +1,6 @@
 -- Seed pontual do estabelecimento de teste ZippyGo Restaurante: zonas de entrega, entrega gratis e
 -- regras de operacao coerentes. So preenche o que ainda nao foi definido (idempotente; nunca
--- sobrescreve o que ja foi editado a mao). Nao e aplicada automaticamente.
+-- sobrescreve o que ja foi editado a mao). Aplicada automaticamente no boot.
 BEGIN;
 
 UPDATE estabelecimentos

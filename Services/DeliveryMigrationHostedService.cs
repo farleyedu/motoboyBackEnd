@@ -74,7 +74,14 @@ namespace APIBack.Services
                 throw new InvalidOperationException($"Diretorio de migrations do delivery nao encontrado: {migrationsPath}");
             }
 
-            var files = Directory.GetFiles(migrationsPath, "*.sql")
+            var scannedPaths = new[] { migrationsPath }
+                .Concat(_options.AdditionalMigrationsPaths.Select(relative => Path.GetFullPath(Path.Combine(
+                    _environment.ContentRootPath,
+                    relative.Replace('/', Path.DirectorySeparatorChar)))))
+                .Where(Directory.Exists);
+
+            var files = scannedPaths
+                .SelectMany(path => Directory.GetFiles(path, "*.sql"))
                 .Where(path =>
                 {
                     var name = Path.GetFileName(path);

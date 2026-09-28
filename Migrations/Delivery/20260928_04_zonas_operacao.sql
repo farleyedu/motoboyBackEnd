@@ -4,8 +4,8 @@ BEGIN;
 -- Fase 2 da reconstrucao de Configuracoes (tela "Delivery e operacao").
 -- Tudo aditivo; estabelecimento sem zona cadastrada continua usando so
 -- taxa_entrega_fixa/taxa_entrega_por_km como hoje (OrderCoreRules.ComputeFee
--- cai pro calculo antigo quando nao ha zona ativa). Nao aplicada
--- automaticamente (ApplyMigrationsOnStartup=false em producao).
+-- cai pro calculo antigo quando nao ha zona ativa). Aplicada automaticamente
+-- no boot (ApplyMigrationsOnStartup=true em producao).
 -- ---------------------------------------------------------------------------
 
 ALTER TABLE estabelecimentos

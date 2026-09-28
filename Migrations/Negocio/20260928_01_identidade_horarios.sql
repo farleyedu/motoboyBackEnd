@@ -1,7 +1,7 @@
 -- Fase 1 da reconstrucao de Configuracoes: identidade visual, contato publico, redes sociais e
--- horario de funcionamento (compartilhado pelas telas Negocio e Delivery). Nao e aplicada
--- automaticamente (so Migrations/Delivery tem hosted service); aplicar manualmente. Aditivo,
--- idempotente.
+-- horario de funcionamento (compartilhado pelas telas Negocio e Delivery). Aplicada
+-- automaticamente no boot (DeliveryMigrationHostedService varre Migrations/Negocio junto com
+-- Migrations/Delivery). Aditivo, idempotente.
 BEGIN;
 
 ALTER TABLE estabelecimentos
