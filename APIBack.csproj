@@ -26,6 +26,8 @@
 
   <ItemGroup>
     <Content Include="Migrations\Delivery\*.sql" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Migrations\Negocio\*.sql" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Migrations\Financeiro\*.sql" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

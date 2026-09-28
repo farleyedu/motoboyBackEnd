@@ -25,7 +25,7 @@ UPDATE delivery_settings
    SET retirada_balcao_ativa = TRUE,
        retirada_tempo_preparo_min = COALESCE(retirada_tempo_preparo_min, 15),
        autoatribuir_motoboy = TRUE
- WHERE id_estabelecimento = '97c5d396-a42c-47de-8f21-a38c3f79d118';
+ WHERE estabelecimento_id = '97c5d396-a42c-47de-8f21-a38c3f79d118';
 
 INSERT INTO estabelecimento_horario_especial (estabelecimento_id, data, fechado, motivo)
 VALUES
