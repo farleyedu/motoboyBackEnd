@@ -90,12 +90,17 @@ namespace APIBack.Service
         /// numa coluna sem fuso deslocaria os horarios em 3h no painel.
         /// <paramref name="minutesParameter"/> soma minutos (ex.: previsao de entrega).
         /// </summary>
-        public static string LocalNowSql(string? postgresDataType, string? minutesParameter = null)
+        public static string LocalNowSql(string? postgresDataType, string? minutesParameter = null, int? maxLength = null)
         {
             var interval = string.IsNullOrEmpty(minutesParameter)
                 ? string.Empty
                 : $" + make_interval(mins => {minutesParameter})";
             var localNow = $"((NOW() AT TIME ZONE '{OperationalDayWindow.TimeZoneId}'){interval})";
+            // "YYYY-MM-DD HH24:MI:SS" tem 19 caracteres: cabe num text/varchar largo, mas uma
+            // varchar(5) legada (ex.: horario_pedido, previsao_entrega) so guarda "HH:MI" mesmo
+            // -- gravar o timestamp inteiro nela sempre estourava com 22001 (value too long),
+            // sem apontar a coluna na excecao.
+            var narrowVarchar = maxLength is > 0 and <= 5;
 
             return (postgresDataType ?? string.Empty).Trim().ToLowerInvariant() switch
             {
@@ -103,7 +108,8 @@ namespace APIBack.Service
                 "timestamp without time zone" => localNow,
                 "time without time zone" or "time with time zone" => $"{localNow}::time",
                 "date" => $"{localNow}::date",
-                // text/varchar ou desconhecido: texto sem fuso, que o leitor interpreta como local.
+                _ when narrowVarchar => $"to_char({localNow}, 'HH24:MI')",
+                // text/varchar largo ou desconhecido: texto sem fuso, que o leitor interpreta como local.
                 _ => $"to_char({localNow}, 'YYYY-MM-DD HH24:MI:SS')"
             };
         }

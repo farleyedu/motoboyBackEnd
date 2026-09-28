@@ -143,6 +143,23 @@ namespace APIBack.Tests.Unit
                 DeliveryRules.LocalNowSql("timestamp with time zone", "@PrevisaoMinutos"));
         }
 
+        [Fact]
+        public void LocalNowSql_NarrowVarchar_FormatsAsTimeOnly()
+        {
+            // horario_pedido/previsao_entrega no schema legado sao varchar(5) ("HH:MI"): o
+            // timestamp completo ("YYYY-MM-DD HH24:MI:SS", 19 chars) sempre estourava 22001
+            // sem apontar a coluna na excecao. Regressao do bug real.
+            var sql = DeliveryRules.LocalNowSql("character varying", maxLength: 5);
+            Assert.Contains("'HH24:MI'", sql);
+            Assert.DoesNotContain("YYYY-MM-DD", sql);
+        }
+
+        [Fact]
+        public void LocalNowSql_WideVarchar_KeepsFullTimestamp()
+        {
+            Assert.Contains("YYYY-MM-DD", DeliveryRules.LocalNowSql("character varying", maxLength: 50));
+        }
+
         // ---- Dia operacional ---------------------------------------------------------
 
         [Fact]

@@ -13,23 +13,24 @@ namespace APIBack.Repository
     /// </summary>
     internal static class PedidoColumnTypes
     {
-        private static readonly ConcurrentDictionary<string, string> Cache = new();
+        private static readonly ConcurrentDictionary<string, (string DataType, int? MaxLength)> Cache = new();
 
         public static async Task<string> LocalNowSqlAsync(
             NpgsqlConnection connection, NpgsqlTransaction? transaction, string column, string? minutesParameter = null)
         {
-            if (!Cache.TryGetValue(column, out var dataType))
+            if (!Cache.TryGetValue(column, out var info))
             {
-                dataType = await connection.ExecuteScalarAsync<string?>(@"
-SELECT data_type
+                var row = await connection.QuerySingleOrDefaultAsync<(string? DataType, int? MaxLength)>(@"
+SELECT data_type AS DataType, character_maximum_length AS MaxLength
   FROM information_schema.columns
  WHERE table_schema = current_schema()
    AND table_name = 'pedido'
-   AND column_name = @Column;", new { Column = column }, transaction) ?? "text";
-                Cache[column] = dataType;
+   AND column_name = @Column;", new { Column = column }, transaction);
+                info = (row.DataType ?? "text", row.MaxLength);
+                Cache[column] = info;
             }
 
-            return DeliveryRules.LocalNowSql(dataType, minutesParameter);
+            return DeliveryRules.LocalNowSql(info.DataType, minutesParameter, info.MaxLength);
         }
 
         private static volatile bool _routeRulesKnown;
