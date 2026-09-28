@@ -36,8 +36,9 @@ namespace APIBack.Services
         /// Falha de migration do delivery NAO derruba a API: antes, uma migration com erro
         /// (ex.: min(uuid) no PG &lt; 17) impedia o boot e tirava do ar WhatsApp, reservas e
         /// todos os outros modulos. Agora o erro e registrado como critico, a transacao do
-        /// arquivo e desfeita pelo proprio Postgres e so o delivery fica comprometido ate a
-        /// correcao. A proxima subida retoma do arquivo que falhou (ledger).
+        /// arquivo e desfeita explicitamente (ROLLBACK) e o restante dos arquivos pendentes
+        /// continua sendo aplicado no mesmo boot -- um arquivo com bug nao trava os que vem
+        /// depois dele. O arquivo que falhou fica pendente e e retentado no proximo boot.
         /// </summary>
         public async Task StartAsync(CancellationToken cancellationToken)
         {
@@ -106,8 +107,30 @@ namespace APIBack.Services
                     }
 
                     _logger.LogInformation("Aplicando migration do delivery {Version}.", version);
-                    var sql = await File.ReadAllTextAsync(path, cancellationToken);
-                    await connection.ExecuteAsync(new CommandDefinition(sql, cancellationToken: cancellationToken));
+                    try
+                    {
+                        var sql = await File.ReadAllTextAsync(path, cancellationToken);
+                        await connection.ExecuteAsync(new CommandDefinition(sql, cancellationToken: cancellationToken));
+                    }
+                    catch (Exception ex) when (ex is not OperationCanceledException)
+                    {
+                        // Um arquivo com erro nao pode travar todos os que vem depois dele pra sempre
+                        // (ja aconteceu: 20260926_01 falhou e bloqueou a fase 1/2 inteira por boots
+                        // seguidos). Loga como critico, desfaz a transacao abortada pra liberar a
+                        // conexao pros proximos arquivos, e segue -- este arquivo fica pendente e e'
+                        // retentado no proximo boot.
+                        _logger.LogCritical(ex,
+                            "Migration do delivery {Version} falhou; ela fica pendente e as demais continuam sendo aplicadas.",
+                            version);
+                        try
+                        {
+                            await connection.ExecuteAsync(new CommandDefinition("ROLLBACK;", cancellationToken: cancellationToken));
+                        }
+                        catch
+                        {
+                            // Sem transacao aberta pra desfazer; nada a fazer.
+                        }
+                    }
                 }
             }
             finally

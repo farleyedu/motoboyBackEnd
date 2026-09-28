@@ -9,19 +9,28 @@ BEGIN;
 -- Aditiva e idempotente.
 -- ---------------------------------------------------------------------------
 
-CREATE TABLE IF NOT EXISTS cardapio_produto_atendimento (
-    produto_id              UUID PRIMARY KEY REFERENCES cardapio_produto (id) ON DELETE CASCADE,
-    id_estabelecimento      UUID NOT NULL,
-    apelidos                TEXT[] NOT NULL DEFAULT '{}',
-    instrucoes              TEXT NULL,
-    restricoes              TEXT NULL,
-    tempo_extra_preparo_min INTEGER NULL
-        CHECK (tempo_extra_preparo_min IS NULL OR tempo_extra_preparo_min BETWEEN 0 AND 240),
-    updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+-- cardapio_produto nao existe em todo ambiente (ex.: banco atual nao tem o modulo de cardapio
+-- provisionado). Sem a tabela-alvo a FK nao pode ser criada -- pula em silencio nesse caso; se o
+-- modulo de cardapio for provisionado depois, uma nova migration cria cardapio_produto_atendimento
+-- (o padrao de todo o resto do sistema: versao aplicada uma vez so, nunca reexecutada).
+DO $$
+BEGIN
+    IF to_regclass('cardapio_produto') IS NOT NULL THEN
+        CREATE TABLE IF NOT EXISTS cardapio_produto_atendimento (
+            produto_id              UUID PRIMARY KEY REFERENCES cardapio_produto (id) ON DELETE CASCADE,
+            id_estabelecimento      UUID NOT NULL,
+            apelidos                TEXT[] NOT NULL DEFAULT '{}',
+            instrucoes              TEXT NULL,
+            restricoes              TEXT NULL,
+            tempo_extra_preparo_min INTEGER NULL
+                CHECK (tempo_extra_preparo_min IS NULL OR tempo_extra_preparo_min BETWEEN 0 AND 240),
+            updated_at              TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        );
 
-CREATE INDEX IF NOT EXISTS ix_cardapio_produto_atendimento_estab
-    ON cardapio_produto_atendimento (id_estabelecimento);
+        CREATE INDEX IF NOT EXISTS ix_cardapio_produto_atendimento_estab
+            ON cardapio_produto_atendimento (id_estabelecimento);
+    END IF;
+END $$;
 
 INSERT INTO delivery_tracking_schema_versions (version)
 VALUES ('20260926_01_produto_atendimento')
