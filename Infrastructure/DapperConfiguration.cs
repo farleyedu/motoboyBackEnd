@@ -22,6 +22,7 @@ namespace APIBack.Infrastructure
             DefaultTypeMap.MatchNamesWithUnderscores = true;
 
             SqlMapper.AddTypeHandler(new DateTimeOffsetTypeHandler());
+            SqlMapper.AddTypeHandler(new DateOnlyTypeHandler());
         }
     }
 }
