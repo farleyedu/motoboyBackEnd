@@ -348,7 +348,7 @@ SELECT id FROM conversas WHERE id_cliente = @Id AND id_estabelecimento = @Est OR
             if (SimuladorPedidoRules.RequiresMotoboy(alvo))
             {
                 motoboyEscolhido ??= await PickMotoboyAsync(est);
-                if (alvo == SimAlvo.Entregue && await HasCurrentDeliveryAsync(motoboyEscolhido.Value))
+                if (alvo == SimAlvo.Entregue && await HasAnotherCurrentDeliveryAsync(motoboyEscolhido.Value, null))
                 {
                     throw new DeliveryDomainException(409, "MOTOBOY_BUSY",
                         "Este motoboy ja esta em outra entrega: o pedido ficaria na fila e nao poderia ser entregue agora. Conclua a entrega dele ou escolha outro motoboy.");
@@ -383,10 +383,14 @@ SELECT id FROM conversas WHERE id_cliente = @Id AND id_estabelecimento = @Est OR
         }
 
         /// <summary>O motoboy ja tem uma entrega em rota (a atual)? Entao um pedido novo entra na fila atras dela.</summary>
-        private async Task<bool> HasCurrentDeliveryAsync(int motoboyId)
+        private async Task<bool> HasAnotherCurrentDeliveryAsync(int motoboyId, int? pedidoId)
         {
             await using var connection = await _dataSource.OpenConnectionAsync();
-            return await connection.ExecuteScalarAsync<bool>("SELECT EXISTS (SELECT 1 FROM delivery_route_stops WHERE motoboy_id = @Id AND stop_status = 'en_route');", new { Id = motoboyId });
+            return await connection.ExecuteScalarAsync<bool>(@"
+SELECT EXISTS (
+    SELECT 1 FROM delivery_route_stops
+     WHERE motoboy_id = @Id AND stop_status = 'en_route'
+       AND (@PedidoId IS NULL OR pedido_id <> @PedidoId));", new { Id = motoboyId, PedidoId = pedidoId });
         }
 
         public async Task<SimPedidoDetalheDto> CloneAsync(Guid est, int userId, int pedidoId)
@@ -568,6 +572,11 @@ SELECT m.id
             if (SimuladorPedidoRules.RequiresMotoboy(alvo))
             {
                 motoboy = motoboyId ?? row.MotoboyId ?? await PickMotoboyAsync(est);
+                if (alvo == SimAlvo.Entregue && await HasAnotherCurrentDeliveryAsync(motoboy.Value, pedidoId))
+                {
+                    throw new DeliveryDomainException(409, "MOTOBOY_BUSY",
+                        "Este motoboy ja esta em outra entrega. Conclua ou transfira a entrega atual, ou escolha outro motoboy.");
+                }
             }
 
             // 1) Volta a uma base pendente quando o alvo esta "atras" do estado atual.

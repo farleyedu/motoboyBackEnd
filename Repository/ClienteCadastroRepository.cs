@@ -169,6 +169,21 @@ RETURNING{Columns};", Parameters(estabelecimentoId, clienteId, input, 0), transa
         public async Task<bool> DeactivateAsync(Guid estabelecimentoId, Guid clienteId)
         {
             await using var connection = await _dataSource.OpenConnectionAsync();
+            var hasActiveOrders = await connection.ExecuteScalarAsync<bool>(@"
+SELECT EXISTS (
+    SELECT 1
+      FROM clientes c
+      JOIN pedido p ON p.id_estabelecimento = c.id_estabelecimento
+       AND RIGHT(regexp_replace(COALESCE(p.telefone_cliente::text, ''), '\D', '', 'g'), 10)
+         = RIGHT(regexp_replace(COALESCE(c.telefone_e164, ''), '\D', '', 'g'), 10)
+     WHERE c.id = @Id AND c.id_estabelecimento = @EstabelecimentoId
+       AND COALESCE(p.status_pedido, 1) IN (1, 2, 5, 6));",
+                new { Id = clienteId, EstabelecimentoId = estabelecimentoId });
+            if (hasActiveOrders)
+            {
+                throw new DeliveryDomainException(409, "CLIENT_HAS_ACTIVE_ORDERS",
+                    "Este cliente ainda tem pedido em andamento. Conclua, transfira ou cancele o pedido antes de desativar.");
+            }
             var affected = await connection.ExecuteAsync(@"
 UPDATE clientes SET ativo = FALSE, data_atualizacao = NOW()
  WHERE id = @Id AND id_estabelecimento = @EstabelecimentoId AND ativo = TRUE;",
