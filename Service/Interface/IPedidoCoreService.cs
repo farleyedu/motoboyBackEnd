@@ -11,8 +11,11 @@ namespace APIBack.Service.Interface
     /// </summary>
     public interface IPedidoCoreService
     {
-        /// <summary>Cria (ou devolve, se a origem/origemRef ja existe) um pedido.</summary>
-        Task<CreatedPedidoDto> CreateAsync(Guid estabelecimentoId, int actorUserId, CreatePedidoRequest request, string? idempotencyKey);
+        /// <summary>
+        /// Cria (ou devolve, se a origem/origemRef ja existe) um pedido. <paramref name="autoAtribuir"/> = false
+        /// ignora a autoatribuicao de motoboy da loja (o simulador cria sempre no primeiro status).
+        /// </summary>
+        Task<CreatedPedidoDto> CreateAsync(Guid estabelecimentoId, int actorUserId, CreatePedidoRequest request, string? idempotencyKey, bool autoAtribuir = true);
 
         /// <summary>Substitui os dados de um pedido em Rascunho ou Pendente (sem motoboy).</summary>
         Task<CreatedPedidoDto> UpdateAsync(Guid estabelecimentoId, int actorUserId, int pedidoId, CreatePedidoRequest request);

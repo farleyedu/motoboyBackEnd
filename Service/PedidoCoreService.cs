@@ -40,11 +40,11 @@ namespace APIBack.Service
             _horarios = horarios;
         }
 
-        public async Task<CreatedPedidoDto> CreateAsync(Guid estabelecimentoId, int actorUserId, CreatePedidoRequest request, string? idempotencyKey)
+        public async Task<CreatedPedidoDto> CreateAsync(Guid estabelecimentoId, int actorUserId, CreatePedidoRequest request, string? idempotencyKey, bool autoAtribuir = true)
         {
             var order = await BuildAsync(estabelecimentoId, request, idempotencyKey);
             var created = await _queue.CreatePedidoAsync(estabelecimentoId, actorUserId, order);
-            if (!created.JaExistia && string.Equals(created.Status, "pendente", StringComparison.OrdinalIgnoreCase))
+            if (autoAtribuir && !created.JaExistia && string.Equals(created.Status, "pendente", StringComparison.OrdinalIgnoreCase))
             {
                 await TryAutoAssignAsync(estabelecimentoId, actorUserId, created.Id);
             }

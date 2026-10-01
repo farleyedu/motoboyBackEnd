@@ -357,7 +357,8 @@ SELECT id FROM conversas WHERE id_cliente = @Id AND id_estabelecimento = @Est OR
 
             await using var connection = await _dataSource.OpenConnectionAsync();
 
-            var created = await _core.CreateAsync(est, userId, create, null);
+            // Sem autoatribuicao: o pedido nasce no primeiro status; avancar (ou criar ja em outro status) so por escolha do usuario.
+            var created = await _core.CreateAsync(est, userId, create, null, autoAtribuir: false);
             await connection.ExecuteAsync("UPDATE pedido SET canal = @Canal WHERE id = @Id AND id_estabelecimento = @Est;",
                 new { Canal = canal, Id = created.Id, Est = est });
 
