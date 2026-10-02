@@ -157,7 +157,10 @@ namespace APIBack.Service
                 var wabaPhoneNumberId = _wabaPhoneRepository != null
                     ? await _wabaPhoneRepository.ObterPhoneNumberIdPorEstabelecimentoAsync(row.Id)
                     : null;
-                dtos.Add(MapEstabelecimento(row, wabaPhoneNumberId));
+                var wabaDisplayPhone = _wabaPhoneRepository != null
+                    ? await _wabaPhoneRepository.ObterDisplayPhonePorEstabelecimentoAsync(row.Id)
+                    : null;
+                dtos.Add(MapEstabelecimento(row, wabaPhoneNumberId, wabaDisplayPhone));
             }
             return dtos;
         }
@@ -181,15 +184,9 @@ namespace APIBack.Service
 
             var createdId = await _repository.CriarEstabelecimentoAsync(request);
 
-            if (_wabaPhoneRepository != null && !string.IsNullOrWhiteSpace(request.WabaPhoneNumberId))
+            if (_wabaPhoneRepository != null && HasWabaData(request))
             {
-                var wabaSaved = await _wabaPhoneRepository.InserirOuAtualizarAsync(new WabaPhone
-                {
-                    PhoneNumberId = request.WabaPhoneNumberId,
-                    IdEstabelecimento = createdId,
-                    Ativo = true,
-                    Descricao = request.NomeFantasia
-                });
+                var wabaSaved = await _wabaPhoneRepository.InserirOuAtualizarAsync(BuildWabaPhone(request, createdId));
                 if (!wabaSaved)
                 {
                     throw new InvalidOperationException(
@@ -204,7 +201,11 @@ namespace APIBack.Service
                 ? await _wabaPhoneRepository.ObterPhoneNumberIdPorEstabelecimentoAsync(createdId)
                 : null;
 
-            return MapEstabelecimento(created, createdWabaId);
+            var createdWabaDisplay = _wabaPhoneRepository != null
+                ? await _wabaPhoneRepository.ObterDisplayPhonePorEstabelecimentoAsync(createdId)
+                : null;
+
+            return MapEstabelecimento(created, createdWabaId, createdWabaDisplay);
         }
 
         public async Task<GestaoEstabelecimentoDto> AtualizarEstabelecimentoAsync(
@@ -231,15 +232,9 @@ namespace APIBack.Service
 
             await _repository.AtualizarEstabelecimentoAsync(targetEstabelecimentoId, request);
 
-            if (_wabaPhoneRepository != null && !string.IsNullOrWhiteSpace(request.WabaPhoneNumberId))
+            if (_wabaPhoneRepository != null && HasWabaData(request))
             {
-                var wabaSaved = await _wabaPhoneRepository.InserirOuAtualizarAsync(new WabaPhone
-                {
-                    PhoneNumberId = request.WabaPhoneNumberId,
-                    IdEstabelecimento = targetEstabelecimentoId,
-                    Ativo = true,
-                    Descricao = request.NomeFantasia
-                });
+                var wabaSaved = await _wabaPhoneRepository.InserirOuAtualizarAsync(BuildWabaPhone(request, targetEstabelecimentoId));
                 if (!wabaSaved)
                 {
                     throw new InvalidOperationException(
@@ -254,7 +249,11 @@ namespace APIBack.Service
                 ? await _wabaPhoneRepository.ObterPhoneNumberIdPorEstabelecimentoAsync(targetEstabelecimentoId)
                 : null;
 
-            return MapEstabelecimento(updated, updatedWabaId);
+            var updatedWabaDisplay = _wabaPhoneRepository != null
+                ? await _wabaPhoneRepository.ObterDisplayPhonePorEstabelecimentoAsync(targetEstabelecimentoId)
+                : null;
+
+            return MapEstabelecimento(updated, updatedWabaId, updatedWabaDisplay);
         }
 
         public async Task AtualizarStatusEstabelecimentoAsync(
@@ -860,6 +859,7 @@ namespace APIBack.Service
                 BuildFieldPath(fieldPrefix, "tempoPreparoMin"),
                 "Tempo de preparo deve ser maior que zero.",
                 errors);
+            ValidateWabaFields(request, fieldPrefix, errors);
 
             if (externalErrors == null)
             {
@@ -915,7 +915,51 @@ namespace APIBack.Service
             };
         }
 
-        private static GestaoEstabelecimentoDto MapEstabelecimento(GestaoEstabelecimentoRow row, string? wabaPhoneNumberId = null)
+        private static bool HasWabaData(SalvarEstabelecimentoRequest request) =>
+            !string.IsNullOrWhiteSpace(request.WabaPhoneNumberId) || !string.IsNullOrWhiteSpace(request.WabaDisplayPhone);
+
+        private static WabaPhone BuildWabaPhone(SalvarEstabelecimentoRequest request, Guid estabelecimentoId) => new()
+        {
+            PhoneNumberId = request.WabaPhoneNumberId?.Trim() ?? string.Empty,
+            DisplayPhoneNumber = NormalizeWabaDisplayPhone(request.WabaDisplayPhone),
+            IdEstabelecimento = estabelecimentoId,
+            Ativo = true,
+            Descricao = request.NomeFantasia
+        };
+
+        /// <summary>So digitos com DDI; sem DDI (10 ou 11 digitos) assume Brasil. Vazio vira null (nao apaga o que ja existe).</summary>
+        private static string? NormalizeWabaDisplayPhone(string? value)
+        {
+            var digits = ExtractDigits(value ?? string.Empty);
+            if (digits.Length == 0) return null;
+            return digits.Length is 10 or 11 ? "55" + digits : digits;
+        }
+
+        private static void ValidateWabaFields(SalvarEstabelecimentoRequest request, string fieldPrefix, Dictionary<string, List<string>> errors)
+        {
+            var phoneNumberId = request.WabaPhoneNumberId?.Trim();
+            if (!string.IsNullOrEmpty(phoneNumberId))
+            {
+                // O ID da Meta tem uns 15 digitos; um telefone tem no maximo 13. Digitar o telefone aqui quebra o envio.
+                if (!phoneNumberId.All(char.IsDigit) || phoneNumberId.Length <= 13)
+                {
+                    AddError(errors, BuildFieldPath(fieldPrefix, "wabaPhoneNumberId"),
+                        "Informe o Phone Number ID da Meta (numero longo, ~15 digitos), nao o telefone. O telefone vai no campo ao lado.");
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(request.WabaDisplayPhone))
+            {
+                var normalized = NormalizeWabaDisplayPhone(request.WabaDisplayPhone) ?? string.Empty;
+                if (normalized.Length < 12 || normalized.Length > 15 || normalized[0] == '0')
+                {
+                    AddError(errors, BuildFieldPath(fieldPrefix, "wabaDisplayPhone"),
+                        "Telefone do WhatsApp invalido. Use DDI + DDD + numero (ex.: 5534991480112).");
+                }
+            }
+        }
+
+        private static GestaoEstabelecimentoDto MapEstabelecimento(GestaoEstabelecimentoRow row, string? wabaPhoneNumberId = null, string? wabaDisplayPhone = null)
         {
             var normalizedStatus = NormalizeStatus(row.Status);
 
@@ -960,7 +1004,8 @@ namespace APIBack.Service
                     ? "inativo"
                     : normalizedStatus,
                 Endereco = BuildAddress(row),
-                WabaPhoneNumberId = wabaPhoneNumberId
+                WabaPhoneNumberId = wabaPhoneNumberId,
+                WabaDisplayPhone = wabaDisplayPhone
             };
         }
 

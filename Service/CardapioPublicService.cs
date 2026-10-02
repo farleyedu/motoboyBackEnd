@@ -413,6 +413,46 @@ namespace APIBack.Service
             return true;
         }
 
+        private static readonly string[] TiposDeVia =
+        {
+            "alameda", "avenida", "av", "travessa", "rodovia", "estrada", "praca", "praça", "viela", "beco", "via", "largo"
+        };
+
+        /// <summary>"Rua Alameda Dos Mandarins" vira "Alameda Dos Mandarins": o tipo de via repetido atrapalha a busca.</summary>
+        internal static string LimparLogradouro(string? logradouro)
+        {
+            var texto = (logradouro ?? string.Empty).Trim();
+            var partes = texto.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (partes.Length > 2
+                && partes[0].Equals("rua", StringComparison.OrdinalIgnoreCase)
+                && TiposDeVia.Contains(partes[1].TrimEnd('.').ToLowerInvariant()))
+            {
+                return string.Join(' ', partes.Skip(1));
+            }
+
+            return texto;
+        }
+
+        internal static IReadOnlyList<string> MontarConsultasEndereco(CardapioEnderecoArmazenado e)
+        {
+            var rua = LimparLogradouro(e.Logradouro);
+            var cidadeUf = $"{e.Cidade} - {e.Uf}, Brasil";
+            var consultas = new List<string>();
+
+            if (!string.IsNullOrWhiteSpace(e.Numero))
+            {
+                consultas.Add($"{rua}, {e.Numero}, {e.Bairro}, {cidadeUf}");
+                consultas.Add($"{rua}, {e.Numero}, {cidadeUf}");
+            }
+
+            consultas.Add($"{rua}, {e.Bairro}, {cidadeUf}");
+
+            var cep = new string((e.Cep ?? string.Empty).Where(char.IsDigit).ToArray());
+            if (cep.Length == 8) consultas.Add($"{cep[..5]}-{cep[5..]}, {cidadeUf}");
+
+            return consultas.Distinct().ToList();
+        }
+
         /// <summary>
         /// A coordenada e obrigatoria no pedido do delivery e nunca e inventada: vem da busca do endereco, feita aqui
         /// no servidor para o cliente nao poder mandar uma posicao qualquer. Endereco nao encontrado = erro de validacao.
@@ -432,14 +472,19 @@ namespace APIBack.Service
             };
 
             (string Latitude, string Longitude)? coordenadas = null;
-            try
+            // Do mais preciso ao mais aproximado: o mapa as vezes nao conhece o bairro ou o numero, mas acha a rua ou o CEP.
+            foreach (var consulta in MontarConsultasEndereco(armazenado))
             {
-                coordenadas = await _localizacao.ObterCoordenadasAsync(
-                    $"{armazenado.Logradouro}, {armazenado.Numero}, {armazenado.Bairro}, {armazenado.Cidade} - {armazenado.Uf}, Brasil");
-            }
-            catch (Exception)
-            {
-                // Falha do servico de mapas: o cliente tenta de novo, o pedido nao e criado sem posicao.
+                try
+                {
+                    coordenadas = await _localizacao.ObterCoordenadasAsync(consulta);
+                }
+                catch (Exception)
+                {
+                    // Falha do servico de mapas: tenta a proxima; sem posicao o pedido nao e criado.
+                }
+
+                if (coordenadas != null) break;
             }
 
             if (coordenadas == null
