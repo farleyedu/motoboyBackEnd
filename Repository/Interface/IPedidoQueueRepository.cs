@@ -31,7 +31,9 @@ namespace APIBack.Repository.Interface
         Task<MotoboyQueueDto> DeliverCurrentAsync(Guid estabelecimentoId, int motoboyId, string? codigo);
         Task<MotoboyQueueDto> FailCurrentAsync(Guid estabelecimentoId, int motoboyId, string motivo);
         Task<MotoboyQueueDto> RefuseAsync(Guid estabelecimentoId, int motoboyId, int pedidoId, string? motivo);
+        Task<MotoboyQueueDto> RefuseRouteByMotoboyAsync(Guid estabelecimentoId, int motoboyId, IReadOnlyList<int> pedidoIds, string? motivo);
         Task<MotoboyQueueDto> ReorderByMotoboyAsync(Guid estabelecimentoId, int motoboyId, long expectedVersion, IReadOnlyList<int> pedidoIdsOrdenados);
+        Task<MotoboyQueueDto> AcceptRouteByMotoboyAsync(Guid estabelecimentoId, int motoboyId, long expectedVersion, IReadOnlyList<int> pedidoIdsOrdenados);
 
         // Transferencia
         Task<IReadOnlyList<TransferTargetDto>> GetTransferTargetsAsync(Guid estabelecimentoId, int motoboyId);

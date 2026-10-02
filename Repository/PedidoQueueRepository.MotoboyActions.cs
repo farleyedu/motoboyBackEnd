@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading.Tasks;
 using APIBack.DTOs.Delivery;
 using APIBack.Hubs;
+using APIBack.Model.Enum;
 using APIBack.Service;
 using Dapper;
 using Npgsql;
@@ -130,6 +132,62 @@ namespace APIBack.Repository
             return snapshot;
         }
 
+        /// <summary>
+        /// Recusa a oferta inteira antes da coleta. Diferente da recusa individual,
+        /// uma ancora nao obriga o motoboy a aceitar toda a rota: o lote completo volta
+        /// ao estabelecimento em uma unica transacao.
+        /// </summary>
+        public async Task<MotoboyQueueDto> RefuseRouteByMotoboyAsync(
+            Guid estabelecimentoId, int motoboyId, IReadOnlyList<int> pedidoIds, string? motivo)
+        {
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+
+            var settings = await GetSettingsInternalAsync(connection, transaction, estabelecimentoId);
+            if (!settings.AllowMotoboyRefuse)
+            {
+                throw new DeliveryDomainException(403, "REFUSE_NOT_ALLOWED", "Este estabelecimento nao permite recusar rotas.");
+            }
+
+            await LockQueuesAsync(connection, transaction, estabelecimentoId, motoboyId);
+            var activeStops = await GetActiveStopsAsync(connection, transaction, estabelecimentoId, motoboyId, forUpdate: true);
+            var requested = pedidoIds.ToHashSet();
+            var stops = activeStops.Where(stop => requested.Contains(stop.PedidoId)).ToList();
+            var missing = pedidoIds.Where(id => stops.All(stop => stop.PedidoId != id)).ToList();
+            if (missing.Count > 0)
+            {
+                throw new DeliveryDomainException(409, "QUEUE_CHANGED", "A rota mudou antes da recusa. Recarregue e tente novamente.", new { pedidoIds = missing });
+            }
+            if (stops.Any(stop => stop.PickedUpAtUtc.HasValue))
+            {
+                throw new DeliveryDomainException(409, "ALREADY_PICKED_UP", "A rota ja possui pedido coletado e nao pode mais ser recusada.");
+            }
+
+            await connection.ExecuteAsync(@"
+UPDATE delivery_route_stops
+   SET stop_status = 'refused', refused_at_utc = NOW(), refusal_reason = @Motivo, updated_at_utc = NOW()
+ WHERE id = ANY(@StopIds);",
+                new { StopIds = stops.Select(stop => stop.Id).ToArray(), Motivo = motivo }, transaction);
+            foreach (var stop in stops)
+            {
+                await ReturnPedidoToPendingAsync(connection, transaction, stop.PedidoId);
+                await CancelPendingTransfersForPedidoAsync(connection, transaction, estabelecimentoId, stop.PedidoId,
+                    "Rota recusada pelo motoboy.");
+            }
+
+            var eligibility = await GetEligibilityAsync(connection, transaction, motoboyId, estabelecimentoId);
+            if (stops.Any(stop => stop.StopStatus == "en_route") && eligibility.SessionId.HasValue)
+            {
+                await TryPromoteNextAsync(connection, transaction, estabelecimentoId, motoboyId);
+            }
+            await RenumberActiveStopsAsync(connection, transaction, estabelecimentoId, motoboyId);
+            var version = await BumpRouteVersionAsync(connection, transaction, estabelecimentoId, motoboyId);
+            await EmitQueueEventAsync(connection, transaction, estabelecimentoId, motoboyId, null, "route_refused", version, eligibility.SessionId);
+            var snapshot = await BuildSnapshotAsync(connection, transaction, estabelecimentoId, motoboyId, version);
+            await transaction.CommitAsync();
+            return snapshot;
+        }
+
         public async Task<MotoboyQueueDto> ReorderByMotoboyAsync(
             Guid estabelecimentoId, int motoboyId, long expectedVersion, IReadOnlyList<int> pedidoIdsOrdenados)
         {
@@ -143,6 +201,84 @@ namespace APIBack.Repository
             }
 
             var snapshot = await ReorderInternalAsync(connection, transaction, estabelecimentoId, motoboyId, expectedVersion, pedidoIdsOrdenados);
+            await transaction.CommitAsync();
+            return snapshot;
+        }
+
+        /// <summary>
+        /// Confirma a oferta na ordem escolhida. Antes da coleta a primeira parada ainda
+        /// pode mudar; nesse caso o marcador en_route passa atomicamente para a nova
+        /// primeira entrega. Depois da coleta, a entrega atual continua fixa.
+        /// </summary>
+        public async Task<MotoboyQueueDto> AcceptRouteByMotoboyAsync(
+            Guid estabelecimentoId, int motoboyId, long expectedVersion, IReadOnlyList<int> pedidoIdsOrdenados)
+        {
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+
+            var currentVersion = await LockQueuesAsync(connection, transaction, estabelecimentoId, motoboyId);
+            if (currentVersion != expectedVersion)
+            {
+                throw new DeliveryDomainException(409, "QUEUE_VERSION_CONFLICT",
+                    "A rota foi modificada. Confira a nova sequencia antes de aceitar.", new { currentVersion });
+            }
+
+            var activeStops = await GetActiveStopsAsync(connection, transaction, estabelecimentoId, motoboyId, forUpdate: true);
+            if (!activeStops.Select(stop => stop.PedidoId).ToHashSet().SetEquals(pedidoIdsOrdenados))
+            {
+                throw new DeliveryDomainException(422, "QUEUE_MISMATCH", "A lista enviada nao corresponde a rota atual.");
+            }
+
+            var changed = activeStops.Select(stop => stop.PedidoId)
+                .Where((id, index) => pedidoIdsOrdenados[index] != id)
+                .Any();
+            var settings = await GetSettingsInternalAsync(connection, transaction, estabelecimentoId);
+            if (changed && !settings.AllowMotoboyReorder)
+            {
+                throw new DeliveryDomainException(403, "REORDER_NOT_ALLOWED", "Este estabelecimento nao permite reordenar a fila.");
+            }
+
+            var current = activeStops.FirstOrDefault(stop => stop.StopStatus == "en_route");
+            if (current?.PickedUpAtUtc.HasValue == true && pedidoIdsOrdenados[0] != current.PedidoId)
+            {
+                throw new DeliveryDomainException(409, "ALREADY_PICKED_UP", "A entrega coletada precisa continuar na primeira posicao.");
+            }
+
+            var lockedIds = await GetLockedPedidoIdsAsync(connection, transaction, estabelecimentoId, motoboyId);
+            RouteLockRules.ValidateReorder(
+                activeStops.Select(stop => new RouteSlot(stop.PedidoId, lockedIds.Contains(stop.PedidoId), stop.StopStatus == "en_route")).ToList(),
+                pedidoIdsOrdenados);
+
+            if (changed)
+            {
+                if (current != null && pedidoIdsOrdenados[0] != current.PedidoId)
+                {
+                    await connection.ExecuteAsync(
+                        "UPDATE delivery_route_stops SET stop_status = 'assigned', started_at_utc = NULL, updated_at_utc = NOW() WHERE id = @Id;",
+                        new { current.Id }, transaction);
+                    await connection.ExecuteAsync(
+                        "UPDATE pedido SET status_pedido = @Atribuido, horario_saida = NULL WHERE id = @PedidoId;",
+                        new { Atribuido = (int)StatusPedido.Atribuido, current.PedidoId }, transaction);
+                }
+
+                await ApplyPositionsAsync(connection, transaction, estabelecimentoId, motoboyId, pedidoIdsOrdenados);
+                if (current == null || pedidoIdsOrdenados[0] != current.PedidoId)
+                {
+                    var newCurrent = activeStops.Single(stop => stop.PedidoId == pedidoIdsOrdenados[0]);
+                    await connection.ExecuteAsync(
+                        "UPDATE delivery_route_stops SET stop_status = 'en_route', started_at_utc = NOW(), updated_at_utc = NOW() WHERE id = @Id;",
+                        new { newCurrent.Id }, transaction);
+                    var saidaNow = await PedidoColumnTypes.LocalNowSqlAsync(connection, transaction, "horario_saida");
+                    await connection.ExecuteAsync(
+                        $"UPDATE pedido SET status_pedido = @EmRota, horario_saida = {saidaNow} WHERE id = @PedidoId;",
+                        new { EmRota = (int)StatusPedido.EmRota, newCurrent.PedidoId }, transaction);
+                }
+            }
+
+            var version = await BumpRouteVersionAsync(connection, transaction, estabelecimentoId, motoboyId);
+            var sessionId = await GetSessionIdAsync(connection, transaction, motoboyId, estabelecimentoId);
+            await EmitQueueEventAsync(connection, transaction, estabelecimentoId, motoboyId, null, "route_accepted", version, sessionId);
+            var snapshot = await BuildSnapshotAsync(connection, transaction, estabelecimentoId, motoboyId, version);
             await transaction.CommitAsync();
             return snapshot;
         }

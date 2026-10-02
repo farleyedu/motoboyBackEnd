@@ -258,9 +258,12 @@ namespace APIBack.DTOs.Tracking
 
     public class DeliveryRouteAssignedRealtimeDto
     {
+        public Guid NotificationId { get; set; } = Guid.NewGuid();
         public int MotoboyId { get; set; }
         public Guid? EstabelecimentoId { get; set; }
         public List<int> PedidoIds { get; set; } = new();
+        public List<int> LockedPedidoIds { get; set; } = new();
+        public long? QueueVersion { get; set; }
         public DateTimeOffset UpdatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
     }
 }

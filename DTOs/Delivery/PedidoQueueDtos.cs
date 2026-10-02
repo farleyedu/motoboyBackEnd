@@ -30,6 +30,23 @@ namespace APIBack.DTOs.Delivery
         public List<int> PedidoIdsOrdenados { get; set; } = new();
     }
 
+    /// <summary>
+    /// Publica, depois da montagem da fila, uma unica notificacao de rota para o
+    /// simulador/app. A posicao travada e a propria posicao do pedido na lista.
+    /// </summary>
+    public sealed class NotifyRouteAssignedRequest
+    {
+        public int MotoboyId { get; set; }
+        public List<int> PedidoIdsOrdenados { get; set; } = new();
+        public List<int> LockedPedidoIds { get; set; } = new();
+    }
+
+    public sealed class RefuseRouteRequest
+    {
+        public List<int> PedidoIds { get; set; } = new();
+        public string? Motivo { get; set; }
+    }
+
     public sealed class RouteStopDto
     {
         public int PedidoId { get; set; }
