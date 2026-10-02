@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
+using APIBack.Automation.Interfaces;
 using APIBack.DTOs.Cardapio;
 using APIBack.Model.Cardapio;
 using APIBack.Repository.Interface;
@@ -14,10 +16,20 @@ namespace APIBack.Service
     {
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
         private readonly ICardapioRepository _repository;
+        private readonly ILocalizacaoService _localizacao;
+        private readonly IWabaPhoneRepository _waba;
+        private readonly ICardapioPedidoWebService _confirmacao;
 
-        public CardapioPublicService(ICardapioRepository repository)
+        public CardapioPublicService(
+            ICardapioRepository repository,
+            ILocalizacaoService localizacao,
+            IWabaPhoneRepository waba,
+            ICardapioPedidoWebService confirmacao)
         {
             _repository = repository;
+            _localizacao = localizacao;
+            _waba = waba;
+            _confirmacao = confirmacao;
         }
 
         public async Task<CardapioPublicoCatalogoDto> ObterCatalogoAsync(Guid? idEstabelecimento, string? estabelecimentoSlug, string? busca)
@@ -123,14 +135,22 @@ namespace APIBack.Service
                 var adicionaisSelecionados = new List<CardapioCotacaoAdicionalDto>();
                 var adicionaisPorGrupo = new Dictionary<Guid, int>();
                 var itensGrupo = produto.Grupos
-                    .SelectMany(grupo => grupo.Itens.Select(item => new { Grupo = grupo, Item = item }))
+                    .SelectMany(grupo => grupo.Itens.Select(item => (Grupo: grupo, Item: item)))
                     .ToDictionary(x => x.Item.Id, x => x);
+                var itensJaSelecionados = new HashSet<Guid>();
 
                 foreach (var adicionalId in selectedIds)
                 {
-                    if (!itensGrupo.TryGetValue(adicionalId, out var itemGrupo))
+                    if (!itensGrupo.TryGetValue(adicionalId, out var itemGrupo)
+                        && !TryResolverAdicionalGlobal(produto, adicionalId, out itemGrupo))
                     {
                         ValidationUtils.AddError(errors, $"{fieldPrefix}.adicionalItemIds", "Um adicional informado nao pertence ao produto.");
+                        continue;
+                    }
+
+                    // O mesmo adicional mandado pelo id do item e pelo id do adicional conta uma vez so.
+                    if (!itensJaSelecionados.Add(itemGrupo.Item.Id))
+                    {
                         continue;
                     }
 
@@ -208,18 +228,25 @@ namespace APIBack.Service
             var errors = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
             var nomeCliente = ValidationUtils.TrimToNull(request.Cliente?.Nome);
             var telefone = ValidationUtils.TrimToNull(request.Cliente?.Telefone);
+            var telefoneE164 = PhoneKey.ToE164(telefone);
             var email = ValidationUtils.TrimToNull(request.Cliente?.Email);
             var formaPagamento = ValidationUtils.TrimToNull(request.FormaPagamento);
             var observacoes = ValidationUtils.TrimToNull(request.Observacoes);
 
-            if (string.IsNullOrWhiteSpace(nomeCliente) || nomeCliente.Length > 160)
+            // Os limites abaixo sao os do pedido do delivery (ManualOrderRules): passar daqui so falharia no aceite.
+            if (string.IsNullOrWhiteSpace(nomeCliente) || nomeCliente.Length > 150)
             {
-                ValidationUtils.AddError(errors, "cliente.nome", "Nome do cliente e obrigatorio e deve ter no maximo 160 caracteres.");
+                ValidationUtils.AddError(errors, "cliente.nome", "Nome do cliente e obrigatorio e deve ter no maximo 150 caracteres.");
             }
 
             if (string.IsNullOrWhiteSpace(telefone) || telefone.Length > 40)
             {
                 ValidationUtils.AddError(errors, "cliente.telefone", "Telefone do cliente e obrigatorio e deve ter no maximo 40 caracteres.");
+            }
+            else if (telefoneE164 == null)
+            {
+                // O pedido so chega ao restaurante depois de uma conversa por este numero: precisa ser um WhatsApp com DDD.
+                ValidationUtils.AddError(errors, "cliente.telefone", "Informe o WhatsApp com DDD, por exemplo (34) 99999-0000.");
             }
 
             if (!string.IsNullOrWhiteSpace(email) && email.Length > 320)
@@ -227,14 +254,15 @@ namespace APIBack.Service
                 ValidationUtils.AddError(errors, "cliente.email", "Email do cliente deve ter no maximo 320 caracteres.");
             }
 
-            if (!string.IsNullOrWhiteSpace(formaPagamento) && formaPagamento.Length > 120)
+            if (!string.IsNullOrWhiteSpace(formaPagamento) && formaPagamento.Length > 50)
             {
-                ValidationUtils.AddError(errors, "formaPagamento", "Forma de pagamento deve ter no maximo 120 caracteres.");
+                ValidationUtils.AddError(errors, "formaPagamento", "Forma de pagamento deve ter no maximo 50 caracteres.");
             }
 
-            if (!string.IsNullOrWhiteSpace(observacoes) && observacoes.Length > 2000)
+            // 500: e o limite do pedido real do delivery, onde estas observacoes vao parar no aceite.
+            if (!string.IsNullOrWhiteSpace(observacoes) && observacoes.Length > 500)
             {
-                ValidationUtils.AddError(errors, "observacoes", "Observacoes do pedido devem ter no maximo 2000 caracteres.");
+                ValidationUtils.AddError(errors, "observacoes", "Observacoes do pedido devem ter no maximo 500 caracteres.");
             }
 
             var cotacao = await CalcularCotacaoAsync(request);
@@ -258,34 +286,41 @@ namespace APIBack.Service
                 }
                 else
                 {
-                    if (string.IsNullOrWhiteSpace(ValidationUtils.TrimToNull(endereco.Logradouro)))
-                    {
-                        ValidationUtils.AddError(errors, "enderecoEntrega.logradouro", "Logradouro e obrigatorio.");
-                    }
+                    ValidarTexto(errors, "enderecoEntrega.logradouro", "Logradouro", endereco.Logradouro, 200, obrigatorio: true);
+                    ValidarTexto(errors, "enderecoEntrega.numero", "Numero", endereco.Numero, 20, obrigatorio: true);
+                    ValidarTexto(errors, "enderecoEntrega.complemento", "Complemento", endereco.Complemento, 100, obrigatorio: false);
+                    ValidarTexto(errors, "enderecoEntrega.bairro", "Bairro", endereco.Bairro, 100, obrigatorio: true);
+                    ValidarTexto(errors, "enderecoEntrega.cidade", "Cidade", endereco.Cidade, 100, obrigatorio: true);
 
-                    if (string.IsNullOrWhiteSpace(ValidationUtils.TrimToNull(endereco.Numero)))
-                    {
-                        ValidationUtils.AddError(errors, "enderecoEntrega.numero", "Numero e obrigatorio.");
-                    }
-
-                    if (string.IsNullOrWhiteSpace(ValidationUtils.TrimToNull(endereco.Bairro)))
-                    {
-                        ValidationUtils.AddError(errors, "enderecoEntrega.bairro", "Bairro e obrigatorio.");
-                    }
-
-                    if (string.IsNullOrWhiteSpace(ValidationUtils.TrimToNull(endereco.Cidade)))
-                    {
-                        ValidationUtils.AddError(errors, "enderecoEntrega.cidade", "Cidade e obrigatoria.");
-                    }
-
-                    if (string.IsNullOrWhiteSpace(ValidationUtils.TrimToNull(endereco.Uf)))
+                    var uf = ValidationUtils.TrimToNull(endereco.Uf);
+                    if (string.IsNullOrWhiteSpace(uf))
                     {
                         ValidationUtils.AddError(errors, "enderecoEntrega.uf", "UF e obrigatoria.");
+                    }
+                    else if (uf.Length != 2 || !uf.All(char.IsLetter))
+                    {
+                        ValidationUtils.AddError(errors, "enderecoEntrega.uf", "UF deve ter 2 letras, por exemplo MG.");
+                    }
+
+                    var cep = ValidationUtils.TrimToNull(endereco.Cep);
+                    if (cep != null && cep.Count(char.IsDigit) != 8)
+                    {
+                        ValidationUtils.AddError(errors, "enderecoEntrega.cep", "CEP deve ter 8 digitos.");
                     }
                 }
             }
 
             ValidationUtils.ThrowIfAny(errors);
+
+            // Sem numero de WhatsApp na loja nao ha como confirmar o pedido: melhor recusar aqui do que deixar o cliente esperando.
+            if (string.IsNullOrWhiteSpace(await _waba.ObterDisplayPhonePorEstabelecimentoAsync(estabelecimento.Id)))
+            {
+                throw new InvalidOperationException("Este restaurante ainda nao recebe pedidos pelo WhatsApp.");
+            }
+
+            var enderecoArmazenado = cotacao.TipoEntrega == "entrega"
+                ? await LocalizarEnderecoAsync(request.EnderecoEntrega!)
+                : null;
 
             var codigo = GerarCodigoPedido();
             var entity = new CardapioPedidoPublico
@@ -295,7 +330,7 @@ namespace APIBack.Service
                 Status = "pendente",
                 TipoEntrega = cotacao.TipoEntrega,
                 NomeCliente = nomeCliente!,
-                TelefoneCliente = telefone!,
+                TelefoneCliente = telefoneE164!,
                 EmailCliente = email,
                 FormaPagamento = formaPagamento,
                 Observacoes = observacoes,
@@ -305,28 +340,123 @@ namespace APIBack.Service
                 Total = cotacao.Total,
                 ItensJson = JsonSerializer.Serialize(new
                 {
-                    solicitado = request.Itens,
+                    // O que o servidor entendeu (ids de ITEM de adicional ja resolvidos): e o que o aceite manda ao nucleo.
+                    solicitado = cotacao.Itens.Select(item => new CardapioPedidoPublicoItemRequest
+                    {
+                        ProdutoId = item.ProdutoId,
+                        Quantidade = item.Quantidade,
+                        Observacao = item.Observacao,
+                        AdicionalItemIds = item.AdicionaisSelecionados.Select(adicional => adicional.Id).ToList()
+                    }).ToList(),
                     cotacao = cotacao.Itens
                 }, JsonOptions),
-                EnderecoEntregaJson = request.EnderecoEntrega == null
+                EnderecoEntregaJson = enderecoArmazenado == null
                     ? null
-                    : JsonSerializer.Serialize(request.EnderecoEntrega, JsonOptions),
+                    : JsonSerializer.Serialize(enderecoArmazenado, JsonOptions),
                 StatusPagamento = "pendente"
             };
 
             entity.Id = await _repository.CriarPedidoPublicoAsync(entity);
 
+            // Janela de 24h aberta: mandamos a mensagem e o pedido ja vai ao restaurante. Fechada: o cliente recebe um codigo.
+            var confirmacao = await _confirmacao.IniciarConfirmacaoAsync(
+                entity, string.IsNullOrWhiteSpace(estabelecimento.NomePublico) ? estabelecimento.NomeFantasia : estabelecimento.NomePublico!);
+
             return new CardapioPedidoPublicoCriadoDto
             {
                 Id = entity.Id,
                 Codigo = entity.Codigo,
-                Status = entity.Status,
+                Status = confirmacao.Modo == "mensagem_enviada" ? CardapioPedidoStatus.AguardandoAceite : CardapioPedidoStatus.AguardandoCodigo,
                 StatusPagamento = entity.StatusPagamento,
                 FormaPagamento = entity.FormaPagamento ?? string.Empty,
                 CreatedAt = entity.CreatedAt,
-                Resumo = cotacao
+                Resumo = cotacao,
+                Confirmacao = confirmacao
             };
         }
+
+        private static void ValidarTexto(
+            Dictionary<string, List<string>> errors, string campo, string rotulo, string? valor, int maximo, bool obrigatorio)
+        {
+            var texto = ValidationUtils.TrimToNull(valor);
+            if (texto == null)
+            {
+                if (obrigatorio) ValidationUtils.AddError(errors, campo, $"{rotulo} e obrigatorio.");
+                return;
+            }
+
+            if (texto.Length > maximo)
+            {
+                ValidationUtils.AddError(errors, campo, $"{rotulo} deve ter no maximo {maximo} caracteres.");
+            }
+        }
+
+        private const string TipoAdicionalGlobal = "adicional_global";
+
+        /// <summary>
+        /// O cardapio web mostra cada adicional pelo id do ADICIONAL (o grupo de tipo adicional_global, ver o
+        /// snapshot publico), mas o preco vive no item do grupo. Aceita o id do adicional e usa o primeiro item
+        /// ativo, o mesmo que o snapshot mostra como preco.
+        /// </summary>
+        private static bool TryResolverAdicionalGlobal(
+            CardapioProduto produto,
+            Guid adicionalId,
+            out (CardapioGrupoAdicional Grupo, CardapioGrupoAdicionalItem Item) resolvido)
+        {
+            resolvido = default;
+            var grupo = produto.Grupos.FirstOrDefault(g =>
+                g.Id == adicionalId && string.Equals(g.Tipo, TipoAdicionalGlobal, StringComparison.OrdinalIgnoreCase));
+            var item = grupo?.Itens.Where(i => i.Ativo).OrderBy(i => i.Ordem).ThenBy(i => i.Nome).FirstOrDefault();
+            if (grupo == null || item == null) return false;
+
+            resolvido = (grupo, item);
+            return true;
+        }
+
+        /// <summary>
+        /// A coordenada e obrigatoria no pedido do delivery e nunca e inventada: vem da busca do endereco, feita aqui
+        /// no servidor para o cliente nao poder mandar uma posicao qualquer. Endereco nao encontrado = erro de validacao.
+        /// </summary>
+        private async Task<CardapioEnderecoArmazenado> LocalizarEnderecoAsync(CriarCardapioPedidoPublicoEnderecoRequest endereco)
+        {
+            var armazenado = new CardapioEnderecoArmazenado
+            {
+                Logradouro = ValidationUtils.TrimToNull(endereco.Logradouro),
+                Numero = ValidationUtils.TrimToNull(endereco.Numero),
+                Complemento = ValidationUtils.TrimToNull(endereco.Complemento),
+                Bairro = ValidationUtils.TrimToNull(endereco.Bairro),
+                Cidade = ValidationUtils.TrimToNull(endereco.Cidade),
+                Uf = ValidationUtils.TrimToNull(endereco.Uf)?.ToUpperInvariant(),
+                Cep = ValidationUtils.TrimToNull(endereco.Cep),
+                Referencia = ValidationUtils.TrimToNull(endereco.Referencia)
+            };
+
+            (string Latitude, string Longitude)? coordenadas = null;
+            try
+            {
+                coordenadas = await _localizacao.ObterCoordenadasAsync(
+                    $"{armazenado.Logradouro}, {armazenado.Numero}, {armazenado.Bairro}, {armazenado.Cidade} - {armazenado.Uf}, Brasil");
+            }
+            catch (Exception)
+            {
+                // Falha do servico de mapas: o cliente tenta de novo, o pedido nao e criado sem posicao.
+            }
+
+            if (coordenadas == null
+                || !TryParseCoordenada(coordenadas.Value.Latitude, out var latitude)
+                || !TryParseCoordenada(coordenadas.Value.Longitude, out var longitude))
+            {
+                throw BuildValidationException("enderecoEntrega", "Nao encontramos esse endereco no mapa. Confira rua, numero e cidade.");
+            }
+
+            armazenado.Latitude = latitude;
+            armazenado.Longitude = longitude;
+            return armazenado;
+        }
+
+        private static bool TryParseCoordenada(string? texto, out double valor) =>
+            double.TryParse((texto ?? string.Empty).Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out valor)
+            && double.IsFinite(valor);
 
         private async Task<CardapioEstabelecimentoPublico> ResolverEstabelecimentoAsync(Guid? idEstabelecimento, string? estabelecimentoSlug)
         {

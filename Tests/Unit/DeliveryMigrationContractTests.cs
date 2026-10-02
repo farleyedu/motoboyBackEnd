@@ -100,6 +100,31 @@ namespace APIBack.Tests.Unit
             Assert.Contains("'20260922_04_constraints'", sql, StringComparison.Ordinal);
         }
 
+        [Fact]
+        public void CardapioConfirmacao_AddsColumnsIdempotentlyAndAllowsOneActiveCodePerStore()
+        {
+            var sql = ReadMigration("20261002_03_cardapio_confirmacao_whatsapp.sql");
+
+            foreach (var column in new[]
+            {
+                "codigo_confirmacao", "codigo_expira_em", "canal_confirmacao", "telefone_contato",
+                "id_conversa", "confirmado_em", "aceito_em", "recusado_em", "motivo_recusa", "id_pedido"
+            })
+            {
+                Assert.Contains($"ADD COLUMN IF NOT EXISTS {column} ", sql, StringComparison.Ordinal);
+            }
+
+            // O codigo de 4 digitos liga a mensagem ao pre-pedido: so um ativo por loja, e vencido libera o numero.
+            Assert.Contains("ux_cardapio_pedido_publico_codigo_ativo", sql, StringComparison.Ordinal);
+            Assert.Contains("(id_estabelecimento, codigo_confirmacao)", sql, StringComparison.Ordinal);
+            Assert.Contains("WHERE status = 'aguardando_codigo'", sql, StringComparison.Ordinal);
+            // 'pendente' continua valendo para as linhas anteriores a esta migration.
+            Assert.Contains("'pendente', 'aguardando_codigo', 'aguardando_aceite', 'aceito', 'recusado', 'expirado'", sql, StringComparison.Ordinal);
+            Assert.Contains("'20261002_03_cardapio_confirmacao_whatsapp'", sql, StringComparison.Ordinal);
+            Assert.DoesNotContain("DROP TABLE", sql, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("DELETE FROM cardapio_pedido_publico", sql, StringComparison.OrdinalIgnoreCase);
+        }
+
         private static string ReadMigration(string fileName)
         {
             var path = Path.Combine(AppContext.BaseDirectory, "Migrations", "Delivery", fileName);

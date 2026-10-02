@@ -148,6 +148,8 @@ builder.Services.AddScoped<IReservasService, ReservasService>();
 builder.Services.AddScoped<IOficinaAgendamentoService, OficinaAgendamentoService>();
 builder.Services.AddScoped<IEstabelecimentoFaqService, EstabelecimentoFaqService>();
 builder.Services.AddScoped<ICardapioService, CardapioService>();
+builder.Services.AddScoped<ICardapioPedidoWebRepository, CardapioPedidoWebRepository>();
+builder.Services.AddScoped<ICardapioPedidoWebService, CardapioPedidoWebService>();
 builder.Services.AddScoped<ICardapioPublicService, CardapioPublicService>();
 builder.Services.AddScoped<ICardapioContractService, CardapioContractService>();
 builder.Services.AddScoped<IEstabelecimentoServicoService, EstabelecimentoServicoService>();

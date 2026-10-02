@@ -280,5 +280,7 @@ namespace APIBack.DTOs.Cardapio
         public string FormaPagamento { get; set; } = string.Empty;
         public DateTime CreatedAt { get; set; }
         public CardapioCotacaoDto Resumo { get; set; } = new();
+        /// <summary>Como o cliente confirma o pedido pelo WhatsApp (mensagem enviada ou codigo).</summary>
+        public CardapioConfirmacaoDto Confirmacao { get; set; } = new();
     }
 }

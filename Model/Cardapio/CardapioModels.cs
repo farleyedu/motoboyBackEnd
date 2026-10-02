@@ -126,6 +126,22 @@ namespace APIBack.Model.Cardapio
         public string StatusPagamento { get; set; } = "pendente";
         public DateTime CreatedAt { get; set; }
         public DateTime UpdatedAt { get; set; }
+
+        // ---- Confirmacao pelo WhatsApp (migration 20261002_03) ----
+        /// <summary>Codigo de 4 digitos que o cliente manda pelo WhatsApp; vale ate <see cref="CodigoExpiraEm"/>.</summary>
+        public string? CodigoConfirmacao { get; set; }
+        public DateTimeOffset? CodigoExpiraEm { get; set; }
+        /// <summary>janela_aberta (mensagem enviada ao cliente) ou codigo (o cliente mandou o codigo).</summary>
+        public string? CanalConfirmacao { get; set; }
+        /// <summary>Numero comprovado do cliente (E.164): o de quem mandou a mensagem ou o que recebeu a nossa.</summary>
+        public string? TelefoneContato { get; set; }
+        public Guid? IdConversa { get; set; }
+        public DateTimeOffset? ConfirmadoEm { get; set; }
+        public DateTimeOffset? AceitoEm { get; set; }
+        public DateTimeOffset? RecusadoEm { get; set; }
+        public string? MotivoRecusa { get; set; }
+        /// <summary>Pedido real do delivery criado no aceite (entrega); nulo na retirada.</summary>
+        public int? IdPedido { get; set; }
     }
 
     public class CardapioWebConfig

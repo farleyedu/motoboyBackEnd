@@ -4,6 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using APIBack.Automation.Dtos;
 using APIBack.Automation.Interfaces;
+using APIBack.Service.Interface;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -48,6 +49,14 @@ namespace APIBack.Automation.Services
                     }
 
                     var idConversa = processamento.IdConversa ?? Guid.Empty;
+
+                    // Codigo de 4 digitos do cardapio web: confirma o pedido e nao segue para a IA nem para o atendente.
+                    if (await TryConfirmCardapioOrderAsync(scope, idConversa, processamento.TextoUsuario))
+                    {
+                        _logger.LogInformation("[Conversa={Conversa}] Mensagem tratada como confirmacao de pedido do cardapio", idConversa);
+                        continue;
+                    }
+
                     var (resetIntercepted, resetDecision, resetConversationId) = await contextInterceptor.TryHandleResetAsync(
                         idConversa,
                         processamento.TextoUsuario,
@@ -138,6 +147,26 @@ namespace APIBack.Automation.Services
                 {
                     _logger.LogError(ex, "[WebhookWorker] Erro ao processar mensagem {MensagemId}", envelope.Input.Mensagem?.Id);
                 }
+            }
+        }
+
+        /// <summary>
+        /// Qualquer falha aqui (banco sem a migration, WhatsApp fora) e ignorada: a mensagem segue o fluxo normal
+        /// em vez de se perder.
+        /// </summary>
+        private async Task<bool> TryConfirmCardapioOrderAsync(IServiceScope scope, Guid idConversa, string? texto)
+        {
+            if (idConversa == Guid.Empty) return false;
+
+            try
+            {
+                var pedidosWeb = scope.ServiceProvider.GetService<ICardapioPedidoWebService>();
+                return pedidosWeb != null && await pedidosWeb.TentarConfirmarPorMensagemAsync(idConversa, texto);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[Conversa={Conversa}] Falha ao tratar confirmacao de pedido do cardapio", idConversa);
+                return false;
             }
         }
     }
