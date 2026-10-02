@@ -11,7 +11,13 @@
         /// Pedido em montagem: nunca aparece no mapa, na fila, nas metricas nem nas listas.
         /// Confirmar o torna Pendente.
         /// </summary>
-        Rascunho = 6
+        Rascunho = 6,
+        /// <summary>
+        /// Pedido que ficou em aberto alem do expediente e foi encerrado pelo sistema (ou pelo
+        /// atendente, ao encerrar o expediente). Nao conta como entregue nem cancelado: o motoboy
+        /// com quem estava fica gravado em pedido_encerramento. Pode ser reaberto (volta a Pendente).
+        /// </summary>
+        EncerradoAuto = 7
     }
 
     public static class StatusPedidoExtensions
@@ -24,6 +30,7 @@
             4 => StatusPedido.Cancelado,
             5 => StatusPedido.Atribuido,
             6 => StatusPedido.Rascunho,
+            7 => StatusPedido.EncerradoAuto,
             _ => null
         };
 
@@ -35,6 +42,7 @@
             StatusPedido.Cancelado => "cancelado",
             StatusPedido.Atribuido => "atribuido",
             StatusPedido.Rascunho => "rascunho",
+            StatusPedido.EncerradoAuto => "encerrado_auto",
             _ => "pendente"
         };
 

@@ -428,6 +428,7 @@ SELECT
         WHEN 4 THEN 'cancelado'
         WHEN 5 THEN 'atribuido'
         WHEN 6 THEN 'rascunho'
+        WHEN 7 THEN 'encerrado_auto'
         ELSE 'pendente'
     END AS StatusPedido,
     -- O dono do pedido e o da fila: se o pedido perdeu o motoboy_responsavel mas a parada de rota existe
@@ -468,6 +469,7 @@ SELECT
     dn.motoboy_id AS CompletedByMotoboyId,
     dn.motoboy_nome AS CompletedByMotoboyNome,
     cn.at_utc AS CanceledAtUtc,
+    __ENC_AT__ AS EncerradoEmUtc,
     COALESCE(pt.pending, FALSE) AS HasPendingTransfer,
     pt.to_nome AS PendingTransferToNome
 FROM pedido p
@@ -514,6 +516,7 @@ LEFT JOIN LATERAL (
      ORDER BY c.canceled_at_utc DESC NULLS LAST
      LIMIT 1
 ) cn ON COALESCE(p.status_pedido, 1) = 4
+__ENC_JOIN__
 LEFT JOIN LATERAL (
     SELECT TRUE AS pending,
            tm.nome::text AS to_nome
@@ -534,6 +537,7 @@ LEFT JOIN LATERAL (
         COALESCE(p.status_pedido, 1) IN (1, 2, 5)
         OR (COALESCE(p.status_pedido, 1) = 3 AND dn.at_utc >= @WindowFromUtc)
         OR (COALESCE(p.status_pedido, 1) = 4 AND cn.at_utc >= @WindowFromUtc)
+        OR (COALESCE(p.status_pedido, 1) = 7 AND __ENC_AT__ >= @WindowFromUtc)
    )
 ORDER BY p.data_pedido DESC NULLS LAST, p.id DESC;";
 
@@ -584,6 +588,11 @@ SELECT rs.motoboy_id AS MotoboyId, COUNT(*)::int AS DeliveredToday
             {
                 pedidosSql = pedidosSql.Replace("FALSE AS Locked", "COALESCE(rs.locked, FALSE) AS Locked");
             }
+            // Encerrado automaticamente (status 7): sem a migration nao existe nenhum, entao as colunas viram NULL.
+            var encerramento = await PedidoColumnTypes.HasEncerramentoSchemaAsync(connection, null);
+            pedidosSql = pedidosSql
+                .Replace("__ENC_AT__", encerramento ? "ec.at_utc" : "NULL::timestamptz")
+                .Replace("__ENC_JOIN__", encerramento ? EncerramentoJoinSql : string.Empty);
             var pedidos = (await connection.QueryAsync<OrderMapRow>(
                     pedidosSql, new { EstabelecimentoId = estabelecimentoId, WindowFromUtc = windowFromUtc }))
                 .Select(ToOrderMapDto)
@@ -663,9 +672,20 @@ SELECT rs.motoboy_id AS MotoboyId, COUNT(*)::int AS DeliveredToday
             if (placed is null) return true;
             if (range.Contains(placed.Value)) return true;
 
-            var finishedAt = pedido.CompletedAtUtc ?? pedido.CanceledAtUtc;
+            var finishedAt = pedido.CompletedAtUtc ?? pedido.CanceledAtUtc ?? pedido.EncerradoEmUtc;
             return !open && finishedAt is not null && range.Contains(finishedAt.Value);
         }
+
+        /// <summary>Quando o pedido foi encerrado automaticamente (so o encerramento que ainda vale, nao o reaberto).</summary>
+        private const string EncerramentoJoinSql = @"
+LEFT JOIN LATERAL (
+    SELECT e.encerrado_em AS at_utc
+      FROM pedido_encerramento e
+     WHERE e.pedido_id = p.id
+       AND e.reaberto_em IS NULL
+     ORDER BY e.id DESC
+     LIMIT 1
+) ec ON COALESCE(p.status_pedido, 1) = 7";
 
         private sealed class OrderMapRow
         {
@@ -714,6 +734,7 @@ SELECT rs.motoboy_id AS MotoboyId, COUNT(*)::int AS DeliveredToday
             public int? CompletedByMotoboyId { get; set; }
             public string? CompletedByMotoboyNome { get; set; }
             public DateTimeOffset? CanceledAtUtc { get; set; }
+            public DateTimeOffset? EncerradoEmUtc { get; set; }
             public bool? HasPendingTransfer { get; set; }
             public string? PendingTransferToNome { get; set; }
         }
@@ -781,6 +802,7 @@ SELECT rs.motoboy_id AS MotoboyId, COUNT(*)::int AS DeliveredToday
                 CompletedByMotoboyId = row.CompletedByMotoboyId,
                 CompletedByMotoboyNome = row.CompletedByMotoboyNome,
                 CanceledAtUtc = row.CanceledAtUtc,
+                EncerradoEmUtc = row.EncerradoEmUtc,
                 HasPendingTransfer = row.HasPendingTransfer ?? false,
                 PendingTransferToNome = row.PendingTransferToNome
             };

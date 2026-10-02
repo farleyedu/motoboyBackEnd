@@ -42,6 +42,8 @@ namespace APIBack.Service.Interface
         Task<CreatedPedidoDto> CreatePedidoAsync(Guid estabelecimentoId, int actorUserId, CreatePedidoRequest request);
         Task<CreatedPedidoDto> UpdatePedidoForSimulatorAsync(Guid estabelecimentoId, int actorUserId, int pedidoId, SimulatorPedidoRequest request);
         Task<CreatedPedidoDto> ReopenPedidoForSimulatorAsync(Guid estabelecimentoId, int actorUserId, int pedidoId);
+        /// <summary>Reabre um pedido encerrado automaticamente (volta a pendente, sem motoboy).</summary>
+        Task<CreatedPedidoDto> ReabrirEncerradoAsync(Guid estabelecimentoId, int actorUserId, int pedidoId);
         Task PublishPedidoEventForSimulatorAsync(Guid estabelecimentoId, int actorUserId, int pedidoId, string action);
 
         // Parametros

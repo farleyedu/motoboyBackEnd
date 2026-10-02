@@ -193,7 +193,7 @@ SELECT id FROM clientes WHERE id_estabelecimento = @Est AND telefone_e164 = @Tel
                 {
                     distance = Math.Round(OrderCoreRules.DistanceKm(extra.LojaLat.Value, extra.LojaLng.Value, baseDetail.Latitude.Value, baseDetail.Longitude.Value), 1);
                 }
-                if (fromLat.HasValue && fromLng.HasValue && status != StatusPedido.Concluido && status != StatusPedido.Cancelado)
+                if (fromLat.HasValue && fromLng.HasValue && status != StatusPedido.Concluido && status != StatusPedido.Cancelado && status != StatusPedido.EncerradoAuto)
                 {
                     var km = OrderCoreRules.DistanceKm(fromLat.Value, fromLng.Value, baseDetail.Latitude.Value, baseDetail.Longitude.Value);
                     eta = Math.Max(1, (int)Math.Round(km / 30d * 60d)); // 30 km/h: velocidade media de moto na cidade
@@ -224,6 +224,7 @@ SELECT id FROM clientes WHERE id_estabelecimento = @Est AND telefone_e164 = @Tel
                 RotaStatus = status switch
                 {
                     StatusPedido.Cancelado => "cancelada",
+                    StatusPedido.EncerradoAuto => "encerrada",
                     StatusPedido.Concluido => "concluida",
                     StatusPedido.EmRota => "em_rota",
                     StatusPedido.Atribuido => "aguardando",
@@ -581,7 +582,7 @@ SELECT m.id
             }
 
             // 1) Volta a uma base pendente quando o alvo esta "atras" do estado atual.
-            if (status is StatusPedido.Concluido or StatusPedido.Cancelado)
+            if (status is StatusPedido.Concluido or StatusPedido.Cancelado or StatusPedido.EncerradoAuto)
             {
                 await _queue.ReopenPedidoForSimulatorAsync(est, userId, pedidoId);
                 await LogAsync(est, userId, "pedido", pedidoId, "pedido_reaberto", "Pedido reaberto", "Voltou a pendente, sem motoboy", "atencao");
@@ -639,7 +640,7 @@ SELECT m.id
         {
             var row = await LoadRowAsync(est, pedidoId);
             RequireSimulated(row);
-            if (StatusOf(row) is StatusPedido.Concluido or StatusPedido.Cancelado)
+            if (StatusOf(row) is StatusPedido.Concluido or StatusPedido.Cancelado or StatusPedido.EncerradoAuto)
             {
                 throw new DeliveryDomainException(409, "ORDER_FINISHED", "Pedido terminado nao volta ao painel. Reabra-o primeiro.");
             }
@@ -664,7 +665,7 @@ SELECT m.id
                     break;
                 case "atraso":
                 {
-                    if (StatusOf(row) is StatusPedido.Concluido or StatusPedido.Cancelado)
+                    if (StatusOf(row) is StatusPedido.Concluido or StatusPedido.Cancelado or StatusPedido.EncerradoAuto)
                     {
                         throw new DeliveryDomainException(409, "ORDER_FINISHED", "Pedido terminado nao atrasa.");
                     }
@@ -715,7 +716,7 @@ SELECT m.id
         {
             var row = await LoadRowAsync(est, pedidoId);
             RequireSimulated(row);
-            if (StatusOf(row) is StatusPedido.Concluido or StatusPedido.Cancelado)
+            if (StatusOf(row) is StatusPedido.Concluido or StatusPedido.Cancelado or StatusPedido.EncerradoAuto)
             {
                 throw new DeliveryDomainException(409, "ORDER_FINISHED", "Pedido terminado nao muda de cliente.");
             }

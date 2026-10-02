@@ -122,6 +122,8 @@ builder.Services.AddScoped<IRastreioRepository, RastreioRepository>();
 builder.Services.AddScoped<ITrackingNoticeSender, ConversationNoticeSender>();
 builder.Services.AddScoped<TrackingNoticeService>();
 builder.Services.AddHostedService<TrackingNoticeWorker>();
+builder.Services.AddScoped<EncerramentoService>();
+builder.Services.AddHostedService<PedidoEncerramentoWorker>();
 builder.Services.AddScoped<AtendimentoService>();
 builder.Services.AddScoped<ICardapioFichaService, CardapioFichaService>();
 builder.Services.AddScoped<IPedidoHistoricoRepository, PedidoHistoricoRepository>();

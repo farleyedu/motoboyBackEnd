@@ -49,6 +49,13 @@ namespace APIBack.Repository.Interface
         Task<CreatedPedidoDto> ConfirmPedidoAsync(Guid estabelecimentoId, int actorUserId, int pedidoId, int previsaoMinutos);
         Task<CreatedPedidoDto> UpdatePedidoForSimulatorAsync(Guid estabelecimentoId, int actorUserId, int pedidoId, APIBack.Service.SimulatorOrderPatch patch);
         Task<CreatedPedidoDto> ReopenPedidoForSimulatorAsync(Guid estabelecimentoId, int actorUserId, int pedidoId);
+
+        // ---- Encerramento automatico de pedidos em aberto ----
+        Task<APIBack.Service.EncerramentoSettings> GetEncerramentoSettingsAsync(Guid estabelecimentoId);
+        Task<IReadOnlyList<Guid>> ListEstablishmentsWithOpenOrdersAsync();
+        Task<IReadOnlyList<APIBack.Service.EncerramentoCandidate>> ListOpenOrdersForEncerramentoAsync(Guid estabelecimentoId);
+        Task<bool> EncerrarPedidoAsync(Guid estabelecimentoId, int pedidoId, string motivo, int? actorUserId);
+        Task<CreatedPedidoDto> ReabrirEncerradoAsync(Guid estabelecimentoId, int actorUserId, int pedidoId);
         Task PublishPedidoEventForSimulatorAsync(Guid estabelecimentoId, int actorUserId, int pedidoId, string action);
 
         // Parametros

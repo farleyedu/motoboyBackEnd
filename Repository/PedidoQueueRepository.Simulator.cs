@@ -27,6 +27,18 @@ namespace APIBack.Repository
         /// </summary>
         public async Task<CreatedPedidoDto> ReopenPedidoForSimulatorAsync(Guid estabelecimentoId, int actorUserId, int pedidoId)
         {
+            // Encerrado automaticamente tem historico proprio (pedido_encerramento): reabre pelo mesmo caminho do painel.
+            await using (var peek = await _dataSource.OpenConnectionAsync())
+            {
+                var peekStatus = await peek.ExecuteScalarAsync<int?>(
+                    "SELECT status_pedido FROM pedido WHERE id = @PedidoId AND id_estabelecimento = @EstabelecimentoId;",
+                    new { PedidoId = pedidoId, EstabelecimentoId = estabelecimentoId });
+                if (peekStatus == (int)APIBack.Model.Enum.StatusPedido.EncerradoAuto)
+                {
+                    return await ReabrirEncerradoAsync(estabelecimentoId, actorUserId, pedidoId);
+                }
+            }
+
             await using var connection = await _dataSource.OpenConnectionAsync();
             await using var transaction = await connection.BeginTransactionAsync();
 

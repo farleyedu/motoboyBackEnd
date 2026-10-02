@@ -189,6 +189,8 @@ namespace APIBack.DTOs.Tracking
         public int? CompletedByMotoboyId { get; set; }
         public string? CompletedByMotoboyNome { get; set; }
         public DateTimeOffset? CanceledAtUtc { get; set; }
+        /// <summary>Quando o pedido foi encerrado automaticamente (status encerrado_auto); null nos demais.</summary>
+        public DateTimeOffset? EncerradoEmUtc { get; set; }
 
         /// <summary>Ha transferencia aguardando aprovacao do estabelecimento para este pedido.</summary>
         public bool HasPendingTransfer { get; set; }

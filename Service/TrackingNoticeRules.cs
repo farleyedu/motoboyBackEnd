@@ -199,6 +199,7 @@ namespace APIBack.Service
         {
             3 => ("concluido", "Entrega finalizada", true),
             4 => ("cancelado", "Pedido cancelado", true),
+            7 => ("encerrado", "Pedido encerrado", true),
             2 => ("em_rota", "A caminho", false),
             5 => ("com_motoboy", "Motoboy a caminho da loja", false),
             _ => ("em_preparo", "Pedido em preparo", false),

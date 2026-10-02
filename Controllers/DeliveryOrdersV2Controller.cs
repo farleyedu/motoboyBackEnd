@@ -29,6 +29,7 @@ namespace APIBack.Controllers
         private readonly IRestaurantSettingsRepository _restaurantRepository;
         private readonly IDeliveryZonaRepository _zonaRepository;
         private readonly IHorarioOperacaoRepository _horarioRepository;
+        private readonly EncerramentoService _encerramento;
 
         public DeliveryOrdersV2Controller(
             IPedidoQueueService queueService,
@@ -39,7 +40,8 @@ namespace APIBack.Controllers
             IPedidoHistoricoRepository historicoRepository,
             IRestaurantSettingsRepository restaurantRepository,
             IDeliveryZonaRepository zonaRepository,
-            IHorarioOperacaoRepository horarioRepository)
+            IHorarioOperacaoRepository horarioRepository,
+            EncerramentoService encerramento)
         {
             _queueService = queueService;
             _coreService = coreService;
@@ -50,6 +52,7 @@ namespace APIBack.Controllers
             _restaurantRepository = restaurantRepository;
             _zonaRepository = zonaRepository;
             _horarioRepository = horarioRepository;
+            _encerramento = encerramento;
         }
 
         // ---- Lista e detalhe (tela de Pedidos) ----------------------------------
@@ -280,6 +283,40 @@ namespace APIBack.Controllers
             {
                 var snapshot = await _queueService.RemoveAsync(estabelecimentoId, actorUserId, pedidoId);
                 return Ok(ApiResponse<MotoboyQueueDto>.Ok(snapshot));
+            }
+            catch (DeliveryDomainException ex)
+            {
+                return DomainError(ex);
+            }
+        }
+
+        /// <summary>Reabre um pedido encerrado automaticamente: volta a pendente, sem motoboy e com prazo novo.</summary>
+        [HttpPost("pedidos/{pedidoId:int}/reabrir-encerrado")]
+        [RequirePermission("Delivery", "atribuir_motoboy")]
+        public async Task<IActionResult> ReopenClosed(int pedidoId)
+        {
+            if (!TryGetActor(out var actorUserId, out var estabelecimentoId, out var error)) return error!;
+            try
+            {
+                var result = await _queueService.ReabrirEncerradoAsync(estabelecimentoId, actorUserId, pedidoId);
+                return Ok(ApiResponse<CreatedPedidoDto>.Ok(result));
+            }
+            catch (DeliveryDomainException ex)
+            {
+                return DomainError(ex);
+            }
+        }
+
+        /// <summary>O atendente encerrou o expediente: todo pedido ainda em aberto e encerrado agora.</summary>
+        [HttpPost("pedidos/encerrar-expediente")]
+        [RequirePermission("Delivery", "atribuir_motoboy")]
+        public async Task<IActionResult> CloseDay()
+        {
+            if (!TryGetActor(out var actorUserId, out var estabelecimentoId, out var error)) return error!;
+            try
+            {
+                var result = await _encerramento.EncerrarExpedienteAgoraAsync(estabelecimentoId, actorUserId);
+                return Ok(ApiResponse<EncerramentoResultDto>.Ok(result));
             }
             catch (DeliveryDomainException ex)
             {

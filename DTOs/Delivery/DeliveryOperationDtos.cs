@@ -64,6 +64,10 @@ namespace APIBack.DTOs.Delivery
         public bool BloquearPedidosForaHorario { get; set; }
         public bool RetiradaBalcaoAtiva { get; set; }
         public int? RetiradaTempoPreparoMin { get; set; }
+        /// <summary>Encerra sozinho os pedidos que sobraram do expediente anterior (status encerrado_auto).</summary>
+        public bool EncerramentoAutoAtivo { get; set; } = true;
+        /// <summary>Horas depois do fechamento do estabelecimento em que o encerramento acontece.</summary>
+        public int EncerramentoAutoHoras { get; set; } = APIBack.Service.EncerramentoRules.HorasPadrao;
 
         public DeliveryPoliciesDto ToPolicies() => new()
         {
@@ -101,6 +105,10 @@ namespace APIBack.DTOs.Delivery
         public bool? RetiradaBalcaoAtiva { get; set; }
         /// <summary>Nulo = manter.</summary>
         public int? RetiradaTempoPreparoMin { get; set; }
+        /// <summary>Nulo = manter.</summary>
+        public bool? EncerramentoAutoAtivo { get; set; }
+        /// <summary>Nulo = manter. De 0 a 24 horas depois do fechamento.</summary>
+        public int? EncerramentoAutoHoras { get; set; }
     }
 
     // ---- Acoes do motoboy ------------------------------------------------------

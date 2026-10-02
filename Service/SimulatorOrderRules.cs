@@ -35,7 +35,8 @@ namespace APIBack.Service
         /// comandos de fila, que criam os dois juntos.
         /// </summary>
         public static bool CanReopen(APIBack.Model.Enum.StatusPedido status) =>
-            status == APIBack.Model.Enum.StatusPedido.Concluido || status == APIBack.Model.Enum.StatusPedido.Cancelado;
+            status == APIBack.Model.Enum.StatusPedido.Concluido || status == APIBack.Model.Enum.StatusPedido.Cancelado
+            || status == APIBack.Model.Enum.StatusPedido.EncerradoAuto;
 
         public static SimulatorOrderPatch Validate(SimulatorPedidoRequest? request)
         {

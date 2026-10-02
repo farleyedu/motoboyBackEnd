@@ -217,6 +217,9 @@ namespace APIBack.Service
         public Task<CreatedPedidoDto> ReopenPedidoForSimulatorAsync(Guid estabelecimentoId, int actorUserId, int pedidoId) =>
             _repository.ReopenPedidoForSimulatorAsync(estabelecimentoId, actorUserId, pedidoId);
 
+        public Task<CreatedPedidoDto> ReabrirEncerradoAsync(Guid estabelecimentoId, int actorUserId, int pedidoId) =>
+            _repository.ReabrirEncerradoAsync(estabelecimentoId, actorUserId, pedidoId);
+
         public Task<CreatedPedidoDto> UpdatePedidoForSimulatorAsync(Guid estabelecimentoId, int actorUserId, int pedidoId, SimulatorPedidoRequest request)
         {
             var patch = SimulatorOrderRules.Validate(request);
@@ -265,6 +268,11 @@ namespace APIBack.Service
             {
                 throw new DeliveryDomainException(422, "INVALID_DEFAULT_DELIVERY_MINUTES",
                     "O prazo padrao de entrega deve ficar entre 1 e 600 minutos.");
+            }
+            if (request.EncerramentoAutoHoras.HasValue && !EncerramentoRules.IsValidHoras(request.EncerramentoAutoHoras.Value))
+            {
+                throw new DeliveryDomainException(422, "INVALID_ENCERRAMENTO_HORAS",
+                    $"As horas do encerramento automatico devem ficar entre 0 e {EncerramentoRules.HorasMaximo}.");
             }
             if (request.OrderWindow != null)
             {

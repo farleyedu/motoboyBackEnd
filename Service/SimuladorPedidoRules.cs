@@ -47,6 +47,10 @@ namespace APIBack.Service
             {
                 return "O pedido ja terminou. Para simular de novo, reabra o pedido (ele volta a pendente).";
             }
+            if (status == StatusPedido.EncerradoAuto)
+            {
+                return "O pedido foi encerrado automaticamente. Reabra-o no painel para continuar.";
+            }
             if (status == StatusPedido.Rascunho)
             {
                 return "O pedido ainda e um rascunho: confirme-o antes de avancar as etapas.";
@@ -86,6 +90,7 @@ namespace APIBack.Service
         public static string EtapaAtual(StatusPedido status, bool confirmado, bool preparo) => status switch
         {
             StatusPedido.Cancelado => "cancelado",
+            StatusPedido.EncerradoAuto => "encerrado",
             StatusPedido.Concluido => "entregue",
             StatusPedido.EmRota => "saiu",
             _ => preparo ? "em_preparo" : confirmado ? "confirmado" : "recebido"

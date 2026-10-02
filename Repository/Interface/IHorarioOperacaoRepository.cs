@@ -11,6 +11,9 @@ namespace APIBack.Repository.Interface
     {
         /// <summary>true quando as tabelas de horario ainda nao existem (aberto por padrao, nunca bloqueia).</summary>
         Task<bool> EstaAbertoAgoraAsync(Guid estabelecimentoId, DateTimeOffset agoraUtc, string timezoneIana);
+        /// <summary>Hora de fechamento (local) de um dia, considerando as excecoes pontuais. Null = fechado nesse dia
+        /// ou sem horario cadastrado (nesse caso nao ha fechamento a esperar).</summary>
+        Task<TimeSpan?> ObterHoraFechamentoAsync(Guid estabelecimentoId, DateOnly dia);
         Task<IReadOnlyList<HorarioEspecialDto>> ListarEspeciaisAsync(Guid estabelecimentoId);
         Task<HorarioEspecialDto> SalvarEspecialAsync(Guid estabelecimentoId, SalvarHorarioEspecialRequest request);
         Task<bool> ExcluirEspecialAsync(Guid estabelecimentoId, long id);

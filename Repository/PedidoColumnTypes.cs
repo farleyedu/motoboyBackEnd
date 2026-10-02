@@ -88,5 +88,23 @@ SELECT (SELECT COUNT(*) FROM information_schema.columns
             if (present) _operacaoSchemaKnown = true;
             return present;
         }
+
+        private static volatile bool _encerramentoSchemaKnown;
+
+        /// <summary>
+        /// True quando a migration 20261002_01 (encerramento automatico: historico de encerramentos e
+        /// parametros) foi aplicada. So cacheia o "sim".
+        /// </summary>
+        public static async Task<bool> HasEncerramentoSchemaAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction)
+        {
+            if (_encerramentoSchemaKnown) return true;
+            var present = await connection.ExecuteScalarAsync<bool>(@"
+SELECT to_regclass('pedido_encerramento') IS NOT NULL
+   AND (SELECT COUNT(*) FROM information_schema.columns
+         WHERE table_schema = current_schema() AND table_name = 'delivery_settings'
+           AND column_name IN ('encerramento_auto_ativo', 'encerramento_auto_horas')) = 2;", transaction: transaction);
+            if (present) _encerramentoSchemaKnown = true;
+            return present;
+        }
     }
 }

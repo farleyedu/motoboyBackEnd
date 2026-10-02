@@ -38,6 +38,7 @@ namespace APIBack.Service
             ["cancelado"] = (int)StatusPedido.Cancelado,
             ["atribuido"] = (int)StatusPedido.Atribuido,
             ["rascunho"] = (int)StatusPedido.Rascunho,
+            ["encerrado_auto"] = (int)StatusPedido.EncerradoAuto,
         };
 
         public static PedidoFiltro From(PedidoFiltroRequest? request)

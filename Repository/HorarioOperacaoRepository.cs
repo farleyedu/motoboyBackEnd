@@ -76,6 +76,25 @@ SELECT fechado AS Fechado, abre_as AS Abre, fecha_as AS Fecha
                 && horaAtual >= dia.Abre.Value && horaAtual <= dia.Fecha.Value;
         }
 
+        public async Task<TimeSpan?> ObterHoraFechamentoAsync(Guid estabelecimentoId, DateOnly dia)
+        {
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            if (!await TabelasExistemAsync(connection)) return null;
+
+            var especial = await connection.QuerySingleOrDefaultAsync<HorarioRow>(@"
+SELECT fechado AS Fechado, abre_as AS Abre, fecha_as AS Fecha
+  FROM estabelecimento_horario_especial
+ WHERE estabelecimento_id = @Id AND data = @Data;", new { Id = estabelecimentoId, Data = dia });
+            if (especial != null) return especial.Fechado ? null : especial.Fecha;
+
+            var diaSemana = ((int)dia.DayOfWeek + 6) % 7; // .NET: 0=domingo -> nosso indice 0=segunda
+            var semanal = await connection.QuerySingleOrDefaultAsync<HorarioRow>(@"
+SELECT fechado AS Fechado, abre_as AS Abre, fecha_as AS Fecha
+  FROM estabelecimento_horario
+ WHERE estabelecimento_id = @Id AND dia_semana = @Dia;", new { Id = estabelecimentoId, Dia = diaSemana });
+            return semanal == null || semanal.Fechado ? null : semanal.Fecha;
+        }
+
         public async Task<IReadOnlyList<HorarioEspecialDto>> ListarEspeciaisAsync(Guid estabelecimentoId)
         {
             await using var connection = await _dataSource.OpenConnectionAsync();

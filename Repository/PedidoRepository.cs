@@ -678,6 +678,8 @@ WHERE p.id_estabelecimento = @EstabelecimentoId
                 StatusPedido.Concluido => "entregue",
                 StatusPedido.Cancelado => "cancelado",
                 StatusPedido.Rascunho => "rascunho",
+                // Encerrado nao pode voltar a ser oferecido como "disponivel" ao motoboy.
+                StatusPedido.EncerradoAuto => "cancelado",
                 _ => "disponivel"
             };
         }
