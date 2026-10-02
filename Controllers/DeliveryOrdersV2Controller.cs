@@ -1,13 +1,17 @@
 using System;
+using System.Linq;
 using System.Threading.Tasks;
 using APIBack.Attributes;
 using APIBack.DTOs.Common;
 using APIBack.DTOs.Delivery;
+using APIBack.DTOs.Tracking;
 using APIBack.Extensions;
+using APIBack.Hubs;
 using APIBack.Repository.Interface;
 using APIBack.Service;
 using APIBack.Service.Interface;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.SignalR;
 
 namespace APIBack.Controllers
 {
@@ -30,6 +34,7 @@ namespace APIBack.Controllers
         private readonly IDeliveryZonaRepository _zonaRepository;
         private readonly IHorarioOperacaoRepository _horarioRepository;
         private readonly EncerramentoService _encerramento;
+        private readonly IHubContext<DeliveryHub> _deliveryHub;
 
         public DeliveryOrdersV2Controller(
             IPedidoQueueService queueService,
@@ -41,7 +46,8 @@ namespace APIBack.Controllers
             IRestaurantSettingsRepository restaurantRepository,
             IDeliveryZonaRepository zonaRepository,
             IHorarioOperacaoRepository horarioRepository,
-            EncerramentoService encerramento)
+            EncerramentoService encerramento,
+            IHubContext<DeliveryHub> deliveryHub)
         {
             _queueService = queueService;
             _coreService = coreService;
@@ -53,6 +59,7 @@ namespace APIBack.Controllers
             _zonaRepository = zonaRepository;
             _horarioRepository = horarioRepository;
             _encerramento = encerramento;
+            _deliveryHub = deliveryHub;
         }
 
         // ---- Lista e detalhe (tela de Pedidos) ----------------------------------
@@ -430,6 +437,102 @@ namespace APIBack.Controllers
             try
             {
                 return Ok(ApiResponse<LockPedidosResultDto>.Ok(await _queueService.UnlockAsync(estabelecimentoId, actorUserId, request?.PedidoIds ?? new())));
+            }
+            catch (DeliveryDomainException ex)
+            {
+                return DomainError(ex);
+            }
+        }
+
+        /// <summary>
+        /// Publica um unico aviso depois que a montagem da rota terminou. O snapshot
+        /// atual e validado para nunca anunciar uma rota parcial ou uma trava ausente.
+        /// </summary>
+        [HttpPost("rotas/notificar")]
+        [RequirePermission("Delivery", "atribuir_motoboy")]
+        public async Task<IActionResult> NotifyRouteAssigned([FromBody] NotifyRouteAssignedRequest? request)
+        {
+            if (!TryGetActor(out _, out var estabelecimentoId, out var error)) return error!;
+            try
+            {
+                if (request == null || request.MotoboyId <= 0 || request.PedidoIdsOrdenados.Count == 0 ||
+                    request.PedidoIdsOrdenados.Any(id => id <= 0) ||
+                    request.PedidoIdsOrdenados.Distinct().Count() != request.PedidoIdsOrdenados.Count)
+                {
+                    throw new DeliveryDomainException(422, "INVALID_REQUEST", "Informe o motoboy e os pedidos da rota, sem ids repetidos.");
+                }
+
+                var lockedIds = request.LockedPedidoIds.Distinct().ToList();
+                if (lockedIds.Any(id => !request.PedidoIdsOrdenados.Contains(id)))
+                {
+                    throw new DeliveryDomainException(422, "INVALID_REQUEST", "Todo pedido travado precisa pertencer a rota enviada.");
+                }
+
+                var queue = await _queueService.GetQueueAsync(estabelecimentoId, request.MotoboyId);
+                var stops = queue.Next.ToList();
+                if (queue.Current != null) stops.Insert(0, queue.Current);
+                var queueIds = stops.Select(stop => stop.PedidoId).ToHashSet();
+                var missing = request.PedidoIdsOrdenados.Where(id => !queueIds.Contains(id)).ToList();
+                if (missing.Count > 0)
+                {
+                    throw new DeliveryDomainException(409, "QUEUE_CHANGED", "A fila mudou antes do envio da rota. Recarregue e tente novamente.", new { pedidoIds = missing });
+                }
+
+                var unlocked = stops.Where(stop => lockedIds.Contains(stop.PedidoId) && !stop.Locked)
+                    .Select(stop => stop.PedidoId)
+                    .ToList();
+                if (unlocked.Count > 0)
+                {
+                    throw new DeliveryDomainException(409, "QUEUE_CHANGED", "Uma trava da rota nao foi aplicada. Recarregue e tente novamente.", new { pedidoIds = unlocked });
+                }
+
+                var evt = new DeliveryRouteAssignedRealtimeDto
+                {
+                    MotoboyId = request.MotoboyId,
+                    EstabelecimentoId = estabelecimentoId,
+                    PedidoIds = request.PedidoIdsOrdenados.ToList(),
+                    LockedPedidoIds = lockedIds,
+                    QueueVersion = queue.Version,
+                    UpdatedAtUtc = DateTimeOffset.UtcNow
+                };
+                await _deliveryHub.Clients
+                    .Group(DeliveryRealtimeEvents.EstablishmentGroup(estabelecimentoId))
+                    .SendAsync(DeliveryRealtimeEvents.DeliveryRouteAssigned, evt);
+                return Ok(ApiResponse<DeliveryRouteAssignedRealtimeDto>.Ok(evt));
+            }
+            catch (DeliveryDomainException ex)
+            {
+                return DomainError(ex);
+            }
+        }
+
+        [HttpPost("simulator/motoboys/{motoboyId:int}/rota/aceitar")]
+        [RequirePermission("Delivery", "gestao_motoboy")]
+        public async Task<IActionResult> AcceptSimulatorRoute(int motoboyId, [FromBody] ReorderQueueRequest request)
+        {
+            if (!TryGetActor(out _, out var estabelecimentoId, out var error)) return error!;
+            try
+            {
+                var snapshot = await _queueService.AcceptRouteByMotoboyAsync(
+                    estabelecimentoId, motoboyId, request.ExpectedVersion, request.PedidoIdsOrdenados);
+                return Ok(ApiResponse<MotoboyQueueDto>.Ok(snapshot));
+            }
+            catch (DeliveryDomainException ex)
+            {
+                return DomainError(ex);
+            }
+        }
+
+        [HttpPost("simulator/motoboys/{motoboyId:int}/rota/recusar")]
+        [RequirePermission("Delivery", "gestao_motoboy")]
+        public async Task<IActionResult> RefuseSimulatorRoute(int motoboyId, [FromBody] RefuseRouteRequest request)
+        {
+            if (!TryGetActor(out _, out var estabelecimentoId, out var error)) return error!;
+            try
+            {
+                var snapshot = await _queueService.RefuseRouteByMotoboyAsync(
+                    estabelecimentoId, motoboyId, request.PedidoIds, request.Motivo);
+                return Ok(ApiResponse<MotoboyQueueDto>.Ok(snapshot));
             }
             catch (DeliveryDomainException ex)
             {

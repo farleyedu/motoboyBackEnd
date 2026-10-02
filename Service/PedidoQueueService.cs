@@ -151,11 +151,29 @@ namespace APIBack.Service
                 DeliveryRules.NormalizeReason(motivo, required: false));
         }
 
+        public Task<MotoboyQueueDto> RefuseRouteByMotoboyAsync(
+            Guid estabelecimentoId, int motoboyId, IReadOnlyList<int> pedidoIds, string? motivo)
+        {
+            EnsurePositive(motoboyId, "motoboyId");
+            EnsureValidOrder(pedidoIds);
+            return _repository.RefuseRouteByMotoboyAsync(
+                estabelecimentoId, motoboyId, pedidoIds,
+                string.IsNullOrWhiteSpace(motivo) ? null : motivo.Trim());
+        }
+
         public Task<MotoboyQueueDto> ReorderByMotoboyAsync(Guid estabelecimentoId, int motoboyId, long expectedVersion, IReadOnlyList<int> pedidoIdsOrdenados)
         {
             EnsurePositive(motoboyId, "motoboyId");
             EnsureValidOrder(pedidoIdsOrdenados);
             return _repository.ReorderByMotoboyAsync(estabelecimentoId, motoboyId, expectedVersion, pedidoIdsOrdenados);
+        }
+
+        public Task<MotoboyQueueDto> AcceptRouteByMotoboyAsync(
+            Guid estabelecimentoId, int motoboyId, long expectedVersion, IReadOnlyList<int> pedidoIdsOrdenados)
+        {
+            EnsurePositive(motoboyId, "motoboyId");
+            EnsureValidOrder(pedidoIdsOrdenados);
+            return _repository.AcceptRouteByMotoboyAsync(estabelecimentoId, motoboyId, expectedVersion, pedidoIdsOrdenados);
         }
 
         public Task<MotoboyQueueDto> ResumeByMotoboyAsync(Guid estabelecimentoId, int motoboyId)

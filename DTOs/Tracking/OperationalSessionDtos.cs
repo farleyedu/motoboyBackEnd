@@ -99,6 +99,9 @@ namespace APIBack.DTOs.Tracking
         public string Nome { get; set; } = string.Empty;
         public string? Avatar { get; set; }
         public string? Telefone { get; set; }
+        public string? PlacaMoto { get; set; }
+        public string? MarcaMoto { get; set; }
+        public string? ModeloMoto { get; set; }
         public bool SimulatorEnabled { get; set; }
         public bool Eligible { get; set; }
         public string? UnavailableReason { get; set; }

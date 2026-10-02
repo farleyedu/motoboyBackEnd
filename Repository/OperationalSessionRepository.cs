@@ -751,6 +751,9 @@ SELECT m.id AS MotoboyId,
        COALESCE(m.nome, '') AS Nome,
        m.avatar AS Avatar,
        m.telefone AS Telefone,
+       m.placa_moto AS PlacaMoto,
+       m.marca_moto AS MarcaMoto,
+       m.modelo_moto AS ModeloMoto,
        me.simulator_enabled AS SimulatorEnabled,
        -- Sessao de outro aparelho (app do motoboy) bloqueia. Sessao de simulador NAO: a
        -- abertura de sessao (StartSimulatorSessionAsync) assume a anterior, porque quem a abriu
