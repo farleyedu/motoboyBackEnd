@@ -85,7 +85,7 @@ SELECT encerramento_auto_ativo AS Ativo, encerramento_auto_horas AS Horas
 
             var ids = await connection.QueryAsync<Guid>(
                 "SELECT DISTINCT id_estabelecimento FROM pedido " +
-                "WHERE COALESCE(status_pedido, 1) IN (1, 2, 5) AND id_estabelecimento IS NOT NULL;");
+                "WHERE COALESCE(status_pedido, 1) IN (1, 2, 5, 8) AND id_estabelecimento IS NOT NULL;");
             return ids.ToList();
         }
 
@@ -97,7 +97,7 @@ SELECT encerramento_auto_ativo AS Ativo, encerramento_auto_horas AS Horas
 SELECT p.id AS Id, p.data_pedido::text AS DataPedidoRaw, p.horario_pedido::text AS HorarioPedidoRaw
   FROM pedido p
  WHERE p.id_estabelecimento = @EstabelecimentoId
-   AND COALESCE(p.status_pedido, 1) IN (1, 2, 5);", new { EstabelecimentoId = estabelecimentoId });
+   AND COALESCE(p.status_pedido, 1) IN (1, 2, 5, 8);", new { EstabelecimentoId = estabelecimentoId });
 
             return rows.Select(row =>
             {

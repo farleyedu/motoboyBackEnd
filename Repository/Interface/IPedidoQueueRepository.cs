@@ -50,6 +50,12 @@ namespace APIBack.Repository.Interface
         Task<CreatedPedidoDto> UpdatePedidoForSimulatorAsync(Guid estabelecimentoId, int actorUserId, int pedidoId, APIBack.Service.SimulatorOrderPatch patch);
         Task<CreatedPedidoDto> ReopenPedidoForSimulatorAsync(Guid estabelecimentoId, int actorUserId, int pedidoId);
 
+        // ---- Confirmacao do motoboy (oferta de rota) ----
+        Task<MotoboyQueueDto> AssignRouteAsync(Guid estabelecimentoId, int actorUserId, int motoboyId, IReadOnlyList<int> pedidoIdsOrdenados);
+        Task<MotoboyQueueDto> AcceptOfferAsync(Guid estabelecimentoId, int motoboyId);
+        Task<MotoboyQueueDto> RejectOfferAsync(Guid estabelecimentoId, int motoboyId, string? motivo);
+        Task<int> ExpireOffersAsync(DateTimeOffset agoraUtc);
+
         // ---- Encerramento automatico de pedidos em aberto ----
         Task<APIBack.Service.EncerramentoSettings> GetEncerramentoSettingsAsync(Guid estabelecimentoId);
         Task<IReadOnlyList<Guid>> ListEstablishmentsWithOpenOrdersAsync();

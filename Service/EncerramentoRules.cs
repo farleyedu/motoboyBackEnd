@@ -21,7 +21,7 @@ namespace APIBack.Service
 
         /// <summary>Pedido em aberto: o que o encerramento alcanca. Rascunho, entregue e cancelado ficam fora.</summary>
         public static bool IsOpen(StatusPedido status) =>
-            status is StatusPedido.Pendente or StatusPedido.Atribuido or StatusPedido.EmRota;
+            status is StatusPedido.Pendente or StatusPedido.Atribuido or StatusPedido.EmRota or StatusPedido.AguardandoMotoboy;
 
         /// <summary>So o pedido encerrado automaticamente pode ser reaberto por aqui.</summary>
         public static bool CanReopen(StatusPedido status) => status == StatusPedido.EncerradoAuto;

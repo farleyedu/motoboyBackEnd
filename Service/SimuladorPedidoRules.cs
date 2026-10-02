@@ -93,6 +93,7 @@ namespace APIBack.Service
             StatusPedido.EncerradoAuto => "encerrado",
             StatusPedido.Concluido => "entregue",
             StatusPedido.EmRota => "saiu",
+            StatusPedido.AguardandoMotoboy => "saiu",
             _ => preparo ? "em_preparo" : confirmado ? "confirmado" : "recebido"
         };
 

@@ -39,6 +39,7 @@ namespace APIBack.Service
             ["atribuido"] = (int)StatusPedido.Atribuido,
             ["rascunho"] = (int)StatusPedido.Rascunho,
             ["encerrado_auto"] = (int)StatusPedido.EncerradoAuto,
+            ["aguardando_motoboy"] = (int)StatusPedido.AguardandoMotoboy,
         };
 
         public static PedidoFiltro From(PedidoFiltroRequest? request)

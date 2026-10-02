@@ -137,6 +137,16 @@ namespace APIBack.Controllers
         public Task<IActionResult> Refuse(int pedidoId, [FromBody] RefuseStopRequest? request) =>
             WithOperationalContextAsync((est, motoboyId, _) => _queueService.RefuseAsync(est, motoboyId, pedidoId, request?.Motivo));
 
+        [HttpPost("queue/offer/accept")]
+        [RequireOperationalSession]
+        public Task<IActionResult> AcceptOffer() =>
+            WithOperationalContextAsync((est, motoboyId, _) => _queueService.AcceptOfferAsync(est, motoboyId));
+
+        [HttpPost("queue/offer/reject")]
+        [RequireOperationalSession]
+        public Task<IActionResult> RejectOffer([FromBody] RejectOfferRequest? request) =>
+            WithOperationalContextAsync((est, motoboyId, _) => _queueService.RejectOfferAsync(est, motoboyId, request?.Motivo));
+
         [HttpPut("queue/reorder")]
         [RequireOperationalSession]
         public Task<IActionResult> Reorder([FromBody] ReorderQueueRequest request) =>

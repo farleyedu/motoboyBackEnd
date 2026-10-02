@@ -42,6 +42,12 @@ namespace APIBack.Service.Interface
         Task<CreatedPedidoDto> CreatePedidoAsync(Guid estabelecimentoId, int actorUserId, CreatePedidoRequest request);
         Task<CreatedPedidoDto> UpdatePedidoForSimulatorAsync(Guid estabelecimentoId, int actorUserId, int pedidoId, SimulatorPedidoRequest request);
         Task<CreatedPedidoDto> ReopenPedidoForSimulatorAsync(Guid estabelecimentoId, int actorUserId, int pedidoId);
+        /// <summary>Envia a rota inteira ao motoboy de uma vez (tudo ou nada).</summary>
+        Task<MotoboyQueueDto> AssignRouteAsync(Guid estabelecimentoId, int actorUserId, int motoboyId, IReadOnlyList<int> pedidoIds);
+        /// <summary>O motoboy aceita a rota oferecida.</summary>
+        Task<MotoboyQueueDto> AcceptOfferAsync(Guid estabelecimentoId, int motoboyId);
+        /// <summary>O motoboy recusa a rota oferecida inteira.</summary>
+        Task<MotoboyQueueDto> RejectOfferAsync(Guid estabelecimentoId, int motoboyId, string? motivo);
         /// <summary>Reabre um pedido encerrado automaticamente (volta a pendente, sem motoboy).</summary>
         Task<CreatedPedidoDto> ReabrirEncerradoAsync(Guid estabelecimentoId, int actorUserId, int pedidoId);
         Task PublishPedidoEventForSimulatorAsync(Guid estabelecimentoId, int actorUserId, int pedidoId, string action);

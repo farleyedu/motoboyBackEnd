@@ -378,8 +378,8 @@ namespace APIBack.Tests.Unit
             Assert.Equal(3, (int)StatusPedido.Concluido);
             Assert.Equal(4, (int)StatusPedido.Cancelado);
             Assert.Equal(5, (int)StatusPedido.Atribuido);
-            // 7 virou EncerradoAuto (encerramento automatico); o proximo valor livre segue desconhecido.
-            Assert.Null(StatusPedidoExtensions.FromDbValue(8));
+            // 7 virou EncerradoAuto e 8 AguardandoMotoboy; o proximo valor livre segue desconhecido.
+            Assert.Null(StatusPedidoExtensions.FromDbValue(9));
         }
     }
 

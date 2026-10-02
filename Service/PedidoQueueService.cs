@@ -40,6 +40,26 @@ namespace APIBack.Service
             return _repository.AssignAsync(estabelecimentoId, actorUserId, motoboyId, pedidoId);
         }
 
+        public Task<MotoboyQueueDto> AssignRouteAsync(Guid estabelecimentoId, int actorUserId, int motoboyId, IReadOnlyList<int> pedidoIds)
+        {
+            EnsurePositive(motoboyId, "motoboyId");
+            EnsureValidOrder(pedidoIds);
+            foreach (var pedidoId in pedidoIds) EnsurePositive(pedidoId, "pedidoId");
+            return _repository.AssignRouteAsync(estabelecimentoId, actorUserId, motoboyId, pedidoIds);
+        }
+
+        public Task<MotoboyQueueDto> AcceptOfferAsync(Guid estabelecimentoId, int motoboyId)
+        {
+            EnsurePositive(motoboyId, "motoboyId");
+            return _repository.AcceptOfferAsync(estabelecimentoId, motoboyId);
+        }
+
+        public Task<MotoboyQueueDto> RejectOfferAsync(Guid estabelecimentoId, int motoboyId, string? motivo)
+        {
+            EnsurePositive(motoboyId, "motoboyId");
+            return _repository.RejectOfferAsync(estabelecimentoId, motoboyId, DeliveryRules.NormalizeReason(motivo, required: false));
+        }
+
         public Task<MotoboyQueueDto> RemoveAsync(Guid estabelecimentoId, int actorUserId, int pedidoId)
         {
             EnsurePositive(pedidoId, "pedidoId");
@@ -268,6 +288,11 @@ namespace APIBack.Service
             {
                 throw new DeliveryDomainException(422, "INVALID_DEFAULT_DELIVERY_MINUTES",
                     "O prazo padrao de entrega deve ficar entre 1 e 600 minutos.");
+            }
+            if (request.OfferTimeoutMinutes.HasValue && !OfertaRotaRules.IsValidPrazo(request.OfferTimeoutMinutes.Value))
+            {
+                throw new DeliveryDomainException(422, "INVALID_OFFER_TIMEOUT",
+                    $"O prazo para o motoboy responder deve ficar entre 1 e {OfertaRotaRules.PrazoMaximoMinutos} minutos.");
             }
             if (request.EncerramentoAutoHoras.HasValue && !EncerramentoRules.IsValidHoras(request.EncerramentoAutoHoras.Value))
             {

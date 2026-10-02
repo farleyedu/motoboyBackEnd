@@ -17,7 +17,12 @@
         /// atendente, ao encerrar o expediente). Nao conta como entregue nem cancelado: o motoboy
         /// com quem estava fica gravado em pedido_encerramento. Pode ser reaberto (volta a Pendente).
         /// </summary>
-        EncerradoAuto = 7
+        EncerradoAuto = 7,
+        /// <summary>
+        /// O atendente enviou o pedido (a rota) ao motoboy e ele ainda nao aceitou nem recusou. Para o
+        /// painel e igual a "em rota"; so e interno. Aceitar vira Atribuido/EmRota; recusar volta a Pendente.
+        /// </summary>
+        AguardandoMotoboy = 8
     }
 
     public static class StatusPedidoExtensions
@@ -31,6 +36,7 @@
             5 => StatusPedido.Atribuido,
             6 => StatusPedido.Rascunho,
             7 => StatusPedido.EncerradoAuto,
+            8 => StatusPedido.AguardandoMotoboy,
             _ => null
         };
 
@@ -43,6 +49,7 @@
             StatusPedido.Atribuido => "atribuido",
             StatusPedido.Rascunho => "rascunho",
             StatusPedido.EncerradoAuto => "encerrado_auto",
+            StatusPedido.AguardandoMotoboy => "aguardando_motoboy",
             _ => "pendente"
         };
 

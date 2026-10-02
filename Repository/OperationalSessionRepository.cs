@@ -860,7 +860,7 @@ SELECT EXISTS (
     SELECT 1 FROM pedido
      WHERE motoboy_responsavel = @MotoboyId
        AND id_estabelecimento = @EstabelecimentoId
-       AND status_pedido IN (2, 5));",
+       AND status_pedido IN (2, 5, 8));",
                 new { MotoboyId = motoboyId, EstabelecimentoId = estabelecimentoId }, transaction);
             if (hasActiveOrders) return SimulatorMotoboyRemoval.HasActiveOrders;
 

@@ -124,6 +124,7 @@ builder.Services.AddScoped<TrackingNoticeService>();
 builder.Services.AddHostedService<TrackingNoticeWorker>();
 builder.Services.AddScoped<EncerramentoService>();
 builder.Services.AddHostedService<PedidoEncerramentoWorker>();
+builder.Services.AddHostedService<OfertaRotaWorker>();
 builder.Services.AddScoped<AtendimentoService>();
 builder.Services.AddScoped<ICardapioFichaService, CardapioFichaService>();
 builder.Services.AddScoped<IPedidoHistoricoRepository, PedidoHistoricoRepository>();

@@ -97,6 +97,22 @@ SELECT m.id
             await using var connection = await _dataSource.OpenConnectionAsync();
             await using var transaction = await connection.BeginTransactionAsync();
 
+            var offerId = await NewOfferIdIfRequiredAsync(connection, transaction, estabelecimentoId);
+            await AssignCoreAsync(connection, transaction, estabelecimentoId, actorUserId, motoboyId, pedidoId, offerId);
+            var version = await GetVersionAsync(connection, transaction, estabelecimentoId, motoboyId);
+            var snapshot = await BuildSnapshotAsync(connection, transaction, estabelecimentoId, motoboyId, version);
+            await transaction.CommitAsync();
+            return snapshot;
+        }
+
+        /// <summary>
+        /// Atribui um pedido ao motoboy dentro da transacao de quem chama (sozinho ou em lote). Com
+        /// <paramref name="offerId"/> a parada entra como oferta, esperando o aceite do motoboy.
+        /// </summary>
+        private async Task AssignCoreAsync(
+            NpgsqlConnection connection, NpgsqlTransaction transaction,
+            Guid estabelecimentoId, int actorUserId, int motoboyId, int pedidoId, Guid? offerId)
+        {
             // Leitura sem trava so para descobrir quais filas travar (regra 1).
             var preview = await GetPedidoAsync(connection, transaction, estabelecimentoId, pedidoId, forUpdate: false)
                 ?? throw new DeliveryDomainException(404, "PEDIDO_NOT_FOUND", "Pedido nao encontrado neste estabelecimento.");
@@ -109,17 +125,14 @@ SELECT m.id
                 ?? throw new DeliveryDomainException(404, "PEDIDO_NOT_FOUND", "Pedido nao encontrado neste estabelecimento.");
             var currentStatus = StatusPedidoExtensions.FromDbValue(pedido.StatusPedido) ?? StatusPedido.Pendente;
 
-            // Idempotencia: repetir a mesma atribuicao devolve o estado atual.
-            if ((currentStatus == StatusPedido.Atribuido || currentStatus == StatusPedido.EmRota)
+            // Idempotencia: repetir a mesma atribuicao nao muda nada.
+            if ((currentStatus == StatusPedido.Atribuido || currentStatus == StatusPedido.EmRota || currentStatus == StatusPedido.AguardandoMotoboy)
                 && pedido.MotoboyResponsavel == motoboyId)
             {
-                var sameVersion = await GetVersionAsync(connection, transaction, estabelecimentoId, motoboyId);
-                var same = await BuildSnapshotAsync(connection, transaction, estabelecimentoId, motoboyId, sameVersion);
-                await transaction.CommitAsync();
-                return same;
+                return;
             }
 
-            if (currentStatus == StatusPedido.Atribuido && pedido.MotoboyResponsavel.HasValue)
+            if ((currentStatus == StatusPedido.Atribuido || currentStatus == StatusPedido.AguardandoMotoboy) && pedido.MotoboyResponsavel.HasValue)
             {
                 // Pedido esperando a vez na fila de outro motoboy: o atendente pode move-lo.
                 // (Pedido em rota com outro motoboy usa transferencia, que trata a entrega atual.)
@@ -149,13 +162,11 @@ SELECT m.id
             }
 
             var eligibility = await EnsureEligibleAsync(connection, transaction, motoboyId, estabelecimentoId);
+            // Motoboy ocupado: ainda nao respondeu a uma rota enviada antes (outra oferta).
+            await EnsureNoOtherPendingOfferAsync(connection, transaction, estabelecimentoId, motoboyId, offerId);
             var version = await AppendStopAsync(connection, transaction, estabelecimentoId, motoboyId, pedidoId, actorUserId,
-                pickedUpAtUtc: null, transferRequestId: null);
-            await EmitQueueEventAsync(connection, transaction, estabelecimentoId, motoboyId, pedidoId, "assigned", version, eligibility.SessionId);
-
-            var snapshot = await BuildSnapshotAsync(connection, transaction, estabelecimentoId, motoboyId, version);
-            await transaction.CommitAsync();
-            return snapshot;
+                pickedUpAtUtc: null, transferRequestId: null, offerId: offerId);
+            await EmitQueueEventAsync(connection, transaction, estabelecimentoId, motoboyId, pedidoId, offerId.HasValue ? "offered" : "assigned", version, eligibility.SessionId);
         }
 
         public async Task<MotoboyQueueDto> RemoveAsync(Guid estabelecimentoId, int actorUserId, int pedidoId)
@@ -434,7 +445,7 @@ SELECT m.id
         private static async Task<long> AppendStopAsync(
             NpgsqlConnection connection, NpgsqlTransaction transaction,
             Guid estabelecimentoId, int motoboyId, int pedidoId, int? actorUserId,
-            DateTimeOffset? pickedUpAtUtc, long? transferRequestId)
+            DateTimeOffset? pickedUpAtUtc, long? transferRequestId, Guid? offerId = null)
         {
             var hasCurrent = await HasEnRouteAnywhereAsync(connection, transaction, motoboyId);
             var nextPosition = await connection.ExecuteScalarAsync<int>(
@@ -442,16 +453,19 @@ SELECT m.id
                 $"WHERE motoboy_id = @MotoboyId AND estabelecimento_id = @EstabelecimentoId AND stop_status IN {ActiveStatusesSql};",
                 new { MotoboyId = motoboyId, EstabelecimentoId = estabelecimentoId }, transaction);
 
-            var stopStatus = hasCurrent ? "assigned" : "en_route";
-            var newPedidoStatus = hasCurrent ? StatusPedido.Atribuido : StatusPedido.EmRota;
+            // Oferta: a parada espera o aceite do motoboy, entao nunca vira entrega atual aqui.
+            var offered = offerId.HasValue;
+            var stopStatus = hasCurrent || offered ? "assigned" : "en_route";
+            var newPedidoStatus = offered ? StatusPedido.AguardandoMotoboy : hasCurrent ? StatusPedido.Atribuido : StatusPedido.EmRota;
 
-            await connection.ExecuteAsync(@"
+            var stopId = await connection.ExecuteScalarAsync<long>(@"
 INSERT INTO delivery_route_stops
     (estabelecimento_id, motoboy_id, pedido_id, position, stop_status, assigned_by_user_id,
      assigned_at_utc, started_at_utc, picked_up_at_utc, transfer_request_id, updated_at_utc)
 VALUES
     (@EstabelecimentoId, @MotoboyId, @PedidoId, @Position, @StopStatus, @ActorUserId,
-     NOW(), CASE WHEN @StopStatus = 'en_route' THEN NOW() ELSE NULL END, @PickedUpAtUtc, @TransferRequestId, NOW());",
+     NOW(), CASE WHEN @StopStatus = 'en_route' THEN NOW() ELSE NULL END, @PickedUpAtUtc, @TransferRequestId, NOW())
+RETURNING id;",
                 new
                 {
                     EstabelecimentoId = estabelecimentoId,
@@ -463,6 +477,13 @@ VALUES
                     PickedUpAtUtc = pickedUpAtUtc,
                     TransferRequestId = transferRequestId
                 }, transaction);
+
+            if (offered)
+            {
+                await connection.ExecuteAsync(
+                    "UPDATE delivery_route_stops SET offer_id = @OfferId, offered_at_utc = NOW() WHERE id = @Id;",
+                    new { OfferId = offerId, Id = stopId }, transaction);
+            }
 
             await ClearReturningAsync(connection, transaction, estabelecimentoId, motoboyId);
 
@@ -618,9 +639,11 @@ UPDATE delivery_route_stops s
         {
             if (await HasEnRouteAnywhereAsync(connection, transaction, motoboyId)) return;
 
+            // Parada oferecida ainda espera o aceite do motoboy: nao vira entrega atual.
+            var notOffered = await PedidoColumnTypes.HasOfertaSchemaAsync(connection, transaction) ? "AND s.offered_at_utc IS NULL " : string.Empty;
             var next = await connection.QuerySingleOrDefaultAsync<StopRow?>(
                 $"SELECT {StopColumns} FROM delivery_route_stops s " +
-                "WHERE s.motoboy_id = @MotoboyId AND s.estabelecimento_id = @EstabelecimentoId AND s.stop_status = 'assigned' " +
+                $"WHERE s.motoboy_id = @MotoboyId AND s.estabelecimento_id = @EstabelecimentoId AND s.stop_status = 'assigned' {notOffered}" +
                 "ORDER BY s.position LIMIT 1 FOR UPDATE;",
                 new { MotoboyId = motoboyId, EstabelecimentoId = estabelecimentoId }, transaction);
             if (next == null) return;
@@ -717,12 +740,15 @@ SELECT
             public string? DataPedidoRaw { get; set; }
             public bool HasDeliveryCode { get; set; }
             public bool Locked { get; set; }
+            public Guid? OfferId { get; set; }
+            public DateTimeOffset? OfferedAtUtc { get; set; }
         }
 
         private static async Task<MotoboyQueueDto> BuildSnapshotAsync(
             NpgsqlConnection connection, NpgsqlTransaction transaction, Guid estabelecimentoId, int motoboyId, long version)
         {
             var rules = await HasRouteRulesSchemaAsync(connection, transaction);
+            var offers = await PedidoColumnTypes.HasOfertaSchemaAsync(connection, transaction);
             // Colunas legadas podem ser text/numeric/time: le como texto e converte com
             // seguranca, para um cadastro mal preenchido nao derrubar a fila inteira.
             var rows = (await connection.QueryAsync<StopDetailRow>($@"
@@ -748,7 +774,9 @@ SELECT s.id AS Id, s.pedido_id AS PedidoId, s.position AS Position, s.stop_statu
        p.previsao_entrega::text AS PrevisaoEntregaRaw,
        p.data_pedido::text AS DataPedidoRaw,
        (NULLIF(BTRIM(COALESCE(p.codigo_entrega::text, '')), '') IS NOT NULL) AS HasDeliveryCode,
-       {(rules ? "s.locked" : "FALSE")} AS Locked
+       {(rules ? "s.locked" : "FALSE")} AS Locked,
+       {(offers ? "s.offer_id" : "NULL::uuid")} AS OfferId,
+       {(offers ? "s.offered_at_utc" : "NULL::timestamptz")} AS OfferedAtUtc
   FROM delivery_route_stops s
   JOIN pedido p ON p.id = s.pedido_id
  WHERE s.motoboy_id = @MotoboyId AND s.estabelecimento_id = @EstabelecimentoId AND s.stop_status IN {ActiveStatusesSql}
@@ -761,7 +789,7 @@ SELECT s.id AS Id, s.pedido_id AS PedidoId, s.position AS Position, s.stop_statu
             {
                 PedidoId = row.PedidoId,
                 Position = row.Position,
-                Status = row.StopStatus,
+                Status = row.OfferedAtUtc.HasValue ? "offered" : row.StopStatus,
                 AssignedAtUtc = row.AssignedAtUtc,
                 PickedUpAtUtc = row.PickedUpAtUtc,
                 ArrivedAtUtc = row.ArrivedAtUtc,
@@ -793,6 +821,12 @@ SELECT s.id AS Id, s.pedido_id AS PedidoId, s.position AS Position, s.stop_statu
             };
 
             var current = rows.FirstOrDefault(r => r.StopStatus == "en_route");
+            var offeredRows = rows.Where(r => r.OfferedAtUtc.HasValue).ToList();
+            var offer = offeredRows.Count == 0
+                ? null
+                : OfertaRotaRules.BuildOffer(
+                    offeredRows.Select(Map).ToList(), offeredRows[0].OfferId, offeredRows.Min(r => r.OfferedAtUtc),
+                    (await ReadOfferSettingsAsync(connection, transaction, estabelecimentoId)).Minutes);
             var routeState = await ReadRouteStateAsync(connection, transaction, estabelecimentoId, motoboyId, rules);
             return new MotoboyQueueDto
             {
@@ -802,7 +836,8 @@ SELECT s.id AS Id, s.pedido_id AS PedidoId, s.position AS Position, s.stop_statu
                 EstabelecimentoId = estabelecimentoId,
                 Version = version,
                 Current = current == null ? null : Map(current),
-                Next = rows.Where(r => r.StopStatus == "assigned").Select(Map).ToList(),
+                Next = rows.Where(r => r.StopStatus == "assigned" && !r.OfferedAtUtc.HasValue).Select(Map).ToList(),
+                Offer = offer,
                 Politicas = settings.ToPolicies()
             };
         }

@@ -274,6 +274,23 @@ namespace APIBack.Controllers
             }
         }
 
+        /// <summary>Envia a rota inteira ao motoboy numa transacao so (tudo ou nada). Com a confirmacao ligada, vira oferta.</summary>
+        [HttpPost("rotas/atribuir")]
+        [RequirePermission("Delivery", "atribuir_motoboy")]
+        public async Task<IActionResult> AssignRoute([FromBody] AssignRouteRequest request)
+        {
+            if (!TryGetActor(out var actorUserId, out var estabelecimentoId, out var error)) return error!;
+            try
+            {
+                var snapshot = await _queueService.AssignRouteAsync(estabelecimentoId, actorUserId, request.MotoboyId, request.PedidoIds);
+                return Ok(ApiResponse<MotoboyQueueDto>.Ok(snapshot));
+            }
+            catch (DeliveryDomainException ex)
+            {
+                return DomainError(ex);
+            }
+        }
+
         [HttpDelete("pedidos/{pedidoId:int}/fila")]
         [RequirePermission("Delivery", "atribuir_motoboy")]
         public async Task<IActionResult> Remove(int pedidoId)

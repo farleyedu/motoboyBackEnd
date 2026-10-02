@@ -228,6 +228,7 @@ SELECT id FROM clientes WHERE id_estabelecimento = @Est AND telefone_e164 = @Tel
                     StatusPedido.Concluido => "concluida",
                     StatusPedido.EmRota => "em_rota",
                     StatusPedido.Atribuido => "aguardando",
+                    StatusPedido.AguardandoMotoboy => "aguardando",
                     _ => "sem_motoboy"
                 },
                 Proximos = simulado ? SimuladorPedidoRules.Proximos(status, confirmado, preparo) : new List<string>()
@@ -587,7 +588,7 @@ SELECT m.id
                 await _queue.ReopenPedidoForSimulatorAsync(est, userId, pedidoId);
                 await LogAsync(est, userId, "pedido", pedidoId, "pedido_reaberto", "Pedido reaberto", "Voltou a pendente, sem motoboy", "atencao");
             }
-            else if (status is StatusPedido.Atribuido or StatusPedido.EmRota && !SimuladorPedidoRules.RequiresMotoboy(alvo))
+            else if (status is StatusPedido.Atribuido or StatusPedido.EmRota or StatusPedido.AguardandoMotoboy && !SimuladorPedidoRules.RequiresMotoboy(alvo))
             {
                 await _queue.RemoveAsync(est, userId, pedidoId);
                 await LogAsync(est, userId, "pedido", pedidoId, "pedido_removido_fila", "Pedido saiu da fila", "Voltou a pendente", "atencao");
@@ -743,7 +744,7 @@ UPDATE pedido SET nome_cliente = COALESCE(NULLIF(@Nome, ''), nome_cliente), tele
         {
             var row = await LoadRowAsync(est, pedidoId);
             RequireSimulated(row);
-            if (StatusOf(row) is StatusPedido.Atribuido or StatusPedido.EmRota)
+            if (StatusOf(row) is StatusPedido.Atribuido or StatusPedido.EmRota or StatusPedido.AguardandoMotoboy)
             {
                 throw new DeliveryDomainException(409, "ORDER_IN_QUEUE", "O pedido esta na fila de um motoboy. Tire-o da fila ou cancele antes de remover.");
             }

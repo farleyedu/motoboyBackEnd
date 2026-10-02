@@ -89,6 +89,24 @@ SELECT (SELECT COUNT(*) FROM information_schema.columns
             return present;
         }
 
+        private static volatile bool _ofertaSchemaKnown;
+
+        /// <summary>
+        /// True quando a migration 20261002_02 (confirmacao do motoboy: ofertas de rota) foi aplicada.
+        /// So cacheia o "sim"; antes dela a atribuicao continua virando entrega na hora.
+        /// </summary>
+        public static async Task<bool> HasOfertaSchemaAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction)
+        {
+            if (_ofertaSchemaKnown) return true;
+            var present = await connection.ExecuteScalarAsync<bool>(@"
+SELECT (SELECT COUNT(*) FROM information_schema.columns
+         WHERE table_schema = current_schema()
+           AND ((table_name = 'delivery_route_stops' AND column_name IN ('offer_id', 'offered_at_utc'))
+             OR (table_name = 'delivery_settings' AND column_name IN ('require_motoboy_acceptance', 'offer_timeout_minutes')))) = 4;", transaction: transaction);
+            if (present) _ofertaSchemaKnown = true;
+            return present;
+        }
+
         private static volatile bool _encerramentoSchemaKnown;
 
         /// <summary>

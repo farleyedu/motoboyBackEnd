@@ -429,6 +429,7 @@ SELECT
         WHEN 5 THEN 'atribuido'
         WHEN 6 THEN 'rascunho'
         WHEN 7 THEN 'encerrado_auto'
+        WHEN 8 THEN 'aguardando_motoboy'
         ELSE 'pendente'
     END AS StatusPedido,
     -- O dono do pedido e o da fila: se o pedido perdeu o motoboy_responsavel mas a parada de rota existe
@@ -527,14 +528,14 @@ LEFT JOIN LATERAL (
        AND t.status = 'pending_approval'
      ORDER BY t.requested_at_utc DESC
      LIMIT 1
-) pt ON COALESCE(p.status_pedido, 1) IN (2, 5)
+) pt ON COALESCE(p.status_pedido, 1) IN (2, 5, 8)
  WHERE p.id_estabelecimento = @EstabelecimentoId
    -- Ativos (pendente/em_rota/atribuido) mais os desfechos (concluido/cancelado) a partir do
    -- inicio da janela de pedidos: o painel mostra 'Entregue' em vez de sumir com o pedido.
    -- O recorte fino pela janela configurada do estabelecimento e feito depois, em C#, porque
    -- as colunas de horario do pedido sao legadas e de tipos misturados.
    AND (
-        COALESCE(p.status_pedido, 1) IN (1, 2, 5)
+        COALESCE(p.status_pedido, 1) IN (1, 2, 5, 8)
         OR (COALESCE(p.status_pedido, 1) = 3 AND dn.at_utc >= @WindowFromUtc)
         OR (COALESCE(p.status_pedido, 1) = 4 AND cn.at_utc >= @WindowFromUtc)
         OR (COALESCE(p.status_pedido, 1) = 7 AND __ENC_AT__ >= @WindowFromUtc)
@@ -614,7 +615,7 @@ SELECT rs.motoboy_id AS MotoboyId, COUNT(*)::int AS DeliveredToday
             var motoboyStats = (await connection.QueryAsync<MotoboyDayStatsDto>(statsQuery, dayParams)).ToList();
 
             var pedidosPorMotoboy = pedidos
-                .Where(p => p.AssignedDriver.HasValue && (p.StatusPedido == "em_rota" || p.StatusPedido == "atribuido"))
+                .Where(p => p.AssignedDriver.HasValue && (p.StatusPedido == "em_rota" || p.StatusPedido == "atribuido" || p.StatusPedido == "aguardando_motoboy"))
                 .GroupBy(p => p.AssignedDriver!.Value)
                 .ToDictionary(g => g.Key, g => g.ToList());
 
@@ -665,14 +666,16 @@ SELECT rs.motoboy_id AS MotoboyId, COUNT(*)::int AS DeliveredToday
         /// </summary>
         internal static bool IsInOrderWindow(OrderMapDto pedido, DTOs.Delivery.OrderWindowDto window, OrderWindowRange range)
         {
-            var open = pedido.StatusPedido is "pendente" or "atribuido" or "em_rota";
+            var open = pedido.StatusPedido is "pendente" or "atribuido" or "em_rota" or "aguardando_motoboy";
             if (open && window.AlwaysShowOpenOrders) return true;
 
             var placed = OrderWindowRules.PlacedAtUtc(pedido.HorarioPedido ?? pedido.DataPedido);
             if (placed is null) return true;
             if (range.Contains(placed.Value)) return true;
 
-            var finishedAt = pedido.CompletedAtUtc ?? pedido.CanceledAtUtc ?? pedido.EncerradoEmUtc;
+            // Encerrado automaticamente nao conta pela hora do encerramento (acontece de madrugada, no dia
+            // seguinte): so aparece se foi FEITO dentro da janela, como qualquer outro.
+            var finishedAt = pedido.CompletedAtUtc ?? pedido.CanceledAtUtc;
             return !open && finishedAt is not null && range.Contains(finishedAt.Value);
         }
 
@@ -778,7 +781,7 @@ LEFT JOIN LATERAL (
                 DistanciaKm = row.DistanciaKm,
                 Observacoes = row.Observacoes,
                 // O codigo so importa enquanto o pedido esta em aberto: finalizado nao o expoe mais.
-                CodigoEntrega = row.StatusPedido is "pendente" or "atribuido" or "em_rota"
+                CodigoEntrega = row.StatusPedido is "pendente" or "atribuido" or "em_rota" or "aguardando_motoboy"
                     ? (string.IsNullOrWhiteSpace(row.CodigoEntrega) ? null : row.CodigoEntrega.Trim())
                     : null,
                 EntregaRua = row.EntregaRua,

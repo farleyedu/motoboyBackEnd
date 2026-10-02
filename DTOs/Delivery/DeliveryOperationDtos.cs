@@ -68,6 +68,10 @@ namespace APIBack.DTOs.Delivery
         public bool EncerramentoAutoAtivo { get; set; } = true;
         /// <summary>Horas depois do fechamento do estabelecimento em que o encerramento acontece.</summary>
         public int EncerramentoAutoHoras { get; set; } = APIBack.Service.EncerramentoRules.HorasPadrao;
+        /// <summary>O motoboy precisa aceitar a rota enviada pelo atendente (o pedido fica "aguardando motoboy" ate la).</summary>
+        public bool RequireMotoboyAcceptance { get; set; }
+        /// <summary>Minutos que o motoboy tem para responder antes da oferta ser recusada sozinha.</summary>
+        public int OfferTimeoutMinutes { get; set; } = APIBack.Service.OfertaRotaRules.PrazoPadraoMinutos;
 
         public DeliveryPoliciesDto ToPolicies() => new()
         {
@@ -109,9 +113,25 @@ namespace APIBack.DTOs.Delivery
         public bool? EncerramentoAutoAtivo { get; set; }
         /// <summary>Nulo = manter. De 0 a 24 horas depois do fechamento.</summary>
         public int? EncerramentoAutoHoras { get; set; }
+        /// <summary>Nulo = manter.</summary>
+        public bool? RequireMotoboyAcceptance { get; set; }
+        /// <summary>Nulo = manter. De 1 a 60 minutos.</summary>
+        public int? OfferTimeoutMinutes { get; set; }
     }
 
     // ---- Acoes do motoboy ------------------------------------------------------
+
+    /// <summary>Rota a enviar ao motoboy: pedidos na ordem da rota.</summary>
+    public sealed class AssignRouteRequest
+    {
+        public int MotoboyId { get; set; }
+        public List<int> PedidoIds { get; set; } = new();
+    }
+
+    public sealed class RejectOfferRequest
+    {
+        public string? Motivo { get; set; }
+    }
 
     public sealed class DeliverStopRequest
     {

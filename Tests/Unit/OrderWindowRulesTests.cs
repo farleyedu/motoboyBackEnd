@@ -204,6 +204,22 @@ namespace APIBack.Tests.Unit
         }
 
         [Fact]
+        public void MapFilter_AutoClosedOrderFromThePreviousShiftIsNotShownToday()
+        {
+            var window = OrderWindowRules.Default();
+            var range = OrderWindowRules.Resolve(window, Now);
+            // Feito ontem as 20:00 e encerrado hoje as 03:00 (4 h depois de fechar): e do expediente anterior.
+            var order = Order("encerrado_auto", BrasiliaLocal(23, 20));
+            order.EncerradoEmUtc = Brasilia(24, 3);
+            Assert.False(TrackingRepository.IsInOrderWindow(order, window, range));
+
+            // Encerrado pelo atendente no fim do expediente de hoje: continua no dia dele.
+            var today = Order("encerrado_auto", BrasiliaLocal(24, 19));
+            today.EncerradoEmUtc = Brasilia(24, 20);
+            Assert.True(TrackingRepository.IsInOrderWindow(today, window, range));
+        }
+
+        [Fact]
         public void MapFilter_OrderWithoutAnyTimestampIsNeverHidden()
         {
             var window = new OrderWindowDto { Mode = OrderWindowModes.LastHours, Hours = 1, AlwaysShowOpenOrders = false };

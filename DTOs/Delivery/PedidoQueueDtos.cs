@@ -78,6 +78,17 @@ namespace APIBack.DTOs.Delivery
         public bool RequerCodigoEntrega { get; set; }
     }
 
+    /// <summary>Rota oferecida ao motoboy: ele aceita (entra na fila), recusa a rota inteira ou recusa um pedido.</summary>
+    public sealed class MotoboyOfferDto
+    {
+        public Guid? OfferId { get; set; }
+        public DateTimeOffset OfferedAtUtc { get; set; }
+        /// <summary>Quando a oferta e recusada sozinha por falta de resposta.</summary>
+        public DateTimeOffset ExpiresAtUtc { get; set; }
+        public int TimeoutMinutes { get; set; }
+        public List<RouteStopDto> Stops { get; set; } = new();
+    }
+
     public sealed class MotoboyQueueDto
     {
         public int MotoboyId { get; set; }
@@ -85,6 +96,8 @@ namespace APIBack.DTOs.Delivery
         public long Version { get; set; }
         public RouteStopDto? Current { get; set; }
         public List<RouteStopDto> Next { get; set; } = new();
+        /// <summary>Rota enviada pelo atendente que o motoboy ainda nao aceitou nem recusou (as paradas oferecidas ficam aqui, fora de Current/Next).</summary>
+        public MotoboyOfferDto? Offer { get; set; }
         /// <summary>'idle' ou 'returning' (voltando a loja depois da ultima entrega).</summary>
         public string RouteState { get; set; } = "idle";
         public DateTimeOffset? ReturningSinceUtc { get; set; }
