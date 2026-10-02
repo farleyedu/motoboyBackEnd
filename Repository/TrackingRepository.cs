@@ -746,14 +746,10 @@ LEFT JOIN LATERAL (
         {
             var dataPedido = DeliveryRules.ParseStoredDateTime(row.DataPedidoRaw);
             var horarioPedido = DeliveryRules.ParseStoredDateTime(row.HorarioPedidoRaw, dataPedido);
-            var previsao = DeliveryRules.ParseStoredDateTime(row.PrevisaoEntregaRaw, dataPedido);
-            // Previsao so com horario, ancorada na data do pedido, pode cair "antes" do
-            // pedido quando passa da meia-noite (pedido 23:50, previsao 00:30).
-            if (previsao.HasValue && horarioPedido.HasValue && previsao.Value < horarioPedido.Value
-                && previsao.Value.Kind == DateTimeKind.Unspecified && horarioPedido.Value.Kind == DateTimeKind.Unspecified)
-            {
-                previsao = previsao.Value.AddDays(1);
-            }
+            // Previsao so com horario cai "antes" do pedido na virada da meia-noite OU quando ja venceu:
+            // so o primeiro caso vira o dia seguinte (ver ResolvePrevisaoAcrossMidnight).
+            var previsao = DeliveryRules.ResolvePrevisaoAcrossMidnight(
+                DeliveryRules.ParseStoredDateTime(row.PrevisaoEntregaRaw, dataPedido), horarioPedido);
 
             return new OrderMapDto
             {

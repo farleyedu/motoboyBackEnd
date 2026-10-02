@@ -84,6 +84,26 @@ namespace APIBack.Service
             return null;
         }
 
+        /// <summary>Maior prazo plausivel entre fazer o pedido e a previsao de entrega.</summary>
+        public static readonly TimeSpan MaxDeliveryPromise = TimeSpan.FromHours(12);
+
+        /// <summary>
+        /// Previsao so com horario ("HH:mm"), ancorada na data do pedido, pode cair "antes" do pedido por dois
+        /// motivos opostos: o pedido virou a meia-noite (pedido 23:50, previsao 00:30: vale o dia seguinte) ou a
+        /// previsao ja venceu (pedido 13:38, previsao 12:08: o pedido esta ATRASADO, vale o mesmo dia). So se
+        /// soma um dia quando o prazo resultante e plausivel; senao um pedido atrasado passava a "amanha" e o
+        /// painel o mostrava "no prazo".
+        /// </summary>
+        public static DateTime? ResolvePrevisaoAcrossMidnight(DateTime? previsao, DateTime? horarioPedido)
+        {
+            if (!previsao.HasValue || !horarioPedido.HasValue) return previsao;
+            if (previsao.Value.Kind != DateTimeKind.Unspecified || horarioPedido.Value.Kind != DateTimeKind.Unspecified) return previsao;
+            if (previsao.Value >= horarioPedido.Value) return previsao;
+
+            var nextDay = previsao.Value.AddDays(1);
+            return nextDay - horarioPedido.Value <= MaxDeliveryPromise ? nextDay : previsao;
+        }
+
         /// <summary>
         /// Expressao SQL de "agora" adequada ao tipo real da coluna de horario do pedido.
         /// As colunas legadas guardam hora de parede local; gravar NOW() (UTC no servidor)

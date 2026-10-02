@@ -7,6 +7,42 @@ namespace APIBack.Tests.Unit
 {
     public sealed class DeliveryRulesTests
     {
+        // ---- Previsao so com horario: virada de meia-noite x pedido atrasado ----------------
+
+        private static DateTime Local(int day, int hour, int minute) => new(2026, 10, day, hour, minute, 0, DateTimeKind.Unspecified);
+
+        [Fact]
+        public void ResolvePrevisao_PedidoQueVirouAMeiaNoite_ValeODiaSeguinte()
+        {
+            var previsao = DeliveryRules.ResolvePrevisaoAcrossMidnight(Local(2, 0, 30), Local(2, 23, 50));
+
+            Assert.Equal(Local(3, 0, 30), previsao);
+        }
+
+        [Fact]
+        public void ResolvePrevisao_PedidoAtrasado_ContinuaNoMesmoDia()
+        {
+            // Pedido 13:38 com previsao 12:08: ja venceu, nao pode virar "amanha 12:08" (parecia no prazo).
+            var previsao = DeliveryRules.ResolvePrevisaoAcrossMidnight(Local(2, 12, 8), Local(2, 13, 38));
+
+            Assert.Equal(Local(2, 12, 8), previsao);
+        }
+
+        [Fact]
+        public void ResolvePrevisao_PrevisaoDepoisDoPedido_NaoMuda()
+        {
+            Assert.Equal(Local(2, 14, 8), DeliveryRules.ResolvePrevisaoAcrossMidnight(Local(2, 14, 8), Local(2, 13, 38)));
+        }
+
+        [Fact]
+        public void ResolvePrevisao_SemHorarioOuComFuso_NaoMuda()
+        {
+            Assert.Null(DeliveryRules.ResolvePrevisaoAcrossMidnight(null, Local(2, 13, 38)));
+            Assert.Equal(Local(2, 12, 8), DeliveryRules.ResolvePrevisaoAcrossMidnight(Local(2, 12, 8), null));
+            var utc = new DateTime(2026, 10, 2, 15, 8, 0, DateTimeKind.Utc);
+            Assert.Equal(utc, DeliveryRules.ResolvePrevisaoAcrossMidnight(utc, Local(2, 23, 50)));
+        }
+
         // ---- Horarios lidos como texto ---------------------------------------------
 
         [Fact]
