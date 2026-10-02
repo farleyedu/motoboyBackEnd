@@ -16,6 +16,15 @@ namespace APIBack.Repository
     public class CardapioRepository : ICardapioRepository
     {
         private const string UniqueViolation = "23505";
+        internal const string EstabelecimentoTemModuloAtivoSql = @"
+SELECT EXISTS (
+    SELECT 1
+      FROM estabelecimentos e
+     CROSS JOIN LATERAL unnest(e.modulos_ativos) AS modulo_linha(modulo_ativo)
+     WHERE e.id = @IdEstabelecimento
+       AND COALESCE(e.ativo, TRUE) = TRUE
+       AND lower(modulo_ativo::text) = lower(@Modulo)
+);";
         private static readonly Regex SlugRegex = new("[^a-z0-9]+", RegexOptions.Compiled | RegexOptions.CultureInvariant);
         private readonly string _connectionString;
 
@@ -28,18 +37,8 @@ namespace APIBack.Repository
 
         public async Task<bool> EstabelecimentoTemModuloAtivoAsync(Guid idEstabelecimento, string modulo)
         {
-            const string sql = @"
-SELECT EXISTS (
-    SELECT 1
-      FROM estabelecimentos e
-     CROSS JOIN LATERAL unnest(e.modulos_ativos)::text AS modulo_ativo
-     WHERE e.id = @IdEstabelecimento
-       AND COALESCE(e.ativo, TRUE) = TRUE
-       AND lower(modulo_ativo) = lower(@Modulo)
-);";
-
             await using var connection = new NpgsqlConnection(_connectionString);
-            return await connection.ExecuteScalarAsync<bool>(sql, new
+            return await connection.ExecuteScalarAsync<bool>(EstabelecimentoTemModuloAtivoSql, new
             {
                 IdEstabelecimento = idEstabelecimento,
                 Modulo = ValidationUtils.NormalizeToken(modulo)
