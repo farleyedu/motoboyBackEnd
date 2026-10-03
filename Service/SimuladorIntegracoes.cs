@@ -47,10 +47,10 @@ namespace APIBack.Service
                 new()
                 {
                     Chave = "mapa", Nome = "Mapa / Geolocalizacao", Descricao = "Rotas e atualizacao de localizacao",
-                    Status = string.IsNullOrWhiteSpace(_configuration["OpenCage:ApiKey"]) ? "atencao" : "ok",
-                    Detalhe = string.IsNullOrWhiteSpace(_configuration["OpenCage:ApiKey"])
-                        ? "Sem chave do geocodificador: buscar endereco no mapa nao funciona."
-                        : "Geocodificador configurado."
+                    Status = string.IsNullOrWhiteSpace(_configuration["Google:MapsApiKey"]) ? "atencao" : "ok",
+                    Detalhe = string.IsNullOrWhiteSpace(_configuration["Google:MapsApiKey"])
+                        ? "Sem chave do Google Maps: o cardapio web nao consegue confirmar o endereco de entrega."
+                        : "Geocodificador (Google) configurado."
                 },
                 new()
                 {

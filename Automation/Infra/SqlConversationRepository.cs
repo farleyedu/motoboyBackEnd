@@ -28,6 +28,7 @@ namespace APIBack.Automation.Infra
 SELECT c.id AS Id,
        COALESCE(c.id_conversa_grupo, c.id) AS IdConversaGrupo,
        c.id_estabelecimento AS IdEstabelecimento,
+       c.id_canal AS IdCanal,
        c.id_cliente AS IdCliente,
        c.estado::text AS Estado,
        COALESCE(NULLIF(c.status_atendimento, ''), '') AS StatusAtendimento,
@@ -108,9 +109,7 @@ SELECT c.id AS Id,
                 ?? config["ConnectionStrings:DefaultConnection"]
                 ?? throw new InvalidOperationException("Connection string DefaultConnection nao encontrada.");
             _logger = logger;
-            _centralEstabelecimentoId = Guid.TryParse(config["WhatsApp:CentralEstabelecimentoId"], out var parsed)
-                ? parsed
-                : null;
+            _centralEstabelecimentoId = null; // central desativada
 
             if (_indexesEnsured)
             {
@@ -195,13 +194,13 @@ UPDATE conversas
 
             const string sql = @"
 INSERT INTO conversas (
-    id, id_conversa_grupo, id_estabelecimento, id_cliente, canal, estado, status_atendimento,
+    id, id_conversa_grupo, id_estabelecimento, id_canal, id_cliente, canal, estado, status_atendimento,
     id_agente_atribuido, data_primeira_mensagem, data_ultima_mensagem, data_ultima_entrada,
     data_ultima_saida, janela_24h_inicio, janela_24h_fim, qtd_nao_lidas, motivo_fechamento,
     fechado_por_id, data_fechamento, data_ultima_leitura, data_criacao, data_atualizacao
 )
 VALUES (
-    @Id, @IdConversaGrupo, @IdEstabelecimento, @IdCliente, @Canal::canal_chat_enum,
+    @Id, @IdConversaGrupo, @IdEstabelecimento, @IdCanal, @IdCliente, @Canal::canal_chat_enum,
     @Estado::estado_conversa_enum, @StatusAtendimento, @IdAgenteAtribuido, @DataPrimeiraMensagem,
     @DataUltimaMensagem, @DataUltimaEntrada, @DataUltimaSaida, @Janela24hInicio, @Janela24hFim,
     @QtdNaoLidas, @MotivoFechamento, @FechadoPorId, @DataFechamento, @DataUltimaLeitura,
@@ -210,6 +209,7 @@ VALUES (
 ON CONFLICT (id) DO UPDATE SET
   id_conversa_grupo = COALESCE(EXCLUDED.id_conversa_grupo, conversas.id_conversa_grupo),
   id_estabelecimento = EXCLUDED.id_estabelecimento,
+  id_canal = COALESCE(EXCLUDED.id_canal, conversas.id_canal),
   id_cliente = EXCLUDED.id_cliente,
   estado = EXCLUDED.estado,
   status_atendimento = COALESCE(NULLIF(EXCLUDED.status_atendimento, ''), conversas.status_atendimento),
@@ -230,6 +230,7 @@ ON CONFLICT (id) DO UPDATE SET
                 Id = conversa.IdConversa,
                 IdConversaGrupo = conversa.IdConversaGrupo == Guid.Empty ? conversa.IdConversa : conversa.IdConversaGrupo,
                 IdEstabelecimento = conversa.IdEstabelecimento,
+                IdCanal = conversa.IdCanal,
                 IdCliente = conversa.IdCliente,
                 Canal = conversa.Canal,
                 Estado = EstadoDb(conversa.Estado),
@@ -952,7 +953,7 @@ VALUES (
         {
             await using var cx = new NpgsqlConnection(_connectionString);
             var atual = Deserialize(await cx.ExecuteScalarAsync<string?>("SELECT contexto_estado::text FROM conversas WHERE id = @Id;", new { Id = idConversa }));
-            var json = JsonSerializer.Serialize(CentralRoutingService.MergeCentralSelection(atual, contexto));
+            var json = JsonSerializer.Serialize(contexto);
             await cx.ExecuteAsync("UPDATE conversas SET contexto_estado = @Json::jsonb, data_atualizacao = NOW() WHERE id = @Id;", new { Id = idConversa, Json = json });
         }
 
@@ -965,13 +966,6 @@ VALUES (
         public async Task LimparContextoAsync(Guid idConversa)
         {
             await using var cx = new NpgsqlConnection(_connectionString);
-            var preservado = CentralRoutingService.BuildPreservedSelectionContext(Deserialize(await cx.ExecuteScalarAsync<string?>("SELECT contexto_estado::text FROM conversas WHERE id = @Id;", new { Id = idConversa })));
-            if (preservado != null)
-            {
-                await cx.ExecuteAsync("UPDATE conversas SET contexto_estado = @Json::jsonb, data_atualizacao = NOW() WHERE id = @Id;", new { Id = idConversa, Json = JsonSerializer.Serialize(preservado) });
-                return;
-            }
-
             await cx.ExecuteAsync("UPDATE conversas SET contexto_estado = NULL, data_atualizacao = NOW() WHERE id = @Id;", new { Id = idConversa });
         }
 
@@ -1411,6 +1405,7 @@ UPDATE conversas c
             IdConversa = row.Id,
             IdConversaGrupo = row.IdConversaGrupo,
             IdEstabelecimento = row.IdEstabelecimento,
+            IdCanal = row.IdCanal,
             IdCliente = row.IdCliente,
             TelefoneCliente = row.TelefoneCliente,
             IdWa = row.TelefoneCliente ?? string.Empty,
@@ -1474,6 +1469,7 @@ UPDATE conversas c
             public Guid Id { get; set; }
             public Guid IdConversaGrupo { get; set; }
             public Guid IdEstabelecimento { get; set; }
+            public Guid? IdCanal { get; set; }
             public Guid IdCliente { get; set; }
             public string? Estado { get; set; }
             public string? StatusAtendimento { get; set; }

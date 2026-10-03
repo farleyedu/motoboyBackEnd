@@ -68,7 +68,10 @@ SELECT e.id,
        COALESCE(e.pedido_minimo, 0) AS PedidoMinimo,
        COALESCE(e.taxa_entrega_fixa, 0) AS TaxaEntregaFixa,
        COALESCE(e.tempo_preparo_min, 0) AS TempoPreparoMin,
-       e.modulos_ativos::text[] AS ModulosAtivosRaw
+       e.modulos_ativos::text[] AS ModulosAtivosRaw,
+       e.latitude::double precision AS Latitude,
+       e.longitude::double precision AS Longitude,
+       e.raio_entrega_km AS RaioEntregaKm
   FROM estabelecimentos e
   LEFT JOIN cardapio_web_config cwc
     ON cwc.id_estabelecimento = e.id

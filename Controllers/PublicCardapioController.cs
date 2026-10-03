@@ -7,6 +7,7 @@ using APIBack.Service;
 using APIBack.Service.Interface;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Caching.Memory;
 
 namespace APIBack.Controllers
 {
@@ -17,11 +18,69 @@ namespace APIBack.Controllers
     {
         private readonly ICardapioPublicService _service;
         private readonly ICardapioPedidoWebService _pedidosWeb;
+        private readonly IMemoryCache _cache;
 
-        public PublicCardapioController(ICardapioPublicService service, ICardapioPedidoWebService pedidosWeb)
+        // Cada busca de endereco custa uma chamada ao Google: sem este teto, qualquer script poderia gastar a cota.
+        private const int MaximoDeBuscasPorJanela = 40;
+        private static readonly TimeSpan JanelaDeBuscas = TimeSpan.FromMinutes(10);
+
+        public PublicCardapioController(ICardapioPublicService service, ICardapioPedidoWebService pedidosWeb, IMemoryCache cache)
         {
             _service = service;
             _pedidosWeb = pedidosWeb;
+            _cache = cache;
+        }
+
+        /// <summary>Verdadeiro quando este IP ainda pode buscar endereco.</summary>
+        private bool PodeBuscarEndereco()
+        {
+            var chave = "busca-endereco:" + (HttpContext.Connection.RemoteIpAddress?.ToString() ?? "desconhecido");
+            var usadas = _cache.GetOrCreate(chave, entrada =>
+            {
+                entrada.AbsoluteExpirationRelativeToNow = JanelaDeBuscas;
+                return new int[1];
+            })!;
+            return System.Threading.Interlocked.Increment(ref usadas[0]) <= MaximoDeBuscasPorJanela;
+        }
+
+        [HttpPost("localizar-endereco")]
+        public async Task<IActionResult> LocalizarEndereco([FromBody] LocalizarCardapioEnderecoRequest? request)
+        {
+            if (request == null) return BadRequestErrorResponse("Corpo da requisicao e obrigatorio.");
+            if (!PodeBuscarEndereco()) return StatusCode(429, ApiResponse<object>.Fail("Muitas buscas de endereco. Tente de novo em alguns minutos."));
+
+            try
+            {
+                return Ok(ApiResponse<CardapioLocalizacaoDto>.Ok(await _service.LocalizarEnderecoAsync(request)));
+            }
+            catch (RequestValidationException ex)
+            {
+                return ValidationErrorResponse(ex);
+            }
+            catch (KeyNotFoundException ex)
+            {
+                return NotFoundErrorResponse(ex.Message);
+            }
+        }
+
+        [HttpPost("endereco-do-ponto")]
+        public async Task<IActionResult> EnderecoDoPonto([FromBody] CardapioEnderecoDoPontoRequest? request)
+        {
+            if (request == null) return BadRequestErrorResponse("Corpo da requisicao e obrigatorio.");
+            if (!PodeBuscarEndereco()) return StatusCode(429, ApiResponse<object>.Fail("Muitas buscas de endereco. Tente de novo em alguns minutos."));
+
+            try
+            {
+                return Ok(ApiResponse<CardapioEnderecoDoPontoDto>.Ok(await _service.ObterEnderecoDoPontoAsync(request)));
+            }
+            catch (RequestValidationException ex)
+            {
+                return ValidationErrorResponse(ex);
+            }
+            catch (KeyNotFoundException ex)
+            {
+                return NotFoundErrorResponse(ex.Message);
+            }
         }
 
         [HttpGet("catalogo")]

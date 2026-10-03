@@ -50,13 +50,24 @@ namespace APIBack.Hubs
             }
 
             var canViewDelivery = httpContext!.IsSuperAdmin() || httpContext.TemPermissao("Delivery", "visualizar");
-            if (!canViewDelivery)
+            var canViewChat = httpContext.IsSuperAdmin() || httpContext.TemPermissao("WhatsApp", "visualizar");
+            if (!canViewDelivery && !canViewChat)
             {
                 Context.Abort();
                 return;
             }
 
-            await Groups.AddToGroupAsync(Context.ConnectionId, DeliveryRealtimeEvents.EstablishmentGroup(estabelecimentoId.Value));
+            // Cada grupo exige a sua permissao: quem so ve o delivery nao recebe o texto das conversas, e vice-versa.
+            if (canViewDelivery)
+            {
+                await Groups.AddToGroupAsync(Context.ConnectionId, DeliveryRealtimeEvents.EstablishmentGroup(estabelecimentoId.Value));
+            }
+
+            if (canViewChat)
+            {
+                await Groups.AddToGroupAsync(Context.ConnectionId, APIBack.Atendimento.ChatRealtimeEvents.Group(estabelecimentoId.Value));
+            }
+
             await base.OnConnectedAsync();
         }
     }

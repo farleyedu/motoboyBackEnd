@@ -35,9 +35,7 @@ namespace APIBack.Service
             _crmRepository = crmRepository;
             _reservaRepository = reservaRepository;
             _logger = logger;
-            _centralEstabelecimentoId = Guid.TryParse(configuration["WhatsApp:CentralEstabelecimentoId"], out var parsed)
-                ? parsed
-                : null;
+            _centralEstabelecimentoId = null; // central desativada
         }
 
         public async Task<IReadOnlyCollection<CrmOportunidadeResumoDto>> ListarOportunidadesAsync(string? status, string? tipo, string? responsavel, string? busca)

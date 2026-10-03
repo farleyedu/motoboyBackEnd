@@ -43,6 +43,8 @@ namespace APIBack.DTOs.Cardapio
         public string? Referencia { get; set; }
         public double? Latitude { get; set; }
         public double? Longitude { get; set; }
+        /// <summary>Como a coordenada foi obtida. Hoje so "exata" e aceita (numero achado pelo geocodificador).</summary>
+        public string? Precisao { get; set; }
     }
 
     // ---- Fila do atendente ---------------------------------------------------------------------------

@@ -23,6 +23,8 @@ namespace APIBack.DTOs.Atendimento
         public string Modo { get; set; } = "humano";
         public string? SaudacaoHumano { get; set; }
         public string? MensagemForaHorario { get; set; }
+        /// <summary>Textos do bot que o dono personalizou (chaves em MensagensDoAtendimento.Chaves). Chave ausente = texto padrao.</summary>
+        public Dictionary<string, string> Mensagens { get; set; } = new();
         public HorarioAtendimentoDto? HorarioAtendimento { get; set; }
         /// <summary>O atendimento esta dentro do horario agora (sem horario configurado = sempre).</summary>
         public bool AbertoAgora { get; set; } = true;
@@ -36,6 +38,7 @@ namespace APIBack.DTOs.Atendimento
         public string? Modo { get; set; }
         public string? SaudacaoHumano { get; set; }
         public string? MensagemForaHorario { get; set; }
+        public Dictionary<string, string>? Mensagens { get; set; }
         public HorarioAtendimentoDto? HorarioAtendimento { get; set; }
     }
 

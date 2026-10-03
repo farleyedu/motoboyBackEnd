@@ -10,8 +10,6 @@ namespace APIBack.Payments.Repository
     public class CheckoutRepository : ICheckoutRepository
     {
         private readonly string _connectionString;
-        private static bool _schemaEnsured;
-        private static readonly SemaphoreSlim SchemaLock = new(1, 1);
 
         public CheckoutRepository(IConfiguration configuration)
         {
@@ -22,8 +20,6 @@ namespace APIBack.Payments.Repository
 
         public async Task<(string Nome, string Email)?> GetUserBasicAsync(int userId)
         {
-            await EnsureSchemaAsync();
-
             const string sql = @"
 SELECT nome AS Nome, email AS Email
   FROM usuario
@@ -37,8 +33,6 @@ SELECT nome AS Nome, email AS Email
 
         public async Task<string?> GetAsaasCustomerIdAsync(int userId)
         {
-            await EnsureSchemaAsync();
-
             const string sql = @"
 SELECT asaas_customer_id
   FROM checkout_asaas_customers
@@ -50,8 +44,6 @@ SELECT asaas_customer_id
 
         public async Task UpsertAsaasCustomerIdAsync(int userId, string asaasCustomerId)
         {
-            await EnsureSchemaAsync();
-
             const string sql = @"
 INSERT INTO checkout_asaas_customers
     (id_usuario, asaas_customer_id, data_criacao, data_atualizacao)
@@ -67,8 +59,6 @@ ON CONFLICT (id_usuario) DO UPDATE SET
 
         public async Task<long> CreatePaymentAsync(NewCheckoutPayment payment)
         {
-            await EnsureSchemaAsync();
-
             const string sql = @"
 INSERT INTO checkout_pagamentos
     (id_usuario, id_estabelecimento, asaas_payment_id, asaas_customer_id, tipo_pagamento, status, asaas_status, valor, descricao, invoice_url, pix_qr_code_base64, pix_copia_cola, json_retorno_gateway, data_criacao, data_atualizacao)
@@ -82,8 +72,6 @@ RETURNING id";
 
         public async Task<CheckoutPaymentRecord?> GetPaymentByIdAsync(long paymentId)
         {
-            await EnsureSchemaAsync();
-
             const string sql = @"
 SELECT id AS Id,
        id_usuario AS UserId,
@@ -110,8 +98,6 @@ SELECT id AS Id,
 
         public async Task<CheckoutPaymentRecord?> GetPaymentByAsaasIdAsync(string asaasPaymentId)
         {
-            await EnsureSchemaAsync();
-
             const string sql = @"
 SELECT id AS Id,
        id_usuario AS UserId,
@@ -138,8 +124,6 @@ SELECT id AS Id,
 
         public async Task UpdatePaymentFromWebhookAsync(string asaasPaymentId, string status, string? asaasStatus, string? webhookPayloadJson)
         {
-            await EnsureSchemaAsync();
-
             const string sql = @"
 UPDATE checkout_pagamentos
    SET status = @Status,
@@ -160,8 +144,6 @@ UPDATE checkout_pagamentos
 
         public async Task<bool> TryCreateWebhookLogAsync(string eventId, string eventType, string? asaasPaymentId, string payloadJson)
         {
-            await EnsureSchemaAsync();
-
             const string sql = @"
 INSERT INTO checkout_webhook_logs
     (event_id, event_type, asaas_payment_id, payload, sucesso, data_recebimento)
@@ -189,8 +171,6 @@ VALUES
 
         public async Task CompleteWebhookLogAsync(string eventId, bool success, string? errorMessage)
         {
-            await EnsureSchemaAsync();
-
             const string sql = @"
 UPDATE checkout_webhook_logs
    SET sucesso = @Success,
@@ -200,76 +180,6 @@ UPDATE checkout_webhook_logs
 
             await using var connection = new NpgsqlConnection(_connectionString);
             await connection.ExecuteAsync(sql, new { EventId = eventId, Success = success, ErrorMessage = errorMessage });
-        }
-
-        private async Task EnsureSchemaAsync()
-        {
-            if (_schemaEnsured)
-            {
-                return;
-            }
-
-            await SchemaLock.WaitAsync();
-            try
-            {
-                if (_schemaEnsured)
-                {
-                    return;
-                }
-
-                const string sql = @"
-CREATE TABLE IF NOT EXISTS checkout_asaas_customers (
-    id_usuario INT PRIMARY KEY,
-    asaas_customer_id TEXT NOT NULL,
-    data_criacao TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    data_atualizacao TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE TABLE IF NOT EXISTS checkout_pagamentos (
-    id BIGSERIAL PRIMARY KEY,
-    id_usuario INT NOT NULL,
-    id_estabelecimento UUID NULL,
-    asaas_payment_id TEXT NOT NULL UNIQUE,
-    asaas_customer_id TEXT NULL,
-    tipo_pagamento TEXT NOT NULL,
-    status TEXT NOT NULL,
-    asaas_status TEXT NULL,
-    valor NUMERIC(14,2) NOT NULL,
-    descricao TEXT NULL,
-    invoice_url TEXT NULL,
-    pix_qr_code_base64 TEXT NULL,
-    pix_copia_cola TEXT NULL,
-    json_retorno_gateway JSONB NULL,
-    json_webhook_ultimo JSONB NULL,
-    data_criacao TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    data_atualizacao TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX IF NOT EXISTS ix_checkout_pagamentos_user ON checkout_pagamentos (id_usuario);
-CREATE INDEX IF NOT EXISTS ix_checkout_pagamentos_status ON checkout_pagamentos (status);
-
-CREATE TABLE IF NOT EXISTS checkout_webhook_logs (
-    id BIGSERIAL PRIMARY KEY,
-    event_id TEXT NOT NULL UNIQUE,
-    event_type TEXT NOT NULL,
-    asaas_payment_id TEXT NULL,
-    payload JSONB NOT NULL,
-    sucesso BOOLEAN NOT NULL DEFAULT FALSE,
-    mensagem_erro TEXT NULL,
-    data_recebimento TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    processado_em TIMESTAMPTZ NULL
-);
-
-CREATE INDEX IF NOT EXISTS ix_checkout_webhook_logs_payment ON checkout_webhook_logs (asaas_payment_id);";
-
-                await using var connection = new NpgsqlConnection(_connectionString);
-                await connection.ExecuteAsync(sql);
-                _schemaEnsured = true;
-            }
-            finally
-            {
-                SchemaLock.Release();
-            }
         }
     }
 }

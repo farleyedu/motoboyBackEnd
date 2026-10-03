@@ -125,6 +125,19 @@ namespace APIBack.Tests.Unit
             Assert.DoesNotContain("DELETE FROM cardapio_pedido_publico", sql, StringComparison.OrdinalIgnoreCase);
         }
 
+        [Fact]
+        public void TabelasDoCodigo_NascemNoHistoricoDeMigrationsSemApagarNada()
+        {
+            var sql = ReadMigration("20261002_05_tabelas_do_codigo.sql");
+
+            foreach (var tabela in new[] { "checkout_asaas_customers", "checkout_pagamentos", "checkout_webhook_logs", "empresa_webhook_auditoria" })
+            {
+                Assert.Contains($"CREATE TABLE IF NOT EXISTS {tabela} ", sql, StringComparison.Ordinal);
+            }
+
+            Assert.DoesNotContain("DROP ", sql, StringComparison.OrdinalIgnoreCase);
+        }
+
         private static string ReadMigration(string fileName)
         {
             var path = Path.Combine(AppContext.BaseDirectory, "Migrations", "Delivery", fileName);

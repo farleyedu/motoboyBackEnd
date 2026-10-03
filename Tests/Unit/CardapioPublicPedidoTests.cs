@@ -9,6 +9,7 @@ using APIBack.Model.Cardapio;
 using APIBack.Repository.Interface;
 using APIBack.Service;
 using APIBack.Service.Interface;
+using APIBack.Service.Interface;
 using Moq;
 using Xunit;
 
@@ -48,8 +49,9 @@ namespace APIBack.Tests.Unit
                 Cardapio.Setup(c => c.CriarPedidoPublicoAsync(It.IsAny<CardapioPedidoPublico>()))
                     .Callback<CardapioPedidoPublico>(entity => Gravado = entity)
                     .ReturnsAsync(Guid.NewGuid());
-                Localizacao.Setup(l => l.ObterCoordenadasAsync(It.IsAny<string>())).ReturnsAsync(("-18,9186", "-48.2772"));
-                Waba.Setup(w => w.ObterDisplayPhonePorEstabelecimentoAsync(Estabelecimento)).ReturnsAsync("+55 34 3333-0000");
+                Localizacao.Setup(l => l.GeocodificarAsync(It.IsAny<string>(), It.IsAny<string?>()))
+                    .ReturnsAsync(new GeocodeResultado("-18,9186", "-48.2772", true, "google"));
+                Waba.Setup(w => w.ObterDisplayPhoneParaServicoAsync(Estabelecimento, "cardapio_web")).ReturnsAsync("+55 34 3333-0000");
                 Confirmacao.Setup(c => c.IniciarConfirmacaoAsync(It.IsAny<CardapioPedidoPublico>(), It.IsAny<string>()))
                     .ReturnsAsync(new CardapioConfirmacaoDto { Modo = "codigo", Codigo = "4821" });
             }
@@ -204,7 +206,7 @@ namespace APIBack.Tests.Unit
         public async Task A_delivery_address_not_found_on_the_map_is_a_validation_error_and_nothing_is_saved()
         {
             var fixture = new Fixture();
-            fixture.Localizacao.Setup(l => l.ObterCoordenadasAsync(It.IsAny<string>())).ReturnsAsync(((string, string)?)null);
+            fixture.Localizacao.Setup(l => l.GeocodificarAsync(It.IsAny<string>(), It.IsAny<string?>())).ReturnsAsync((GeocodeResultado?)null);
 
             var erro = await Assert.ThrowsAsync<RequestValidationException>(() => fixture.Build().CriarPedidoAsync(Pedido()));
 
@@ -214,10 +216,169 @@ namespace APIBack.Tests.Unit
         }
 
         [Fact]
+        public async Task An_approximate_point_is_refused_even_when_the_map_found_something()
+        {
+            var fixture = new Fixture();
+            fixture.Localizacao.Setup(l => l.GeocodificarAsync(It.IsAny<string>(), It.IsAny<string?>()))
+                .ReturnsAsync(new GeocodeResultado("-18,9186", "-48.2772", false, "google"));
+
+            var erro = await Assert.ThrowsAsync<RequestValidationException>(() => fixture.Build().CriarPedidoAsync(Pedido()));
+
+            Assert.Contains("enderecoEntrega", erro.Errors.Keys);
+            Assert.Contains("exato", string.Join(" ", erro.Errors["enderecoEntrega"]));
+            Assert.Null(fixture.Gravado);
+        }
+
+        [Fact]
+        public async Task The_stored_address_records_that_the_point_is_exact()
+        {
+            var fixture = new Fixture();
+
+            await fixture.Build().CriarPedidoAsync(Pedido());
+
+            Assert.Contains("\"precisao\":\"exata\"", fixture.Gravado!.EnderecoEntregaJson);
+        }
+
+        // =====================================================================
+        // Ponto de entrega confirmado pelo cliente no mapa
+        // =====================================================================
+
+        private static CriarCardapioPedidoPublicoRequest PedidoComPino(double lat, double lng, string? origem)
+        {
+            var pedido = Pedido();
+            pedido.EnderecoEntrega!.Latitude = lat;
+            pedido.EnderecoEntrega.Longitude = lng;
+            pedido.EnderecoEntrega.OrigemPonto = origem;
+            return pedido;
+        }
+
+        [Theory]
+        [InlineData("pino")]
+        [InlineData("gps")]
+        [InlineData("geocodificada")]
+        public async Task A_point_confirmed_by_the_customer_is_used_without_searching_the_address_again(string origem)
+        {
+            var fixture = new Fixture();
+
+            await fixture.Build().CriarPedidoAsync(PedidoComPino(-18.9100, -48.2700, origem));
+
+            fixture.Localizacao.Verify(l => l.GeocodificarAsync(It.IsAny<string>(), It.IsAny<string?>()), Times.Never);
+            Assert.Contains($"\"precisao\":\"{origem}\"", fixture.Gravado!.EnderecoEntregaJson);
+            Assert.Contains("-18.91", fixture.Gravado.EnderecoEntregaJson);
+        }
+
+        [Theory]
+        [InlineData(-18.91, -48.27, "inventada")]   // origem desconhecida
+        [InlineData(-18.91, -48.27, null)]          // sem origem
+        [InlineData(40.7, -74.0, "pino")]           // Nova York
+        [InlineData(0.0, 0.0, "pino")]              // meio do oceano
+        public async Task An_implausible_point_is_refused_and_nothing_is_saved(double lat, double lng, string? origem)
+        {
+            var fixture = new Fixture();
+
+            var erro = await Assert.ThrowsAsync<RequestValidationException>(() => fixture.Build().CriarPedidoAsync(PedidoComPino(lat, lng, origem)));
+
+            Assert.Contains("enderecoEntrega", erro.Errors.Keys);
+            Assert.Null(fixture.Gravado);
+        }
+
+        [Fact]
+        public async Task A_point_far_from_the_store_is_refused_even_inside_brazil()
+        {
+            var fixture = new Fixture();
+            fixture.Cardapio.Setup(c => c.ObterEstabelecimentoPublicoAsync(It.IsAny<Guid?>(), It.IsAny<string?>()))
+                .ReturnsAsync(new CardapioEstabelecimentoPublico
+                {
+                    Id = Estabelecimento, NomeFantasia = "Pizza Bom", Publicado = true, AceitaPedidos = true, TaxaEntregaFixa = 5m,
+                    ModulosAtivosRaw = new[] { "cardapio", "cardapioweb" }, Latitude = -18.9186, Longitude = -48.2772, RaioEntregaKm = 8m
+                });
+
+            var erro = await Assert.ThrowsAsync<RequestValidationException>(() => fixture.Build().CriarPedidoAsync(PedidoComPino(-23.55, -46.63, "pino"))); // Sao Paulo
+
+            Assert.Contains("longe demais", string.Join(" ", erro.Errors["enderecoEntrega"]));
+            await fixture.Build().CriarPedidoAsync(PedidoComPino(-18.95, -48.30, "pino")); // ~5 km: aceito
+            Assert.NotNull(fixture.Gravado);
+        }
+
+        [Fact]
+        public async Task The_map_search_returns_the_exact_point_and_stops_at_the_first_exact_result()
+        {
+            var fixture = new Fixture();
+            fixture.Localizacao.Setup(l => l.GeocodificarAsync(It.IsAny<string>(), It.IsAny<string?>()))
+                .ReturnsAsync(new GeocodeResultado("-18.918600", "-48.277200", true, "google"));
+
+            var r = await fixture.Build().LocalizarEnderecoAsync(new LocalizarCardapioEnderecoRequest
+            {
+                EstabelecimentoId = Estabelecimento, Logradouro = "Rua das Flores", Numero = "120", Bairro = "Centro", Cidade = "Uberlandia", Uf = "MG", Cep = "38400000"
+            });
+
+            Assert.True(r.Encontrado);
+            Assert.True(r.Exata);
+            Assert.Equal(-18.9186, r.Latitude);
+            fixture.Localizacao.Verify(l => l.GeocodificarAsync(It.IsAny<string>(), It.IsAny<string?>()), Times.Once);
+        }
+
+        [Fact]
+        public async Task When_no_search_reaches_the_number_the_best_point_is_the_starting_pin_and_it_is_not_exact()
+        {
+            var fixture = new Fixture();
+            fixture.Localizacao.Setup(l => l.GeocodificarAsync(It.IsAny<string>(), It.IsAny<string?>()))
+                .ReturnsAsync(new GeocodeResultado("-18.920000", "-48.280000", false, "google"));
+
+            var r = await fixture.Build().LocalizarEnderecoAsync(new LocalizarCardapioEnderecoRequest
+            {
+                EstabelecimentoId = Estabelecimento, Logradouro = "Alameda Dos Mandarins", Numero = "500", Bairro = "Grand Ville", Cidade = "Uberlandia", Uf = "MG"
+            });
+
+            Assert.True(r.Encontrado);
+            Assert.False(r.Exata);
+            Assert.Equal(-18.92, r.Latitude);
+        }
+
+        [Fact]
+        public async Task An_address_the_map_does_not_know_still_answers_with_the_store_as_the_map_center()
+        {
+            var fixture = new Fixture();
+            fixture.Cardapio.Setup(c => c.ObterEstabelecimentoPublicoAsync(It.IsAny<Guid?>(), It.IsAny<string?>()))
+                .ReturnsAsync(new CardapioEstabelecimentoPublico
+                {
+                    Id = Estabelecimento, NomeFantasia = "Pizza Bom", Publicado = true, AceitaPedidos = true,
+                    ModulosAtivosRaw = new[] { "cardapio", "cardapioweb" }, Latitude = -18.9186, Longitude = -48.2772
+                });
+            fixture.Localizacao.Setup(l => l.GeocodificarAsync(It.IsAny<string>(), It.IsAny<string?>())).ThrowsAsync(new InvalidOperationException("mapa fora"));
+
+            var r = await fixture.Build().LocalizarEnderecoAsync(new LocalizarCardapioEnderecoRequest
+            {
+                EstabelecimentoId = Estabelecimento, Logradouro = "Rua X", Numero = "1", Cidade = "Uberlandia", Uf = "MG"
+            });
+
+            Assert.False(r.Encontrado);
+            Assert.False(r.Exata);
+            Assert.Equal(-18.9186, r.CentroLatitude);
+            Assert.Equal(-48.2772, r.CentroLongitude);
+        }
+
+        [Fact]
+        public async Task Use_my_location_returns_the_address_of_the_point_and_refuses_points_outside_brazil()
+        {
+            var fixture = new Fixture();
+            fixture.Localizacao.Setup(l => l.GeocodificarReversoAsync(-18.9186, -48.2772))
+                .ReturnsAsync(new EnderecoReverso("Rua das Flores", "120", "Centro", "Uberlandia", "MG", "38400-000"));
+            var service = fixture.Build();
+
+            var r = await service.ObterEnderecoDoPontoAsync(new CardapioEnderecoDoPontoRequest { EstabelecimentoId = Estabelecimento, Latitude = -18.9186, Longitude = -48.2772 });
+
+            Assert.Equal("Rua das Flores", r.Logradouro);
+            Assert.Equal("MG", r.Uf);
+            await Assert.ThrowsAsync<RequestValidationException>(() =>
+                service.ObterEnderecoDoPontoAsync(new CardapioEnderecoDoPontoRequest { EstabelecimentoId = Estabelecimento, Latitude = 40.7, Longitude = -74.0 }));
+        }
+
+        [Fact]
         public async Task A_map_service_failure_never_creates_an_order_without_a_position()
         {
             var fixture = new Fixture();
-            fixture.Localizacao.Setup(l => l.ObterCoordenadasAsync(It.IsAny<string>())).ThrowsAsync(new InvalidOperationException("mapa fora"));
+            fixture.Localizacao.Setup(l => l.GeocodificarAsync(It.IsAny<string>(), It.IsAny<string?>())).ThrowsAsync(new InvalidOperationException("mapa fora"));
 
             await Assert.ThrowsAsync<RequestValidationException>(() => fixture.Build().CriarPedidoAsync(Pedido()));
 
@@ -228,7 +389,8 @@ namespace APIBack.Tests.Unit
         public async Task Unreadable_coordinates_are_treated_as_address_not_found()
         {
             var fixture = new Fixture();
-            fixture.Localizacao.Setup(l => l.ObterCoordenadasAsync(It.IsAny<string>())).ReturnsAsync(("abc", "-48.2"));
+            fixture.Localizacao.Setup(l => l.GeocodificarAsync(It.IsAny<string>(), It.IsAny<string?>()))
+                .ReturnsAsync(new GeocodeResultado("abc", "-48.2", true, "google"));
 
             await Assert.ThrowsAsync<RequestValidationException>(() => fixture.Build().CriarPedidoAsync(Pedido()));
 
@@ -244,7 +406,7 @@ namespace APIBack.Tests.Unit
 
             Assert.Equal("retirada", fixture.Gravado!.TipoEntrega);
             Assert.Null(fixture.Gravado.EnderecoEntregaJson);
-            fixture.Localizacao.Verify(l => l.ObterCoordenadasAsync(It.IsAny<string>()), Times.Never);
+            fixture.Localizacao.Verify(l => l.GeocodificarAsync(It.IsAny<string>(), It.IsAny<string?>()), Times.Never);
         }
 
         [Theory]
@@ -309,7 +471,7 @@ namespace APIBack.Tests.Unit
         public async Task A_store_without_a_whatsapp_number_cannot_take_orders()
         {
             var fixture = new Fixture();
-            fixture.Waba.Setup(w => w.ObterDisplayPhonePorEstabelecimentoAsync(Estabelecimento)).ReturnsAsync((string?)null);
+            fixture.Waba.Setup(w => w.ObterDisplayPhoneParaServicoAsync(Estabelecimento, "cardapio_web")).ReturnsAsync((string?)null);
 
             var erro = await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Build().CriarPedidoAsync(Pedido()));
 

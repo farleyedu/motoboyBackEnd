@@ -266,6 +266,52 @@ LIMIT @Limit;
             return list.AsList();
         }
 
+        public async Task<bool> AtualizarStatusPorProvedorAsync(string idProvedor, string status, string? codigoErro = null, string? mensagemErro = null)
+        {
+            var statusNormalizado = MessageStatusMapper.NormalizeForDatabase(status, DirecaoMensagem.Saida);
+
+            // Nunca regride: um recibo "enviada" atrasado nao pode desfazer "entregue", nem "entregue" desfazer "lida".
+            const string sql = @"
+UPDATE mensagens
+   SET status = @Status::status_mensagem_enum,
+       codigo_erro = COALESCE(@CodigoErro, codigo_erro),
+       mensagem_erro = COALESCE(@MensagemErro, mensagem_erro),
+       data_envio = CASE WHEN @Status IN ('enviada', 'entregue', 'lida') THEN COALESCE(data_envio, NOW()) ELSE data_envio END,
+       data_entrega = CASE WHEN @Status IN ('entregue', 'lida') THEN COALESCE(data_entrega, NOW()) ELSE data_entrega END,
+       data_leitura = CASE WHEN @Status = 'lida' THEN COALESCE(data_leitura, NOW()) ELSE data_leitura END
+ WHERE id_provedor = @IdProvedor
+   AND direcao = 'saida'::direcao_mensagem_enum
+   AND NOT (status::text = 'lida' AND @Status <> 'lida')
+   AND NOT (status::text = 'entregue' AND @Status IN ('enviada', 'fila'));";
+
+            await using var cx = new NpgsqlConnection(_connectionString);
+            var existe = await cx.ExecuteScalarAsync<bool>(
+                "SELECT EXISTS (SELECT 1 FROM mensagens WHERE id_provedor = @IdProvedor AND direcao = 'saida'::direcao_mensagem_enum);",
+                new { IdProvedor = idProvedor });
+            if (!existe) return false;
+
+            await cx.ExecuteAsync(sql, new { IdProvedor = idProvedor, Status = statusNormalizado, CodigoErro = codigoErro, MensagemErro = mensagemErro });
+            return true;
+        }
+
+        public async Task<Guid?> ObterConversaDaMensagemAsync(Guid idMensagem)
+        {
+            await using var cx = new NpgsqlConnection(_connectionString);
+            return await cx.ExecuteScalarAsync<Guid?>("SELECT id_conversa FROM mensagens WHERE id = @Id;", new { Id = idMensagem });
+        }
+
+        public async Task<Guid?> ObterConversaPorProvedorAsync(string idProvedor)
+        {
+            await using var cx = new NpgsqlConnection(_connectionString);
+            return await cx.ExecuteScalarAsync<Guid?>("SELECT id_conversa FROM mensagens WHERE id_provedor = @IdProvedor LIMIT 1;", new { IdProvedor = idProvedor });
+        }
+
+        public async Task VincularProvedorAsync(Guid idMensagem, string idProvedor)
+        {
+            await using var cx = new NpgsqlConnection(_connectionString);
+            await cx.ExecuteAsync("UPDATE mensagens SET id_provedor = @IdProvedor WHERE id = @Id;", new { Id = idMensagem, IdProvedor = idProvedor });
+        }
+
         public async Task AtualizarStatusAsync(Guid idMensagem, string status, string? codigoErro = null, string? mensagemErro = null)
         {
             var statusNormalizado = MessageStatusMapper.NormalizeForDatabase(status, DirecaoMensagem.Saida);

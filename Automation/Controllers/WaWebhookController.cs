@@ -1,49 +1,42 @@
-﻿// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
+// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
 using System;
+using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
-using APIBack.Attributes;
-using APIBack.Automation.Dtos;
+using APIBack.Atendimento;
 using APIBack.Automation.Infra;
-using APIBack.Automation.Interfaces;
 using APIBack.Automation.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Microsoft.Extensions.Hosting;
 
 namespace APIBack.Automation.Controllers
 {
+    /// <summary>
+    /// Porta de entrada do WhatsApp. So faz tres coisas, nesta ordem: conferir a assinatura, GRAVAR cada mensagem/status
+    /// em wa_evento e responder. O processamento acontece depois, no WaEventoWorker: assim nenhuma mensagem se perde
+    /// se o servidor reiniciar, e a Meta recebe a resposta rapido.
+    /// </summary>
     [ApiController]
     [Route("wa")]
     public class WaWebhookController : ControllerBase
     {
         private readonly ILogger<WaWebhookController> _logger;
         private readonly WebhookValidatorService _validator;
-        private readonly IWebhookDispatchService _dispatcher;
-        private readonly IWebhookMessageCache _messageCache;
+        private readonly IWaEventoRepository _eventos;
         private readonly IOptions<AutomationOptions> _opcoes;
-        private readonly IWhatsAppTokenProvider _waTokenProvider;
-        private readonly IHostEnvironment _hostEnvironment;
 
         public WaWebhookController(
             ILogger<WaWebhookController> logger,
             WebhookValidatorService validator,
-            IWebhookDispatchService dispatcher,
-            IWebhookMessageCache messageCache,
-            IOptions<AutomationOptions> opcoes,
-            IWhatsAppTokenProvider waTokenProvider,
-            IHostEnvironment hostEnvironment)
+            IWaEventoRepository eventos,
+            IOptions<AutomationOptions> opcoes)
         {
             _logger = logger;
             _validator = validator;
-            _dispatcher = dispatcher;
-            _messageCache = messageCache;
+            _eventos = eventos;
             _opcoes = opcoes;
-            _waTokenProvider = waTokenProvider;
-            _hostEnvironment = hostEnvironment;
         }
 
         [HttpGet("webhook")]
@@ -53,226 +46,179 @@ namespace APIBack.Automation.Controllers
             [FromQuery(Name = "hub.verify_token")] string token,
             [FromQuery(Name = "hub.challenge")] string challenge)
         {
-            var verifyToken = _opcoes.Value?.VerifyToken ?? "zippygo123";
-            if (mode == "subscribe" && token == verifyToken)
+            var configurado = _opcoes.Value?.VerifyToken;
+            if (!WebhookSignatureValidator.SegredoConfigurado(configurado))
             {
-                _logger.LogInformation("Webhook verificado com sucesso pelo Meta.");
+                _logger.LogError("[wa.in] ev=verificacao_recusada motivo=verify_token_nao_configurado dica=\"configure Automation__VerifyToken\"");
+                return StatusCode(StatusCodes.Status403Forbidden, new { success = false, error = "Webhook sem token de verificacao configurado." });
+            }
+
+            if (mode == "subscribe" && string.Equals(token, configurado, StringComparison.Ordinal))
+            {
+                _logger.LogInformation("[wa.in] ev=verificacao_ok");
                 return Ok(challenge);
             }
 
-            _logger.LogWarning("Falha na verifica��o do webhook. Token inv�lido.");
-            return StatusCode(StatusCodes.Status403Forbidden, new
-            {
-                success = false,
-                error = "Não autorizado."
-            });
+            _logger.LogWarning("[wa.in] ev=verificacao_recusada motivo=token_invalido");
+            return StatusCode(StatusCodes.Status403Forbidden, new { success = false, error = "Nao autorizado." });
         }
 
         [HttpPost("webhook")]
         [Microsoft.AspNetCore.Authorization.AllowAnonymous]
         public async Task<IActionResult> Webhook()
         {
-            string payload;
-            var isDevelopment = _hostEnvironment.IsDevelopment();
-
+            string corpo;
             try
             {
-                payload = await _validator.ReadBodyAsync(Request);
+                corpo = await _validator.ReadBodyAsync(Request);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Falha ao ler payload do webhook");
-                return Ok();
+                _logger.LogError(ex, "[wa.in] ev=erro motivo=corpo_ilegivel");
+                return BadRequest();
             }
 
-            var assinatura = Request.Headers["X-Hub-Signature-256"].ToString();
-            _logger.LogInformation("[Webhook] POST recebido. SignaturePresent={SignaturePresent} PayloadLength={PayloadLength} ContentType={ContentType}",
-                !string.IsNullOrWhiteSpace(assinatura), payload.Length, Request.ContentType ?? "(null)");
-            if (!_validator.ValidateSignature(assinatura, payload))
+            if (!_validator.ValidateSignature(Request.Headers["X-Hub-Signature-256"].ToString(), corpo))
             {
-                return Ok();
+                // 403 (e nao 200): mensagem sem assinatura valida nao pode ser aceita nem fingir que foi.
+                _logger.LogWarning(
+                    "[wa.in] ev=recusada motivo=assinatura_invalida bytes={Bytes} dica=\"confira Automation__Meta__AppSecret\"", corpo.Length);
+                return StatusCode(StatusCodes.Status403Forbidden);
             }
 
-            WebhookPayloadDto? carga;
+            JsonDocument documento;
             try
             {
-                carga = JsonSerializer.Deserialize<WebhookPayloadDto>(payload);
+                documento = JsonDocument.Parse(corpo);
             }
-            catch (Exception ex)
+            catch (JsonException ex)
             {
-                _logger.LogWarning(ex, "Payload inv�lido recebido do WhatsApp");
+                _logger.LogWarning(ex, "[wa.in] ev=ignorada motivo=json_invalido bytes={Bytes}", corpo.Length);
                 return Ok();
             }
 
-            if (carga?.Entradas == null)
+            using (documento)
             {
-                return Ok();
-            }
-
-            _logger.LogInformation("[Webhook] Payload valido. Entradas={Entries}", carga.Entradas.Count);
-
-            foreach (var entrada in carga.Entradas)
-            {
-                if (entrada.Mudancas == null) continue;
-
-                foreach (var mudanca in entrada.Mudancas)
+                int novos = 0, repetidos = 0;
+                try
                 {
-                    var valor = mudanca.Valor;
-                    if (valor?.Mensagens == null) continue;
-
-                    foreach (var mensagem in valor.Mensagens)
+                    foreach (var valor in Valores(documento.RootElement))
                     {
-                        try
-                        {
-                            var originalMessageId = mensagem?.Id;
-                            var textoExibicao = ExtrairTextoExibicao(mensagem);
-                            var textoInterpretado = ExtrairTextoInterpretado(mensagem);
-
-                            if (string.IsNullOrWhiteSpace(textoExibicao) || string.IsNullOrWhiteSpace(mensagem?.Id) || string.IsNullOrWhiteSpace(mensagem.De))
-                            {
-                                _logger.LogDebug("[Webhook] Mensagem ignorada por falta de campos essenciais (id={MensagemId}, from={From})", mensagem?.Id, MaskValue(mensagem?.De));
-                                continue;
-                            }
-
-                            if (isDevelopment)
-                            {
-                                if (!_messageCache.TryRegister(mensagem.Id))
-                                {
-                                    var novoId = $"local-{Guid.NewGuid():N}";
-                                    _logger.LogDebug("[Webhook][DEV] Mensagem duplicada detectada (id={MensagemId}); substituindo por {NovoId}", originalMessageId, novoId);
-                                    mensagem.Id = novoId;
-                                    _messageCache.TryRegister(mensagem.Id);
-                                }
-                            }
-                            else
-                            {
-                                if (!_messageCache.TryRegister(mensagem.Id))
-                                {
-                                    _logger.LogInformation("[Webhook] Mensagem duplicada ignorada (id={MensagemId})", mensagem.Id);
-                                    continue;
-                                }
-                            }
-
-                            DateTime? dataMsgUtc = null;
-                            if (!string.IsNullOrWhiteSpace(mensagem.CarimboTempo) && long.TryParse(mensagem.CarimboTempo, out var unix))
-                            {
-                                try
-                                {
-                                    dataMsgUtc = DateTimeOffset.FromUnixTimeSeconds(unix).UtcDateTime;
-                                }
-                                catch
-                                {
-                                    dataMsgUtc = null;
-                                }
-                            }
-
-                            var input = new ConversationProcessingInput(
-                                Mensagem: mensagem,
-                                Texto: textoExibicao,
-                                PhoneNumberDisplay: valor.Metadados?.NumeroTelefoneExibicao,
-                                PhoneNumberId: valor.Metadados?.IdNumeroTelefone,
-                                DataMensagemUtc: dataMsgUtc,
-                                Valor: valor,
-                                TextoInterpretado: textoInterpretado);
-
-                            _logger.LogInformation("[Webhook] Mensagem recebida id={MensagemId} from={From} phoneNumberId={PhoneNumberId} display={Display}",
-                                mensagem.Id,
-                                MaskValue(mensagem.De),
-                                valor.Metadados?.IdNumeroTelefone ?? "(null)",
-                                valor.Metadados?.NumeroTelefoneExibicao ?? "(null)");
-                            _logger.LogInformation(
-                                "[Webhook] Conteudo interpretado tipo={Tipo} exibicao='{TextoExibicao}' interpretado='{TextoInterpretado}'",
-                                mensagem.Tipo ?? "(null)",
-                                textoExibicao ?? "(null)",
-                                textoInterpretado ?? "(null)");
-
-                            await _dispatcher.EnqueueAsync(input, HttpContext.RequestAborted);
-                            _logger.LogDebug("[Webhook] Mensagem {MensagemId} enfileirada (from={From})", mensagem.Id, MaskValue(mensagem.De));
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogError(ex, "Erro ao preparar mensagem {MensagemId} de {De}", mensagem?.Id, mensagem?.De);
-                        }
+                        (var n, var r) = await GravarEventosAsync(valor);
+                        novos += n;
+                        repetidos += r;
                     }
+                }
+                catch (Exception ex)
+                {
+                    // Sem gravar nao ha como garantir a mensagem: 500 faz a Meta reenviar depois.
+                    _logger.LogError(ex, "[wa.in] ev=erro motivo=falha_ao_gravar_evento");
+                    return StatusCode(StatusCodes.Status500InternalServerError);
+                }
+
+                if (novos > 0 || repetidos > 0)
+                {
+                    _logger.LogInformation("[wa.in] ev=lote novos={Novos} repetidos={Repetidos}", novos, repetidos);
                 }
             }
 
             return Ok();
         }
 
-        [HttpPost("token")]
-        [RequirePermission("WhatsApp", "configurar")]
-        public IActionResult AtualizarAccessToken([FromBody] UpdateWhatsAppTokenRequest req)
+        private static System.Collections.Generic.IEnumerable<JsonElement> Valores(JsonElement raiz)
         {
-            if (req == null || string.IsNullOrWhiteSpace(req.AccessToken))
+            if (!raiz.TryGetProperty("entry", out var entradas) || entradas.ValueKind != JsonValueKind.Array) yield break;
+
+            foreach (var entrada in entradas.EnumerateArray())
             {
-                return BadRequest(new { error = "AccessToken obrigat�rio" });
+                if (!entrada.TryGetProperty("changes", out var mudancas) || mudancas.ValueKind != JsonValueKind.Array) continue;
+
+                foreach (var mudanca in mudancas.EnumerateArray())
+                {
+                    if (mudanca.TryGetProperty("value", out var valor) && valor.ValueKind == JsonValueKind.Object) yield return valor;
+                }
             }
-
-            _waTokenProvider.SetAccessToken(req.AccessToken);
-            _logger.LogInformation("Token do WhatsApp atualizado via endpoint em {When}", DateTimeOffset.UtcNow);
-
-            return Ok(new
-            {
-                message = "Token atualizado com sucesso (apenas em mem�ria).",
-                updated_at_utc = _waTokenProvider.LastUpdatedUtc?.ToString("o")
-            });
         }
 
-        private static string MaskValue(string? value)
+        private async Task<(int Novos, int Repetidos)> GravarEventosAsync(JsonElement valor)
         {
-            if (string.IsNullOrWhiteSpace(value)) return "(vazio)";
-            if (value.Length <= 4) return value;
-            var tail = value[^4..];
-            return new string('*', value.Length - 4) + tail;
+            int novos = 0, repetidos = 0;
+            valor.TryGetProperty("metadata", out var metadata);
+            var phoneNumberId = Texto(metadata, "phone_number_id");
+            var display = Texto(metadata, "display_phone_number");
+            valor.TryGetProperty("contacts", out var contatos);
+
+            if (valor.TryGetProperty("messages", out var mensagens) && mensagens.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var mensagem in mensagens.EnumerateArray())
+                {
+                    var id = Texto(mensagem, "id");
+                    if (string.IsNullOrWhiteSpace(id))
+                    {
+                        _logger.LogWarning("[wa.in] ev=ignorada motivo=mensagem_sem_id phone_number_id={PhoneNumberId}", phoneNumberId);
+                        continue;
+                    }
+
+                    var payload = JsonSerializer.Serialize(new
+                    {
+                        metadata = Clonar(metadata),
+                        contacts = Clonar(contatos),
+                        message = Clonar(mensagem)
+                    });
+
+                    var novo = await _eventos.RegistrarAsync(new WaEvento
+                    {
+                        Id = Guid.NewGuid(), Tipo = TipoEvento.Mensagem, Chave = id,
+                        PhoneNumberId = phoneNumberId, DisplayPhone = display, PayloadJson = payload
+                    });
+
+                    _logger.LogInformation(
+                        "[wa.in] ev={Evento} wa={Wa} tipo={Tipo} de={De} phone_number_id={PhoneNumberId} display={Display} bytes={Bytes}",
+                        novo ? "recebida" : "repetida", id, Texto(mensagem, "type"), Mascarar(Texto(mensagem, "from")),
+                        phoneNumberId, display, payload.Length);
+                    if (novo) novos++; else repetidos++;
+                }
+            }
+
+            if (valor.TryGetProperty("statuses", out var statuses) && statuses.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var status in statuses.EnumerateArray())
+                {
+                    var id = Texto(status, "id");
+                    var situacao = Texto(status, "status");
+                    if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(situacao)) continue;
+
+                    var payload = JsonSerializer.Serialize(new { metadata = Clonar(metadata), status = Clonar(status) });
+                    var novo = await _eventos.RegistrarAsync(new WaEvento
+                    {
+                        Id = Guid.NewGuid(), Tipo = TipoEvento.Status, Chave = $"{id}:{situacao}",
+                        PhoneNumberId = phoneNumberId, DisplayPhone = display, PayloadJson = payload
+                    });
+
+                    _logger.LogInformation(
+                        "[wa.in] ev={Evento} wa={Wa} status={Status} phone_number_id={PhoneNumberId}",
+                        novo ? "status_recebido" : "status_repetido", id, situacao, phoneNumberId);
+                    if (novo) novos++; else repetidos++;
+                }
+            }
+
+            return (novos, repetidos);
         }
 
-        private static string? ExtrairTextoExibicao(WebhookMessageDto? mensagem)
+        private static string? Texto(JsonElement elemento, string propriedade) =>
+            elemento.ValueKind == JsonValueKind.Object && elemento.TryGetProperty(propriedade, out var v) && v.ValueKind == JsonValueKind.String
+                ? v.GetString()
+                : null;
+
+        // JsonElement e uma "visao" do documento; clonar permite serializar depois que o documento for descartado.
+        private static object? Clonar(JsonElement elemento) =>
+            elemento.ValueKind == JsonValueKind.Undefined ? null : elemento.Clone();
+
+        private static string Mascarar(string? valor)
         {
-            if (mensagem == null)
-            {
-                return null;
-            }
-
-            if (!string.IsNullOrWhiteSpace(mensagem.Texto?.Corpo))
-            {
-                return mensagem.Texto.Corpo;
-            }
-
-            if (!string.IsNullOrWhiteSpace(mensagem.Interactive?.ButtonReply?.Title))
-            {
-                return mensagem.Interactive.ButtonReply.Title;
-            }
-
-            if (!string.IsNullOrWhiteSpace(mensagem.Interactive?.ListReply?.Title))
-            {
-                return mensagem.Interactive.ListReply.Title;
-            }
-
-            return null;
-        }
-
-        private static string? ExtrairTextoInterpretado(WebhookMessageDto? mensagem)
-        {
-            if (mensagem == null)
-            {
-                return null;
-            }
-
-            if (!string.IsNullOrWhiteSpace(mensagem.Interactive?.ButtonReply?.Id))
-            {
-                return mensagem.Interactive.ButtonReply.Id;
-            }
-
-            if (!string.IsNullOrWhiteSpace(mensagem.Interactive?.ListReply?.Id))
-            {
-                return mensagem.Interactive.ListReply.Id;
-            }
-
-            return mensagem.Texto?.Corpo;
+            if (string.IsNullOrWhiteSpace(valor)) return "(vazio)";
+            return valor.Length <= 4 ? valor : new string('*', valor.Length - 4) + valor[^4..];
         }
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
-
-

@@ -225,6 +225,56 @@ namespace APIBack.DTOs.Cardapio
         public string? Uf { get; set; }
         public string? Cep { get; set; }
         public string? Referencia { get; set; }
+        /// <summary>
+        /// Ponto de entrega confirmado pelo cliente no mapa. Quando vem, o servidor nao geocodifica de novo: so confere se o
+        /// ponto e plausivel (Brasil e perto da loja).
+        /// </summary>
+        public double? Latitude { get; set; }
+        public double? Longitude { get; set; }
+        /// <summary>geocodificada (o ponto que a busca achou), pino (o cliente arrastou) ou gps (localizacao do aparelho).</summary>
+        public string? OrigemPonto { get; set; }
+    }
+
+    public class LocalizarCardapioEnderecoRequest
+    {
+        public Guid? EstabelecimentoId { get; set; }
+        public string? EstabelecimentoSlug { get; set; }
+        public string? Logradouro { get; set; }
+        public string? Numero { get; set; }
+        public string? Bairro { get; set; }
+        public string? Cidade { get; set; }
+        public string? Uf { get; set; }
+        public string? Cep { get; set; }
+    }
+
+    /// <summary>Onde o endereco foi achado no mapa. Sem Encontrado, o centro (a loja) serve para o cliente colocar o pino.</summary>
+    public class CardapioLocalizacaoDto
+    {
+        public bool Encontrado { get; set; }
+        /// <summary>Exata = o servico chegou ao numero informado. Falso = o cliente precisa confirmar ou ajustar o pino.</summary>
+        public bool Exata { get; set; }
+        public double? Latitude { get; set; }
+        public double? Longitude { get; set; }
+        public double? CentroLatitude { get; set; }
+        public double? CentroLongitude { get; set; }
+    }
+
+    public class CardapioEnderecoDoPontoRequest
+    {
+        public Guid? EstabelecimentoId { get; set; }
+        public string? EstabelecimentoSlug { get; set; }
+        public double Latitude { get; set; }
+        public double Longitude { get; set; }
+    }
+
+    public class CardapioEnderecoDoPontoDto
+    {
+        public string? Logradouro { get; set; }
+        public string? Numero { get; set; }
+        public string? Bairro { get; set; }
+        public string? Cidade { get; set; }
+        public string? Uf { get; set; }
+        public string? Cep { get; set; }
     }
 
     public class CriarCardapioPedidoPublicoRequest : CalcularCardapioPedidoPublicoRequest

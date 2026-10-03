@@ -1,12 +1,14 @@
 // ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
 using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.Linq;
 using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
-using System.Linq;
-using System.Collections.Generic;
+using APIBack.Atendimento;
 using APIBack.Automation.Dtos;
 using APIBack.Automation.Helpers;
 using APIBack.Automation.Interfaces;
@@ -15,11 +17,18 @@ using Microsoft.Extensions.Logging;
 
 namespace APIBack.Automation.Services
 {
+    /// <summary>
+    /// Envio pela Cloud API da Meta. O token e o ID do numero vem do canal (um token por numero); o token global de
+    /// configuracao so e usado, com aviso no log, enquanto o numero ainda nao tem token proprio. Cada envio deixa
+    /// linhas [wa.out] no log; falha permanente (ID inexistente, token invalido) marca o canal como "erro".
+    /// </summary>
     public class WhatsAppSender
     {
         private readonly IHttpClientFactory _httpFactory;
         private readonly IWhatsAppTokenProvider _tokenProvider;
-        private readonly IWabaPhoneRepository _wabaPhoneRepository;
+        private readonly ICanalRepository _canais;
+        private readonly ITokenProtector _tokenProtector;
+        private readonly IMessageService _mensagens;
         private readonly IConfiguration _configuration;
         private readonly ILogger<WhatsAppSender> _logger;
         private readonly APIBack.Service.ISimulatedCustomerGuard _simulatedGuard;
@@ -27,7 +36,9 @@ namespace APIBack.Automation.Services
         public WhatsAppSender(
             IHttpClientFactory httpFactory,
             IWhatsAppTokenProvider tokenProvider,
-            IWabaPhoneRepository wabaPhoneRepository,
+            ICanalRepository canais,
+            ITokenProtector tokenProtector,
+            IMessageService mensagens,
             IConfiguration configuration,
             ILogger<WhatsAppSender> logger,
             APIBack.Service.ISimulatedCustomerGuard simulatedGuard)
@@ -35,16 +46,19 @@ namespace APIBack.Automation.Services
             _simulatedGuard = simulatedGuard;
             _httpFactory = httpFactory;
             _tokenProvider = tokenProvider;
-            _wabaPhoneRepository = wabaPhoneRepository;
+            _canais = canais;
+            _tokenProtector = tokenProtector;
+            _mensagens = mensagens;
             _configuration = configuration;
             _logger = logger;
         }
 
-        public Task SendTextAsync(Guid idConversa, string phoneNumberId, string numeroDestino, string texto, string? displayPhone = null)
+        /// <returns>O id da mensagem na Meta (wamid), ou null quando nada foi enviado (texto vazio, cliente de teste).</returns>
+        public Task<string?> SendTextAsync(Guid idConversa, string phoneNumberId, string numeroDestino, string texto, string? displayPhone = null, Guid? idMensagem = null)
         {
             if (string.IsNullOrWhiteSpace(texto))
             {
-                return Task.CompletedTask;
+                return Task.FromResult<string?>(null);
             }
 
             var payload = new
@@ -55,10 +69,10 @@ namespace APIBack.Automation.Services
                 text = new { body = texto }
             };
 
-            return SendPayloadAsync(idConversa, phoneNumberId, payload, "text", displayPhone);
+            return SendPayloadAsync(idConversa, phoneNumberId, payload, "text", idMensagem);
         }
 
-        public Task SendImageAsync(Guid idConversa, string phoneNumberId, string numeroDestino, string imageUrl, string? displayPhone = null)
+        public Task<string?> SendImageAsync(Guid idConversa, string phoneNumberId, string numeroDestino, string imageUrl, string? displayPhone = null, Guid? idMensagem = null)
         {
             var payload = new
             {
@@ -68,10 +82,10 @@ namespace APIBack.Automation.Services
                 image = new { link = imageUrl }
             };
 
-            return SendPayloadAsync(idConversa, phoneNumberId, payload, "image", displayPhone);
+            return SendPayloadAsync(idConversa, phoneNumberId, payload, "image", idMensagem);
         }
 
-        public Task SendDocumentAsync(Guid idConversa, string phoneNumberId, string numeroDestino, string documentUrl, string? filename, string? displayPhone = null)
+        public Task<string?> SendDocumentAsync(Guid idConversa, string phoneNumberId, string numeroDestino, string documentUrl, string? filename, string? displayPhone = null, Guid? idMensagem = null)
         {
             var payload = new
             {
@@ -81,20 +95,21 @@ namespace APIBack.Automation.Services
                 document = new { link = documentUrl, filename = string.IsNullOrWhiteSpace(filename) ? null : filename }
             };
 
-            return SendPayloadAsync(idConversa, phoneNumberId, payload, "document", displayPhone);
+            return SendPayloadAsync(idConversa, phoneNumberId, payload, "document", idMensagem);
         }
 
-        public Task SendReplyButtonsAsync(
+        public Task<string?> SendReplyButtonsAsync(
             Guid idConversa,
             string phoneNumberId,
             string numeroDestino,
             string bodyText,
             IReadOnlyCollection<WhatsAppReplyButtonOption> options,
-            string? displayPhone = null)
+            string? displayPhone = null,
+            Guid? idMensagem = null)
         {
             if (string.IsNullOrWhiteSpace(bodyText))
             {
-                return Task.CompletedTask;
+                return Task.FromResult<string?>(null);
             }
 
             var buttons = (options ?? Array.Empty<WhatsAppReplyButtonOption>())
@@ -115,7 +130,7 @@ namespace APIBack.Automation.Services
 
             if (buttons.Length == 0)
             {
-                return SendTextAsync(idConversa, phoneNumberId, numeroDestino, bodyText, displayPhone);
+                return SendTextAsync(idConversa, phoneNumberId, numeroDestino, bodyText, displayPhone, idMensagem);
             }
 
             var payload = new
@@ -126,36 +141,52 @@ namespace APIBack.Automation.Services
                 interactive = new
                 {
                     type = "button",
-                    body = new
-                    {
-                        text = bodyText
-                    },
-                    action = new
-                    {
-                        buttons
-                    }
+                    body = new { text = bodyText },
+                    action = new { buttons }
                 }
             };
 
-            return SendPayloadAsync(idConversa, phoneNumberId, payload, "interactive", displayPhone);
+            return SendPayloadAsync(idConversa, phoneNumberId, payload, "interactive", idMensagem);
         }
 
-        private async Task SendPayloadAsync(Guid idConversa, string phoneNumberId, object payload, string payloadType, string? displayPhone = null)
+        /// <summary>Erro da Meta que nao adianta repetir: ID do numero inexistente (100/33), token invalido (190) ou sem permissao (10, 200).</summary>
+        internal static bool ErroPermanenteDoCanal(int? codigo, int? subcodigo) =>
+            codigo is 190 or 10 or 200 || (codigo == 100 && subcodigo == 33);
+
+        private async Task<string?> SendPayloadAsync(Guid idConversa, string phoneNumberId, object payload, string payloadType, Guid? idMensagem)
         {
             // Cliente de teste (simulador): a conversa e gravada normalmente, mas nada sai para o WhatsApp de verdade.
             if (await _simulatedGuard.IsSimulatedConversationAsync(idConversa))
             {
-                _logger.LogInformation("[Conversa={Conversa}] Cliente de teste: envio real ao WhatsApp suprimido ({Tipo}).", idConversa, payloadType);
-                return;
+                _logger.LogInformation("[wa.out] ev=suprimida motivo=cliente_de_teste conversa={Conversa} tipo={Tipo}", idConversa, payloadType);
+                return null;
             }
 
-            var lookupKey = !string.IsNullOrWhiteSpace(displayPhone) ? displayPhone : phoneNumberId;
-            var perNumberToken = await _wabaPhoneRepository.ObterAccessTokenPorPhoneNumberIdAsync(lookupKey);
-            var token = !string.IsNullOrWhiteSpace(perNumberToken) ? perNumberToken : _tokenProvider.GetAccessToken();
+            var canal = await _canais.ObterAtivoPorPhoneNumberIdAsync(new string((phoneNumberId ?? string.Empty).Where(char.IsDigit).ToArray()));
+            var token = _tokenProtector.Revelar(canal?.TokenCifrado);
+            var origemToken = "canal";
             if (string.IsNullOrWhiteSpace(token))
             {
-                _logger.LogWarning("[Conversa={Conversa}] Token do WhatsApp nao configurado", idConversa);
-                return;
+                token = _tokenProvider.GetAccessToken();
+                origemToken = "global";
+                if (!string.IsNullOrWhiteSpace(token) && !token.StartsWith("__", StringComparison.Ordinal))
+                {
+                    _logger.LogWarning(
+                        "[wa.out] ev=token_global conversa={Conversa} canal={Canal} dica=\"cadastre o token deste numero na Gestao\"",
+                        idConversa, canal?.Id);
+                }
+                else
+                {
+                    token = null;
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(token))
+            {
+                var semToken = "Nenhum token da Meta configurado para este numero.";
+                _logger.LogError("[wa.out] ev=falhou motivo=sem_token conversa={Conversa} canal={Canal} phone_number_id={PhoneNumberId}", idConversa, canal?.Id, phoneNumberId);
+                if (canal != null) await _canais.MarcarErroAsync(canal.Id, semToken, desativar: false);
+                throw new HttpRequestException($"WhatsApp: {semToken}");
             }
 
             var client = _httpFactory.CreateClient();
@@ -164,53 +195,105 @@ namespace APIBack.Automation.Services
             var graphVersion = _configuration["WhatsApp:GraphApiVersion"] ?? "v23.0";
             var endpoint = $"https://graph.facebook.com/{graphVersion}/{phoneNumberId}/messages";
             var json = JsonSerializer.Serialize(payload);
-            _logger.LogDebug("[Conversa={Conversa}] Payload WhatsApp ({Tipo}): {Json}", idConversa, payloadType, json);
 
-            var delays = new[] { TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(5) };
-            string? lastErrorBody = null;
-            int? lastStatusCode = null;
+            var esperas = new[] { TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2) };
+            string? ultimoCorpo = null;
+            int? ultimoStatus = null;
+            int? ultimoCodigo = null;
+            int? ultimoSubcodigo = null;
+            string? ultimaMensagem = null;
 
-            for (var tentativa = 0; tentativa < delays.Length; tentativa++)
+            for (var tentativa = 1; tentativa <= esperas.Length + 1; tentativa++)
             {
+                var relogio = Stopwatch.StartNew();
                 using var content = new StringContent(json, Encoding.UTF8, "application/json");
 
                 try
                 {
-                    var resposta = await client.PostAsync(endpoint, content);
-                    var body = await resposta.Content.ReadAsStringAsync();
+                    using var resposta = await client.PostAsync(endpoint, content);
+                    var corpo = await resposta.Content.ReadAsStringAsync();
+                    relogio.Stop();
 
                     if (resposta.IsSuccessStatusCode)
                     {
-                        _logger.LogInformation("[Conversa={Conversa}] Mensagem ({Tipo}) enviada via WhatsApp", idConversa, payloadType);
-                        return;
+                        var wamid = ExtrairWamid(corpo);
+                        _logger.LogInformation(
+                            "[wa.out] ev=enviada conversa={Conversa} canal={Canal} wa={Wa} tipo={Tipo} tentativa={Tentativa} token={Token} ms={Ms}",
+                            idConversa, canal?.Id, wamid, payloadType, tentativa, origemToken, relogio.ElapsedMilliseconds);
+
+                        if (canal != null) await _canais.MarcarEnvioOkAsync(canal.Id);
+                        if (idMensagem.HasValue && !string.IsNullOrWhiteSpace(wamid))
+                        {
+                            try { await _mensagens.VincularProvedorAsync(idMensagem.Value, wamid); }
+                            catch (Exception ex) { _logger.LogWarning(ex, "[wa.out] ev=sem_vinculo conversa={Conversa} mensagem={Mensagem}", idConversa, idMensagem); }
+                        }
+
+                        return wamid;
                     }
 
-                    lastStatusCode = (int)resposta.StatusCode;
-                    lastErrorBody = body;
+                    ultimoStatus = (int)resposta.StatusCode;
+                    ultimoCorpo = corpo;
+                    (ultimoCodigo, ultimoSubcodigo, ultimaMensagem) = ExtrairErro(corpo);
                     _logger.LogWarning(
-                        "[Conversa={Conversa}] Falha ao enviar WhatsApp ({Tipo}, tentativa {Tentativa}): {Status} - {Body}",
-                        idConversa,
-                        payloadType,
-                        tentativa + 1,
-                        lastStatusCode,
-                        body);
+                        "[wa.out] ev=tentativa_falhou conversa={Conversa} canal={Canal} tentativa={Tentativa} http={Http} codigo={Codigo} subcodigo={Subcodigo} motivo=\"{Motivo}\" ms={Ms}",
+                        idConversa, canal?.Id, tentativa, ultimoStatus, ultimoCodigo, ultimoSubcodigo, ultimaMensagem, relogio.ElapsedMilliseconds);
+
+                    // 4xx (menos 429) e erro do pedido, nao do servidor: repetir nao muda nada.
+                    if (ultimoStatus is >= 400 and < 500 and not 429) break;
                 }
-                catch (Exception ex)
+                catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
                 {
-                    lastErrorBody = ex.Message;
-                    _logger.LogWarning(ex, "[Conversa={Conversa}] Erro ao enviar WhatsApp ({Tipo}, tentativa {Tentativa})", idConversa, payloadType, tentativa + 1);
+                    ultimoCorpo = ex.Message;
+                    _logger.LogWarning(ex, "[wa.out] ev=tentativa_falhou conversa={Conversa} canal={Canal} tentativa={Tentativa} motivo=rede", idConversa, canal?.Id, tentativa);
                 }
 
-                if (tentativa < delays.Length - 1)
+                if (tentativa <= esperas.Length)
                 {
-                    await Task.Delay(delays[tentativa]);
+                    await Task.Delay(esperas[tentativa - 1]);
                 }
             }
 
-            _logger.LogError("[Conversa={Conversa}] Todas as tentativas de envio ({Tipo}) falharam. Ultimo status: {Status} - {Body}",
-                idConversa, payloadType, lastStatusCode, lastErrorBody);
-            throw new HttpRequestException(
-                $"WhatsApp API retornou erro {lastStatusCode}: {lastErrorBody}");
+            var motivo = ultimaMensagem ?? ultimoCorpo ?? "sem resposta";
+            var permanente = ErroPermanenteDoCanal(ultimoCodigo, ultimoSubcodigo);
+            _logger.LogError(
+                "[wa.out] ev=falhou conversa={Conversa} canal={Canal} phone_number_id={PhoneNumberId} http={Http} codigo={Codigo} subcodigo={Subcodigo} permanente={Permanente} motivo=\"{Motivo}\"",
+                idConversa, canal?.Id, phoneNumberId, ultimoStatus, ultimoCodigo, ultimoSubcodigo, permanente, motivo);
+
+            if (canal != null) await _canais.MarcarErroAsync(canal.Id, $"{ultimoCodigo}/{ultimoSubcodigo}: {motivo}", desativar: permanente);
+
+            throw new HttpRequestException($"WhatsApp API retornou erro {ultimoStatus}: {ultimoCorpo}");
+        }
+
+        internal static string? ExtrairWamid(string corpo)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(corpo);
+                return doc.RootElement.TryGetProperty("messages", out var mensagens) && mensagens.ValueKind == JsonValueKind.Array && mensagens.GetArrayLength() > 0
+                    ? mensagens[0].TryGetProperty("id", out var id) ? id.GetString() : null
+                    : null;
+            }
+            catch (JsonException)
+            {
+                return null;
+            }
+        }
+
+        internal static (int? Codigo, int? Subcodigo, string? Mensagem) ExtrairErro(string corpo)
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(corpo);
+                if (!doc.RootElement.TryGetProperty("error", out var erro)) return (null, null, null);
+
+                int? Inteiro(string nome) => erro.TryGetProperty(nome, out var v) && v.ValueKind == JsonValueKind.Number ? v.GetInt32() : null;
+                var mensagem = erro.TryGetProperty("message", out var m) ? m.GetString() : null;
+                return (Inteiro("code"), Inteiro("error_subcode"), mensagem);
+            }
+            catch (JsonException)
+            {
+                return (null, null, null);
+            }
         }
     }
 }

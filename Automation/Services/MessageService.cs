@@ -11,15 +11,15 @@ namespace APIBack.Automation.Services
         private readonly IMessageRepository _repo;
         private readonly ILogger<MessageService> _logger;
         private readonly IConfiguration _configuration;
+        private readonly APIBack.Atendimento.IChatRealtimePublisher _tempoReal;
 
-
-        public MessageService(IMessageRepository repo, ILogger<MessageService> logger, 
-                              IConfiguration configuration)
+        public MessageService(IMessageRepository repo, ILogger<MessageService> logger,
+                              IConfiguration configuration, APIBack.Atendimento.IChatRealtimePublisher tempoReal)
         {
             _repo = repo;
             _logger = logger;
             _configuration = configuration;
-
+            _tempoReal = tempoReal;
         }
 
         public async Task<Message?> AdicionarMensagemAsync(Message mensagem, string? phoneNumberId, string? idWa)
@@ -51,13 +51,36 @@ namespace APIBack.Automation.Services
             }
 
             await _repo.AddMessageAsync(mensagem, phoneNumberId, idWa ?? string.Empty);
+            await _tempoReal.MensagemCriadaAsync(mensagem);
             return mensagem;
         }
 
-        public Task AtualizarStatusAsync(Guid idMensagem, string status, string? codigoErro = null, string? mensagemErro = null)
+        public async Task AtualizarStatusAsync(Guid idMensagem, string status, string? codigoErro = null, string? mensagemErro = null)
         {
-            return _repo.AtualizarStatusAsync(idMensagem, status, codigoErro, mensagemErro);
+            await _repo.AtualizarStatusAsync(idMensagem, status, codigoErro, mensagemErro);
+            var conversa = await _repo.ObterConversaDaMensagemAsync(idMensagem);
+            if (conversa.HasValue)
+            {
+                await _tempoReal.StatusDaMensagemAsync(conversa.Value, idMensagem, null, MessageStatusMapper.NormalizeForDatabase(status, DirecaoMensagem.Saida), mensagemErro);
+            }
         }
+
+        public async Task<bool> AtualizarStatusPorProvedorAsync(string idProvedor, string status, string? codigoErro = null, string? mensagemErro = null)
+        {
+            var atualizada = await _repo.AtualizarStatusPorProvedorAsync(idProvedor, status, codigoErro, mensagemErro);
+            if (atualizada)
+            {
+                var conversa = await _repo.ObterConversaPorProvedorAsync(idProvedor);
+                if (conversa.HasValue)
+                {
+                    await _tempoReal.StatusDaMensagemAsync(conversa.Value, null, idProvedor, MessageStatusMapper.NormalizeForDatabase(status, DirecaoMensagem.Saida), mensagemErro);
+                }
+            }
+
+            return atualizada;
+        }
+
+        public Task VincularProvedorAsync(Guid idMensagem, string idProvedor) => _repo.VincularProvedorAsync(idMensagem, idProvedor);
     }
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================

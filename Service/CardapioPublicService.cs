@@ -312,14 +312,15 @@ namespace APIBack.Service
 
             ValidationUtils.ThrowIfAny(errors);
 
-            // Sem numero de WhatsApp na loja nao ha como confirmar o pedido: melhor recusar aqui do que deixar o cliente esperando.
-            if (string.IsNullOrWhiteSpace(await _waba.ObterDisplayPhonePorEstabelecimentoAsync(estabelecimento.Id)))
+            // Sem um numero de WhatsApp que atenda o cardapio web nao ha como confirmar o pedido: melhor recusar aqui do que
+            // deixar o cliente esperando.
+            if (string.IsNullOrWhiteSpace(await _waba.ObterDisplayPhoneParaServicoAsync(estabelecimento.Id, "cardapio_web")))
             {
                 throw new InvalidOperationException("Este restaurante ainda nao recebe pedidos pelo WhatsApp.");
             }
 
             var enderecoArmazenado = cotacao.TipoEntrega == "entrega"
-                ? await LocalizarEnderecoAsync(request.EnderecoEntrega!)
+                ? await LocalizarEnderecoDoPedidoAsync(request.EnderecoEntrega!, estabelecimento)
                 : null;
 
             var codigo = GerarCodigoPedido();
@@ -418,46 +419,59 @@ namespace APIBack.Service
             "alameda", "avenida", "av", "travessa", "rodovia", "estrada", "praca", "praça", "viela", "beco", "via", "largo"
         };
 
-        /// <summary>"Rua Alameda Dos Mandarins" vira "Alameda Dos Mandarins": o tipo de via repetido atrapalha a busca.</summary>
+        private static readonly string[] PalavrasDeNumero = { "numero", "número", "nº", "n°" };
+
+        /// <summary>
+        /// Deixa so o nome da via: "Rua Alameda Dos Mandarins" vira "Alameda Dos Mandarins" (tipo de via repetido) e
+        /// "Alameda Dos Mandarins Número" perde o "Número" sobrando no fim (vem do preenchimento por CEP ou de quem digita).
+        /// </summary>
         internal static string LimparLogradouro(string? logradouro)
         {
-            var texto = (logradouro ?? string.Empty).Trim();
-            var partes = texto.Split(' ', StringSplitOptions.RemoveEmptyEntries);
-            if (partes.Length > 2
+            var partes = (logradouro ?? string.Empty).Split(' ', StringSplitOptions.RemoveEmptyEntries).ToList();
+
+            while (partes.Count > 1 && PalavrasDeNumero.Contains(partes[^1].TrimEnd('.', ',').ToLowerInvariant()))
+            {
+                partes.RemoveAt(partes.Count - 1);
+            }
+
+            if (partes.Count > 2
                 && partes[0].Equals("rua", StringComparison.OrdinalIgnoreCase)
                 && TiposDeVia.Contains(partes[1].TrimEnd('.').ToLowerInvariant()))
             {
-                return string.Join(' ', partes.Skip(1));
+                partes.RemoveAt(0);
             }
 
-            return texto;
+            return string.Join(' ', partes);
         }
 
-        internal static IReadOnlyList<string> MontarConsultasEndereco(CardapioEnderecoArmazenado e)
+        /// <summary>
+        /// Buscas a tentar, da mais completa para a mais enxuta (o Google as vezes nao conhece o bairro digitado, mas
+        /// acha a rua e o numero pelo CEP). So a primeira que devolver ponto exato vale.
+        /// </summary>
+        internal static IReadOnlyList<(string Endereco, string? Cep)> MontarConsultasEndereco(CardapioEnderecoArmazenado e)
         {
             var rua = LimparLogradouro(e.Logradouro);
             var cidadeUf = $"{e.Cidade} - {e.Uf}, Brasil";
-            var consultas = new List<string>();
+            var numero = string.IsNullOrWhiteSpace(e.Numero) ? string.Empty : $", {e.Numero}";
+            var cep = new string((e.Cep ?? string.Empty).Where(char.IsDigit).ToArray());
+            var cepOuNulo = cep.Length == 8 ? cep : null;
 
-            if (!string.IsNullOrWhiteSpace(e.Numero))
+            var consultas = new List<(string, string?)> { ($"{rua}{numero}, {e.Bairro}, {cidadeUf}", cepOuNulo) };
+            if (!string.IsNullOrWhiteSpace(e.Bairro))
             {
-                consultas.Add($"{rua}, {e.Numero}, {e.Bairro}, {cidadeUf}");
-                consultas.Add($"{rua}, {e.Numero}, {cidadeUf}");
+                consultas.Add(($"{rua}{numero}, {cidadeUf}", cepOuNulo));
             }
 
-            consultas.Add($"{rua}, {e.Bairro}, {cidadeUf}");
-
-            var cep = new string((e.Cep ?? string.Empty).Where(char.IsDigit).ToArray());
-            if (cep.Length == 8) consultas.Add($"{cep[..5]}-{cep[5..]}, {cidadeUf}");
-
-            return consultas.Distinct().ToList();
+            return consultas;
         }
 
         /// <summary>
         /// A coordenada e obrigatoria no pedido do delivery e nunca e inventada: vem da busca do endereco, feita aqui
-        /// no servidor para o cliente nao poder mandar uma posicao qualquer. Endereco nao encontrado = erro de validacao.
+        /// no servidor para o cliente nao poder mandar uma posicao qualquer. So vale ponto EXATO (o numero foi achado):
+        /// rua, bairro ou centro do CEP nao servem para entregar. Sem ponto exato = erro de validacao.
         /// </summary>
-        private async Task<CardapioEnderecoArmazenado> LocalizarEnderecoAsync(CriarCardapioPedidoPublicoEnderecoRequest endereco)
+        private async Task<CardapioEnderecoArmazenado> LocalizarEnderecoDoPedidoAsync(
+            CriarCardapioPedidoPublicoEnderecoRequest endereco, CardapioEstabelecimentoPublico estabelecimento)
         {
             var armazenado = new CardapioEnderecoArmazenado
             {
@@ -471,32 +485,134 @@ namespace APIBack.Service
                 Referencia = ValidationUtils.TrimToNull(endereco.Referencia)
             };
 
-            (string Latitude, string Longitude)? coordenadas = null;
-            // Do mais preciso ao mais aproximado: o mapa as vezes nao conhece o bairro ou o numero, mas acha a rua ou o CEP.
-            foreach (var consulta in MontarConsultasEndereco(armazenado))
+            // O cliente confirmou o ponto no mapa (o que a busca achou, o pino arrastado ou o GPS): vale ele, sem gastar outra
+            // busca. O servidor so confere se o ponto e plausivel.
+            if (endereco.Latitude.HasValue || endereco.Longitude.HasValue)
             {
+                var erro = PontoDeEntregaRules.Validar(
+                    endereco.Latitude, endereco.Longitude, endereco.OrigemPonto,
+                    estabelecimento.Latitude, estabelecimento.Longitude, estabelecimento.RaioEntregaKm);
+                if (erro != null) throw BuildValidationException("enderecoEntrega", erro);
+
+                armazenado.Latitude = endereco.Latitude!.Value;
+                armazenado.Longitude = endereco.Longitude!.Value;
+                armazenado.Precisao = endereco.OrigemPonto!.Trim().ToLowerInvariant();
+                return armazenado;
+            }
+
+            GeocodeResultado? achado = null;
+            var encontrouAlgo = false;
+            foreach (var (consulta, cep) in MontarConsultasEndereco(armazenado))
+            {
+                GeocodeResultado? resultado = null;
                 try
                 {
-                    coordenadas = await _localizacao.ObterCoordenadasAsync(consulta);
+                    resultado = await _localizacao.GeocodificarAsync(consulta, cep);
                 }
                 catch (Exception)
                 {
-                    // Falha do servico de mapas: tenta a proxima; sem posicao o pedido nao e criado.
+                    // Falha do servico de mapas: tenta a proxima; sem ponto exato o pedido nao e criado.
                 }
 
-                if (coordenadas != null) break;
+                if (resultado == null) continue;
+                encontrouAlgo = true;
+                if (resultado.Exata)
+                {
+                    achado = resultado;
+                    break;
+                }
             }
 
-            if (coordenadas == null
-                || !TryParseCoordenada(coordenadas.Value.Latitude, out var latitude)
-                || !TryParseCoordenada(coordenadas.Value.Longitude, out var longitude))
+            if (achado == null
+                || !TryParseCoordenada(achado.Latitude, out var latitude)
+                || !TryParseCoordenada(achado.Longitude, out var longitude))
             {
-                throw BuildValidationException("enderecoEntrega", "Nao encontramos esse endereco no mapa. Confira rua, numero e cidade.");
+                throw BuildValidationException("enderecoEntrega", encontrouAlgo
+                    ? "Nao conseguimos confirmar o ponto exato desse endereco. Confira rua, numero e CEP."
+                    : "Nao encontramos esse endereco no mapa. Confira rua, numero e cidade.");
             }
 
             armazenado.Latitude = latitude;
             armazenado.Longitude = longitude;
+            armazenado.Precisao = "exata";
             return armazenado;
+        }
+
+        public async Task<CardapioLocalizacaoDto> LocalizarEnderecoAsync(LocalizarCardapioEnderecoRequest request)
+        {
+            var estabelecimento = await ResolverEstabelecimentoAsync(request.EstabelecimentoId, request.EstabelecimentoSlug);
+            var armazenado = new CardapioEnderecoArmazenado
+            {
+                Logradouro = ValidationUtils.TrimToNull(request.Logradouro),
+                Numero = ValidationUtils.TrimToNull(request.Numero),
+                Bairro = ValidationUtils.TrimToNull(request.Bairro),
+                Cidade = ValidationUtils.TrimToNull(request.Cidade),
+                Uf = ValidationUtils.TrimToNull(request.Uf)?.ToUpperInvariant(),
+                Cep = ValidationUtils.TrimToNull(request.Cep)
+            };
+
+            var resultado = new CardapioLocalizacaoDto
+            {
+                CentroLatitude = estabelecimento.Latitude,
+                CentroLongitude = estabelecimento.Longitude
+            };
+
+            // O primeiro ponto exato vence; se nenhuma busca chegou ao numero, devolve o melhor ponto achado como ponto de partida
+            // do pino (o cliente confirma ou arrasta).
+            GeocodeResultado? aproximado = null;
+            foreach (var (consulta, cep) in MontarConsultasEndereco(armazenado))
+            {
+                GeocodeResultado? achado = null;
+                try
+                {
+                    achado = await _localizacao.GeocodificarAsync(consulta, cep);
+                }
+                catch (Exception)
+                {
+                    // Servico de mapas fora: tenta a proxima; no pior caso o cliente posiciona o pino.
+                }
+
+                if (achado == null) continue;
+                if (achado.Exata)
+                {
+                    aproximado = achado;
+                    resultado.Exata = true;
+                    break;
+                }
+
+                aproximado ??= achado;
+            }
+
+            if (aproximado != null
+                && TryParseCoordenada(aproximado.Latitude, out var latitude)
+                && TryParseCoordenada(aproximado.Longitude, out var longitude))
+            {
+                resultado.Encontrado = true;
+                resultado.Latitude = latitude;
+                resultado.Longitude = longitude;
+            }
+            else
+            {
+                resultado.Exata = false;
+            }
+
+            return resultado;
+        }
+
+        public async Task<CardapioEnderecoDoPontoDto> ObterEnderecoDoPontoAsync(CardapioEnderecoDoPontoRequest request)
+        {
+            var estabelecimento = await ResolverEstabelecimentoAsync(request.EstabelecimentoId, request.EstabelecimentoSlug);
+            var erro = PontoDeEntregaRules.Validar(
+                request.Latitude, request.Longitude, PontoDeEntregaRules.Gps,
+                estabelecimento.Latitude, estabelecimento.Longitude, estabelecimento.RaioEntregaKm);
+            if (erro != null) throw BuildValidationException("latitude", erro);
+
+            var endereco = await _localizacao.GeocodificarReversoAsync(request.Latitude, request.Longitude);
+            return new CardapioEnderecoDoPontoDto
+            {
+                Logradouro = endereco?.Logradouro, Numero = endereco?.Numero, Bairro = endereco?.Bairro,
+                Cidade = endereco?.Cidade, Uf = endereco?.Uf, Cep = endereco?.Cep
+            };
         }
 
         private static bool TryParseCoordenada(string? texto, out double valor) =>

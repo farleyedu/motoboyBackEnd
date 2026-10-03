@@ -13,11 +13,14 @@ namespace APIBack.Tests.Unit
         [InlineData("Rua das Flores", "Rua das Flores")]
         [InlineData("Alameda Dos Mandarins", "Alameda Dos Mandarins")]
         [InlineData("Rua Alameda", "Rua Alameda")]
-        public void LimparLogradouro_tira_o_tipo_de_via_repetido(string entrada, string esperado) =>
+        [InlineData("Alameda Dos Mandarins Número", "Alameda Dos Mandarins")]
+        [InlineData("Rua Alameda Dos Mandarins numero", "Alameda Dos Mandarins")]
+        [InlineData("Rua das Flores nº", "Rua das Flores")]
+        public void LimparLogradouro_deixa_so_o_nome_da_via(string entrada, string esperado) =>
             Assert.Equal(esperado, CardapioPublicService.LimparLogradouro(entrada));
 
         [Fact]
-        public void Consultas_vao_do_preciso_ao_aproximado_e_usam_o_cep()
+        public void Consultas_vao_da_mais_completa_para_a_mais_enxuta_e_levam_o_cep()
         {
             var consultas = CardapioPublicService.MontarConsultasEndereco(new CardapioEnderecoArmazenado
             {
@@ -25,20 +28,22 @@ namespace APIBack.Tests.Unit
                 Cidade = "Uberlândia", Uf = "MG", Cep = "38407661"
             });
 
-            Assert.Equal("Alameda Dos Mandarins, 500, Grand Ville, Uberlândia - MG, Brasil", consultas.First());
-            Assert.Contains("Alameda Dos Mandarins, 500, Uberlândia - MG, Brasil", consultas);
-            Assert.Equal("38407-661, Uberlândia - MG, Brasil", consultas.Last());
+            Assert.Equal(2, consultas.Count);
+            Assert.Equal("Alameda Dos Mandarins, 500, Grand Ville, Uberlândia - MG, Brasil", consultas[0].Endereco);
+            Assert.Equal("Alameda Dos Mandarins, 500, Uberlândia - MG, Brasil", consultas[1].Endereco);
+            Assert.All(consultas, c => Assert.Equal("38407661", c.Cep));
         }
 
         [Fact]
-        public void Sem_numero_nem_cep_ainda_tenta_pela_rua()
+        public void Sem_bairro_e_sem_cep_so_ha_uma_consulta_e_ela_nao_leva_cep()
         {
             var consultas = CardapioPublicService.MontarConsultasEndereco(new CardapioEnderecoArmazenado
             {
-                Logradouro = "Rua A", Bairro = "Centro", Cidade = "Uberlândia", Uf = "MG"
+                Logradouro = "Rua A", Numero = "10", Cidade = "Uberlândia", Uf = "MG"
             });
 
             Assert.Single(consultas);
+            Assert.Null(consultas.Single().Cep);
         }
     }
 }

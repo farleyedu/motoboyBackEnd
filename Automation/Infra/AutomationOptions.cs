@@ -6,7 +6,6 @@ namespace APIBack.Automation.Infra
         public bool StrictSignatureValidation { get; set; } = false;
         public string VerifyToken { get; set; } = "<TODO>";
         public MetaOptions Meta { get; set; } = new();
-        public TelegramOptions Telegram { get; set; } = new();
         public HandoverOptions Handover { get; set; } = new();
     }
 

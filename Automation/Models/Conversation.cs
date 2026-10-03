@@ -23,6 +23,8 @@ namespace APIBack.Automation.Models
         public Guid IdConversa { get; set; }
         public Guid IdConversaGrupo { get; set; }
         public Guid IdEstabelecimento { get; set; }
+        /// <summary>Numero de WhatsApp (canal_whatsapp) por onde o cliente chegou; a resposta sai por ele. Nulo em conversa antiga.</summary>
+        public Guid? IdCanal { get; set; }
         public Guid IdCliente { get; set; }
         public string? TelefoneCliente { get; set; }
         public string IdWa { get; set; } = string.Empty;

@@ -10,7 +10,6 @@ using Serilog;
 using APIBack.Automation.Interfaces;
 using APIBack.Automation.Infra;
 using APIBack.Automation.Services;
-using APIBack.Automation.Infra.Config;
 using APIBack.Automation.Repository;
 using APIBack.Automation.Repository.Interface;
 using APIBack.Automation.Services.Interface;
@@ -134,18 +133,14 @@ builder.Services.AddScoped<IHorarioOperacaoRepository, HorarioOperacaoRepository
 builder.Services.AddScoped<IClienteCadastroRepository, ClienteCadastroRepository>();
 builder.Services.AddScoped<ISimulatedCustomerGuard, SimulatedCustomerGuard>();
 builder.Services.AddScoped<IClienteSimulatorService, ClienteSimulatorService>();
+builder.Services.AddScoped<IReservaRepository, ReservaRepository>();
 builder.Services.AddScoped<ISimuladorRepository, SimuladorRepository>();
 builder.Services.AddScoped<ISimuladorPedidoService, SimuladorPedidoService>();
 builder.Services.AddScoped<ISimuladorIntegracoes, SimuladorIntegracoes>();
-builder.Services.AddScoped<IReservaRepository, ReservaRepository>();
-builder.Services.AddScoped<IReservasRepository, ReservasRepository>();
-builder.Services.AddScoped<IOficinaAgendamentoRepository, OficinaAgendamentoRepository>();
 builder.Services.AddScoped<IMotoboyService, MotoboyService>();
 builder.Services.AddScoped<ILocalizacaoService, LocalizacaoService>();
 builder.Services.AddScoped<ITrackingService, TrackingService>();
 builder.Services.AddScoped<IOperationalSessionService, OperationalSessionService>();
-builder.Services.AddScoped<IReservasService, ReservasService>();
-builder.Services.AddScoped<IOficinaAgendamentoService, OficinaAgendamentoService>();
 builder.Services.AddScoped<IEstabelecimentoFaqService, EstabelecimentoFaqService>();
 builder.Services.AddScoped<ICardapioService, CardapioService>();
 builder.Services.AddScoped<ICardapioPedidoWebRepository, CardapioPedidoWebRepository>();
@@ -209,69 +204,51 @@ builder.Services.Configure<AsaasCheckoutOptions>(builder.Configuration.GetSectio
 // ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
 // Automation DI
 builder.Services.Configure<AutomationOptions>(builder.Configuration.GetSection("Automation"));
-builder.Services.Configure<OpenAIOptions>(builder.Configuration.GetSection("OpenAI"));
 builder.Services.AddScoped<IConversationRepository, SqlConversationRepository>();
 builder.Services.AddScoped<IMessageRepository, SqlMessageRepository>();
 builder.Services.AddScoped<IWabaPhoneRepository, SqlWabaPhoneRepository>();
-builder.Services.AddScoped<IIARegraRepository, SqlIARegraRepository>();
-builder.Services.AddScoped<IIARespostaRepository, SqlIARespostaRepository>();
+// Atendimento (modulo novo: catalogo de servicos e numeros de WhatsApp por loja)
+builder.Services.AddSingleton<APIBack.Atendimento.ITokenProtector, APIBack.Atendimento.TokenProtector>();
+builder.Services.AddScoped<APIBack.Atendimento.ICatalogoRepository, APIBack.Atendimento.SqlCatalogoRepository>();
+builder.Services.AddScoped<APIBack.Atendimento.ICanalRepository, APIBack.Atendimento.SqlCanalRepository>();
+builder.Services.AddScoped<APIBack.Atendimento.IServicosDaLojaService, APIBack.Atendimento.ServicosDaLojaService>();
+builder.Services.AddScoped<APIBack.Atendimento.IChatRealtimePublisher, APIBack.Atendimento.ChatRealtimePublisher>();
+builder.Services.AddScoped<APIBack.Atendimento.ICanalVerificador, APIBack.Atendimento.CanalVerificador>();
+builder.Services.AddScoped<APIBack.Atendimento.ICanaisWhatsappService, APIBack.Atendimento.CanaisWhatsappService>();
 builder.Services.AddScoped<IEstabelecimentoRepository, SqlEstabelecimentoRepository>();
 builder.Services.AddScoped<IClienteRepository, SqlClienteRepository>();
-builder.Services.AddScoped<IOficinaAtendimentoRepository, SqlOficinaAtendimentoRepository>();
-builder.Services.AddScoped<IServicoAtendimentoRepository, SqlServicoAtendimentoRepository>();
-builder.Services.AddScoped<IGaragemLeadRepository, SqlGaragemLeadRepository>();
-builder.Services.AddScoped<IGaragemPainelRepository, SqlGaragemPainelRepository>();
-builder.Services.AddScoped<IGaragemVeiculoRepository, SqlGaragemVeiculoRepository>();
-builder.Services.AddScoped<INauticaLeadRepository, SqlNauticaLeadRepository>();
-builder.Services.AddScoped<INauticaPainelRepository, SqlNauticaPainelRepository>();
-builder.Services.AddSingleton<IQueueBus, InMemoryQueueBus>();
 builder.Services.AddScoped<IWebhookSignatureValidator, WebhookSignatureValidator>();
-builder.Services.AddScoped<IWhatsappSender, WhatsappSenderStub>();
 builder.Services.AddScoped<IEstabelecimentoSelectionRepository, EstabelecimentoSelectionRepository>();
 builder.Services.AddScoped<IEstabelecimentoSelectionService, EstabelecimentoSelectionService>();
 builder.Services.AddScoped<EstabelecimentoSelectionValidator>();
-builder.Services.AddScoped<ToolExecutorService>();
-builder.Services.AddScoped<AtualizarReservaHandler>();
-builder.Services.AddScoped<ReservaValidator>();
-builder.Services.AddScoped<CentralRoutingService>();
-builder.Services.AddScoped<OficinaFlowService>();
-builder.Services.AddScoped<GarageFlowService>();
-builder.Services.AddScoped<NauticaFlowService>();
-builder.Services.AddScoped<ServicoCatalogProvider>();
-builder.Services.AddScoped<FaqCatalogProvider>();
-builder.Services.AddScoped<ServicoReplyComposer>();
-builder.Services.AddScoped<ServicosFlowService>();
-builder.Services.AddScoped<TopicOrchestratorService>();
-builder.Services.AddScoped<ConversationResetService>();
 
 
 
 
 // Provedor de token do WhatsApp em memória (permite atualizar via endpoint)
 builder.Services.AddSingleton<IWhatsAppTokenProvider, InMemoryWhatsAppTokenProvider>();
-// IA real via OpenAI (novo orquestrador determinístico)
-builder.Services.AddScoped<IAssistantService, AssistantService>();
-// Envio real de alertas para Telegram
-builder.Services.AddScoped<IAlertSender, AlertSenderTelegram>();
 builder.Services.AddScoped<IAgenteRepository, SqlAgenteRepository>();
 builder.Services.AddScoped<AgenteService>();
 builder.Services.AddScoped<ConversationService>();
 builder.Services.AddScoped<ConversationManagementService>();
-builder.Services.AddScoped<GarageSimulationStorageService>();
 builder.Services.AddScoped<ConversaAnexoService>();
-builder.Services.AddSingleton<PromptAssembler>();
 builder.Services.AddScoped<IMessageService, MessageService>();
-builder.Services.AddScoped<HandoverService>();
-builder.Services.AddScoped<AutomationHealthService>();
 builder.Services.AddScoped<WebhookValidatorService>();
-builder.Services.AddScoped<ConversationProcessor>();
-builder.Services.AddScoped<IAResponseHandler>();
 builder.Services.AddScoped<WhatsAppSender>();
-builder.Services.AddScoped<ContextInterceptorService>();
-builder.Services.AddSingleton<IWebhookMessageCache, WebhookMessageCache>();
-builder.Services.AddSingleton<WebhookMessageQueue>();
-builder.Services.AddSingleton<IWebhookDispatchService, WebhookDispatchService>();
-builder.Services.AddHostedService<WebhookProcessingWorker>();
+// Webhook do WhatsApp: evento gravado em wa_evento (Postgres) e processado pelo worker, sem fila em memoria.
+builder.Services.AddScoped<APIBack.Atendimento.IWaEventoRepository, APIBack.Atendimento.SqlWaEventoRepository>();
+builder.Services.AddScoped<APIBack.Atendimento.IWaEventoProcessor, APIBack.Atendimento.WaEventoProcessor>();
+builder.Services.AddScoped<APIBack.Atendimento.IIngressoDeConversa>(sp => sp.GetRequiredService<ConversationService>());
+builder.Services.AddScoped<APIBack.Atendimento.IPipelineDeMensagem, APIBack.Atendimento.PipelineDeMensagem>();
+// Motor de atendimento: decisao pura (AtendimentoMotor) + fluxos por servico + executor com banco e envio.
+builder.Services.AddSingleton<APIBack.Atendimento.Motor.IFluxoDeServico, APIBack.Atendimento.Motor.FluxoCardapioWeb>();
+builder.Services.AddSingleton<APIBack.Atendimento.Motor.IFluxoDeServico, APIBack.Atendimento.Motor.FluxoDelivery>();
+builder.Services.AddSingleton<APIBack.Atendimento.Motor.IFluxoDeServico, APIBack.Atendimento.Motor.FluxoAgendamento>();
+builder.Services.AddSingleton<APIBack.Atendimento.Motor.AtendimentoMotor>();
+builder.Services.AddScoped<APIBack.Atendimento.Motor.IFluxoEstadoRepository, APIBack.Atendimento.Motor.SqlFluxoEstadoRepository>();
+builder.Services.AddScoped<APIBack.Atendimento.Motor.IEnviadorDeRespostas, APIBack.Atendimento.Motor.EnviadorDeRespostas>();
+builder.Services.AddScoped<APIBack.Atendimento.Motor.IExecutorDeAtendimento, APIBack.Atendimento.Motor.ExecutorDeAtendimento>();
+builder.Services.AddHostedService<APIBack.Atendimento.WaEventoWorker>();
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
 
 // ================= PAYMENTS SECTION (BEGIN) ===================

@@ -42,7 +42,7 @@ namespace APIBack.Tests.Unit
             {
                 Cardapio.Setup(c => c.ObterEstabelecimentoPublicoAsync(It.IsAny<Guid?>(), It.IsAny<string?>()))
                     .ReturnsAsync(new CardapioEstabelecimentoPublico { Id = Estabelecimento, NomeFantasia = "Pizza Bom" });
-                Waba.Setup(w => w.ObterDisplayPhonePorEstabelecimentoAsync(Estabelecimento)).ReturnsAsync("+55 34 3333-0000");
+                Waba.Setup(w => w.ObterDisplayPhoneParaServicoAsync(Estabelecimento, "cardapio_web")).ReturnsAsync("+55 34 3333-0000");
                 Sender.Setup(s => s.SendAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>()))
                     .Callback<Guid, Guid, string>((_, _, texto) => Enviadas.Add(texto))
                     .ReturnsAsync(Guid.NewGuid());

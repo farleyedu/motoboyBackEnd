@@ -32,13 +32,12 @@ convencao do ASP.NET Core: `Secao__Subsecao__Chave`.
 | Variavel | Descricao |
 | --- | --- |
 | `Automation__VerifyToken` | Token de verificacao do webhook Meta. |
-| `Automation__Meta__AppSecret` | App secret usado para validar assinatura dos webhooks. |
+| `Automation__Meta__AppSecret` | App secret usado para validar assinatura dos webhooks. Com ele configurado a assinatura passa a ser exigida. |
+| `Atendimento__ChaveToken` | Chave que cifra os tokens da Meta guardados por numero de WhatsApp (nao troque depois de cadastrar tokens, ou eles precisam ser cadastrados de novo). |
+| `Atendimento__CardapioBaseUrl` | Endereco publico do site (ex.: `https://app.zippygo.com.br`); o bot monta o link `/cardapio/{loja}` com ele. Sem isso o bot passa o cliente para a equipe. |
 | `Automation__Meta__AccessToken` | Access token da conta WhatsApp Business. |
 | `Automation__Meta__PhoneNumberId` | ID do numero de telefone configurado no Meta. |
-| `Automation__Telegram__BotToken` | Token do bot Telegram usado para alertas internos. |
-| `Automation__Telegram__ChatId` | Chat ID de destino dos alertas. |
 | `WhatsApp__AccessToken` | Access token do canal WhatsApp usado pelo fluxo de atendimento. |
-| `WhatsApp__CentralResetCommand` | Comando de reset do atendimento central (somente producao; ausente no template de Development). |
 
 ## Delivery / tracking operacional (Parte 2)
 
@@ -64,8 +63,7 @@ DELIVERY_TRACKING_DISABLED`, o `DeliveryOutboxPublisher` nao publica eventos no 
 
 | Variavel | Descricao |
 | --- | --- |
-| `OpenAI__ApiKey` | Chave da API OpenAI. |
-| `OpenCage__ApiKey` | Chave da API OpenCage (geocodificacao). |
+| `Google__MapsApiKey` | Chave do Google Maps Platform com a **Geocoding API** ativada (geocodificacao do endereco de entrega). Sem ela o cardapio web recusa pedidos de entrega. |
 
 ## Pagamentos (Asaas)
 
@@ -82,10 +80,8 @@ git (antes desta limpeza) deve ser tratada como comprometida:
 - [ ] `Jwt__SecretKey` rotacionado no provedor/gerador e reemitido.
 - [ ] `Payments__Asaas__ApiKey` / `WebhookToken` rotacionados no painel Asaas.
 - [ ] `Automation__Meta__AppSecret` / `AccessToken` rotacionados no Meta for Developers.
-- [ ] `Automation__Telegram__BotToken` rotacionado com o BotFather.
-- [ ] `WhatsApp__CentralResetCommand` trocado.
 - [ ] `GoogleOAuth__ClientSecret` rotacionado no Google Cloud Console.
-- [ ] `OpenAI__ApiKey` / `OpenCage__ApiKey` rotacionados nos respectivos paineis.
+- [ ] `Google__MapsApiKey` rotacionado nos respectivos paineis. (A chave antiga `OpenCage__ApiKey` nao e mais lida: pode ser apagada.)
 - [ ] Variaveis configuradas no ambiente de deploy (Render) e conferidas com `dotnet run` local usando `.env`/`launchSettings.json` nao versionado.
 
 Esta lista foi gerada por inspecao estatica dos arquivos `appsettings*.json` em

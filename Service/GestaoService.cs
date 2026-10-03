@@ -1236,12 +1236,13 @@ namespace APIBack.Service
 
         private static void EnsureCanCreateEstablishment(GestaoEmpresaScope scope)
         {
-            if (scope.IsSuperAdmin || IsCompanyManager(scope))
+            // Estabelecimentos nascem so na empresa Gestao: ela liga os modulos, servicos e numeros de cada um.
+            if (scope.IsSuperAdmin)
             {
                 return;
             }
 
-            throw new UnauthorizedAccessException("Voce nao pode criar estabelecimentos.");
+            throw new UnauthorizedAccessException("Somente a Gestao cria estabelecimentos.");
         }
 
         private static void EnsureCanManageEstablishment(GestaoEmpresaScope scope, GestaoEstabelecimentoRow current)

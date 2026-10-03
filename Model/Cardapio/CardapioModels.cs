@@ -103,6 +103,10 @@ namespace APIBack.Model.Cardapio
         public decimal TaxaEntregaFixa { get; set; }
         public int TempoPreparoMin { get; set; }
         public string[]? ModulosAtivosRaw { get; set; }
+        /// <summary>Posicao da loja: centro do mapa quando o endereco do cliente nao e achado, e referencia da area de entrega.</summary>
+        public double? Latitude { get; set; }
+        public double? Longitude { get; set; }
+        public decimal? RaioEntregaKm { get; set; }
     }
 
     public class CardapioPedidoPublico

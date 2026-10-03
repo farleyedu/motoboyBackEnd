@@ -15,6 +15,62 @@ namespace APIBack.Service
         public const string Ia = "ia";
     }
 
+    /// <summary>Textos do bot que o dono pode trocar. A saudacao e a mensagem de fora do horario tem coluna propria.</summary>
+    public static class MensagensDoAtendimento
+    {
+        public const string Menu = "menu";
+        public const string Cardapio = "cardapio";
+        public const string Atendente = "atendente";
+        public const string Agendamento = "agendamento";
+        public const string SemServico = "semServico";
+
+        public static readonly IReadOnlyList<string> Chaves = new[] { Menu, Cardapio, Atendente, Agendamento, SemServico };
+        /// <summary>{loja} vira o nome da loja e {link} o endereco do cardapio.</summary>
+        public static readonly IReadOnlyList<string> Variaveis = new[] { "loja", "link" };
+
+        private static readonly Regex Variavel = new(@"\{([^{}]*)\}", RegexOptions.Compiled);
+
+        /// <summary>Variaveis usadas no texto que o sistema nao conhece (ex.: {nome}).</summary>
+        public static IReadOnlyList<string> VariaveisDesconhecidas(string texto) =>
+            Variavel.Matches(texto).Select(m => m.Groups[1].Value).Where(v => !Variaveis.Contains(v)).Distinct().ToList();
+
+        /// <summary>Limpa e valida os textos. Vazio some (volta ao padrao). O texto do cardapio sem {link} deixaria o cliente sem o endereco.</summary>
+        public static Dictionary<string, string> Normalizar(Dictionary<string, string>? mensagens, int max)
+        {
+            var resultado = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var (chave, valor) in mensagens ?? new Dictionary<string, string>())
+            {
+                if (!Chaves.Contains(chave))
+                {
+                    throw new DeliveryDomainException(422, "INVALID_MESSAGE_KEY", $"Texto desconhecido: '{chave}'.");
+                }
+
+                var texto = valor?.Trim();
+                if (string.IsNullOrEmpty(texto)) continue;
+                if (texto.Length > max)
+                {
+                    throw new DeliveryDomainException(422, "INVALID_MESSAGE", $"O texto '{chave}' aceita no maximo {max} caracteres.");
+                }
+
+                var desconhecidas = VariaveisDesconhecidas(texto);
+                if (desconhecidas.Count > 0)
+                {
+                    throw new DeliveryDomainException(422, "INVALID_MESSAGE",
+                        $"O texto '{chave}' usa variaveis que nao existem: {string.Join(", ", desconhecidas.Select(v => "{" + v + "}"))}. Use {{loja}} e {{link}}.");
+                }
+
+                if (chave == Cardapio && !texto.Contains("{link}", StringComparison.Ordinal))
+                {
+                    throw new DeliveryDomainException(422, "INVALID_MESSAGE", "O texto do cardapio precisa conter {link}: e por ele que o cliente recebe o endereco.");
+                }
+
+                resultado[chave] = texto;
+            }
+
+            return resultado;
+        }
+    }
+
     public static class AtendimentoConfigRules
     {
         public const int MaxMensagem = 1000;
@@ -56,6 +112,7 @@ namespace APIBack.Service
                 Modo = modo,
                 SaudacaoHumano = Clean(request.SaudacaoHumano, MaxMensagem, "saudacaoHumano"),
                 MensagemForaHorario = Clean(request.MensagemForaHorario, MaxMensagem, "mensagemForaHorario"),
+                Mensagens = MensagensDoAtendimento.Normalizar(request.Mensagens, MaxMensagem),
                 HorarioAtendimento = horario is { Dias.Count: > 0 } ? horario : null
             };
         }

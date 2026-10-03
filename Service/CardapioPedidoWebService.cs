@@ -105,7 +105,7 @@ namespace APIBack.Service
 
         private async Task<CardapioConfirmacaoDto> ConfirmacaoPorCodigoAsync(CardapioPedidoPublico pedido)
         {
-            var telefoneDaLoja = await _waba.ObterDisplayPhonePorEstabelecimentoAsync(pedido.IdEstabelecimento);
+            var telefoneDaLoja = await _waba.ObterDisplayPhoneParaServicoAsync(pedido.IdEstabelecimento, "cardapio_web");
             return new CardapioConfirmacaoDto
             {
                 Modo = CardapioCanalConfirmacao.Codigo,

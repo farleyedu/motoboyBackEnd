@@ -48,11 +48,10 @@ namespace APIBack.Automation.Services
         private readonly IMessageService _messageService;
         private readonly IClienteRepository _clienteRepository;
         private readonly IWabaPhoneRepository _wabaPhoneRepository;
-        private readonly IQueueBus _queueBus;
-        private readonly IServicoAtendimentoRepository _servicoAtendimentoRepository;
+        private readonly APIBack.Atendimento.ICanalRepository _canais;
+        private readonly APIBack.Atendimento.IChatRealtimePublisher _tempoReal;
         private readonly WhatsAppSender _whatsAppSender;
         private readonly AgenteService _agenteService;
-        private readonly ConversationResetService _conversationReset;
         private readonly IConfiguration _configuration;
         private readonly ILogger<ConversationManagementService> _logger;
 
@@ -61,11 +60,10 @@ namespace APIBack.Automation.Services
             IMessageService messageService,
             IClienteRepository clienteRepository,
             IWabaPhoneRepository wabaPhoneRepository,
-            IQueueBus queueBus,
-            IServicoAtendimentoRepository servicoAtendimentoRepository,
+            APIBack.Atendimento.ICanalRepository canais,
+            APIBack.Atendimento.IChatRealtimePublisher tempoReal,
             WhatsAppSender whatsAppSender,
             AgenteService agenteService,
-            ConversationResetService conversationReset,
             IConfiguration configuration,
             ILogger<ConversationManagementService> logger)
         {
@@ -73,11 +71,10 @@ namespace APIBack.Automation.Services
             _messageService = messageService;
             _clienteRepository = clienteRepository;
             _wabaPhoneRepository = wabaPhoneRepository;
-            _queueBus = queueBus;
-            _servicoAtendimentoRepository = servicoAtendimentoRepository;
+            _canais = canais;
+            _tempoReal = tempoReal;
             _whatsAppSender = whatsAppSender;
             _agenteService = agenteService;
-            _conversationReset = conversationReset;
             _configuration = configuration;
             _logger = logger;
         }
@@ -131,7 +128,6 @@ namespace APIBack.Automation.Services
                     ["assignedAgentName"] = agente.Nome
                 });
 
-            await SyncServicoAtendimentoStatusAsync(requestedConversationId, "em_andamento");
 
             return await BuildResponseAsync(requestedConversationId, idEstabelecimento);
         }
@@ -164,7 +160,6 @@ namespace APIBack.Automation.Services
                 actorUserId,
                 null);
 
-            await SyncServicoAtendimentoStatusAsync(requestedConversationId, "com_bot");
 
             return await BuildResponseAsync(requestedConversationId, idEstabelecimento);
         }
@@ -240,7 +235,6 @@ namespace APIBack.Automation.Services
                 actorUserId,
                 null);
 
-            await SyncServicoAtendimentoStatusAsync(requestedConversationId, status);
 
             return await BuildResponseAsync(requestedConversationId, idEstabelecimento);
         }
@@ -296,12 +290,6 @@ namespace APIBack.Automation.Services
                 actorUserId,
                 agenteId);
 
-            await SyncServicoAtendimentoStatusAsync(requestedConversationId, novoStatus, tipoFechamento);
-
-            if (string.Equals(tipoFechamento, "manual", StringComparison.OrdinalIgnoreCase))
-            {
-                await _conversationReset.ResetAfterManualCloseAsync(requestedConversationId);
-            }
 
             return await BuildResponseAsync(requestedConversationId, idEstabelecimento);
         }
@@ -392,41 +380,8 @@ namespace APIBack.Automation.Services
             if (string.IsNullOrWhiteSpace(numeroDestino))
                 throw new ConversationManagementException(422, "Telefone do cliente nao encontrado para envio.");
 
-            string? displayPhone = null;
-            string? phoneNumberId = null;
+            var (displayPhone, phoneNumberId) = await ResolverNumeroDeEnvioAsync(conversaOperacional);
 
-            if (conversaOperacional.IdConversaGrupo != Guid.Empty
-                && conversaOperacional.IdConversaGrupo != conversaOperacional.IdConversa)
-            {
-                var conversaRaiz = await _conversationRepository.ObterPorIdAsync(conversaOperacional.IdConversaGrupo);
-                if (conversaRaiz != null && conversaRaiz.IdEstabelecimento != Guid.Empty)
-                {
-                    displayPhone = await _wabaPhoneRepository.ObterDisplayPhonePorEstabelecimentoAsync(conversaRaiz.IdEstabelecimento);
-                    phoneNumberId = await _wabaPhoneRepository.ObterPhoneNumberIdPorEstabelecimentoAsync(conversaRaiz.IdEstabelecimento);
-                }
-            }
-
-            if (string.IsNullOrWhiteSpace(displayPhone) || string.IsNullOrWhiteSpace(phoneNumberId))
-            {
-                displayPhone = await _wabaPhoneRepository.ObterDisplayPhonePorEstabelecimentoAsync(conversaOperacional.IdEstabelecimento);
-                phoneNumberId = await _wabaPhoneRepository.ObterPhoneNumberIdPorEstabelecimentoAsync(conversaOperacional.IdEstabelecimento);
-            }
-
-            if (string.IsNullOrWhiteSpace(displayPhone) || string.IsNullOrWhiteSpace(phoneNumberId))
-            {
-                var centralDisplayConfig = _configuration["WhatsApp:CentralDisplayPhone"];
-                if (!string.IsNullOrWhiteSpace(centralDisplayConfig))
-                {
-                    var idWabaCentral = await _wabaPhoneRepository.ObterPhoneNumberIdPorDisplayPhoneAsync(centralDisplayConfig);
-                    if (!string.IsNullOrWhiteSpace(idWabaCentral))
-                    {
-                        displayPhone = centralDisplayConfig;
-                        phoneNumberId = idWabaCentral;
-                    }
-                }
-            }
-
-            phoneNumberId ??= _configuration["Automation:Meta:PhoneNumberId"];
 
             var criadoPor = !string.IsNullOrWhiteSpace(actorName)
                 ? actorName!.Trim()
@@ -462,8 +417,6 @@ namespace APIBack.Automation.Services
             if (persisted == null)
                 throw new ConversationManagementException(409, "Nao foi possivel persistir a mensagem.");
 
-            await _queueBus.PublicarSaidaAsync(mensagem);
-
             if (string.IsNullOrWhiteSpace(phoneNumberId))
             {
                 await _messageService.AtualizarStatusAsync(mensagem.Id, "falhou", "waba_not_configured", "PhoneNumberId nao configurado.");
@@ -473,9 +426,9 @@ namespace APIBack.Automation.Services
             try
             {
                 if (isImage)
-                    await _whatsAppSender.SendImageAsync(mensagem.IdConversa, phoneNumberId, numeroDestino, url, displayPhone);
+                    await _whatsAppSender.SendImageAsync(mensagem.IdConversa, phoneNumberId, numeroDestino, url, displayPhone, mensagem.Id);
                 else
-                    await _whatsAppSender.SendDocumentAsync(mensagem.IdConversa, phoneNumberId, numeroDestino, url, nome, displayPhone);
+                    await _whatsAppSender.SendDocumentAsync(mensagem.IdConversa, phoneNumberId, numeroDestino, url, nome, displayPhone, mensagem.Id);
 
                 await _messageService.AtualizarStatusAsync(mensagem.Id, MessageStatusMapper.Enviada);
                 mensagem.Status = MessageStatusMapper.Enviada;
@@ -549,44 +502,8 @@ namespace APIBack.Automation.Services
                 throw new ConversationManagementException(422, "Telefone do cliente nao encontrado para envio.");
             }
 
-            string? displayPhone = null;
-            string? phoneNumberId = null;
+            var (displayPhone, phoneNumberId) = await ResolverNumeroDeEnvioAsync(conversaOperacional);
 
-            // Para conversas roteadas via numero central, a raiz tem o WABA correto (igual ao bot que le do webhook)
-            if (conversaOperacional.IdConversaGrupo != Guid.Empty
-                && conversaOperacional.IdConversaGrupo != conversaOperacional.IdConversa)
-            {
-                var conversaRaiz = await _conversationRepository.ObterPorIdAsync(conversaOperacional.IdConversaGrupo);
-                if (conversaRaiz != null && conversaRaiz.IdEstabelecimento != Guid.Empty)
-                {
-                    displayPhone = await _wabaPhoneRepository.ObterDisplayPhonePorEstabelecimentoAsync(conversaRaiz.IdEstabelecimento);
-                    phoneNumberId = await _wabaPhoneRepository.ObterPhoneNumberIdPorEstabelecimentoAsync(conversaRaiz.IdEstabelecimento);
-                }
-            }
-
-            // Fallback: usa o proprio estabelecimento da conversa
-            if (string.IsNullOrWhiteSpace(displayPhone) || string.IsNullOrWhiteSpace(phoneNumberId))
-            {
-                displayPhone = await _wabaPhoneRepository.ObterDisplayPhonePorEstabelecimentoAsync(conversaOperacional.IdEstabelecimento);
-                phoneNumberId = await _wabaPhoneRepository.ObterPhoneNumberIdPorEstabelecimentoAsync(conversaOperacional.IdEstabelecimento);
-            }
-
-            // FALLBACK FINAL: Se ainda nao encontrou, usa o CentralDisplayPhone configurado
-            if (string.IsNullOrWhiteSpace(displayPhone) || string.IsNullOrWhiteSpace(phoneNumberId))
-            {
-                var centralDisplayConfig = _configuration["WhatsApp:CentralDisplayPhone"];
-                if (!string.IsNullOrWhiteSpace(centralDisplayConfig))
-                {
-                    var idWabaCentral = await _wabaPhoneRepository.ObterPhoneNumberIdPorDisplayPhoneAsync(centralDisplayConfig);
-                    if (!string.IsNullOrWhiteSpace(idWabaCentral))
-                    {
-                        displayPhone = centralDisplayConfig;
-                        phoneNumberId = idWabaCentral;
-                    }
-                }
-            }
-
-            phoneNumberId ??= _configuration["Automation:Meta:PhoneNumberId"];
 
             var criadoPor = !string.IsNullOrWhiteSpace(actorName)
                 ? actorName!.Trim()
@@ -615,8 +532,6 @@ namespace APIBack.Automation.Services
                 throw new ConversationManagementException(409, "Nao foi possivel persistir a mensagem.");
             }
 
-            await _queueBus.PublicarSaidaAsync(mensagem);
-
             if (string.IsNullOrWhiteSpace(phoneNumberId))
             {
                 await _messageService.AtualizarStatusAsync(mensagem.Id, "falhou", "waba_not_configured", "PhoneNumberId nao configurado para o estabelecimento.");
@@ -625,7 +540,7 @@ namespace APIBack.Automation.Services
 
             try
             {
-                await _whatsAppSender.SendTextAsync(mensagem.IdConversa, phoneNumberId, numeroDestino, texto, displayPhone);
+                await _whatsAppSender.SendTextAsync(mensagem.IdConversa, phoneNumberId, numeroDestino, texto, displayPhone, mensagem.Id);
                 await _messageService.AtualizarStatusAsync(mensagem.Id, MessageStatusMapper.Enviada);
                 mensagem.Status = MessageStatusMapper.Enviada;
             }
@@ -657,6 +572,26 @@ namespace APIBack.Automation.Services
         /// e envia pelo WhatsApp SEM exigir que a conversa esteja assumida por um atendente. A janela de 24h
         /// continua valendo: fora dela a conversa nao aceita texto livre e o envio e recusado (409).
         /// </summary>
+        /// <summary>
+        /// Numero pelo qual a resposta sai: o numero (canal) em que a conversa nasceu, para o cliente receber a resposta
+        /// no mesmo WhatsApp que ele procurou. Conversas antigas, sem canal, usam o primeiro numero em uso da loja.
+        /// </summary>
+        private async Task<(string? DisplayPhone, string? PhoneNumberId)> ResolverNumeroDeEnvioAsync(Conversation conversa)
+        {
+            if (conversa.IdCanal.HasValue)
+            {
+                var canal = await _canais.ObterAsync(conversa.IdCanal.Value);
+                if (canal != null && canal.Status != APIBack.Atendimento.StatusCanal.Inativo)
+                {
+                    return (canal.NumeroE164, canal.PhoneNumberId);
+                }
+            }
+
+            var display = await _wabaPhoneRepository.ObterDisplayPhonePorEstabelecimentoAsync(conversa.IdEstabelecimento);
+            var phoneNumberId = await _wabaPhoneRepository.ObterPhoneNumberIdPorEstabelecimentoAsync(conversa.IdEstabelecimento);
+            return (display, phoneNumberId);
+        }
+
         public async Task<Guid> SendSystemNoticeAsync(Guid requestedConversationId, Guid idEstabelecimento, string texto)
         {
             if (string.IsNullOrWhiteSpace(texto))
@@ -678,9 +613,7 @@ namespace APIBack.Automation.Services
                 throw new ConversationManagementException(422, "Telefone do cliente nao encontrado para envio.");
             }
 
-            var displayPhone = await _wabaPhoneRepository.ObterDisplayPhonePorEstabelecimentoAsync(conversa.IdEstabelecimento);
-            var phoneNumberId = await _wabaPhoneRepository.ObterPhoneNumberIdPorEstabelecimentoAsync(conversa.IdEstabelecimento);
-            phoneNumberId ??= _configuration["Automation:Meta:PhoneNumberId"];
+            var (displayPhone, phoneNumberId) = await ResolverNumeroDeEnvioAsync(conversa);
 
             var agora = DateTime.UtcNow;
             var mensagem = new Message
@@ -713,7 +646,7 @@ namespace APIBack.Automation.Services
 
             try
             {
-                await _whatsAppSender.SendTextAsync(mensagem.IdConversa, phoneNumberId, numeroDestino, mensagem.Conteudo, displayPhone);
+                await _whatsAppSender.SendTextAsync(mensagem.IdConversa, phoneNumberId, numeroDestino, mensagem.Conteudo, displayPhone, mensagem.Id);
                 await _messageService.AtualizarStatusAsync(mensagem.Id, MessageStatusMapper.Enviada);
             }
             catch (Exception ex)
@@ -816,6 +749,9 @@ namespace APIBack.Automation.Services
             var controle = await _conversationRepository.ObterControleConversaAsync(requestedConversationId, idEstabelecimento);
             var eventos = await _conversationRepository.ListarEventosConversaAsync(requestedConversationId, idEstabelecimento);
 
+            // Toda acao sobre a conversa (assumir, devolver ao bot, fechar, reabrir, ler...) avisa as telas abertas.
+            await _tempoReal.ConversaAtualizadaAsync(requestedConversationId, idEstabelecimento, "acao");
+
             return new ConversationActionResponseDto
             {
                 Conversa = detalhes,
@@ -830,41 +766,5 @@ namespace APIBack.Automation.Services
 
         private static string NormalizeCloseType(string? tipo)
             => string.IsNullOrWhiteSpace(tipo) ? "manual" : tipo.Trim().ToLowerInvariant();
-
-        private async Task SyncServicoAtendimentoStatusAsync(Guid conversationId, string conversationStatus, string? closeType = null)
-        {
-            var atendimento = await _servicoAtendimentoRepository.ObterPorConversaAsync(conversationId);
-            if (atendimento == null)
-            {
-                return;
-            }
-
-            string? novoStatus = null;
-            if (!string.IsNullOrWhiteSpace(closeType))
-            {
-                novoStatus = string.Equals(closeType, "inatividade", StringComparison.OrdinalIgnoreCase)
-                    ? "cancelado"
-                    : "concluido";
-            }
-            else
-            {
-                novoStatus = NormalizeStatus(conversationStatus) switch
-                {
-                    "em_andamento" => "em_andamento",
-                    "aguardando_interno" => "aguardando_interno",
-                    "aguardando_cliente" => "aguardando_cliente",
-                    "com_bot" => "aguardando_cliente",
-                    _ => null
-                };
-            }
-
-            if (string.IsNullOrWhiteSpace(novoStatus) ||
-                string.Equals(atendimento.Status, novoStatus, StringComparison.OrdinalIgnoreCase))
-            {
-                return;
-            }
-
-            await _servicoAtendimentoRepository.AtualizarStatusAsync(atendimento.Id, novoStatus);
-        }
     }
 }

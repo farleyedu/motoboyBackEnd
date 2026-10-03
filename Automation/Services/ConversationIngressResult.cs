@@ -7,6 +7,7 @@ namespace APIBack.Automation.Services
         Message Mensagem,
         bool ReiniciadaPorExpiracao,
         DateTime? AposEncerramentoManualEm = null,
-        bool EmpresaPausada = false);
+        bool EmpresaPausada = false,
+        bool NovaConversa = false);
 }
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
