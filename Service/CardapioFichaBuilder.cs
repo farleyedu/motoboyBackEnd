@@ -78,6 +78,7 @@ namespace APIBack.Service
                 Id = produto.Id,
                 Nome = produto.Nome,
                 Descricao = produto.Descricao,
+                ImagemUrl = produto.ImagemUrl,
                 Preco = produto.PrecoBase,
                 PrecoDe = produto.PrecoDe,
                 Disponivel = produto.Disponivel,

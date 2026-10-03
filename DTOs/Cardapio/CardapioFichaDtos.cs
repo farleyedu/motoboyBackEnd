@@ -39,6 +39,7 @@ namespace APIBack.DTOs.Cardapio
         public Guid Id { get; set; }
         public string Nome { get; set; } = string.Empty;
         public string? Descricao { get; set; }
+        public string? ImagemUrl { get; set; }
         public decimal Preco { get; set; }
         public decimal? PrecoDe { get; set; }
         /// <summary>False: acabou hoje. Continua na ficha, marcado, para o atendente saber.</summary>

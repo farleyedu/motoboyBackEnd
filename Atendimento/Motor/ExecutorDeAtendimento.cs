@@ -108,16 +108,19 @@ namespace APIBack.Atendimento.Motor
         {
             var nome = await _lojas.ObterNomeFantasiaAsync(loja) ?? "nossa loja";
             var config = await SafeConfigAsync(loja);
-            var aberto = AtendimentoConfigRules.IsOpen(config?.HorarioAtendimento, ConverterParaHorarioLocal(quandoUtc));
+            var aceita = await _lojas.ObterAceitaPedidosAsync(loja) ?? true;
+            var situacao = PedidosAbertosRules.Avaliar(aceita, config?.HorarioAtendimento, AtendimentoConfigRules.ParaHorarioLocal(quandoUtc));
+            var aberto = situacao.Aberto;
             var m = config?.Mensagens;
             string? Txt(string chave) => m != null && m.TryGetValue(chave, out var v) ? v : null;
             var textos = new TextosMotor(
                 Txt(MensagensDoAtendimento.Menu), Txt(MensagensDoAtendimento.Cardapio), Txt(MensagensDoAtendimento.Atendente),
-                Txt(MensagensDoAtendimento.Agendamento), Txt(MensagensDoAtendimento.SemServico));
+                Txt(MensagensDoAtendimento.Agendamento), Txt(MensagensDoAtendimento.SemServico),
+                Txt(MensagensDoAtendimento.CardapioFechado));
 
             var entrada = new EntradaMotor(
                 conversa, loja, canal, nome, modo, servicos, texto, interpretado, primeira,
-                ForaDoHorario: !aberto, config?.MensagemForaHorario, config?.SaudacaoHumano, MontarUrlDoCardapio(loja), textos);
+                ForaDoHorario: !aberto, config?.MensagemForaHorario, config?.SaudacaoHumano, MontarUrlDoCardapio(loja), textos, situacao);
             return (entrada, aberto);
         }
 
@@ -179,18 +182,6 @@ namespace APIBack.Atendimento.Motor
             }
 
             return $"{baseUrl.TrimEnd('/')}/cardapio/{loja}";
-        }
-
-        private static DateTime ConverterParaHorarioLocal(DateTime utc)
-        {
-            try
-            {
-                return TimeZoneInfo.ConvertTimeFromUtc(DateTime.SpecifyKind(utc, DateTimeKind.Utc), TimeZoneInfo.FindSystemTimeZoneById("America/Sao_Paulo"));
-            }
-            catch (TimeZoneNotFoundException)
-            {
-                return utc.AddHours(-3);
-            }
         }
 
         private static string NomeDaAcao(AcaoMotor acao) => acao switch

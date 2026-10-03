@@ -208,6 +208,12 @@ namespace APIBack.DTOs.Cardapio
         public decimal ServiceFeeValue { get; set; }
         public bool AceitaEntrega { get; set; }
         public bool AceitaRetirada { get; set; }
+        /// <summary>Aceita pedido AGORA (interruptor da loja e horario de atendimento juntos).</summary>
+        public bool AceitaPedidos { get; set; } = true;
+        /// <summary>pausado ou fora_horario quando nao aceita.</summary>
+        public string? MotivoFechado { get; set; }
+        /// <summary>Quando abre de novo, por exemplo "hoje as 18:00".</summary>
+        public string? AbreEm { get; set; }
         public List<CardapioPublicoCategoriaContractDto> Categorias { get; set; } = new();
         public List<CardapioPublicoProdutoContractDto> Produtos { get; set; } = new();
     }

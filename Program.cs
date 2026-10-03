@@ -147,6 +147,7 @@ builder.Services.AddScoped<ICardapioPedidoWebRepository, CardapioPedidoWebReposi
 builder.Services.AddScoped<ICardapioPedidoWebService, CardapioPedidoWebService>();
 builder.Services.AddScoped<ICardapioPublicService, CardapioPublicService>();
 builder.Services.AddScoped<ICardapioContractService, CardapioContractService>();
+builder.Services.AddScoped<IPedidosAbertosService, PedidosAbertosService>();
 builder.Services.AddScoped<IEstabelecimentoServicoService, EstabelecimentoServicoService>();
 builder.Services.AddScoped<IConfiguracaoCarroService, ConfiguracaoCarroService>();
 builder.Services.AddScoped<IEstabelecimentoAgendamentoConfigService, EstabelecimentoAgendamentoConfigService>();

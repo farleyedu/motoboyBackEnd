@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using APIBack.Service;
 
 namespace APIBack.Atendimento.Motor
 {
@@ -24,6 +25,19 @@ namespace APIBack.Atendimento.Motor
                         new AcaoChamarAtendente("cardapio sem link configurado")
                     },
                     ProximoPasso: null, Regra: "cardapio_sem_link");
+            }
+
+            if (entrada.Pedidos is { Aberto: false } fechada)
+            {
+                // Loja fechada ou com pedidos pausados: o cliente ainda pode ver o cardapio, mas o pedido nao entra.
+                var padrao = fechada.Motivo == PedidosAbertosRules.Pausado
+                    ? "No momento a loja pausou os pedidos. Você pode ver o cardápio aqui, mas só consegue pedir quando voltarmos:\n{link}"
+                    : string.IsNullOrWhiteSpace(fechada.AbreEm)
+                        ? "Estamos fechados agora e não estamos aceitando pedidos. Você pode ver o cardápio aqui:\n{link}"
+                        : "Estamos fechados agora. Abrimos {abre}. Você pode ver o cardápio aqui:\n{link}";
+                return new ResultadoFluxo(
+                    new AcaoMotor[] { new AcaoResponder(entrada.Escolher(entrada.Textos?.CardapioFechado, padrao)) },
+                    ProximoPasso: null, Regra: "cardapio_fechado_" + (fechada.Motivo ?? "fechado"));
             }
 
             return new ResultadoFluxo(

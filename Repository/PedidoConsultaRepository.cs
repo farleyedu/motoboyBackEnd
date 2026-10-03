@@ -30,6 +30,18 @@ namespace APIBack.Repository
             var core = await PedidoColumnTypes.HasCoreSchemaAsync(connection, null);
 
             var origemExpr = core ? "p.origem" : "CASE WHEN p.id_ifood IS NOT NULL THEN 'ifood' ELSE 'atendente' END";
+            var coverJoin = core ? @"
+  LEFT JOIN LATERAL (
+      SELECT i.nome AS ItemNome, cp.imagem_url AS ImagemUrl
+        FROM pedido_item i
+        LEFT JOIN cardapio_produto cp
+          ON cp.id = i.produto_id AND cp.id_estabelecimento = p.id_estabelecimento
+       WHERE i.pedido_id = p.id
+       ORDER BY i.preco_unitario DESC, i.ordem, i.id
+       LIMIT 1
+  ) capa ON TRUE" : string.Empty;
+            var coverNameExpr = core ? "capa.ItemNome" : "NULL::text";
+            var coverImageExpr = core ? "capa.ImagemUrl" : "NULL::text";
             var (where, parameters) = BuildWhere(estabelecimentoId, filtro, origemExpr);
             if (filtro.ConversaId.HasValue)
             {
@@ -65,9 +77,12 @@ SELECT p.id AS Id,
        p.motoboy_responsavel AS MotoboyId,
        m.nome::text AS MotoboyNome,
        p.items::text AS Items,
-       {(core ? "p.conversa_id" : "NULL::UUID")} AS ConversaId
+       {(core ? "p.conversa_id" : "NULL::UUID")} AS ConversaId,
+       {coverNameExpr} AS CapaItemNome,
+       {coverImageExpr} AS CapaImagemUrl
   FROM pedido p
   LEFT JOIN motoboy m ON m.id = p.motoboy_responsavel
+ {coverJoin}
  WHERE {where}
  ORDER BY p.id DESC
  LIMIT @Limit OFFSET @Offset;", parameters)).ToList();
@@ -86,6 +101,18 @@ SELECT p.id AS Id,
             await using var connection = await _dataSource.OpenConnectionAsync();
             var core = await PedidoColumnTypes.HasCoreSchemaAsync(connection, null);
             var origemExpr = core ? "p.origem" : "CASE WHEN p.id_ifood IS NOT NULL THEN 'ifood' ELSE 'atendente' END";
+            var coverJoin = core ? @"
+  LEFT JOIN LATERAL (
+      SELECT i.nome AS ItemNome, cp.imagem_url AS ImagemUrl
+        FROM pedido_item i
+        LEFT JOIN cardapio_produto cp
+          ON cp.id = i.produto_id AND cp.id_estabelecimento = p.id_estabelecimento
+       WHERE i.pedido_id = p.id
+       ORDER BY i.preco_unitario DESC, i.ordem, i.id
+       LIMIT 1
+  ) capa ON TRUE" : string.Empty;
+            var coverNameExpr = core ? "capa.ItemNome" : "NULL::text";
+            var coverImageExpr = core ? "capa.ImagemUrl" : "NULL::text";
 
             var row = await connection.QueryFirstOrDefaultAsync<DetalheRow>($@"
 SELECT p.id AS Id,
@@ -115,9 +142,12 @@ SELECT p.id AS Id,
        CASE WHEN p.troco::text ~ {Numeric} THEN p.troco::text::NUMERIC END AS Troco,
        p.status_pagamento::text AS StatusPagamento,
        p.previsao_entrega::text AS PrevisaoEntregaRaw,
-       p.codigo_entrega::text AS CodigoEntrega
+       p.codigo_entrega::text AS CodigoEntrega,
+       {coverNameExpr} AS CapaItemNome,
+       {coverImageExpr} AS CapaImagemUrl
   FROM pedido p
   LEFT JOIN motoboy m ON m.id = p.motoboy_responsavel
+ {coverJoin}
  WHERE p.id = @PedidoId AND p.id_estabelecimento = @EstabelecimentoId;",
                 new { PedidoId = pedidoId, EstabelecimentoId = estabelecimentoId });
             if (row == null) return null;
@@ -126,9 +156,13 @@ SELECT p.id AS Id,
             if (core)
             {
                 var structured = await connection.QueryAsync<ItemRow>(@"
-SELECT nome AS Nome, quantidade AS Quantidade, preco_unitario AS PrecoUnitario,
-       observacao AS Observacao, adicionais::text AS Adicionais
-  FROM pedido_item WHERE pedido_id = @PedidoId ORDER BY ordem, id;", new { PedidoId = pedidoId });
+SELECT i.produto_id AS ProdutoId, i.nome AS Nome, i.quantidade AS Quantidade,
+       i.preco_unitario AS PrecoUnitario, i.observacao AS Observacao,
+       i.adicionais::text AS Adicionais, cp.imagem_url AS ImagemUrl
+  FROM pedido_item i
+  LEFT JOIN cardapio_produto cp ON cp.id = i.produto_id AND cp.id_estabelecimento = @EstabelecimentoId
+ WHERE i.pedido_id = @PedidoId ORDER BY i.ordem, i.id;",
+                    new { PedidoId = pedidoId, EstabelecimentoId = estabelecimentoId });
                 itens = structured.Select(ToItem).ToList();
             }
             if (itens.Count == 0) itens = LegacyItemsParser.Parse(row.Items);
@@ -231,6 +265,8 @@ SELECT nome AS Nome, quantidade AS Quantidade, preco_unitario AS PrecoUnitario,
             dto.MotoboyNome = row.MotoboyNome;
             dto.QuantidadeItens = LegacyItemsParser.CountUnits(row.Items);
             dto.ConversaId = row.ConversaId;
+            dto.CapaItemNome = row.CapaItemNome;
+            dto.CapaImagemUrl = row.CapaImagemUrl;
         }
 
         private static PedidoItemDto ToItem(ItemRow row)
@@ -243,9 +279,12 @@ SELECT nome AS Nome, quantidade AS Quantidade, preco_unitario AS PrecoUnitario,
                     using var doc = JsonDocument.Parse(row.Adicionais);
                     foreach (var element in doc.RootElement.EnumerateArray())
                     {
+                        var id = element.TryGetProperty("id", out var idElement) && Guid.TryParse(idElement.GetString(), out var parsedId)
+                            ? parsedId
+                            : (Guid?)null;
                         var nome = element.TryGetProperty("nome", out var n) ? n.GetString() : null;
                         var preco = element.TryGetProperty("preco", out var p) && p.TryGetDecimal(out var d) ? d : 0m;
-                        if (!string.IsNullOrWhiteSpace(nome)) addons.Add(new PedidoAdicionalDto { Nome = nome!, Preco = preco });
+                        if (!string.IsNullOrWhiteSpace(nome)) addons.Add(new PedidoAdicionalDto { Id = id, Nome = nome!, Preco = preco });
                     }
                 }
                 catch (JsonException)
@@ -255,12 +294,14 @@ SELECT nome AS Nome, quantidade AS Quantidade, preco_unitario AS PrecoUnitario,
             }
             return new PedidoItemDto
             {
+                ProdutoId = row.ProdutoId,
                 Nome = row.Nome,
                 Quantidade = row.Quantidade,
                 PrecoUnitario = row.PrecoUnitario,
                 Observacao = row.Observacao,
                 Adicionais = addons,
-                Total = decimal.Round(row.Quantidade * (row.PrecoUnitario + addons.Sum(a => a.Preco)), 2)
+                Total = decimal.Round(row.Quantidade * (row.PrecoUnitario + addons.Sum(a => a.Preco)), 2),
+                ImagemUrl = row.ImagemUrl
             };
         }
 
@@ -282,6 +323,8 @@ SELECT nome AS Nome, quantidade AS Quantidade, preco_unitario AS PrecoUnitario,
             public string? MotoboyNome { get; set; }
             public string? Items { get; set; }
             public Guid? ConversaId { get; set; }
+            public string? CapaItemNome { get; set; }
+            public string? CapaImagemUrl { get; set; }
         }
 
         private sealed class DetalheRow : ResumoRow
@@ -302,11 +345,13 @@ SELECT nome AS Nome, quantidade AS Quantidade, preco_unitario AS PrecoUnitario,
 
         private sealed class ItemRow
         {
+            public Guid? ProdutoId { get; set; }
             public string Nome { get; set; } = string.Empty;
             public int Quantidade { get; set; }
             public decimal PrecoUnitario { get; set; }
             public string? Observacao { get; set; }
             public string? Adicionais { get; set; }
+            public string? ImagemUrl { get; set; }
         }
     }
 }

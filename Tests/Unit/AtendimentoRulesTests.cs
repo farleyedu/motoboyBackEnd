@@ -291,4 +291,49 @@ namespace APIBack.Tests.Unit
             Assert.True(string.CompareOrdinal("20260927_03_atendimento.sql", "20260927_90_seed_uberlandia.sql") < 0);
         }
     }
+
+    public class PedidosAbertosRulesTests
+    {
+        private static HorarioAtendimentoDto Horario(params (int dia, string abre, string fecha)[] dias) =>
+            new() { Dias = dias.Select(d => new HorarioDiaDto { Dia = d.dia, Abre = d.abre, Fecha = d.fecha }).ToList() };
+
+        // 07/10/2026 e quarta-feira.
+        private static DateTime Quarta(string hora) => DateTime.Parse("2026-10-07 " + hora);
+
+        [Fact]
+        public void Sem_horario_so_vale_o_interruptor()
+        {
+            Assert.True(PedidosAbertosRules.Avaliar(true, null, Quarta("03:00")).Aberto);
+            var pausado = PedidosAbertosRules.Avaliar(false, null, Quarta("12:00"));
+            Assert.False(pausado.Aberto);
+            Assert.Equal(PedidosAbertosRules.Pausado, pausado.Motivo);
+        }
+
+        [Fact]
+        public void Fora_do_horario_diz_quando_abre_hoje_amanha_ou_no_dia_da_semana()
+        {
+            var horario = Horario((3, "18:00", "23:00"), (5, "11:00", "15:00"));
+
+            Assert.Equal("hoje às 18:00", PedidosAbertosRules.Avaliar(true, horario, Quarta("12:00")).AbreEm);
+            Assert.Equal("sexta às 11:00", PedidosAbertosRules.Avaliar(true, horario, Quarta("23:30")).AbreEm);
+            Assert.Equal("amanhã às 11:00", PedidosAbertosRules.Avaliar(true, Horario((4, "11:00", "15:00")), Quarta("23:30")).AbreEm);
+        }
+
+        [Fact]
+        public void Dentro_do_horario_inclusive_na_virada_da_noite_esta_aberto()
+        {
+            Assert.True(PedidosAbertosRules.Avaliar(true, Horario((3, "18:00", "23:00")), Quarta("20:00")).Aberto);
+            // quarta 18:00 ate quinta 02:00: quinta 01:00 ainda e a quarta.
+            Assert.True(PedidosAbertosRules.Avaliar(true, Horario((3, "18:00", "02:00")), DateTime.Parse("2026-10-08 01:00")).Aberto);
+            Assert.False(PedidosAbertosRules.Avaliar(true, Horario((3, "18:00", "02:00")), DateTime.Parse("2026-10-08 03:00")).Aberto);
+        }
+
+        [Fact]
+        public void A_mensagem_para_o_cliente_explica_o_motivo()
+        {
+            Assert.Contains("pausou", PedidosAbertosRules.Mensagem(new SituacaoPedidos(false, PedidosAbertosRules.Pausado, null)));
+            Assert.Contains("Abrimos amanhã às 11:00", PedidosAbertosRules.Mensagem(new SituacaoPedidos(false, PedidosAbertosRules.ForaDoHorario, "amanhã às 11:00")));
+            Assert.Equal(string.Empty, PedidosAbertosRules.Mensagem(SituacaoPedidos.Aberta));
+        }
+    }
 }

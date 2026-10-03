@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using APIBack.Service;
 
 namespace APIBack.Atendimento.Motor
 {
@@ -19,10 +20,12 @@ namespace APIBack.Atendimento.Motor
     /// <summary>
     /// Textos que o dono da loja personalizou. Qualquer um nulo = texto padrao do sistema. Variaveis: {loja} e {link}.
     /// </summary>
-    public sealed record TextosMotor(string? Menu, string? Cardapio, string? Atendente, string? Agendamento, string? SemServico)
+    public sealed record TextosMotor(string? Menu, string? Cardapio, string? Atendente, string? Agendamento, string? SemServico, string? CardapioFechado = null)
     {
-        public static string Renderizar(string modelo, string loja, string? link) =>
-            modelo.Replace("{loja}", loja, StringComparison.Ordinal).Replace("{link}", link ?? string.Empty, StringComparison.Ordinal);
+        public static string Renderizar(string modelo, string loja, string? link, string? abre = null) =>
+            modelo.Replace("{loja}", loja, StringComparison.Ordinal)
+                .Replace("{link}", link ?? string.Empty, StringComparison.Ordinal)
+                .Replace("{abre}", abre ?? string.Empty, StringComparison.Ordinal);
     }
 
     /// <summary>Tudo que o motor precisa saber de uma mensagem recebida. Montado pelo executor; o motor nao toca em banco.</summary>
@@ -45,11 +48,13 @@ namespace APIBack.Atendimento.Motor
         /// <summary>Link publico do cardapio da loja; nulo quando a URL base nao esta configurada.</summary>
         string? CardapioUrl,
         /// <summary>Textos personalizados da loja; nulo = todos os padroes.</summary>
-        TextosMotor? Textos = null)
+        TextosMotor? Textos = null,
+        /// <summary>A loja aceita pedido agora? Nulo = sim (nada configurado).</summary>
+        SituacaoPedidos? Pedidos = null)
     {
         /// <summary>O texto escolhido pelo dono (com {loja} e {link} trocados) ou o padrao.</summary>
         public string Escolher(string? personalizado, string padrao) =>
-            TextosMotor.Renderizar(string.IsNullOrWhiteSpace(personalizado) ? padrao : personalizado!, NomeLoja, CardapioUrl);
+            TextosMotor.Renderizar(string.IsNullOrWhiteSpace(personalizado) ? padrao : personalizado!, NomeLoja, CardapioUrl, Pedidos?.AbreEm);
     }
 
     /// <summary>Estado do atendimento automatico de uma conversa (persistido em conversas.fluxo_estado).</summary>

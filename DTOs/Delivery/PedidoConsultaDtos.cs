@@ -22,22 +22,28 @@ namespace APIBack.DTOs.Delivery
         public string? MotoboyNome { get; set; }
         public int QuantidadeItens { get; set; }
         public Guid? ConversaId { get; set; }
+        /// <summary>Produto de maior preco unitario do pedido, usado como capa no historico.</summary>
+        public string? CapaItemNome { get; set; }
+        public string? CapaImagemUrl { get; set; }
     }
 
     public class PedidoAdicionalDto
     {
+        public Guid? Id { get; set; }
         public string Nome { get; set; } = string.Empty;
         public decimal Preco { get; set; }
     }
 
     public class PedidoItemDto
     {
+        public Guid? ProdutoId { get; set; }
         public string Nome { get; set; } = string.Empty;
         public int Quantidade { get; set; } = 1;
         public decimal? PrecoUnitario { get; set; }
         public string? Observacao { get; set; }
         public List<PedidoAdicionalDto> Adicionais { get; set; } = new();
         public decimal? Total { get; set; }
+        public string? ImagemUrl { get; set; }
     }
 
     public class PedidoDetalheDto : PedidoResumoDto

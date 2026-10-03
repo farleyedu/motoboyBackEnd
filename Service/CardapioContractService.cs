@@ -14,10 +14,12 @@ namespace APIBack.Service
     {
         private const string TipoAdicionalGlobal = "adicional_global";
         private readonly ICardapioRepository _repository;
+        private readonly IPedidosAbertosService _pedidosAbertos;
 
-        public CardapioContractService(ICardapioRepository repository)
+        public CardapioContractService(ICardapioRepository repository, IPedidosAbertosService pedidosAbertos)
         {
             _repository = repository;
+            _pedidosAbertos = pedidosAbertos;
         }
 
         public Task<bool> EstabelecimentoTemModuloAtivoAsync(Guid idEstabelecimento, string modulo)
@@ -267,6 +269,7 @@ namespace APIBack.Service
             var produtos = await _repository.ListarProdutosPublicosAsync(idEstabelecimento, null);
             var categoriaIdsAtivas = categorias.Itens.Select(item => item.Id).ToHashSet();
             var ordemCategoria = categorias.Itens.ToDictionary(item => item.Id, item => item.Ordem);
+            var situacao = await _pedidosAbertos.AvaliarAsync(estabelecimento.Id, estabelecimento.AceitaPedidos);
 
             return new CardapioPublicoSnapshotDto
             {
@@ -283,6 +286,9 @@ namespace APIBack.Service
                 ServiceFeeValue = estabelecimento.ServiceFeeValue,
                 AceitaEntrega = estabelecimento.AceitaEntrega,
                 AceitaRetirada = estabelecimento.AceitaRetirada,
+                AceitaPedidos = situacao.Aberto,
+                MotivoFechado = situacao.Motivo,
+                AbreEm = situacao.AbreEm,
                 Categorias = categorias.Itens
                     .OrderBy(item => item.Ordem)
                     .ThenBy(item => item.Nome)

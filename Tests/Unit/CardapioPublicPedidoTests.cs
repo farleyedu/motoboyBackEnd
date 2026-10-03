@@ -4,7 +4,9 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using APIBack.Automation.Interfaces;
+using APIBack.DTOs.Atendimento;
 using APIBack.DTOs.Cardapio;
+using Microsoft.Extensions.Logging.Abstractions;
 using APIBack.Model.Cardapio;
 using APIBack.Repository.Interface;
 using APIBack.Service;
@@ -23,12 +25,27 @@ namespace APIBack.Tests.Unit
         private static readonly Guid ItemBacon = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb");
         private static readonly JsonSerializerOptions Web = new(JsonSerializerDefaults.Web);
 
+        private sealed class RelogioFixo : TimeProvider
+        {
+            private readonly DateTimeOffset _agora;
+            public RelogioFixo(DateTimeOffset agora) => _agora = agora;
+            public override DateTimeOffset GetUtcNow() => _agora;
+        }
+
+        private static HorarioAtendimentoDto Horario18as23() =>
+            new() { Dias = Enumerable.Range(0, 7).Select(d => new HorarioDiaDto { Dia = d, Abre = "18:00", Fecha = "23:00" }).ToList() };
+
         private sealed class Fixture
         {
             public Mock<ICardapioRepository> Cardapio { get; } = new();
             public Mock<ILocalizacaoService> Localizacao { get; } = new();
             public Mock<IWabaPhoneRepository> Waba { get; } = new();
             public Mock<ICardapioPedidoWebService> Confirmacao { get; } = new();
+            public Mock<IAtendimentoRepository> Atendimento { get; } = new();
+            /// <summary>Quarta-feira, 15h no Brasil (18h UTC): ajustavel por teste.</summary>
+            public DateTimeOffset Agora { get; set; } = new(2026, 10, 7, 18, 0, 0, TimeSpan.Zero);
+            public HorarioAtendimentoDto? Horario { get; set; }
+            public bool AceitaPedidos { get; set; } = true;
             public CardapioPedidoPublico? Gravado { get; private set; }
 
             public Fixture()
@@ -44,6 +61,8 @@ namespace APIBack.Tests.Unit
                         TaxaEntregaFixa = 5m,
                         ModulosAtivosRaw = new[] { "cardapio", "cardapioweb" }
                     });
+                Atendimento.Setup(a => a.GetConfigAsync(Estabelecimento))
+                    .ReturnsAsync(() => new AtendimentoConfigDto { EstabelecimentoId = Estabelecimento, HorarioAtendimento = Horario });
                 Cardapio.Setup(c => c.ListarProdutosPublicosPorIdsAsync(Estabelecimento, It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<bool>()))
                     .ReturnsAsync(new[] { Produto() });
                 Cardapio.Setup(c => c.CriarPedidoPublicoAsync(It.IsAny<CardapioPedidoPublico>()))
@@ -56,7 +75,22 @@ namespace APIBack.Tests.Unit
                     .ReturnsAsync(new CardapioConfirmacaoDto { Modo = "codigo", Codigo = "4821" });
             }
 
-            public CardapioPublicService Build() => new(Cardapio.Object, Localizacao.Object, Waba.Object, Confirmacao.Object);
+            public CardapioPublicService Build()
+            {
+                if (!AceitaPedidos)
+                {
+                    Cardapio.Setup(c => c.ObterEstabelecimentoPublicoAsync(It.IsAny<Guid?>(), It.IsAny<string?>()))
+                        .ReturnsAsync(new CardapioEstabelecimentoPublico
+                        {
+                            Id = Estabelecimento, NomeFantasia = "Pizza Bom", Publicado = true, AceitaPedidos = false, TaxaEntregaFixa = 5m,
+                            ModulosAtivosRaw = new[] { "cardapio", "cardapioweb" }
+                        });
+                }
+
+                return new(Cardapio.Object, Localizacao.Object, Waba.Object, Confirmacao.Object,
+                    new PedidosAbertosService(Atendimento.Object, NullLogger<PedidosAbertosService>.Instance, new RelogioFixo(Agora)),
+                    NullLogger<CardapioPublicService>.Instance);
+            }
         }
 
         private static CardapioProduto Produto() => new()
@@ -477,6 +511,65 @@ namespace APIBack.Tests.Unit
 
             Assert.Contains("WhatsApp", erro.Message);
             Assert.Null(fixture.Gravado);
+        }
+
+        // =====================================================================
+        // Loja fechada nao recebe pedido
+        // =====================================================================
+
+        [Fact]
+        public async Task Fora_do_horario_o_pedido_e_recusado_com_o_horario_de_abertura_e_nada_e_gravado()
+        {
+            var fixture = new Fixture { Horario = Horario18as23() };
+
+            var erro = await Assert.ThrowsAsync<DeliveryDomainException>(() => fixture.Build().CriarPedidoAsync(Pedido()));
+
+            Assert.Equal(409, erro.StatusCode);
+            Assert.Equal("loja_fechada", erro.Code);
+            Assert.Contains("hoje às 18:00", erro.Message);
+            Assert.Null(fixture.Gravado);
+        }
+
+        [Fact]
+        public async Task Dentro_do_horario_o_pedido_passa_e_a_cotacao_diz_que_aceita()
+        {
+            var fixture = new Fixture { Horario = Horario18as23(), Agora = new DateTimeOffset(2026, 10, 7, 22, 0, 0, TimeSpan.Zero) };
+
+            var cotacao = await fixture.Build().CalcularCotacaoAsync(Pedido());
+            await fixture.Build().CriarPedidoAsync(Pedido());
+
+            Assert.True(cotacao.AceitaPedidos);
+            Assert.Null(cotacao.MotivoFechado);
+            Assert.NotNull(fixture.Gravado);
+        }
+
+        [Fact]
+        public async Task Pedidos_pausados_pelo_interruptor_fecham_mesmo_dentro_do_horario()
+        {
+            var fixture = new Fixture { AceitaPedidos = false };
+
+            var cotacao = await fixture.Build().CalcularCotacaoAsync(Pedido());
+            var erro = await Assert.ThrowsAsync<DeliveryDomainException>(() => fixture.Build().CriarPedidoAsync(Pedido()));
+
+            Assert.False(cotacao.AceitaPedidos);
+            Assert.Equal("pausado", cotacao.MotivoFechado);
+            Assert.Equal("loja_fechada", erro.Code);
+        }
+
+        [Fact]
+        public async Task O_catalogo_informa_se_a_loja_esta_fechada_e_quando_abre()
+        {
+            var fixture = new Fixture { Horario = Horario18as23() };
+            fixture.Cardapio.Setup(c => c.ListarCategoriasAsync(Estabelecimento, It.IsAny<string?>(), It.IsAny<bool>(), It.IsAny<int>(), It.IsAny<int>()))
+                .ReturnsAsync((new List<CardapioCategoria>(), 0));
+            fixture.Cardapio.Setup(c => c.ListarProdutosPublicosAsync(Estabelecimento, It.IsAny<string?>()))
+                .ReturnsAsync(new List<CardapioProduto>());
+
+            var catalogo = await fixture.Build().ObterCatalogoAsync(Estabelecimento, null, null);
+
+            Assert.False(catalogo.Estabelecimento.AceitaPedidos);
+            Assert.Equal("fora_horario", catalogo.Estabelecimento.MotivoFechado);
+            Assert.Equal("hoje às 18:00", catalogo.Estabelecimento.AbreEm);
         }
     }
 }

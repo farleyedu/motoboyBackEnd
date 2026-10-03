@@ -23,10 +23,11 @@ namespace APIBack.Service
         public const string Atendente = "atendente";
         public const string Agendamento = "agendamento";
         public const string SemServico = "semServico";
+        public const string CardapioFechado = "cardapioFechado";
 
-        public static readonly IReadOnlyList<string> Chaves = new[] { Menu, Cardapio, Atendente, Agendamento, SemServico };
+        public static readonly IReadOnlyList<string> Chaves = new[] { Menu, Cardapio, Atendente, Agendamento, SemServico, CardapioFechado };
         /// <summary>{loja} vira o nome da loja e {link} o endereco do cardapio.</summary>
-        public static readonly IReadOnlyList<string> Variaveis = new[] { "loja", "link" };
+        public static readonly IReadOnlyList<string> Variaveis = new[] { "loja", "link", "abre" };
 
         private static readonly Regex Variavel = new(@"\{([^{}]*)\}", RegexOptions.Compiled);
 
@@ -56,7 +57,7 @@ namespace APIBack.Service
                 if (desconhecidas.Count > 0)
                 {
                     throw new DeliveryDomainException(422, "INVALID_MESSAGE",
-                        $"O texto '{chave}' usa variaveis que nao existem: {string.Join(", ", desconhecidas.Select(v => "{" + v + "}"))}. Use {{loja}} e {{link}}.");
+                        $"O texto '{chave}' usa variaveis que nao existem: {string.Join(", ", desconhecidas.Select(v => "{" + v + "}"))}. Use {{loja}}, {{link}} e {{abre}}.");
                 }
 
                 if (chave == Cardapio && !texto.Contains("{link}", StringComparison.Ordinal))
@@ -143,12 +144,91 @@ namespace APIBack.Service
             return false;
         }
 
+        /// <summary>Hora local (America/Sao_Paulo) de um instante UTC: o horario de atendimento e sempre o da loja no Brasil.</summary>
+        public static DateTime ParaHorarioLocal(DateTime utc)
+        {
+            var instante = DateTime.SpecifyKind(utc, DateTimeKind.Utc);
+            try
+            {
+                return TimeZoneInfo.ConvertTimeFromUtc(instante, TimeZoneInfo.FindSystemTimeZoneById("America/Sao_Paulo"));
+            }
+            catch (TimeZoneNotFoundException)
+            {
+                return instante.AddHours(-3);
+            }
+        }
+
+        private static readonly string[] NomesDosDias = { "domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado" };
+
+        /// <summary>"hoje às 18:00", "amanhã às 11:00" ou "quarta às 11:00": a proxima abertura. Nulo sem horario ou sem dia marcado.</summary>
+        public static string? ProximaAbertura(HorarioAtendimentoDto? horario, DateTime localNow)
+        {
+            if (horario?.Dias == null || horario.Dias.Count == 0) return null;
+
+            DateTime? melhor = null;
+            var melhorOffset = 0;
+            for (var offset = 0; offset <= 7; offset++)
+            {
+                var data = localNow.Date.AddDays(offset);
+                foreach (var dia in horario.Dias.Where(d => d.Dia == (int)data.DayOfWeek))
+                {
+                    var candidato = data + TimeSpan.Parse(dia.Abre, CultureInfo.InvariantCulture);
+                    if (candidato > localNow && (melhor == null || candidato < melhor))
+                    {
+                        melhor = candidato;
+                        melhorOffset = offset;
+                    }
+                }
+            }
+
+            if (melhor == null) return null;
+            var hora = melhor.Value.ToString("HH:mm", CultureInfo.InvariantCulture);
+            return melhorOffset switch
+            {
+                0 => $"hoje às {hora}",
+                1 => $"amanhã às {hora}",
+                _ => $"{NomesDosDias[(int)melhor.Value.DayOfWeek]} às {hora}"
+            };
+        }
+
         internal static string? Clean(string? value, int max, string field)
         {
             var trimmed = value?.Trim();
             if (string.IsNullOrEmpty(trimmed)) return null;
             if (trimmed.Length > max) throw new DeliveryDomainException(422, "INVALID_REQUEST", $"{field} aceita no maximo {max} caracteres.");
             return trimmed;
+        }
+    }
+
+    /// <summary>Se a loja aceita pedido agora, e se nao, por que (para a tela e o bot explicarem).</summary>
+    public sealed record SituacaoPedidos(bool Aberto, string? Motivo, string? AbreEm)
+    {
+        public static readonly SituacaoPedidos Aberta = new(true, null, null);
+    }
+
+    /// <summary>
+    /// Pedido so entra com a loja aberta: o interruptor "pausar pedidos" (aceita_pedidos) e o horario de atendimento valem
+    /// juntos. Uma unica regra, usada pelo cardapio web (que recusa) e pelo bot (que explica).
+    /// </summary>
+    public static class PedidosAbertosRules
+    {
+        public const string Pausado = "pausado";
+        public const string ForaDoHorario = "fora_horario";
+
+        public static SituacaoPedidos Avaliar(bool aceitaPedidos, HorarioAtendimentoDto? horario, DateTime localNow)
+        {
+            if (!aceitaPedidos) return new SituacaoPedidos(false, Pausado, null);
+            if (AtendimentoConfigRules.IsOpen(horario, localNow)) return SituacaoPedidos.Aberta;
+            return new SituacaoPedidos(false, ForaDoHorario, AtendimentoConfigRules.ProximaAbertura(horario, localNow));
+        }
+
+        public static string Mensagem(SituacaoPedidos situacao)
+        {
+            if (situacao.Aberto) return string.Empty;
+            if (situacao.Motivo == Pausado) return "A loja pausou os pedidos por enquanto. Tente novamente em instantes.";
+            return string.IsNullOrWhiteSpace(situacao.AbreEm)
+                ? "A loja está fechada agora e não está aceitando pedidos."
+                : $"A loja está fechada agora. Abrimos {situacao.AbreEm}.";
         }
     }
 

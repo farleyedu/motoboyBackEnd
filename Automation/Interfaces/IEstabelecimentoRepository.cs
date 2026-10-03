@@ -11,6 +11,8 @@ namespace APIBack.Automation.Interfaces
         Task<IReadOnlyCollection<string>> ObterModulosAtivosAsync(Guid idEstabelecimento);
         Task<IReadOnlyCollection<EstabelecimentoWhatsappAtivoDto>> ListarEstabelecimentosComWhatsappAtivoAsync(Guid? excluirEstabelecimentoId = null);
         Task<string?> ObterNomeFantasiaAsync(Guid idEstabelecimento);
+        /// <summary>Interruptor "aceitando pedidos" da loja; nulo quando nao foi possivel ler (quem chama assume aberto).</summary>
+        Task<bool?> ObterAceitaPedidosAsync(Guid idEstabelecimento);
         Task<EstabelecimentoPublicoResumo?> ObterResumoPublicoAsync(Guid idEstabelecimento);
         Task<EstabelecimentoPublicoResumo?> ObterResumoPublicoPorSlugAsync(string slug);
         Task<string?> ObterTipoEstabelecimentoAsync(Guid idEstabelecimento);

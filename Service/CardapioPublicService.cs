@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using APIBack.Automation.Interfaces;
 using APIBack.DTOs.Cardapio;
+using Microsoft.Extensions.Logging;
 using APIBack.Model.Cardapio;
 using APIBack.Repository.Interface;
 using APIBack.Service.Interface;
@@ -19,17 +20,23 @@ namespace APIBack.Service
         private readonly ILocalizacaoService _localizacao;
         private readonly IWabaPhoneRepository _waba;
         private readonly ICardapioPedidoWebService _confirmacao;
+        private readonly IPedidosAbertosService _pedidosAbertos;
+        private readonly ILogger<CardapioPublicService> _logger;
 
         public CardapioPublicService(
             ICardapioRepository repository,
             ILocalizacaoService localizacao,
             IWabaPhoneRepository waba,
-            ICardapioPedidoWebService confirmacao)
+            ICardapioPedidoWebService confirmacao,
+            IPedidosAbertosService pedidosAbertos,
+            ILogger<CardapioPublicService> logger)
         {
             _repository = repository;
             _localizacao = localizacao;
             _waba = waba;
             _confirmacao = confirmacao;
+            _pedidosAbertos = pedidosAbertos;
+            _logger = logger;
         }
 
         public async Task<CardapioPublicoCatalogoDto> ObterCatalogoAsync(Guid? idEstabelecimento, string? estabelecimentoSlug, string? busca)
@@ -43,7 +50,7 @@ namespace APIBack.Service
 
             var response = new CardapioPublicoCatalogoDto
             {
-                Estabelecimento = MapEstabelecimento(estabelecimento)
+                Estabelecimento = MapEstabelecimento(estabelecimento, await _pedidosAbertos.AvaliarAsync(estabelecimento.Id, estabelecimento.AceitaPedidos))
             };
 
             foreach (var categoria in categorias.Itens.OrderBy(x => x.Ordem).ThenBy(x => x.Nome))
@@ -202,6 +209,7 @@ namespace APIBack.Service
 
             ValidationUtils.ThrowIfAny(errors);
 
+            var situacaoPedidos = await _pedidosAbertos.AvaliarAsync(estabelecimento.Id, estabelecimento.AceitaPedidos);
             var basePedido = subtotalProdutos + subtotalAdicionais;
             var taxaEntrega = tipoEntrega == "entrega" ? estabelecimento.TaxaEntregaFixa : 0;
 
@@ -210,7 +218,9 @@ namespace APIBack.Service
                 EstabelecimentoId = estabelecimento.Id,
                 EstabelecimentoNome = estabelecimento.NomeFantasia,
                 TipoEntrega = tipoEntrega,
-                AceitaPedidos = estabelecimento.AceitaPedidos,
+                AceitaPedidos = situacaoPedidos.Aberto,
+                MotivoFechado = situacaoPedidos.Motivo,
+                AbreEm = situacaoPedidos.AbreEm,
                 PedidoMinimo = estabelecimento.PedidoMinimo,
                 PedidoMinimoAtingido = basePedido >= estabelecimento.PedidoMinimo,
                 SubtotalProdutos = subtotalProdutos,
@@ -267,9 +277,12 @@ namespace APIBack.Service
 
             var cotacao = await CalcularCotacaoAsync(request);
 
-            if (!estabelecimento.AceitaPedidos)
+            if (!cotacao.AceitaPedidos)
             {
-                throw new InvalidOperationException("O estabelecimento nao esta aceitando pedidos no momento.");
+                // O servidor e quem decide: a tela so mostra o aviso. O carrinho do cliente continua la para quando a loja abrir.
+                _logger.LogInformation("[cardapio] ev=pedido_recusado motivo={Motivo} loja={Loja}", cotacao.MotivoFechado, estabelecimento.Id);
+                throw new DeliveryDomainException(409, "loja_fechada",
+                    PedidosAbertosRules.Mensagem(new SituacaoPedidos(false, cotacao.MotivoFechado, cotacao.AbreEm)));
             }
 
             if (!cotacao.PedidoMinimoAtingido)
@@ -657,7 +670,7 @@ namespace APIBack.Service
             return estabelecimento;
         }
 
-        private static CardapioPublicoEstabelecimentoDto MapEstabelecimento(CardapioEstabelecimentoPublico entity)
+        private static CardapioPublicoEstabelecimentoDto MapEstabelecimento(CardapioEstabelecimentoPublico entity, SituacaoPedidos situacaoPedidos)
         {
             return new CardapioPublicoEstabelecimentoDto
             {
@@ -665,7 +678,9 @@ namespace APIBack.Service
                 Nome = entity.NomeFantasia,
                 Slug = entity.Slug,
                 UrlLogo = entity.UrlLogo,
-                AceitaPedidos = entity.AceitaPedidos,
+                AceitaPedidos = situacaoPedidos.Aberto,
+                MotivoFechado = situacaoPedidos.Motivo,
+                AbreEm = situacaoPedidos.AbreEm,
                 PedidoMinimo = entity.PedidoMinimo,
                 TaxaEntregaFixa = entity.TaxaEntregaFixa,
                 TempoPreparoMin = entity.TempoPreparoMin

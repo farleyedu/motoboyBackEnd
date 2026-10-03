@@ -200,7 +200,9 @@ namespace APIBack.Atendimento.Motor
             if (estado.ForaDoHorarioAvisadoEm.HasValue && agoraUtc - estado.ForaDoHorarioAvisadoEm.Value < IntervaloAvisoForaDoHorario) return;
 
             acoes.Add(new AcaoResponder(string.IsNullOrWhiteSpace(entrada.MensagemForaDoHorario)
-                ? "No momento nosso atendimento está fechado, mas você pode fazer o seu pedido pelo cardápio a qualquer hora."
+                ? (string.IsNullOrWhiteSpace(entrada.Pedidos?.AbreEm)
+                    ? "No momento estamos fechados."
+                    : $"No momento estamos fechados. Abrimos {entrada.Pedidos!.AbreEm}.")
                 : entrada.MensagemForaDoHorario!));
             estado.ForaDoHorarioAvisadoEm = agoraUtc;
         }

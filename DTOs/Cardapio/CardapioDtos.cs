@@ -131,7 +131,12 @@ namespace APIBack.DTOs.Cardapio
         public string Nome { get; set; } = string.Empty;
         public string Slug { get; set; } = string.Empty;
         public string? UrlLogo { get; set; }
+        /// <summary>Aceita pedido AGORA: o interruptor da loja e o horario de atendimento valem juntos.</summary>
         public bool AceitaPedidos { get; set; }
+        /// <summary>pausado ou fora_horario quando nao aceita; nulo quando aceita.</summary>
+        public string? MotivoFechado { get; set; }
+        /// <summary>Quando abre de novo ("hoje as 18:00"), se for por horario.</summary>
+        public string? AbreEm { get; set; }
         public decimal PedidoMinimo { get; set; }
         public decimal TaxaEntregaFixa { get; set; }
         public int TempoPreparoMin { get; set; }
@@ -311,6 +316,8 @@ namespace APIBack.DTOs.Cardapio
         public string EstabelecimentoNome { get; set; } = string.Empty;
         public string TipoEntrega { get; set; } = "retirada";
         public bool AceitaPedidos { get; set; }
+        public string? MotivoFechado { get; set; }
+        public string? AbreEm { get; set; }
         public decimal PedidoMinimo { get; set; }
         public bool PedidoMinimoAtingido { get; set; }
         public decimal SubtotalProdutos { get; set; }

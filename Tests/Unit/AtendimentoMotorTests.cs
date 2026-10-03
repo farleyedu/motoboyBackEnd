@@ -1,4 +1,5 @@
 using System;
+using APIBack.Service;
 using System.Linq;
 using APIBack.Atendimento;
 using APIBack.Atendimento.Motor;
@@ -280,5 +281,40 @@ namespace APIBack.Tests.Unit
         [InlineData(null, "")]
         public void Normalizar_tira_acento_caixa_e_pontuacao_das_pontas(string? entrada, string esperado) =>
             Assert.Equal(esperado, AtendimentoMotor.Normalizar(entrada));
+
+        // ---- loja fechada -----------------------------------------------------------------------------------------------
+
+        [Fact]
+        public void Cardapio_com_a_loja_fechada_avisa_quando_abre_e_so_deixa_ver_o_cardapio()
+        {
+            var entrada = Entrada(texto: "cardapio", primeira: false) with { Pedidos = new SituacaoPedidos(false, PedidosAbertosRules.ForaDoHorario, "hoje às 18:00") };
+
+            var r = Motor.Decidir(entrada, null, Agora);
+
+            Assert.Contains("Abrimos hoje às 18:00", Texto(r));
+            Assert.Contains("https://zippy.app/cardapio/97c5d396", Texto(r));
+            Assert.EndsWith("cardapio_fechado_fora_horario", r.Regra);
+            Assert.DoesNotContain(r.Acoes, a => a is AcaoChamarAtendente);
+        }
+
+        [Fact]
+        public void Texto_personalizado_da_loja_fechada_usa_loja_link_e_abre()
+        {
+            var entrada = Entrada(texto: "cardapio", primeira: false) with
+            {
+                Pedidos = new SituacaoPedidos(false, PedidosAbertosRules.ForaDoHorario, "amanhã às 11:00"),
+                Textos = new TextosMotor(null, null, null, null, null, "{loja} abre {abre}. Veja: {link}")
+            };
+
+            Assert.Contains("Pizza Bom Centro abre amanhã às 11:00. Veja: https://zippy.app/cardapio/97c5d396", Texto(Motor.Decidir(entrada, null, Agora)));
+        }
+
+        [Fact]
+        public void Pedidos_pausados_tem_texto_proprio()
+        {
+            var entrada = Entrada(texto: "cardapio", primeira: false) with { Pedidos = new SituacaoPedidos(false, PedidosAbertosRules.Pausado, null) };
+
+            Assert.Contains("pausou os pedidos", Texto(Motor.Decidir(entrada, null, Agora)));
+        }
     }
 }

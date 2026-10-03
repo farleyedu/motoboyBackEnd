@@ -112,6 +112,21 @@ SELECT nome_fantasia
             }
         }
 
+        public async Task<bool?> ObterAceitaPedidosAsync(Guid idEstabelecimento)
+        {
+            try
+            {
+                await using var connection = new NpgsqlConnection(_connectionString);
+                return await connection.ExecuteScalarAsync<bool?>(
+                    "SELECT aceita_pedidos FROM estabelecimentos WHERE id = @IdEstabelecimento LIMIT 1;", new { IdEstabelecimento = idEstabelecimento });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao ler aceita_pedidos da loja {IdEstabelecimento}", idEstabelecimento);
+                return null;
+            }
+        }
+
         public async Task<EstabelecimentoPublicoResumo?> ObterResumoPublicoAsync(Guid idEstabelecimento)
         {
             const string sql = @"
