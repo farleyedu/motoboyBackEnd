@@ -25,8 +25,9 @@ namespace APIBack.DTOs.Atendimento
         public string? MensagemForaHorario { get; set; }
         /// <summary>Textos do bot que o dono personalizou (chaves em MensagensDoAtendimento.Chaves). Chave ausente = texto padrao.</summary>
         public Dictionary<string, string> Mensagens { get; set; } = new();
+        /// <summary>Somente leitura: vem do horario de funcionamento da loja (Negocio e identidade), nao e salvo aqui.</summary>
         public HorarioAtendimentoDto? HorarioAtendimento { get; set; }
-        /// <summary>O atendimento esta dentro do horario agora (sem horario configurado = sempre).</summary>
+        /// <summary>A loja esta dentro do horario de funcionamento agora (sem horario cadastrado = sempre).</summary>
         public bool AbertoAgora { get; set; } = true;
         /// <summary>true quando o estabelecimento nunca salvou a configuracao (valem os padroes).</summary>
         public bool IsDefault { get; set; }
@@ -39,7 +40,6 @@ namespace APIBack.DTOs.Atendimento
         public string? SaudacaoHumano { get; set; }
         public string? MensagemForaHorario { get; set; }
         public Dictionary<string, string>? Mensagens { get; set; }
-        public HorarioAtendimentoDto? HorarioAtendimento { get; set; }
     }
 
     public class RespostaRapidaDto

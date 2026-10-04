@@ -75,7 +75,6 @@ namespace APIBack.Service
     public static class AtendimentoConfigRules
     {
         public const int MaxMensagem = 1000;
-        private static readonly Regex Hora = new(@"^([01]\d|2[0-3]):[0-5]\d$", RegexOptions.Compiled);
 
         /// <summary>Normaliza e valida o corpo do PUT. O modo "ia" so existe na etapa 2 (modulo de IA).</summary>
         public static UpdateAtendimentoConfigRequest Validate(UpdateAtendimentoConfigRequest? request, bool iaAvailable = false)
@@ -93,35 +92,20 @@ namespace APIBack.Service
                     "O atendimento com IA ainda nao esta disponivel. Use o modo 'humano'.");
             }
 
-            var horario = request.HorarioAtendimento;
-            if (horario != null)
-            {
-                var dias = horario.Dias ?? new List<HorarioDiaDto>();
-                if (dias.Any(d => d.Dia is < 0 or > 6) || dias.Select(d => d.Dia).Distinct().Count() != dias.Count)
-                {
-                    throw new DeliveryDomainException(422, "INVALID_SCHEDULE", "Horario invalido: cada dia (0 a 6) so pode aparecer uma vez.");
-                }
-                if (dias.Any(d => !Hora.IsMatch(d.Abre ?? string.Empty) || !Hora.IsMatch(d.Fecha ?? string.Empty) || d.Abre == d.Fecha))
-                {
-                    throw new DeliveryDomainException(422, "INVALID_SCHEDULE", "Horario invalido: use HH:mm e abertura diferente do fechamento.");
-                }
-                horario = new HorarioAtendimentoDto { Dias = dias.OrderBy(d => d.Dia).ToList() };
-            }
-
             return new UpdateAtendimentoConfigRequest
             {
                 Modo = modo,
                 SaudacaoHumano = Clean(request.SaudacaoHumano, MaxMensagem, "saudacaoHumano"),
                 MensagemForaHorario = Clean(request.MensagemForaHorario, MaxMensagem, "mensagemForaHorario"),
-                Mensagens = MensagensDoAtendimento.Normalizar(request.Mensagens, MaxMensagem),
-                HorarioAtendimento = horario is { Dias.Count: > 0 } ? horario : null
+                Mensagens = MensagensDoAtendimento.Normalizar(request.Mensagens, MaxMensagem)
             };
         }
 
-        /// <summary>O atendimento esta aberto agora? Sem horario configurado, sempre aberto. Aceita virada de meia-noite.</summary>
+        /// <summary>A loja esta aberta agora? Sem horario cadastrado (nulo), sempre aberta; horario sem nenhum dia aberto, fechada. Aceita virada de meia-noite.</summary>
         public static bool IsOpen(HorarioAtendimentoDto? horario, DateTime localNow)
         {
-            if (horario?.Dias == null || horario.Dias.Count == 0) return true;
+            if (horario == null) return true;
+            if (horario.Dias == null || horario.Dias.Count == 0) return false;
             var today = (int)localNow.DayOfWeek;
             var yesterday = (today + 6) % 7;
             var time = localNow.TimeOfDay;

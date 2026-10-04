@@ -19,7 +19,6 @@ namespace APIBack.Tests.Unit
             Assert.Equal("humano", result.Modo);
             Assert.Equal("Ola!", result.SaudacaoHumano);
             Assert.Null(result.MensagemForaHorario);
-            Assert.Null(result.HorarioAtendimento);
         }
 
         [Fact]
@@ -39,53 +38,14 @@ namespace APIBack.Tests.Unit
             Assert.Throws<DeliveryDomainException>(() => AtendimentoConfigRules.Validate(null));
         }
 
-        [Fact]
-        public void Schedule_is_validated_and_sorted()
-        {
-            var ok = AtendimentoConfigRules.Validate(new UpdateAtendimentoConfigRequest
-            {
-                HorarioAtendimento = new HorarioAtendimentoDto
-                {
-                    Dias = new List<HorarioDiaDto> { new() { Dia = 3, Abre = "11:00", Fecha = "23:00" }, new() { Dia = 1, Abre = "10:00", Fecha = "22:00" } }
-                }
-            });
-
-            Assert.Equal(new[] { 1, 3 }, ok.HorarioAtendimento!.Dias.Select(d => d.Dia));
-        }
-
-        [Theory]
-        [InlineData(7, "11:00", "23:00")]
-        [InlineData(1, "25:00", "23:00")]
-        [InlineData(1, "11:00", "11:00")]
-        [InlineData(1, "abc", "23:00")]
-        public void Invalid_schedule_is_refused(int dia, string abre, string fecha)
-        {
-            Assert.Throws<DeliveryDomainException>(() => AtendimentoConfigRules.Validate(new UpdateAtendimentoConfigRequest
-            {
-                HorarioAtendimento = new HorarioAtendimentoDto { Dias = new List<HorarioDiaDto> { new() { Dia = dia, Abre = abre, Fecha = fecha } } }
-            }));
-        }
-
-        [Fact]
-        public void Duplicate_day_is_refused()
-        {
-            Assert.Throws<DeliveryDomainException>(() => AtendimentoConfigRules.Validate(new UpdateAtendimentoConfigRequest
-            {
-                HorarioAtendimento = new HorarioAtendimentoDto
-                {
-                    Dias = new List<HorarioDiaDto> { new() { Dia = 1, Abre = "10:00", Fecha = "12:00" }, new() { Dia = 1, Abre = "14:00", Fecha = "18:00" } }
-                }
-            }));
-        }
-
         private static HorarioAtendimentoDto Schedule(params (int Dia, string Abre, string Fecha)[] days) =>
             new() { Dias = days.Select(d => new HorarioDiaDto { Dia = d.Dia, Abre = d.Abre, Fecha = d.Fecha }).ToList() };
 
         [Fact]
-        public void No_schedule_means_always_open()
+        public void No_schedule_means_always_open_but_all_days_closed_means_closed()
         {
             Assert.True(AtendimentoConfigRules.IsOpen(null, new DateTime(2026, 9, 26, 3, 0, 0)));
-            Assert.True(AtendimentoConfigRules.IsOpen(new HorarioAtendimentoDto(), new DateTime(2026, 9, 26, 3, 0, 0)));
+            Assert.False(AtendimentoConfigRules.IsOpen(new HorarioAtendimentoDto(), new DateTime(2026, 9, 26, 3, 0, 0)));
         }
 
         [Fact]

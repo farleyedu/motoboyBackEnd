@@ -41,8 +41,51 @@ namespace APIBack.Repository
             public string? SaudacaoHumano { get; set; }
             public string? MensagemForaHorario { get; set; }
             public string? Mensagens { get; set; }
-            public string? HorarioAtendimento { get; set; }
             public DateTimeOffset UpdatedAtUtc { get; set; }
+        }
+
+        private sealed class HorarioRow
+        {
+            public int DiaSemana { get; set; }
+            public bool Fechado { get; set; }
+            public TimeSpan? AbreAs { get; set; }
+            public TimeSpan? FechaAs { get; set; }
+        }
+
+        /// <summary>
+        /// Horario de funcionamento da loja: unica fonte (tela Negocio e identidade, tabela estabelecimento_horario), usada pelo
+        /// cardapio web, pelo bot e pela tela de Atendimento. Nulo = loja sem horario cadastrado (sempre aberta); sem nenhum dia aberto = fechada.
+        /// </summary>
+        private async Task<HorarioAtendimentoDto?> LerHorarioDeFuncionamentoAsync(Guid estabelecimentoId)
+        {
+            try
+            {
+                await using var connection = await _dataSource.OpenConnectionAsync();
+                var rows = (await connection.QueryAsync<HorarioRow>(@"
+SELECT dia_semana AS DiaSemana, fechado AS Fechado, abre_as AS AbreAs, fecha_as AS FechaAs
+  FROM estabelecimento_horario WHERE estabelecimento_id = @EstabelecimentoId;",
+                    new { EstabelecimentoId = estabelecimentoId })).ToList();
+                if (rows.Count == 0) return null;
+
+                // Negocio guarda 0 = segunda; a regra de abertura usa 0 = domingo.
+                return new HorarioAtendimentoDto
+                {
+                    Dias = rows
+                        .Where(r => !r.Fechado && r.AbreAs.HasValue && r.FechaAs.HasValue)
+                        .Select(r => new HorarioDiaDto
+                        {
+                            Dia = (r.DiaSemana + 1) % 7,
+                            Abre = r.AbreAs!.Value.ToString(@"hh\:mm"),
+                            Fecha = r.FechaAs!.Value.ToString(@"hh\:mm")
+                        })
+                        .OrderBy(d => d.Dia)
+                        .ToList()
+                };
+            }
+            catch (PostgresException ex) when (IsMissingTable(ex))
+            {
+                return null;
+            }
         }
 
         public async Task<AtendimentoConfigDto> GetConfigAsync(Guid estabelecimentoId)
@@ -54,7 +97,7 @@ namespace APIBack.Repository
                 var row = await connection.QuerySingleOrDefaultAsync<ConfigRow>(@"
 SELECT modo AS Modo, saudacao_humano AS SaudacaoHumano, mensagem_fora_horario AS MensagemForaHorario,
        COALESCE(mensagens, '{}'::jsonb)::text AS Mensagens,
-       horario_atendimento::text AS HorarioAtendimento, updated_at_utc AS UpdatedAtUtc
+       updated_at_utc AS UpdatedAtUtc
   FROM estabelecimento_atendimento_config WHERE estabelecimento_id = @EstabelecimentoId;",
                     new { EstabelecimentoId = estabelecimentoId });
                 if (row != null)
@@ -65,9 +108,6 @@ SELECT modo AS Modo, saudacao_humano AS SaudacaoHumano, mensagem_fora_horario AS
                     config.Mensagens = string.IsNullOrWhiteSpace(row.Mensagens)
                         ? new Dictionary<string, string>()
                         : JsonSerializer.Deserialize<Dictionary<string, string>>(row.Mensagens, JsonOptions) ?? new Dictionary<string, string>();
-                    config.HorarioAtendimento = string.IsNullOrWhiteSpace(row.HorarioAtendimento)
-                        ? null
-                        : JsonSerializer.Deserialize<HorarioAtendimentoDto>(row.HorarioAtendimento, JsonOptions);
                     config.UpdatedAtUtc = row.UpdatedAtUtc;
                     config.IsDefault = false;
                 }
@@ -76,6 +116,8 @@ SELECT modo AS Modo, saudacao_humano AS SaudacaoHumano, mensagem_fora_horario AS
             {
                 // sem a migration: valem os padroes (modo humano, sempre aberto)
             }
+
+            config.HorarioAtendimento = await LerHorarioDeFuncionamentoAsync(estabelecimentoId);
 
             await using var clock = await _dataSource.OpenConnectionAsync();
             var localNow = await clock.ExecuteScalarAsync<DateTime>($"SELECT (NOW() AT TIME ZONE '{LocalTimeZone}');");
@@ -92,14 +134,13 @@ SELECT modo AS Modo, saudacao_humano AS SaudacaoHumano, mensagem_fora_horario AS
                 await using var connection = await _dataSource.OpenConnectionAsync();
                 await connection.ExecuteAsync(@"
 INSERT INTO estabelecimento_atendimento_config
-    (estabelecimento_id, modo, saudacao_humano, mensagem_fora_horario, mensagens, horario_atendimento, updated_by_user_id, updated_at_utc)
-VALUES (@EstabelecimentoId, @Modo, @Saudacao, @ForaHorario, @Mensagens::jsonb, @Horario::jsonb, @ActorUserId, NOW())
+    (estabelecimento_id, modo, saudacao_humano, mensagem_fora_horario, mensagens, updated_by_user_id, updated_at_utc)
+VALUES (@EstabelecimentoId, @Modo, @Saudacao, @ForaHorario, @Mensagens::jsonb, @ActorUserId, NOW())
 ON CONFLICT (estabelecimento_id) DO UPDATE SET
     modo = EXCLUDED.modo,
     saudacao_humano = EXCLUDED.saudacao_humano,
     mensagem_fora_horario = EXCLUDED.mensagem_fora_horario,
     mensagens = EXCLUDED.mensagens,
-    horario_atendimento = EXCLUDED.horario_atendimento,
     updated_by_user_id = EXCLUDED.updated_by_user_id,
     updated_at_utc = NOW();",
                     new
@@ -109,7 +150,6 @@ ON CONFLICT (estabelecimento_id) DO UPDATE SET
                         Saudacao = request.SaudacaoHumano,
                         ForaHorario = request.MensagemForaHorario,
                         Mensagens = JsonSerializer.Serialize(request.Mensagens ?? new Dictionary<string, string>(), JsonOptions),
-                        Horario = request.HorarioAtendimento == null ? null : JsonSerializer.Serialize(request.HorarioAtendimento, JsonOptions),
                         ActorUserId = actorUserId
                     });
             }
