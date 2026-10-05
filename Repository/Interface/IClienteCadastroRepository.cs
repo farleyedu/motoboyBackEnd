@@ -21,5 +21,8 @@ namespace APIBack.Repository.Interface
         /// de pedido para ligar TODO pedido (de qualquer origem) a um cliente (fundacao de CRM, Fase 3c).
         /// </summary>
         Task<Guid?> ResolverOuCriarAsync(Guid estabelecimentoId, string? telefoneBruto, string? nome);
+
+        /// <summary>Edicao inline do nome (chat do modo comando); null quando o cliente nao existe.</summary>
+        Task<ClienteDto?> UpdateNomeAsync(Guid estabelecimentoId, Guid clienteId, string nome);
     }
 }

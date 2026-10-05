@@ -112,6 +112,21 @@ namespace APIBack.Tests.Unit
         {
             Assert.Throws<DeliveryDomainException>(() => PedidoFiltro.From(new PedidoFiltroRequest { Busca = new string('a', 101) }));
         }
+
+        [Fact]
+        public void ClienteId_is_parsed_when_valid()
+        {
+            var id = Guid.NewGuid();
+            var filtro = PedidoFiltro.From(new PedidoFiltroRequest { ClienteId = id.ToString() });
+
+            Assert.Equal(id, filtro.ClienteId);
+        }
+
+        [Fact]
+        public void Invalid_clienteId_is_rejected()
+        {
+            Assert.Throws<DeliveryDomainException>(() => PedidoFiltro.From(new PedidoFiltroRequest { ClienteId = "nao-e-guid" }));
+        }
     }
 
     public class LegacyItemsParserTests

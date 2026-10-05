@@ -46,6 +46,13 @@ namespace APIBack.Controllers
             ExecuteAsync(async (est, _) =>
                 await _clientes.UpdateAsync(est, clienteId, ClienteRules.Validate(request)) ?? throw NotFound_());
 
+        /// <summary>Edicao inline do nome, sem exigir o formulario completo (chat do modo comando, Fase 3c).</summary>
+        [HttpPut("{clienteId:guid}/nome")]
+        [RequirePermission("Delivery", "editar_pedido")]
+        public Task<IActionResult> UpdateNome(Guid clienteId, [FromBody] ClienteNomeRequest request) =>
+            ExecuteAsync(async (est, _) =>
+                await _clientes.UpdateNomeAsync(est, clienteId, ClienteRules.ValidateNome(request.Nome)) ?? throw NotFound_());
+
         /// <summary>Exclusao logica: o cliente some das listas, o historico de pedidos continua.</summary>
         [HttpDelete("{clienteId:guid}")]
         [RequirePermission("Delivery", "editar_pedido")]

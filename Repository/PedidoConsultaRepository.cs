@@ -56,6 +56,19 @@ SELECT cl.telefone_e164 FROM conversas c JOIN clientes cl ON cl.id = c.id_client
                 where += " AND (" + (core ? "p.conversa_id = @ConversaId OR " : "") +
                     "(@PhoneKey::text IS NOT NULL AND RIGHT(regexp_replace(p.telefone_cliente::text, '[^0-9]', '', 'g'), 11) = @PhoneKey::text))";
             }
+            if (filtro.ClienteId.HasValue)
+            {
+                // Historico real do cliente (Fase 3c): ligados a ele pelo nucleo e, de reserva, os
+                // antigos/do cardapio web sem cliente_id gravado, pelo telefone do cadastro.
+                var phone = await connection.ExecuteScalarAsync<string?>(
+                    "SELECT telefone_e164 FROM clientes WHERE id = @ClienteId AND id_estabelecimento = @EstabelecimentoId;",
+                    new { ClienteId = filtro.ClienteId.Value, EstabelecimentoId = estabelecimentoId });
+                var clientePhoneKey = PhoneKey.From(phone);
+                parameters.Add("ClienteId", filtro.ClienteId.Value);
+                parameters.Add("ClientePhoneKey", clientePhoneKey);
+                where += " AND (" + (core ? "p.cliente_id = @ClienteId OR " : "") +
+                    "(@ClientePhoneKey::text IS NOT NULL AND RIGHT(regexp_replace(p.telefone_cliente::text, '[^0-9]', '', 'g'), 11) = @ClientePhoneKey::text))";
+            }
 
             var total = await connection.ExecuteScalarAsync<int>($"SELECT COUNT(*) FROM pedido p WHERE {where};", parameters);
 

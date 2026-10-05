@@ -22,6 +22,7 @@ namespace APIBack.Service
         public string? BuscaDigitos { get; init; }
         public string? BuscaLike { get; init; }
         public Guid? ConversaId { get; init; }
+        public Guid? ClienteId { get; init; }
         public int Page { get; init; } = 1;
         public int PageSize { get; init; } = 30;
         public int Offset => (Page - 1) * PageSize;
@@ -90,6 +91,16 @@ namespace APIBack.Service
                 conversaId = parsed;
             }
 
+            Guid? clienteId = null;
+            if (!string.IsNullOrWhiteSpace(request.ClienteId))
+            {
+                if (!Guid.TryParse(request.ClienteId, out var parsedCliente))
+                {
+                    throw new DeliveryDomainException(422, "INVALID_REQUEST", "clienteId invalido.");
+                }
+                clienteId = parsedCliente;
+            }
+
             var pageSize = request.PageSize <= 0 ? 30 : Math.Min(request.PageSize, MaxPageSize);
             return new PedidoFiltro
             {
@@ -101,6 +112,7 @@ namespace APIBack.Service
                 BuscaDigitos = digitos,
                 BuscaLike = like,
                 ConversaId = conversaId,
+                ClienteId = clienteId,
                 Page = Math.Max(1, request.Page),
                 PageSize = pageSize
             };

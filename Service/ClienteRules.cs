@@ -51,6 +51,10 @@ namespace APIBack.Service
             return digits;
         }
 
+        /// <summary>Nome para a edicao inline (chat do modo comando, Fase 3c): mesma regra do cadastro completo.</summary>
+        public static string ValidateNome(string? nome) =>
+            Text(nome, "nome", 150) ?? throw Invalid("Informe o nome do cliente.");
+
         public static ClienteInput Validate(ClienteRequest? request)
         {
             if (request == null) throw Invalid("Corpo da requisicao obrigatorio.");

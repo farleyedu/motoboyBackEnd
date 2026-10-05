@@ -67,6 +67,12 @@ namespace APIBack.DTOs.Clientes
         public bool? Ativo { get; set; }
     }
 
+    /// <summary>Edicao inline do nome (chat do modo comando, Fase 3c): nao exige o formulario completo.</summary>
+    public sealed class ClienteNomeRequest
+    {
+        public string? Nome { get; set; }
+    }
+
     /// <summary>Corpo de "o cliente de teste manda uma mensagem" (simulador).</summary>
     public sealed class SimulatorClienteMessageRequest
     {

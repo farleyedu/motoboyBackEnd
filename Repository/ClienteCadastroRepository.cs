@@ -242,6 +242,15 @@ VALUES (@Id, @EstabelecimentoId, @Telefone, @Nome, TRUE, NOW(), NOW());",
             return clienteId;
         }
 
+        public async Task<ClienteDto?> UpdateNomeAsync(Guid estabelecimentoId, Guid clienteId, string nome)
+        {
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            return await connection.QuerySingleOrDefaultAsync<ClienteDto>($@"
+UPDATE clientes SET nome = @Nome, data_atualizacao = NOW()
+ WHERE id = @Id AND id_estabelecimento = @EstabelecimentoId
+RETURNING{Columns};", new { Nome = nome, Id = clienteId, EstabelecimentoId = estabelecimentoId });
+        }
+
         // Serializa cadastros do mesmo telefone no mesmo estabelecimento (a tabela pode nao ter indice unico).
         private static Task LockPhoneAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, Guid estabelecimentoId, string phone) =>
             connection.ExecuteAsync("SELECT pg_advisory_xact_lock(hashtext(@Key));",
