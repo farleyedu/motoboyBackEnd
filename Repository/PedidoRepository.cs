@@ -16,10 +16,12 @@ namespace APIBack.Repository
     public class PedidoRepository : IPedidoRepository
     {
         private readonly string _connectionString;
+        private readonly IClienteCadastroRepository _clientes;
 
-        public PedidoRepository(IConfiguration configuration)
+        public PedidoRepository(IConfiguration configuration, IClienteCadastroRepository clientes)
         {
             _connectionString = configuration.GetConnectionString("DefaultConnection");
+            _clientes = clientes;
         }
 
         public IEnumerable<Pedido> GetPedidos(Guid estabelecimentoId)
@@ -170,6 +172,16 @@ WHERE p.id_estabelecimento = @EstabelecimentoId
                     connection.Execute(
                         "UPDATE pedido SET origem = 'ifood', origem_ref = @IdIfood WHERE id_ifood = @IdIfood AND id_estabelecimento = @EstabelecimentoId AND origem_ref IS NULL;",
                         new { IdIfood = pedido.DisplayId, EstabelecimentoId = estabelecimentoId });
+
+                    // Fase 3c (D14): todo pedido fica ligado a um cliente de verdade, mesmo o capturado do iFood.
+                    var clienteId = _clientes.ResolverOuCriarAsync(estabelecimentoId, pedido.Cliente.Telefone, pedido.Cliente.Nome)
+                        .GetAwaiter().GetResult();
+                    if (clienteId.HasValue)
+                    {
+                        connection.Execute(
+                            "UPDATE pedido SET cliente_id = @ClienteId WHERE id_ifood = @IdIfood AND id_estabelecimento = @EstabelecimentoId;",
+                            new { ClienteId = clienteId.Value, IdIfood = pedido.DisplayId, EstabelecimentoId = estabelecimentoId });
+                    }
                 }
                 return rows > 0;
             }

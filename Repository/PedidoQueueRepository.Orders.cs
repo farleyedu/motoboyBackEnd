@@ -62,8 +62,8 @@ namespace APIBack.Repository
             var horarioPedido = await PedidoColumnTypes.LocalNowSqlAsync(connection, transaction, "horario_pedido");
             var previsao = await PedidoColumnTypes.LocalNowSqlAsync(connection, transaction, "previsao_entrega", "@PrevisaoMinutos");
 
-            var extraColumns = coreSchema ? ", origem, origem_ref, conversa_id, subtotal, taxa_entrega, desconto" : string.Empty;
-            var extraValues = coreSchema ? ", @Origem, @OrigemRef, @ConversaId, @Subtotal, @TaxaEntrega, @Desconto" : string.Empty;
+            var extraColumns = coreSchema ? ", origem, origem_ref, conversa_id, cliente_id, subtotal, taxa_entrega, desconto" : string.Empty;
+            var extraValues = coreSchema ? ", @Origem, @OrigemRef, @ConversaId, @ClienteId, @Subtotal, @TaxaEntrega, @Desconto" : string.Empty;
             var status = order.Rascunho ? StatusPedido.Rascunho : StatusPedido.Pendente;
 
             var pedidoId = await connection.ExecuteScalarAsync<int>($@"
@@ -129,7 +129,7 @@ UPDATE pedido
        entrega_rua = @Rua, entrega_numero = @Numero, entrega_bairro = @Bairro, entrega_cidade = @Cidade,
        entrega_estado = @Estado, entrega_cep = @Cep, tipo_pagamento = @TipoPagamento, troco = @Troco,
        observacoes = @Observacoes, codigo_entrega = @CodigoEntrega,
-       conversa_id = COALESCE(@ConversaId, conversa_id),
+       conversa_id = COALESCE(@ConversaId, conversa_id), cliente_id = COALESCE(@ClienteId, cliente_id),
        subtotal = @Subtotal, taxa_entrega = @TaxaEntrega, desconto = @Desconto
  WHERE id = @PedidoId AND id_estabelecimento = @EstabelecimentoId;", InsertParameters(estabelecimentoId, order, status, pedidoId), transaction);
 
@@ -210,6 +210,7 @@ UPDATE pedido
             order.Origem,
             order.OrigemRef,
             order.ConversaId,
+            order.ClienteId,
             order.Subtotal,
             order.TaxaEntrega,
             order.Desconto

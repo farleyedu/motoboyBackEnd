@@ -26,6 +26,7 @@ namespace APIBack.Service
         private readonly IDeliveryZonaRepository _zonas;
         private readonly IHorarioOperacaoRepository _horarios;
         private readonly IAtendenteConfirmacaoSender _confirmacaoAtendente;
+        private readonly IClienteCadastroRepository _clientes;
 
         public PedidoCoreService(
             IPedidoQueueRepository queue,
@@ -33,7 +34,8 @@ namespace APIBack.Service
             ICardapioRepository cardapio,
             IDeliveryZonaRepository zonas,
             IHorarioOperacaoRepository horarios,
-            IAtendenteConfirmacaoSender confirmacaoAtendente)
+            IAtendenteConfirmacaoSender confirmacaoAtendente,
+            IClienteCadastroRepository clientes)
         {
             _queue = queue;
             _restaurant = restaurant;
@@ -41,6 +43,7 @@ namespace APIBack.Service
             _zonas = zonas;
             _horarios = horarios;
             _confirmacaoAtendente = confirmacaoAtendente;
+            _clientes = clientes;
         }
 
         public async Task<CreatedPedidoDto> CreateAsync(Guid estabelecimentoId, int actorUserId, CreatePedidoRequest request, string? idempotencyKey, bool autoAtribuir = true)
@@ -152,6 +155,9 @@ namespace APIBack.Service
             }
 
             var manual = ManualOrderRules.Validate(request);
+            // Fase 3c (D14): todo pedido, de qualquer origem, fica ligado a um cliente de verdade
+            // (acha pelo telefone ou cria um novo); nunca mais nome/telefone soltos no pedido.
+            var clienteId = await _clientes.ResolverOuCriarAsync(estabelecimentoId, manual.TelefoneCliente, manual.NomeCliente);
             var hasItems = request.Itens is { Count: > 0 };
             var zonas = await _zonas.ListAtivasOrdenadasAsync(estabelecimentoId);
 
@@ -169,6 +175,7 @@ namespace APIBack.Service
                     Origem = origin,
                     OrigemRef = origemRef,
                     ConversaId = request.ConversaId,
+                    ClienteId = clienteId,
                     Rascunho = forcarRascunho ?? request.Rascunho,
                     Avisos = legacy.Warnings
                 };
@@ -203,6 +210,7 @@ namespace APIBack.Service
                 Origem = origin,
                 OrigemRef = origemRef,
                 ConversaId = request.ConversaId,
+                ClienteId = clienteId,
                 Rascunho = forcarRascunho ?? request.Rascunho,
                 Lines = priced.Lines,
                 Subtotal = priced.Subtotal,

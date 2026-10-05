@@ -14,5 +14,12 @@ namespace APIBack.Repository.Interface
         Task<ClienteDto?> UpdateAsync(Guid estabelecimentoId, Guid clienteId, ClienteInput input);
         /// <summary>Exclusao logica; false quando nao existe (ou ja estava inativo).</summary>
         Task<bool> DeactivateAsync(Guid estabelecimentoId, Guid clienteId);
+
+        /// <summary>
+        /// Acha o cliente ativo pelo telefone ou cria um novo (so com telefone/nome); null quando o telefone
+        /// e invalido/vazio. Preenche o nome so se o cliente existente ainda nao tiver um. Usado pelo nucleo
+        /// de pedido para ligar TODO pedido (de qualquer origem) a um cliente (fundacao de CRM, Fase 3c).
+        /// </summary>
+        Task<Guid?> ResolverOuCriarAsync(Guid estabelecimentoId, string? telefoneBruto, string? nome);
     }
 }

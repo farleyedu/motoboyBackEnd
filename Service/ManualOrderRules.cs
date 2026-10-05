@@ -30,6 +30,8 @@ namespace APIBack.Service
         public string Origem { get; init; } = APIBack.Model.Delivery.PedidoOrigem.Atendente;
         public string? OrigemRef { get; init; }
         public Guid? ConversaId { get; init; }
+        /// <summary>Cliente resolvido (achado por telefone ou criado) pelo nucleo; null quando o telefone e invalido (Fase 3c).</summary>
+        public Guid? ClienteId { get; init; }
         /// <summary>Pedido em montagem (status Rascunho).</summary>
         public bool Rascunho { get; init; }
         /// <summary>Linhas precificadas pelo servidor; vazio = pedido no formato antigo (items texto + valor).</summary>

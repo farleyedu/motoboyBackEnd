@@ -387,7 +387,9 @@ namespace APIBack.Tests.Unit
     {
         private static readonly Guid P1 = Guid.NewGuid();
 
-        private static (PedidoCoreService Service, Mock<IPedidoQueueRepository> Queue, Mock<ICardapioRepository> Menu) Create(
+        private static readonly Guid ClienteResolvido = Guid.NewGuid();
+
+        private static (PedidoCoreService Service, Mock<IPedidoQueueRepository> Queue, Mock<ICardapioRepository> Menu, Mock<IClienteCadastroRepository> Clientes) Create(
             RestaurantSettingsDto? restaurant = null, CardapioProduto? product = null)
         {
             var queue = new Mock<IPedidoQueueRepository>();
@@ -410,7 +412,11 @@ namespace APIBack.Tests.Unit
 
             var confirmacaoAtendente = new Mock<IAtendenteConfirmacaoSender>();
 
-            return (new PedidoCoreService(queue.Object, restaurantRepo.Object, menu.Object, zonas.Object, horarios.Object, confirmacaoAtendente.Object), queue, menu);
+            var clientes = new Mock<IClienteCadastroRepository>();
+            clientes.Setup(c => c.ResolverOuCriarAsync(It.IsAny<Guid>(), It.IsAny<string?>(), It.IsAny<string?>()))
+                .ReturnsAsync(ClienteResolvido);
+
+            return (new PedidoCoreService(queue.Object, restaurantRepo.Object, menu.Object, zonas.Object, horarios.Object, confirmacaoAtendente.Object, clientes.Object), queue, menu, clientes);
         }
 
         private static ManualOrder Captured(Mock<IPedidoQueueRepository> queue) =>
@@ -419,7 +425,7 @@ namespace APIBack.Tests.Unit
         [Fact]
         public async Task LegacyRequest_KeepsTypedValueAndText_NoCoreFields()
         {
-            var (service, queue, menu) = Create();
+            var (service, queue, menu, _) = Create();
             var request = CoreFixtures.Request();
             request.Items = "2 pizzas";
             request.Value = 80m;
@@ -434,6 +440,7 @@ namespace APIBack.Tests.Unit
             Assert.Empty(order.Lines);
             Assert.Null(order.Subtotal);
             Assert.False(order.NeedsCoreSchema);
+            Assert.Equal(ClienteResolvido, order.ClienteId); // D14: ate o formato antigo liga o pedido a um cliente
             menu.Verify(m => m.ListarProdutosPublicosPorIdsAsync(It.IsAny<Guid>(), It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<bool>()), Times.Never);
         }
 
@@ -441,7 +448,7 @@ namespace APIBack.Tests.Unit
         public async Task StructuredItems_ArePricedByTheServer_WithFeeAndTotal()
         {
             var product = CoreFixtures.Product(P1, 30m);
-            var (service, queue, menu) = Create(CoreFixtures.Restaurant(fixedFee: 6m), product);
+            var (service, queue, menu, _) = Create(CoreFixtures.Restaurant(fixedFee: 6m), product);
             var request = CoreFixtures.Request();
             request.Value = 1m; // o cliente tenta impor um total: e ignorado
             request.TipoPagamento = "PIX";
@@ -463,11 +470,11 @@ namespace APIBack.Tests.Unit
         [Fact]
         public async Task IdempotencyKey_BecomesOrigemRef_UnlessOrigemRefIsGiven()
         {
-            var (service, queue, _) = Create();
+            var (service, queue, _, _) = Create();
             await service.CreateAsync(CoreFixtures.Est, 1, CoreFixtures.Request(), "  chave-1 ");
             Assert.Equal("chave-1", Captured(queue).OrigemRef);
 
-            var (service2, queue2, _) = Create();
+            var (service2, queue2, _, _) = Create();
             var request = CoreFixtures.Request();
             request.OrigemRef = "ifood-99";
             await service2.CreateAsync(CoreFixtures.Est, 1, request, "chave-1");
@@ -478,7 +485,7 @@ namespace APIBack.Tests.Unit
         public async Task StrictOrigin_RequiresItems_AndRefusesFreeLinesAndFeeOverride()
         {
             var product = CoreFixtures.Product(P1, 30m);
-            var (service, _, _) = Create(product: product);
+            var (service, _, _, _) = Create(product: product);
 
             var noItems = CoreFixtures.Request();
             noItems.Origem = "ia_whatsapp";
@@ -502,7 +509,7 @@ namespace APIBack.Tests.Unit
         public async Task StrictOrigin_ClosedStoreOrBelowMinimum_IsBlocked_NothingIsSaved()
         {
             var product = CoreFixtures.Product(P1, 10m);
-            var (service, queue, _) = Create(CoreFixtures.Restaurant(accepts: false), product);
+            var (service, queue, _, _) = Create(CoreFixtures.Restaurant(accepts: false), product);
             var request = CoreFixtures.Request();
             request.Origem = "cardapio_web";
             request.Itens = new List<PedidoItemRequest> { new() { ProdutoId = P1, Quantidade = 1 } };
@@ -516,7 +523,7 @@ namespace APIBack.Tests.Unit
         public async Task Attendant_ViolationsBecomeWarnings_AndOrderIsStillCreated()
         {
             var product = CoreFixtures.Product(P1, 10m);
-            var (service, queue, _) = Create(CoreFixtures.Restaurant(accepts: false, minimum: 50m), product);
+            var (service, queue, _, _) = Create(CoreFixtures.Restaurant(accepts: false, minimum: 50m), product);
             var request = CoreFixtures.Request();
             request.Itens = new List<PedidoItemRequest> { new() { ProdutoId = P1, Quantidade = 1 } };
             request.TaxaEntrega = 3m;
@@ -543,7 +550,9 @@ namespace APIBack.Tests.Unit
             zonas.Setup(z => z.ListAtivasOrdenadasAsync(It.IsAny<Guid>())).ReturnsAsync(Array.Empty<DeliveryZonaDto>());
             var horarios = new Mock<IHorarioOperacaoRepository>();
             horarios.Setup(h => h.EstaAbertoAgoraAsync(It.IsAny<Guid>(), It.IsAny<DateTimeOffset>(), It.IsAny<string>())).ReturnsAsync(true);
-            var service = new PedidoCoreService(queue.Object, restaurantRepo.Object, menu.Object, zonas.Object, horarios.Object, confirmacaoAtendente.Object);
+            var clientes = new Mock<IClienteCadastroRepository>();
+            clientes.Setup(c => c.ResolverOuCriarAsync(It.IsAny<Guid>(), It.IsAny<string?>(), It.IsAny<string?>())).ReturnsAsync(ClienteResolvido);
+            var service = new PedidoCoreService(queue.Object, restaurantRepo.Object, menu.Object, zonas.Object, horarios.Object, confirmacaoAtendente.Object, clientes.Object);
 
             await service.CreateAsync(CoreFixtures.Est, 1, CoreFixtures.Request(), null, autoAtribuir: false);
 
@@ -565,7 +574,9 @@ namespace APIBack.Tests.Unit
             zonas.Setup(z => z.ListAtivasOrdenadasAsync(It.IsAny<Guid>())).ReturnsAsync(Array.Empty<DeliveryZonaDto>());
             var horarios = new Mock<IHorarioOperacaoRepository>();
             horarios.Setup(h => h.EstaAbertoAgoraAsync(It.IsAny<Guid>(), It.IsAny<DateTimeOffset>(), It.IsAny<string>())).ReturnsAsync(true);
-            var service = new PedidoCoreService(queue.Object, restaurantRepo.Object, menu.Object, zonas.Object, horarios.Object, confirmacaoAtendente.Object);
+            var clientes = new Mock<IClienteCadastroRepository>();
+            clientes.Setup(c => c.ResolverOuCriarAsync(It.IsAny<Guid>(), It.IsAny<string?>(), It.IsAny<string?>())).ReturnsAsync(ClienteResolvido);
+            var service = new PedidoCoreService(queue.Object, restaurantRepo.Object, menu.Object, zonas.Object, horarios.Object, confirmacaoAtendente.Object, clientes.Object);
             var request = CoreFixtures.Request();
             request.Rascunho = true;
 
@@ -575,9 +586,36 @@ namespace APIBack.Tests.Unit
         }
 
         [Fact]
+        public async Task NoValidPhone_ResolvesNoClient_ButOrderStillSucceeds()
+        {
+            var confirmacaoAtendente = new Mock<IAtendenteConfirmacaoSender>();
+            var queue = new Mock<IPedidoQueueRepository>();
+            queue.Setup(q => q.GetSettingsAsync(It.IsAny<Guid>())).ReturnsAsync(new DeliverySettingsDto { DefaultDeliveryMinutes = 45 });
+            queue.Setup(q => q.CreatePedidoAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<ManualOrder>()))
+                .ReturnsAsync((Guid _, int _, ManualOrder o) => new CreatedPedidoDto { Id = 10, Total = o.Value });
+            var restaurantRepo = new Mock<IRestaurantSettingsRepository>();
+            restaurantRepo.Setup(r => r.GetAsync(It.IsAny<Guid>())).ReturnsAsync(CoreFixtures.Restaurant());
+            var menu = new Mock<ICardapioRepository>();
+            var zonas = new Mock<IDeliveryZonaRepository>();
+            zonas.Setup(z => z.ListAtivasOrdenadasAsync(It.IsAny<Guid>())).ReturnsAsync(Array.Empty<DeliveryZonaDto>());
+            var horarios = new Mock<IHorarioOperacaoRepository>();
+            horarios.Setup(h => h.EstaAbertoAgoraAsync(It.IsAny<Guid>(), It.IsAny<DateTimeOffset>(), It.IsAny<string>())).ReturnsAsync(true);
+            // Telefone invalido/ausente: o repositorio devolve null (nenhum cliente achado/criado).
+            var clientes = new Mock<IClienteCadastroRepository>();
+            clientes.Setup(c => c.ResolverOuCriarAsync(It.IsAny<Guid>(), It.IsAny<string?>(), It.IsAny<string?>())).ReturnsAsync((Guid?)null);
+            var service = new PedidoCoreService(queue.Object, restaurantRepo.Object, menu.Object, zonas.Object, horarios.Object, confirmacaoAtendente.Object, clientes.Object);
+            var request = CoreFixtures.Request();
+            request.TelefoneCliente = null;
+
+            await service.CreateAsync(CoreFixtures.Est, 1, request, null);
+
+            Assert.Null(Captured(queue).ClienteId);
+        }
+
+        [Fact]
         public async Task UnknownOrigin_IsRejected()
         {
-            var (service, _, _) = Create();
+            var (service, _, _, _) = Create();
             var request = CoreFixtures.Request();
             request.Origem = "telepatia";
             var ex = await Assert.ThrowsAsync<DeliveryDomainException>(() => service.CreateAsync(CoreFixtures.Est, 1, request, null));
@@ -587,7 +625,7 @@ namespace APIBack.Tests.Unit
         [Fact]
         public async Task DraftAndConversation_AreCarriedToTheRepository()
         {
-            var (service, queue, _) = Create();
+            var (service, queue, _, _) = Create();
             var conversa = Guid.NewGuid();
             var request = CoreFixtures.Request();
             request.Rascunho = true;
@@ -599,12 +637,13 @@ namespace APIBack.Tests.Unit
             Assert.True(order.Rascunho);
             Assert.Equal(conversa, order.ConversaId);
             Assert.True(order.NeedsCoreSchema);
+            Assert.Equal(ClienteResolvido, order.ClienteId);
         }
 
         [Fact]
         public async Task DefaultForecast_ComesFromDeliverySettings()
         {
-            var (service, queue, _) = Create();
+            var (service, queue, _, _) = Create();
             await service.CreateAsync(CoreFixtures.Est, 1, CoreFixtures.Request(), null);
             Assert.Equal(45, Captured(queue).PrevisaoMinutos);
         }
@@ -612,7 +651,7 @@ namespace APIBack.Tests.Unit
         [Fact]
         public async Task Update_DropsOrigemRef_AndConfirmUsesDefaultMinutes()
         {
-            var (service, queue, _) = Create();
+            var (service, queue, _, clientes) = Create();
             queue.Setup(q => q.UpdatePedidoAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<ManualOrder>()))
                 .ReturnsAsync(new CreatedPedidoDto { Id = 7 });
             queue.Setup(q => q.ConfirmPedidoAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<int>()))
@@ -623,8 +662,9 @@ namespace APIBack.Tests.Unit
             await service.UpdateAsync(CoreFixtures.Est, 1, 7, request);
             await service.ConfirmAsync(CoreFixtures.Est, 1, 7);
 
-            queue.Verify(q => q.UpdatePedidoAsync(CoreFixtures.Est, 1, 7, It.Is<ManualOrder>(o => o.OrigemRef == null)), Times.Once);
+            queue.Verify(q => q.UpdatePedidoAsync(CoreFixtures.Est, 1, 7, It.Is<ManualOrder>(o => o.OrigemRef == null && o.ClienteId == ClienteResolvido)), Times.Once);
             queue.Verify(q => q.ConfirmPedidoAsync(CoreFixtures.Est, 1, 7, 45), Times.Once);
+            clientes.Verify(c => c.ResolverOuCriarAsync(CoreFixtures.Est, request.TelefoneCliente, request.NomeCliente), Times.Once);
             await Assert.ThrowsAsync<DeliveryDomainException>(() => service.ConfirmAsync(CoreFixtures.Est, 1, 0));
         }
 

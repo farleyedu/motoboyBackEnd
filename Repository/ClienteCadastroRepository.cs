@@ -201,6 +201,47 @@ UPDATE clientes SET ativo = FALSE, data_atualizacao = NOW()
             return affected > 0;
         }
 
+        public async Task<Guid?> ResolverOuCriarAsync(Guid estabelecimentoId, string? telefoneBruto, string? nome)
+        {
+            var telefone = PhoneKey.ToE164(telefoneBruto);
+            if (telefone == null) return null;
+            var nomeLimpo = string.IsNullOrWhiteSpace(nome) ? null : nome.Trim();
+
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+
+            await LockPhoneAsync(connection, transaction, estabelecimentoId, telefone);
+
+            var existing = await connection.QueryFirstOrDefaultAsync<(Guid Id, string? Nome)?>(@"
+SELECT id, nome FROM clientes
+ WHERE id_estabelecimento = @EstabelecimentoId AND telefone_e164 = @Telefone AND ativo = TRUE
+ ORDER BY data_criacao
+ LIMIT 1;", new { EstabelecimentoId = estabelecimentoId, Telefone = telefone }, transaction);
+
+            Guid clienteId;
+            if (existing != null)
+            {
+                clienteId = existing.Value.Id;
+                if (nomeLimpo != null && string.IsNullOrWhiteSpace(existing.Value.Nome))
+                {
+                    await connection.ExecuteAsync(
+                        "UPDATE clientes SET nome = @Nome, data_atualizacao = NOW() WHERE id = @Id;",
+                        new { Nome = nomeLimpo, Id = clienteId }, transaction);
+                }
+            }
+            else
+            {
+                clienteId = Guid.NewGuid();
+                await connection.ExecuteAsync(@"
+INSERT INTO clientes (id, id_estabelecimento, telefone_e164, nome, ativo, data_criacao, data_atualizacao)
+VALUES (@Id, @EstabelecimentoId, @Telefone, @Nome, TRUE, NOW(), NOW());",
+                    new { Id = clienteId, EstabelecimentoId = estabelecimentoId, Telefone = telefone, Nome = nomeLimpo }, transaction);
+            }
+
+            await transaction.CommitAsync();
+            return clienteId;
+        }
+
         // Serializa cadastros do mesmo telefone no mesmo estabelecimento (a tabela pode nao ter indice unico).
         private static Task LockPhoneAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, Guid estabelecimentoId, string phone) =>
             connection.ExecuteAsync("SELECT pg_advisory_xact_lock(hashtext(@Key));",
