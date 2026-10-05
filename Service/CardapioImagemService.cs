@@ -44,12 +44,18 @@ namespace APIBack.Service
         private readonly IWebHostEnvironment _environment;
         private readonly IConfiguration _configuration;
         private readonly IHttpClientFactory _httpClientFactory;
+        private readonly IHttpContextAccessor _httpContextAccessor;
 
-        public CardapioImagemService(IWebHostEnvironment environment, IConfiguration configuration, IHttpClientFactory httpClientFactory)
+        public CardapioImagemService(
+            IWebHostEnvironment environment,
+            IConfiguration configuration,
+            IHttpClientFactory httpClientFactory,
+            IHttpContextAccessor httpContextAccessor)
         {
             _environment = environment;
             _configuration = configuration;
             _httpClientFactory = httpClientFactory;
+            _httpContextAccessor = httpContextAccessor;
         }
 
         /// <summary>Foto enviada do computador do atendente (formulario multipart).</summary>
@@ -258,15 +264,37 @@ namespace APIBack.Service
             return false;
         }
 
+        /// <summary>
+        /// App:BaseUrl so vem preenchido em producao (em dev o appsettings guarda o placeholder
+        /// "__SET_IN_ENV__", que nenhum .env local troca). Sem ele, a URL relativa que sobrava aqui era
+        /// resolvida pelo NAVEGADOR a partir do dominio do PAINEL (zippy-admin), nao do backend -- dava 404 e
+        /// a foto aparecia em branco. Request.Scheme/Host sempre aponta pro host que respondeu essa
+        /// requisicao, local ou em producao, entao serve de base confiavel quando App:BaseUrl nao esta setado.
+        /// </summary>
         private string BuildPublicUrl(string relativePath)
         {
-            var baseUrl = _configuration["App:BaseUrl"]?.TrimEnd('/');
+            var baseUrl = ConfiguredBaseUrl();
             if (string.IsNullOrWhiteSpace(baseUrl))
             {
-                baseUrl = _configuration["ASPNETCORE_URLS"]?.Split(';')[0].TrimEnd('/');
+                var request = _httpContextAccessor.HttpContext?.Request;
+                if (request != null)
+                {
+                    baseUrl = $"{request.Scheme}://{request.Host}";
+                }
             }
 
-            return !string.IsNullOrWhiteSpace(baseUrl) ? $"{baseUrl}/{relativePath}" : "/" + relativePath;
+            return !string.IsNullOrWhiteSpace(baseUrl) ? $"{baseUrl.TrimEnd('/')}/{relativePath}" : "/" + relativePath;
+        }
+
+        private string? ConfiguredBaseUrl()
+        {
+            var configured = _configuration["App:BaseUrl"];
+            if (string.IsNullOrWhiteSpace(configured) || configured.Contains("__SET_IN_ENV__", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            return configured;
         }
 
         private static RequestValidationException Invalida(string message) =>
