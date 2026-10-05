@@ -258,6 +258,8 @@ SELECT EXISTS (SELECT 1 FROM atendimento_respostas_rapidas
             public string? PrevisaoRaw { get; set; }
             public decimal? Total { get; set; }
             public string? Loja { get; set; }
+            public string? Items { get; set; }
+            public string? EnderecoEntrega { get; set; }
         }
 
         public async Task<IReadOnlyDictionary<string, string?>> GetPedidoVariablesAsync(Guid estabelecimentoId, int? pedidoId)
@@ -272,7 +274,8 @@ SELECT EXISTS (SELECT 1 FROM atendimento_respostas_rapidas
             var row = await connection.QuerySingleOrDefaultAsync<PedidoVarsRow>($@"
 SELECT p.id AS Id, p.nome_cliente::text AS NomeCliente, m.nome::text AS MotoboyNome,
        p.previsao_entrega::text AS PrevisaoRaw,
-       CASE WHEN p.value::text ~ {numeric} THEN p.value::text::NUMERIC END AS Total
+       CASE WHEN p.value::text ~ {numeric} THEN p.value::text::NUMERIC END AS Total,
+       p.items::text AS Items, p.endereco_entrega::text AS EnderecoEntrega
   FROM pedido p LEFT JOIN motoboy m ON m.id = p.motoboy_responsavel
  WHERE p.id = @PedidoId AND p.id_estabelecimento = @EstabelecimentoId;",
                 new { PedidoId = pedidoId.Value, EstabelecimentoId = estabelecimentoId })
@@ -284,6 +287,8 @@ SELECT p.id AS Id, p.nome_cliente::text AS NomeCliente, m.nome::text AS MotoboyN
             values["motoboy"] = row.MotoboyNome;
             values["previsao"] = QuickReplyRenderer.FormatTime(previsao);
             values["total"] = QuickReplyRenderer.FormatMoney(row.Total);
+            values["itens"] = row.Items;
+            values["endereco"] = row.EnderecoEntrega;
             return values;
         }
 
@@ -434,6 +439,24 @@ VALUES (@Id, @Id, @EstabelecimentoId, @ClienteId, 'whatsapp'::canal_chat_enum, '
                 Telefone = e164,
                 Criada = true
             };
+        }
+
+        public async Task<Guid> EnsureConversaParaClienteAsync(Guid estabelecimentoId, Guid clienteId)
+        {
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            var existing = await connection.ExecuteScalarAsync<Guid?>(
+                "SELECT id FROM conversas WHERE id_cliente = @ClienteId AND id_estabelecimento = @EstabelecimentoId ORDER BY data_criacao LIMIT 1;",
+                new { ClienteId = clienteId, EstabelecimentoId = estabelecimentoId });
+            if (existing.HasValue) return existing.Value;
+
+            var conversaId = Guid.NewGuid();
+            await connection.ExecuteAsync(@"
+INSERT INTO conversas (id, id_conversa_grupo, id_estabelecimento, id_cliente, canal, estado, status_atendimento,
+                       qtd_nao_lidas, data_criacao, data_atualizacao)
+VALUES (@Id, @Id, @EstabelecimentoId, @ClienteId, 'whatsapp'::canal_chat_enum, 'em_atendimento'::estado_conversa_enum,
+        'aguardando_interno', 0, NOW(), NOW());",
+                new { Id = conversaId, EstabelecimentoId = estabelecimentoId, ClienteId = clienteId });
+            return conversaId;
         }
 
         // =====================================================================

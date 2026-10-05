@@ -44,6 +44,16 @@ namespace APIBack.Controllers
                 return new { id, status = CardapioPedidoStatus.Recusado };
             });
 
+        /// <summary>Disparo manual: atendente/cozinha avisa que o pedido de retirada ja esta pronto.</summary>
+        [HttpPost("{id:guid}/pronto-retirada")]
+        [RequirePermission("Delivery", "criar_pedido")]
+        public Task<IActionResult> ProntoParaRetirada(Guid id) =>
+            ExecuteAsync(async (estabelecimentoId, _) =>
+            {
+                await _service.ProntoParaRetiradaAsync(estabelecimentoId, id);
+                return new { id };
+            });
+
         private async Task<IActionResult> ExecuteAsync<T>(Func<Guid, int, Task<T>> action)
         {
             var userId = HttpContext.GetUserId() ?? 0;

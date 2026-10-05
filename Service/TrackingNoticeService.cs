@@ -88,6 +88,61 @@ namespace APIBack.Service
             return attempted;
         }
 
+        /// <summary>
+        /// Disparo manual: quem acompanha a rota avisa que o motoboy chegou (o app do motoboy ainda nao esta
+        /// integrado). Ao contrario do poll automatico, falha aqui lanca pro atendente ver na hora.
+        /// </summary>
+        public async Task SendArrivedAsync(Guid estabelecimentoId, int pedidoId)
+        {
+            var settings = await _rastreio.GetSettingsAsync(estabelecimentoId);
+            if (!settings.ArrivedEnabled)
+            {
+                throw new DeliveryDomainException(409, "NOTICE_DISABLED", "O aviso de chegada esta desligado nas configuracoes.");
+            }
+
+            var reserved = await _rastreio.TryReserveAsync(pedidoId, NoticeTypes.Arrived);
+            if (!reserved.HasValue)
+            {
+                throw new DeliveryDomainException(409, "NOTICE_ALREADY_SENT", "Esse aviso ja foi enviado para este pedido.");
+            }
+
+            try
+            {
+                var conversa = await _atendimento.GetConversaDoPedidoAsync(estabelecimentoId, pedidoId);
+                if (conversa.ConversaId == null)
+                {
+                    await _rastreio.MarkAsync(reserved.Value, NoticeStatuses.Ignored, "sem_conversa", null);
+                    throw new DeliveryDomainException(409, "NOTICE_NO_CONVERSATION", "Este pedido nao tem conversa vinculada.");
+                }
+                if (!conversa.JanelaAberta)
+                {
+                    await _rastreio.MarkAsync(reserved.Value, NoticeStatuses.Failed, "fora_da_janela_sem_template", null);
+                    throw new DeliveryDomainException(409, "NOTICE_WINDOW_CLOSED", "A janela de 24h do WhatsApp esta fechada para este cliente.");
+                }
+
+                var values = await _atendimento.GetPedidoVariablesAsync(estabelecimentoId, pedidoId);
+                var rendered = QuickReplyRenderer.Render(settings.ArrivedText, values);
+                if (rendered.Pendentes.Count > 0)
+                {
+                    await _rastreio.MarkAsync(reserved.Value, NoticeStatuses.Failed, "variavel_sem_valor:" + string.Join(",", rendered.Pendentes), null);
+                    throw new DeliveryDomainException(422, "NOTICE_MISSING_VARIABLE",
+                        "O texto do aviso tem uma variavel sem valor: " + string.Join(", ", rendered.Pendentes));
+                }
+
+                var messageId = await _sender.SendAsync(conversa.ConversaId.Value, estabelecimentoId, rendered.Texto);
+                await _rastreio.MarkAsync(reserved.Value, NoticeStatuses.Sent, null, messageId);
+            }
+            catch (DeliveryDomainException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                await _rastreio.MarkAsync(reserved.Value, NoticeStatuses.Failed, "envio: " + ex.Message, null);
+                throw;
+            }
+        }
+
         private async Task RecordIgnoredAsync(int pedidoId, string type, string reason)
         {
             var id = await _rastreio.TryReserveAsync(pedidoId, type);

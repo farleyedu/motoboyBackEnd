@@ -144,8 +144,6 @@ namespace APIBack.Tests.Unit
 
     public class CardapioConfirmacaoTextosTests
     {
-        private static readonly string[] Linhas = { "2x X-Bacon (+ Bacon extra)", "1x Coca 2L" };
-
         [Theory]
         [InlineData(64.9, "R$ 64,90")]
         [InlineData(1234.5, "R$ 1.234,50")]
@@ -160,40 +158,6 @@ namespace APIBack.Tests.Unit
         {
             Assert.Equal("1x Coca 2L", CardapioConfirmacaoRules.LinhaDoItem(1, "Coca 2L", Array.Empty<string>()));
             Assert.Equal("2x X-Bacon (+ Bacon extra, Ovo)", CardapioConfirmacaoRules.LinhaDoItem(2, "X-Bacon", new[] { "Bacon extra", "Ovo" }));
-        }
-
-        [Fact]
-        public void Received_message_names_the_store_lists_items_and_lets_a_wrong_owner_ignore_it()
-        {
-            var texto = CardapioConfirmacaoRules.PedidoRecebido("Maria Souza", "Pizza Bom", Linhas, 64.9m);
-
-            Assert.Contains("Maria", texto);
-            Assert.DoesNotContain("Souza", texto);
-            Assert.Contains("Pizza Bom", texto);
-            Assert.Contains("2x X-Bacon (+ Bacon extra)", texto);
-            Assert.Contains("Total: R$ 64,90", texto);
-            Assert.Contains("ignorar", texto);
-        }
-
-        [Fact]
-        public void Code_confirmed_message_does_not_ask_to_ignore()
-        {
-            var texto = CardapioConfirmacaoRules.CodigoConfirmado("Maria", "Pizza Bom", Linhas, 64.9m);
-
-            Assert.Contains("Código confirmado", texto);
-            Assert.DoesNotContain("ignorar", texto);
-        }
-
-        [Fact]
-        public void Accepted_message_differs_for_delivery_and_pickup_and_shows_the_order_number()
-        {
-            var entrega = CardapioConfirmacaoRules.PedidoAceito("Maria", "Pizza Bom", 77, entrega: true);
-            var retirada = CardapioConfirmacaoRules.PedidoAceito("Maria", "Pizza Bom", null, entrega: false);
-
-            Assert.Contains("#77", entrega);
-            Assert.DoesNotContain("retirar", entrega);
-            Assert.DoesNotContain("#", retirada);
-            Assert.Contains("retirar", retirada);
         }
 
         [Fact]
@@ -215,9 +179,9 @@ namespace APIBack.Tests.Unit
         [Fact]
         public void Name_fallback_never_leaves_a_hole_in_the_sentence()
         {
-            var texto = CardapioConfirmacaoRules.PedidoRecebido("  ", "Pizza Bom", Linhas, 10m);
+            var texto = CardapioConfirmacaoRules.PedidoRecusado("  ", "Pizza Bom", null);
 
-            Assert.StartsWith("Olá, tudo bem!", texto);
+            Assert.StartsWith("tudo bem,", texto);
             Assert.Contains("Pizza Bom", texto);
         }
     }

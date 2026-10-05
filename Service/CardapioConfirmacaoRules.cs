@@ -118,30 +118,8 @@ namespace APIBack.Service
                 : $"{quantidade}x {nome} (+ {string.Join(", ", extras)})";
         }
 
-        /// <summary>Janela aberta: avisa que o pedido foi ao restaurante. Quem nao fez o pedido pode ignorar.</summary>
-        public static string PedidoRecebido(string nomeCliente, string loja, IEnumerable<string> linhas, decimal total) =>
-            $"Olá, {PrimeiroNome(nomeCliente)}! Recebemos seu pedido pelo cardápio da {loja}.\n\n" +
-            $"{Resumo(linhas, total)}\n\n" +
-            "Já enviamos para o restaurante. Assim que for aceito, avisamos por aqui.\n" +
-            "Se você não fez esse pedido, é só ignorar esta mensagem.";
-
-        /// <summary>Janela fechada: o cliente mandou o codigo e o pedido foi ao restaurante.</summary>
-        public static string CodigoConfirmado(string nomeCliente, string loja, IEnumerable<string> linhas, decimal total) =>
-            $"Código confirmado, {PrimeiroNome(nomeCliente)}! Seu pedido da {loja} foi enviado ao restaurante.\n\n" +
-            $"{Resumo(linhas, total)}\n\n" +
-            "Assim que for aceito, avisamos por aqui.";
-
         public static string CodigoInvalido() =>
             "Não encontrei esse código ou ele expirou. Volte ao cardápio e finalize o pedido de novo para gerar um código novo.";
-
-        public static string PedidoAceito(string nomeCliente, string loja, int? numeroPedido, bool entrega)
-        {
-            var numero = numeroPedido.HasValue ? $" (pedido #{numeroPedido})" : string.Empty;
-            var proximo = entrega
-                ? "Já estamos cuidando dele e avisamos por aqui quando houver novidade."
-                : "Já estamos preparando. Pode vir retirar na loja.";
-            return $"{PrimeiroNome(nomeCliente)}, seu pedido na {loja} foi aceito{numero}! {proximo}";
-        }
 
         public static string PedidoRecusado(string nomeCliente, string loja, string? motivo)
         {
@@ -155,9 +133,6 @@ namespace APIBack.Service
             var texto = valor.ToString("N2", CultureInfo.InvariantCulture);
             return "R$ " + texto.Replace(',', '§').Replace('.', ',').Replace('§', '.');
         }
-
-        private static string Resumo(IEnumerable<string> linhas, decimal total) =>
-            string.Join("\n", linhas) + $"\nTotal: {Dinheiro(total)}";
 
         private static string PrimeiroNome(string? nome)
         {

@@ -22,6 +22,9 @@ namespace APIBack.Automation.Infra
     {
         private const string WindowExpiredReason = "Janela de 24 horas do WhatsApp expirada";
         private const string WindowExpiredBlockCode = "whatsapp_window_expired";
+        /// <summary>Contato criado manualmente (ex.: tela de Clientes) que ainda nao mandou nenhuma mensagem: nunca
+        /// houve janela de 24h aberta, entao o atendente nao pode iniciar a conversa por aqui.</summary>
+        private const string NeverContactedBlockCode = "sem_mensagem_do_cliente";
         private static (bool PhoneNumberId, bool DisplayPhoneNumber)? _cachedWabaPhoneColumns;
 
         private const string SelectConversation = @"
@@ -1272,6 +1275,9 @@ UPDATE conversas c
             var manualReplyAllowed =
                 IsHumanStatus(status) &&
                 row.IdAgenteAtribuido.HasValue;
+            // Conversa criada so pelo cadastro manual do cliente (tela de Clientes): nunca chegou mensagem dele,
+            // entao nunca existiu janela de 24h, mesmo que um atendente assuma a conversa depois.
+            var neverContacted = !row.DataUltimaMensagem.HasValue;
             var unreadCount = IsCentral(idEstabelecimento) ? await GroupUnreadCountAsync(cx, row.IdConversaGrupo) : row.QtdNaoLidas;
             return new ConversationControlDto
             {
@@ -1282,9 +1288,10 @@ UPDATE conversas c
                 CanBotReply =
                     (string.Equals(status, "com_bot", StringComparison.OrdinalIgnoreCase) || waitingInternalWithoutAgent) &&
                     !closed &&
-                    !windowExpired,
-                CanManualReply = manualReplyAllowed && !closed && !windowExpired,
-                SendBlockReasonCode = ResolveSendBlockReasonCode(row, status),
+                    !windowExpired &&
+                    !neverContacted,
+                CanManualReply = manualReplyAllowed && !closed && !windowExpired && !neverContacted,
+                SendBlockReasonCode = neverContacted ? NeverContactedBlockCode : ResolveSendBlockReasonCode(row, status),
                 AssignedAgentId = row.IdAgenteAtribuido,
                 AssignedAgentName = row.AgenteNome,
                 LastInteractionAt = row.DataUltimaMensagem ?? row.DataAtualizacao,

@@ -450,6 +450,66 @@ namespace APIBack.Tests.Unit
             Assert.Equal("Diego", TrackingNoticeService.FirstName("Diego"));
             Assert.Null(TrackingNoticeService.FirstName("  "));
         }
+
+        // ---- Disparo manual "chegou" --------------------------------------------------------------
+
+        private void SetupArrivedDependencies(NoticeSettings? settings = null, IReadOnlyDictionary<string, string?>? values = null)
+        {
+            _rastreio.Setup(r => r.GetSettingsAsync(It.IsAny<Guid>())).ReturnsAsync(settings ?? new NoticeSettings());
+            _atendimento.Setup(a => a.GetPedidoVariablesAsync(It.IsAny<Guid>(), It.IsAny<int?>()))
+                .ReturnsAsync(values ?? new Dictionary<string, string?> { ["cliente"] = "Maria", ["loja"] = "Sabor", ["motoboy"] = "Diego" });
+        }
+
+        [Fact]
+        public async Task Arrived_notice_is_sent_once_and_reserved()
+        {
+            var service = Service();
+            SetupArrivedDependencies();
+
+            await service.SendArrivedAsync(Guid.NewGuid(), 42);
+
+            _sender.Verify(s => s.SendAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.Is<string>(t => t.Contains("Maria") && t.Contains("Diego"))), Times.Once);
+            Assert.Contains(_marks, m => m.Status == "enviada");
+        }
+
+        [Fact]
+        public async Task Arrived_notice_throws_when_disabled_in_settings()
+        {
+            var service = Service();
+            SetupArrivedDependencies(new NoticeSettings { ArrivedEnabled = false });
+
+            var ex = await Assert.ThrowsAsync<DeliveryDomainException>(() => service.SendArrivedAsync(Guid.NewGuid(), 42));
+
+            Assert.Equal("NOTICE_DISABLED", ex.Code);
+            _sender.Verify(s => s.SendAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>()), Times.Never);
+        }
+
+        [Fact]
+        public async Task Arrived_notice_throws_when_already_sent()
+        {
+            var service = Service();
+            SetupArrivedDependencies();
+            _rastreio.Setup(r => r.TryReserveAsync(It.IsAny<int>(), NoticeTypes.Arrived)).ReturnsAsync((long?)null);
+
+            var ex = await Assert.ThrowsAsync<DeliveryDomainException>(() => service.SendArrivedAsync(Guid.NewGuid(), 42));
+
+            Assert.Equal("NOTICE_ALREADY_SENT", ex.Code);
+        }
+
+        [Fact]
+        public async Task Arrived_notice_throws_and_records_failure_when_window_is_closed()
+        {
+            var service = Service();
+            SetupArrivedDependencies();
+            _atendimento.Setup(a => a.GetConversaDoPedidoAsync(It.IsAny<Guid>(), It.IsAny<int>()))
+                .ReturnsAsync(new ConversaDoPedidoDto { ConversaId = Guid.NewGuid(), JanelaAberta = false });
+
+            var ex = await Assert.ThrowsAsync<DeliveryDomainException>(() => service.SendArrivedAsync(Guid.NewGuid(), 42));
+
+            Assert.Equal("NOTICE_WINDOW_CLOSED", ex.Code);
+            Assert.Contains(_marks, m => m.Status == "falhou" && m.Motivo == "fora_da_janela_sem_template");
+            _sender.Verify(s => s.SendAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>()), Times.Never);
+        }
     }
 
     public class AvisosMigrationTests
@@ -471,6 +531,23 @@ namespace APIBack.Tests.Unit
             Assert.Contains("compartilhar_localizacao_cliente BOOLEAN NOT NULL DEFAULT FALSE", sql);
             Assert.Contains("notify_arriving_minutes INTEGER NOT NULL DEFAULT 5", sql);
             Assert.Contains("notify_arriving_radius_m INTEGER NOT NULL DEFAULT 400", sql);
+            Assert.DoesNotContain("DROP TABLE", sql, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("DROP COLUMN", sql, StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public void Expanded_notices_migration_adds_new_types_without_dropping_anything()
+        {
+            var sql = Read("20261005_03_avisos_pedido.sql");
+
+            Assert.Contains("notify_received_enabled BOOLEAN NOT NULL DEFAULT TRUE", sql);
+            Assert.Contains("notify_arrived_enabled BOOLEAN NOT NULL DEFAULT TRUE", sql);
+            Assert.Contains("notify_confirmacao_atendente_enabled BOOLEAN NOT NULL DEFAULT TRUE", sql);
+            Assert.Contains("notify_pronto_retirada_enabled BOOLEAN NOT NULL DEFAULT TRUE", sql);
+            Assert.Contains("'pedido_enviado_loja'", sql);
+            Assert.Contains("'pedido_confirmado_loja'", sql);
+            Assert.Contains("'chegou'", sql);
+            Assert.Contains("'confirmacao_atendente'", sql);
             Assert.DoesNotContain("DROP TABLE", sql, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain("DROP COLUMN", sql, StringComparison.OrdinalIgnoreCase);
         }

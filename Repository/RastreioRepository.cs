@@ -48,12 +48,22 @@ SELECT to_regclass('pedido_notificacao') IS NOT NULL AND to_regclass('pedido_ras
 
         private sealed class SettingsRow
         {
+            public bool ReceivedEnabled { get; set; }
+            public bool AcceptedEnabled { get; set; }
             public bool DispatchEnabled { get; set; }
             public bool ArrivingEnabled { get; set; }
             public int ArrivingMinutes { get; set; }
             public int ArrivingRadiusM { get; set; }
+            public bool ArrivedEnabled { get; set; }
+            public bool ConfirmacaoAtendenteEnabled { get; set; }
+            public bool ProntoRetiradaEnabled { get; set; }
+            public string? TemplateReceived { get; set; }
+            public string? TemplateAccepted { get; set; }
             public string? TemplateDispatch { get; set; }
             public string? TemplateArriving { get; set; }
+            public string? TemplateArrived { get; set; }
+            public string? TemplateConfirmacaoAtendente { get; set; }
+            public string? TemplateProntoRetirada { get; set; }
         }
 
         public async Task<NoticeSettings> GetSettingsAsync(Guid estabelecimentoId)
@@ -61,17 +71,33 @@ SELECT to_regclass('pedido_notificacao') IS NOT NULL AND to_regclass('pedido_ras
             await using var connection = await _dataSource.OpenConnectionAsync();
             if (!await HasSchemaAsync(connection)) return new NoticeSettings();
             var row = await connection.QuerySingleOrDefaultAsync<SettingsRow>(@"
-SELECT notify_dispatch_enabled AS DispatchEnabled, notify_arriving_enabled AS ArrivingEnabled,
+SELECT notify_received_enabled AS ReceivedEnabled, notify_accepted_enabled AS AcceptedEnabled,
+       notify_dispatch_enabled AS DispatchEnabled, notify_arriving_enabled AS ArrivingEnabled,
        notify_arriving_minutes AS ArrivingMinutes, notify_arriving_radius_m AS ArrivingRadiusM,
-       notify_template_dispatch AS TemplateDispatch, notify_template_arriving AS TemplateArriving
+       notify_arrived_enabled AS ArrivedEnabled,
+       notify_confirmacao_atendente_enabled AS ConfirmacaoAtendenteEnabled,
+       notify_pronto_retirada_enabled AS ProntoRetiradaEnabled,
+       notify_template_received AS TemplateReceived, notify_template_accepted AS TemplateAccepted,
+       notify_template_dispatch AS TemplateDispatch, notify_template_arriving AS TemplateArriving,
+       notify_template_arrived AS TemplateArrived,
+       notify_template_confirmacao_atendente AS TemplateConfirmacaoAtendente,
+       notify_template_pronto_retirada AS TemplateProntoRetirada
   FROM delivery_settings WHERE estabelecimento_id = @EstabelecimentoId;", new { EstabelecimentoId = estabelecimentoId });
             return row == null
                 ? new NoticeSettings()
                 : new NoticeSettings
                 {
+                    ReceivedEnabled = row.ReceivedEnabled, AcceptedEnabled = row.AcceptedEnabled,
                     DispatchEnabled = row.DispatchEnabled, ArrivingEnabled = row.ArrivingEnabled,
                     ArrivingMinutes = row.ArrivingMinutes, ArrivingRadiusM = row.ArrivingRadiusM,
-                    TemplateDispatch = row.TemplateDispatch, TemplateArriving = row.TemplateArriving
+                    ArrivedEnabled = row.ArrivedEnabled,
+                    ConfirmacaoAtendenteEnabled = row.ConfirmacaoAtendenteEnabled,
+                    ProntoRetiradaEnabled = row.ProntoRetiradaEnabled,
+                    TemplateReceived = row.TemplateReceived, TemplateAccepted = row.TemplateAccepted,
+                    TemplateDispatch = row.TemplateDispatch, TemplateArriving = row.TemplateArriving,
+                    TemplateArrived = row.TemplateArrived,
+                    TemplateConfirmacaoAtendente = row.TemplateConfirmacaoAtendente,
+                    TemplateProntoRetirada = row.TemplateProntoRetirada
                 };
         }
 
@@ -81,24 +107,45 @@ SELECT notify_dispatch_enabled AS DispatchEnabled, notify_arriving_enabled AS Ar
             if (!await HasSchemaAsync(connection)) throw MigrationPending();
             await connection.ExecuteAsync(@"
 INSERT INTO delivery_settings (estabelecimento_id, updated_by_user_id, updated_at_utc,
+    notify_received_enabled, notify_accepted_enabled,
     notify_dispatch_enabled, notify_arriving_enabled, notify_arriving_minutes, notify_arriving_radius_m,
-    notify_template_dispatch, notify_template_arriving)
-VALUES (@EstabelecimentoId, @ActorUserId, NOW(), @DispatchEnabled, @ArrivingEnabled, @ArrivingMinutes, @ArrivingRadiusM,
-    @TemplateDispatch, @TemplateArriving)
+    notify_arrived_enabled, notify_confirmacao_atendente_enabled, notify_pronto_retirada_enabled,
+    notify_template_received, notify_template_accepted,
+    notify_template_dispatch, notify_template_arriving, notify_template_arrived,
+    notify_template_confirmacao_atendente, notify_template_pronto_retirada)
+VALUES (@EstabelecimentoId, @ActorUserId, NOW(), @ReceivedEnabled, @AcceptedEnabled,
+    @DispatchEnabled, @ArrivingEnabled, @ArrivingMinutes, @ArrivingRadiusM,
+    @ArrivedEnabled, @ConfirmacaoAtendenteEnabled, @ProntoRetiradaEnabled,
+    @TemplateReceived, @TemplateAccepted, @TemplateDispatch, @TemplateArriving, @TemplateArrived,
+    @TemplateConfirmacaoAtendente, @TemplateProntoRetirada)
 ON CONFLICT (estabelecimento_id) DO UPDATE SET
+    notify_received_enabled = EXCLUDED.notify_received_enabled,
+    notify_accepted_enabled = EXCLUDED.notify_accepted_enabled,
     notify_dispatch_enabled = EXCLUDED.notify_dispatch_enabled,
     notify_arriving_enabled = EXCLUDED.notify_arriving_enabled,
     notify_arriving_minutes = EXCLUDED.notify_arriving_minutes,
     notify_arriving_radius_m = EXCLUDED.notify_arriving_radius_m,
+    notify_arrived_enabled = EXCLUDED.notify_arrived_enabled,
+    notify_confirmacao_atendente_enabled = EXCLUDED.notify_confirmacao_atendente_enabled,
+    notify_pronto_retirada_enabled = EXCLUDED.notify_pronto_retirada_enabled,
+    notify_template_received = EXCLUDED.notify_template_received,
+    notify_template_accepted = EXCLUDED.notify_template_accepted,
     notify_template_dispatch = EXCLUDED.notify_template_dispatch,
     notify_template_arriving = EXCLUDED.notify_template_arriving,
+    notify_template_arrived = EXCLUDED.notify_template_arrived,
+    notify_template_confirmacao_atendente = EXCLUDED.notify_template_confirmacao_atendente,
+    notify_template_pronto_retirada = EXCLUDED.notify_template_pronto_retirada,
     updated_by_user_id = EXCLUDED.updated_by_user_id,
     updated_at_utc = NOW();",
                 new
                 {
                     EstabelecimentoId = estabelecimentoId, ActorUserId = actorUserId,
+                    settings.ReceivedEnabled, settings.AcceptedEnabled,
                     settings.DispatchEnabled, settings.ArrivingEnabled, settings.ArrivingMinutes, settings.ArrivingRadiusM,
-                    settings.TemplateDispatch, settings.TemplateArriving
+                    settings.ArrivedEnabled, settings.ConfirmacaoAtendenteEnabled, settings.ProntoRetiradaEnabled,
+                    settings.TemplateReceived, settings.TemplateAccepted,
+                    settings.TemplateDispatch, settings.TemplateArriving, settings.TemplateArrived,
+                    settings.TemplateConfirmacaoAtendente, settings.TemplateProntoRetirada
                 });
             return await GetSettingsAsync(estabelecimentoId);
         }

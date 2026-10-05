@@ -18,10 +18,12 @@ namespace APIBack.Controllers
     public sealed class RastreioController : ControllerBase
     {
         private readonly IRastreioRepository _repository;
+        private readonly TrackingNoticeService _notices;
 
-        public RastreioController(IRastreioRepository repository)
+        public RastreioController(IRastreioRepository repository, TrackingNoticeService notices)
         {
             _repository = repository;
+            _notices = notices;
         }
 
         [HttpGet("pedidos/{pedidoId:int}/avisos")]
@@ -57,6 +59,16 @@ namespace APIBack.Controllers
                 return await _repository.GetPedidoAsync(est, pedidoId);
             });
 
+        /// <summary>Disparo manual: quem acompanha a rota avisa que o motoboy chegou (sem app do motoboy integrado ainda).</summary>
+        [HttpPost("pedidos/{pedidoId:int}/avisos/chegou/enviar")]
+        [RequirePermission("Delivery", "atribuir_motoboy")]
+        public Task<IActionResult> EnviarChegou(int pedidoId) =>
+            Run(async (est, _) =>
+            {
+                await _notices.SendArrivedAsync(est, pedidoId);
+                return await _repository.GetPedidoAsync(est, pedidoId);
+            });
+
         [HttpGet("avisos/config")]
         [RequirePermission("Delivery", "visualizar")]
         public Task<IActionResult> GetConfig() => Run(async (est, _) => ToDto(await _repository.GetSettingsAsync(est)));
@@ -69,24 +81,44 @@ namespace APIBack.Controllers
                 if (request == null) throw new DeliveryDomainException(400, "INVALID_REQUEST", "Corpo da requisicao obrigatorio.");
                 var settings = new NoticeSettings
                 {
+                    ReceivedEnabled = request.ReceivedEnabled,
+                    AcceptedEnabled = request.AcceptedEnabled,
                     DispatchEnabled = request.DispatchEnabled,
                     ArrivingEnabled = request.ArrivingEnabled,
                     ArrivingMinutes = NoticeSettingsRules.NormalizeMinutes(request.ArrivingMinutes),
                     ArrivingRadiusM = NoticeSettingsRules.NormalizeRadius(request.ArrivingRadiusM),
+                    ArrivedEnabled = request.ArrivedEnabled,
+                    ConfirmacaoAtendenteEnabled = request.ConfirmacaoAtendenteEnabled,
+                    ProntoRetiradaEnabled = request.ProntoRetiradaEnabled,
+                    TemplateReceived = NoticeSettingsRules.NormalizeTemplate(request.TemplateReceived),
+                    TemplateAccepted = NoticeSettingsRules.NormalizeTemplate(request.TemplateAccepted),
                     TemplateDispatch = NoticeSettingsRules.NormalizeTemplate(request.TemplateDispatch),
-                    TemplateArriving = NoticeSettingsRules.NormalizeTemplate(request.TemplateArriving)
+                    TemplateArriving = NoticeSettingsRules.NormalizeTemplate(request.TemplateArriving),
+                    TemplateArrived = NoticeSettingsRules.NormalizeTemplate(request.TemplateArrived),
+                    TemplateConfirmacaoAtendente = NoticeSettingsRules.NormalizeTemplate(request.TemplateConfirmacaoAtendente),
+                    TemplateProntoRetirada = NoticeSettingsRules.NormalizeTemplate(request.TemplateProntoRetirada)
                 };
                 return ToDto(await _repository.UpsertSettingsAsync(est, user, settings));
             });
 
         private static AvisosConfigDto ToDto(NoticeSettings settings) => new()
         {
+            ReceivedEnabled = settings.ReceivedEnabled,
+            AcceptedEnabled = settings.AcceptedEnabled,
             DispatchEnabled = settings.DispatchEnabled,
             ArrivingEnabled = settings.ArrivingEnabled,
             ArrivingMinutes = settings.ArrivingMinutes,
             ArrivingRadiusM = settings.ArrivingRadiusM,
+            ArrivedEnabled = settings.ArrivedEnabled,
+            ConfirmacaoAtendenteEnabled = settings.ConfirmacaoAtendenteEnabled,
+            ProntoRetiradaEnabled = settings.ProntoRetiradaEnabled,
+            TemplateReceived = settings.TemplateReceived,
+            TemplateAccepted = settings.TemplateAccepted,
             TemplateDispatch = settings.TemplateDispatch,
-            TemplateArriving = settings.TemplateArriving
+            TemplateArriving = settings.TemplateArriving,
+            TemplateArrived = settings.TemplateArrived,
+            TemplateConfirmacaoAtendente = settings.TemplateConfirmacaoAtendente,
+            TemplateProntoRetirada = settings.TemplateProntoRetirada
         };
 
         private async Task<IActionResult> Run<T>(Func<Guid, int, Task<T>> action)

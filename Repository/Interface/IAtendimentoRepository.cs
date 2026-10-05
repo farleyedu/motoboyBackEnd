@@ -20,6 +20,13 @@ namespace APIBack.Repository.Interface
         Task<ConversaDoPedidoDto> VincularAsync(Guid estabelecimentoId, Guid conversaId, int pedidoId);
         Task<ConversaDoPedidoDto> AbrirConversaDoPedidoAsync(Guid estabelecimentoId, int pedidoId);
 
+        /// <summary>
+        /// Garante uma conversa pro cliente que acabou de ser cadastrado manualmente (sem nenhuma mensagem
+        /// ainda), pra ele aparecer na lista de conversas do atendimento. Idempotente: se ja existe conversa
+        /// pra esse cliente, devolve o id dela sem criar outra.
+        /// </summary>
+        Task<Guid> EnsureConversaParaClienteAsync(Guid estabelecimentoId, Guid clienteId);
+
         Task<MotoboyMessageDto> SendMotoboyMessageAsync(Guid estabelecimentoId, int motoboyId, int? pedidoId, string direction, string body, string? quickKey, int? actorUserId);
         Task<IReadOnlyList<MotoboyMessageDto>> ListMotoboyMessagesAsync(Guid estabelecimentoId, int? motoboyId, int? pedidoId, int limit);
         Task<int> MarkReadAsync(Guid estabelecimentoId, int motoboyId, string readerSide);

@@ -6,7 +6,7 @@ namespace APIBack.DTOs.Rastreio
 {
     public class AvisoDto
     {
-        /// <summary>saiu_da_loja ou motoboy_chegando.</summary>
+        /// <summary>pedido_enviado_loja, pedido_confirmado_loja, saiu_da_loja, motoboy_chegando ou chegou.</summary>
         public string Tipo { get; set; } = string.Empty;
         /// <summary>pendente, enviada, falhou ou ignorada.</summary>
         public string Status { get; set; } = string.Empty;
@@ -28,25 +28,50 @@ namespace APIBack.DTOs.Rastreio
 
     public class AvisosConfigDto
     {
+        public bool ReceivedEnabled { get; set; } = true;
+        public bool AcceptedEnabled { get; set; } = true;
         public bool DispatchEnabled { get; set; } = true;
         public bool ArrivingEnabled { get; set; } = true;
         public int ArrivingMinutes { get; set; } = 5;
         public int ArrivingRadiusM { get; set; } = 400;
-        /// <summary>Texto do aviso 1 (vazio = padrao). Variaveis: {cliente} {numero} {loja} {motoboy} {minutos} {link}.</summary>
+        public bool ArrivedEnabled { get; set; } = true;
+        public bool ConfirmacaoAtendenteEnabled { get; set; } = true;
+        public bool ProntoRetiradaEnabled { get; set; } = true;
+        /// <summary>Texto de cada aviso (vazio = padrao). Variaveis: {cliente} {numero} {loja} {motoboy} {minutos} {link} {itens} {endereco} {total}.</summary>
+        public string? TemplateReceived { get; set; }
+        public string? TemplateAccepted { get; set; }
         public string? TemplateDispatch { get; set; }
         public string? TemplateArriving { get; set; }
+        public string? TemplateArrived { get; set; }
+        public string? TemplateConfirmacaoAtendente { get; set; }
+        public string? TemplateProntoRetirada { get; set; }
+        public string DefaultTemplateReceived { get; set; } = NoticeSettings.DefaultReceivedTemplate;
+        public string DefaultTemplateAccepted { get; set; } = NoticeSettings.DefaultAcceptedTemplate;
         public string DefaultTemplateDispatch { get; set; } = NoticeSettings.DefaultDispatchTemplate;
         public string DefaultTemplateArriving { get; set; } = NoticeSettings.DefaultArrivingTemplate;
+        public string DefaultTemplateArrived { get; set; } = NoticeSettings.DefaultArrivedTemplate;
+        public string DefaultTemplateConfirmacaoAtendente { get; set; } = NoticeSettings.DefaultConfirmacaoAtendenteTemplate;
+        public string DefaultTemplateProntoRetirada { get; set; } = NoticeSettings.DefaultProntoRetiradaTemplate;
     }
 
     public class UpdateAvisosConfigRequest
     {
+        public bool ReceivedEnabled { get; set; } = true;
+        public bool AcceptedEnabled { get; set; } = true;
         public bool DispatchEnabled { get; set; } = true;
         public bool ArrivingEnabled { get; set; } = true;
         public int? ArrivingMinutes { get; set; }
         public int? ArrivingRadiusM { get; set; }
+        public bool ArrivedEnabled { get; set; } = true;
+        public bool ConfirmacaoAtendenteEnabled { get; set; } = true;
+        public bool ProntoRetiradaEnabled { get; set; } = true;
+        public string? TemplateReceived { get; set; }
+        public string? TemplateAccepted { get; set; }
         public string? TemplateDispatch { get; set; }
         public string? TemplateArriving { get; set; }
+        public string? TemplateArrived { get; set; }
+        public string? TemplateConfirmacaoAtendente { get; set; }
+        public string? TemplateProntoRetirada { get; set; }
     }
 
     public class MotoboyPreferencesRequest

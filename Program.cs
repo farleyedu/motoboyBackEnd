@@ -120,6 +120,7 @@ builder.Services.AddScoped<IPedidoConsultaRepository, PedidoConsultaRepository>(
 builder.Services.AddScoped<IAtendimentoRepository, AtendimentoRepository>();
 builder.Services.AddScoped<IRastreioRepository, RastreioRepository>();
 builder.Services.AddScoped<ITrackingNoticeSender, ConversationNoticeSender>();
+builder.Services.AddScoped<IAtendenteConfirmacaoSender, AtendenteConfirmacaoService>();
 builder.Services.AddScoped<TrackingNoticeService>();
 builder.Services.AddHostedService<TrackingNoticeWorker>();
 builder.Services.AddScoped<EncerramentoService>();

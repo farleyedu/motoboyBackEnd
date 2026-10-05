@@ -29,6 +29,7 @@ namespace APIBack.Service
         private readonly IWabaPhoneRepository _waba;
         private readonly ITrackingNoticeSender _sender;
         private readonly IPedidoCoreService _core;
+        private readonly IRastreioRepository _rastreio;
         private readonly IMemoryCache _cache;
         private readonly ILogger<CardapioPedidoWebService> _logger;
 
@@ -40,6 +41,7 @@ namespace APIBack.Service
             IWabaPhoneRepository waba,
             ITrackingNoticeSender sender,
             IPedidoCoreService core,
+            IRastreioRepository rastreio,
             IMemoryCache cache,
             ILogger<CardapioPedidoWebService> logger)
         {
@@ -50,9 +52,22 @@ namespace APIBack.Service
             _waba = waba;
             _sender = sender;
             _core = core;
+            _rastreio = rastreio;
             _cache = cache;
             _logger = logger;
         }
+
+        /// <summary>Monta os valores comuns dos templates configuraveis (avisos ao cliente) para um pedido do cardapio.</summary>
+        private static Dictionary<string, string?> ValoresDoPedido(CardapioPedidoPublico pedido, string nomeLoja) => new()
+        {
+            ["cliente"] = TrackingNoticeService.FirstName(pedido.NomeCliente) ?? "cliente",
+            ["loja"] = nomeLoja,
+            ["itens"] = string.Join("\n", LinhasDoPedido(pedido)),
+            ["total"] = QuickReplyRenderer.FormatMoney(pedido.Total),
+            ["endereco"] = EhEntrega(pedido)
+                ? TextoDoEndereco(LerEndereco(pedido.EnderecoEntregaJson)) ?? "-"
+                : "Retirada no balcao",
+        };
 
         // =====================================================================
         // Confirmacao pelo cliente
@@ -66,8 +81,11 @@ namespace APIBack.Service
             var conversa = await _repository.ObterConversaPorTelefoneAsync(pedido.IdEstabelecimento, variantes);
             if (conversa is { JanelaAberta: true })
             {
-                var texto = CardapioConfirmacaoRules.PedidoRecebido(pedido.NomeCliente, nomeLoja, LinhasDoPedido(pedido), pedido.Total);
+                var settings = await _rastreio.GetSettingsAsync(pedido.IdEstabelecimento);
+                var texto = QuickReplyRenderer.Render(settings.ReceivedText, ValoresDoPedido(pedido, nomeLoja)).Texto;
                 // O envio so e aceito com a janela de 24h aberta: aceitar o envio e a prova de que o numero ja falou com a loja.
+                // A redacao e configuravel (settings.ReceivedEnabled so controla o texto padrao vs custom); o envio em si
+                // nao pode ser desligado aqui, pois tambem prova a janela aberta pro fluxo de codigo (cenario A/B).
                 if (await TentarEnviarAsync(conversa.ConversaId, pedido.IdEstabelecimento, texto))
                 {
                     var telefone = PhoneKey.ToE164(pedido.TelefoneCliente) ?? pedido.TelefoneCliente;
@@ -171,8 +189,9 @@ namespace APIBack.Service
             }
 
             var nomeLoja = await NomeDaLojaAsync(estabelecimentoId);
-            await TentarEnviarAsync(conversaId, estabelecimentoId,
-                CardapioConfirmacaoRules.CodigoConfirmado(pedido.NomeCliente, nomeLoja, LinhasDoPedido(pedido), pedido.Total));
+            var settings = await _rastreio.GetSettingsAsync(estabelecimentoId);
+            var mensagem = QuickReplyRenderer.Render(settings.ReceivedText, ValoresDoPedido(pedido, nomeLoja)).Texto;
+            await TentarEnviarAsync(conversaId, estabelecimentoId, mensagem);
             return true;
         }
 
@@ -239,8 +258,12 @@ namespace APIBack.Service
             if (pedido.IdConversa.HasValue)
             {
                 var nomeLoja = await NomeDaLojaAsync(estabelecimentoId);
-                resultado.ClienteAvisado = await TentarEnviarAsync(pedido.IdConversa.Value, estabelecimentoId,
-                    CardapioConfirmacaoRules.PedidoAceito(pedido.NomeCliente, nomeLoja, pedidoId, EhEntrega(pedido)));
+                var settings = await _rastreio.GetSettingsAsync(estabelecimentoId);
+                if (settings.AcceptedEnabled)
+                {
+                    var texto = QuickReplyRenderer.Render(settings.AcceptedText, ValoresDoPedido(pedido, nomeLoja)).Texto;
+                    resultado.ClienteAvisado = await TentarEnviarAsync(pedido.IdConversa.Value, estabelecimentoId, texto);
+                }
             }
             return resultado;
         }
@@ -258,6 +281,26 @@ namespace APIBack.Service
                 await TentarEnviarAsync(pedido.IdConversa.Value, estabelecimentoId,
                     CardapioConfirmacaoRules.PedidoRecusado(pedido.NomeCliente, nomeLoja, motivoLimpo));
             }
+        }
+
+        /// <summary>Disparo manual: avisa que o pedido de retirada ja esta pronto (so depois de aceito, so retirada).</summary>
+        public async Task ProntoParaRetiradaAsync(Guid estabelecimentoId, Guid id)
+        {
+            var pedido = await _repository.ObterAsync(estabelecimentoId, id)
+                ?? throw new DeliveryDomainException(404, "CARDAPIO_PEDIDO_NOT_FOUND", "Pedido do cardapio nao encontrado.");
+            if (pedido.Status != CardapioPedidoStatus.Aceito || EhEntrega(pedido))
+            {
+                throw new DeliveryDomainException(409, "CARDAPIO_PEDIDO_STATUS",
+                    "Esse aviso so vale para pedido de retirada ja aceito.");
+            }
+            if (!pedido.IdConversa.HasValue) return;
+
+            var settings = await _rastreio.GetSettingsAsync(estabelecimentoId);
+            if (!settings.ProntoRetiradaEnabled) return;
+
+            var nomeLoja = await NomeDaLojaAsync(estabelecimentoId);
+            var texto = QuickReplyRenderer.Render(settings.ProntoRetiradaText, ValoresDoPedido(pedido, nomeLoja)).Texto;
+            await TentarEnviarAsync(pedido.IdConversa.Value, estabelecimentoId, texto);
         }
 
         private async Task<CardapioPedidoPublico> ObterAguardandoAsync(Guid estabelecimentoId, Guid id)

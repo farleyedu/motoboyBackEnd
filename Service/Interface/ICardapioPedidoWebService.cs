@@ -31,5 +31,8 @@ namespace APIBack.Service.Interface
         Task<IReadOnlyList<CardapioPedidoAguardandoDto>> ListarAguardandoAsync(Guid estabelecimentoId);
         Task<AceitarCardapioPedidoResultDto> AceitarAsync(Guid estabelecimentoId, int actorUserId, Guid id);
         Task RecusarAsync(Guid estabelecimentoId, Guid id, string? motivo);
+
+        /// <summary>Disparo manual: avisa que o pedido de retirada ja esta pronto (so depois de aceito, so retirada).</summary>
+        Task ProntoParaRetiradaAsync(Guid estabelecimentoId, Guid id);
     }
 }

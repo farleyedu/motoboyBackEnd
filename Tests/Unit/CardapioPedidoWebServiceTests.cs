@@ -36,6 +36,7 @@ namespace APIBack.Tests.Unit
             public Mock<IWabaPhoneRepository> Waba { get; } = new();
             public Mock<ITrackingNoticeSender> Sender { get; } = new();
             public Mock<IPedidoCoreService> Core { get; } = new();
+            public Mock<IRastreioRepository> Rastreio { get; } = new();
             public List<string> Enviadas { get; } = new();
 
             public Fixture()
@@ -51,11 +52,12 @@ namespace APIBack.Tests.Unit
                 Clientes.Setup(c => c.ObterTelefoneClienteAsync(Cliente, Estabelecimento)).ReturnsAsync("+5534991230001");
                 Repo.Setup(r => r.ObterConversaPorTelefoneAsync(Estabelecimento, It.IsAny<IReadOnlyList<string>>()))
                     .ReturnsAsync((ConversaPorTelefone?)null);
+                Rastreio.Setup(r => r.GetSettingsAsync(It.IsAny<Guid>())).ReturnsAsync(new NoticeSettings());
             }
 
             public CardapioPedidoWebService Build() => new(
                 Repo.Object, Cardapio.Object, Conversas.Object, Clientes.Object, Waba.Object,
-                Sender.Object, Core.Object, new MemoryCache(new MemoryCacheOptions()),
+                Sender.Object, Core.Object, Rastreio.Object, new MemoryCache(new MemoryCacheOptions()),
                 NullLogger<CardapioPedidoWebService>.Instance);
         }
 
@@ -313,7 +315,7 @@ namespace APIBack.Tests.Unit
 
             Assert.True(tratada);
             var texto = Assert.Single(f.Enviadas);
-            Assert.Contains("Código confirmado", texto);
+            Assert.Contains("Recebemos seu pedido", texto);
             Assert.Contains("Total: R$ 64,90", texto);
         }
 
@@ -445,7 +447,7 @@ namespace APIBack.Tests.Unit
             Assert.Equal(64.9m, resultado.TotalCliente);
             Assert.Equal(70m, resultado.TotalPedido);
             Assert.True(resultado.ClienteAvisado);
-            Assert.Contains("#77", Assert.Single(f.Enviadas));
+            Assert.Contains("confirmou seu pedido", Assert.Single(f.Enviadas));
 
             Assert.NotNull(enviado);
             Assert.Equal("cardapio_web", enviado!.Origem);
@@ -493,7 +495,7 @@ namespace APIBack.Tests.Unit
 
             Assert.Null(resultado.PedidoId);
             f.Core.Verify(c => c.CreateAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<CreatePedidoRequest>(), It.IsAny<string?>(), It.IsAny<bool>()), Times.Never);
-            Assert.Contains("retirar", Assert.Single(f.Enviadas));
+            Assert.Contains("confirmou seu pedido", Assert.Single(f.Enviadas));
         }
 
         [Fact]
@@ -603,6 +605,48 @@ namespace APIBack.Tests.Unit
             f.Repo.Setup(r => r.MarcarRecusadoAsync(Estabelecimento, pedido.Id, null)).ReturnsAsync(false);
 
             await f.Build().RecusarAsync(Estabelecimento, pedido.Id, null);
+
+            Assert.Empty(f.Enviadas);
+        }
+
+        // =====================================================================
+        // Pronto para retirada (disparo manual)
+        // =====================================================================
+
+        [Fact]
+        public async Task Ready_for_pickup_notice_is_sent_for_an_accepted_pickup_order()
+        {
+            var f = new Fixture();
+            var pedido = Pedido(CardapioPedidoStatus.Aceito, tipoEntrega: "retirada", conversa: Conversa);
+            f.Repo.Setup(r => r.ObterAsync(Estabelecimento, pedido.Id)).ReturnsAsync(pedido);
+
+            await f.Build().ProntoParaRetiradaAsync(Estabelecimento, pedido.Id);
+
+            Assert.Contains("pronto", Assert.Single(f.Enviadas), StringComparison.OrdinalIgnoreCase);
+        }
+
+        [Fact]
+        public async Task Ready_for_pickup_notice_rejects_a_delivery_order()
+        {
+            var f = new Fixture();
+            var pedido = Pedido(CardapioPedidoStatus.Aceito, conversa: Conversa);
+            f.Repo.Setup(r => r.ObterAsync(Estabelecimento, pedido.Id)).ReturnsAsync(pedido);
+
+            var ex = await Assert.ThrowsAsync<DeliveryDomainException>(() => f.Build().ProntoParaRetiradaAsync(Estabelecimento, pedido.Id));
+
+            Assert.Equal("CARDAPIO_PEDIDO_STATUS", ex.Code);
+            Assert.Empty(f.Enviadas);
+        }
+
+        [Fact]
+        public async Task Ready_for_pickup_notice_does_nothing_when_disabled_in_settings()
+        {
+            var f = new Fixture();
+            var pedido = Pedido(CardapioPedidoStatus.Aceito, tipoEntrega: "retirada", conversa: Conversa);
+            f.Repo.Setup(r => r.ObterAsync(Estabelecimento, pedido.Id)).ReturnsAsync(pedido);
+            f.Rastreio.Setup(r => r.GetSettingsAsync(Estabelecimento)).ReturnsAsync(new NoticeSettings { ProntoRetiradaEnabled = false });
+
+            await f.Build().ProntoParaRetiradaAsync(Estabelecimento, pedido.Id);
 
             Assert.Empty(f.Enviadas);
         }

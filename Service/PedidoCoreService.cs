@@ -25,28 +25,39 @@ namespace APIBack.Service
         private readonly ICardapioRepository _cardapio;
         private readonly IDeliveryZonaRepository _zonas;
         private readonly IHorarioOperacaoRepository _horarios;
+        private readonly IAtendenteConfirmacaoSender _confirmacaoAtendente;
 
         public PedidoCoreService(
             IPedidoQueueRepository queue,
             IRestaurantSettingsRepository restaurant,
             ICardapioRepository cardapio,
             IDeliveryZonaRepository zonas,
-            IHorarioOperacaoRepository horarios)
+            IHorarioOperacaoRepository horarios,
+            IAtendenteConfirmacaoSender confirmacaoAtendente)
         {
             _queue = queue;
             _restaurant = restaurant;
             _cardapio = cardapio;
             _zonas = zonas;
             _horarios = horarios;
+            _confirmacaoAtendente = confirmacaoAtendente;
         }
 
         public async Task<CreatedPedidoDto> CreateAsync(Guid estabelecimentoId, int actorUserId, CreatePedidoRequest request, string? idempotencyKey, bool autoAtribuir = true)
         {
             var order = await BuildAsync(estabelecimentoId, request, idempotencyKey);
             var created = await _queue.CreatePedidoAsync(estabelecimentoId, actorUserId, order);
-            if (autoAtribuir && !created.JaExistia && string.Equals(created.Status, "pendente", StringComparison.OrdinalIgnoreCase))
+            var isPending = string.Equals(created.Status, "pendente", StringComparison.OrdinalIgnoreCase);
+            if (autoAtribuir && !created.JaExistia && isPending)
             {
                 await TryAutoAssignAsync(estabelecimentoId, actorUserId, created.Id);
+            }
+            if (!created.JaExistia && isPending && order.Origem == PedidoOrigem.Atendente)
+            {
+                // Pedido feito pelo atendente (telefone/balcao): confirma com o cliente mostrando os itens,
+                // sempre, mesmo que ele tenha desligado os avisos automaticos de rastreio (nao e a mesma coisa:
+                // esta existe pra pegar erro de digitacao, nao pra rastrear entrega). Nunca lanca.
+                await _confirmacaoAtendente.TrySendAsync(estabelecimentoId, created.Id);
             }
             return created;
         }

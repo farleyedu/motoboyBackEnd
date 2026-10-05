@@ -19,10 +19,12 @@ namespace APIBack.Repository
         private const string UniqueViolation = "23505";
 
         private readonly NpgsqlDataSource _dataSource;
+        private readonly IAtendimentoRepository _atendimento;
 
-        public ClienteCadastroRepository(NpgsqlDataSource dataSource)
+        public ClienteCadastroRepository(NpgsqlDataSource dataSource, IAtendimentoRepository atendimento)
         {
             _dataSource = dataSource ?? throw new ArgumentNullException(nameof(dataSource));
+            _atendimento = atendimento;
         }
 
         private const string Columns = @"
@@ -122,6 +124,14 @@ RETURNING{Columns};", Parameters(estabelecimentoId, Guid.NewGuid(), input, actor
                 }
 
                 await transaction.CommitAsync();
+
+                if (existing == null)
+                {
+                    // Cliente genuinamente novo (nao e o WhatsApp completando uma linha so com telefone):
+                    // garante que ele apareca na lista de conversas, mesmo sem nenhuma mensagem ainda. O
+                    // atendente cria o pedido de dentro dela; o composer fica bloqueado ate o cliente escrever.
+                    await _atendimento.EnsureConversaParaClienteAsync(estabelecimentoId, saved.Id);
+                }
                 return saved;
             }
             catch (PostgresException ex) when (ex.SqlState == UniqueViolation)

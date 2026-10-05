@@ -408,7 +408,9 @@ namespace APIBack.Tests.Unit
             var horarios = new Mock<IHorarioOperacaoRepository>();
             horarios.Setup(h => h.EstaAbertoAgoraAsync(It.IsAny<Guid>(), It.IsAny<DateTimeOffset>(), It.IsAny<string>())).ReturnsAsync(true);
 
-            return (new PedidoCoreService(queue.Object, restaurantRepo.Object, menu.Object, zonas.Object, horarios.Object), queue, menu);
+            var confirmacaoAtendente = new Mock<IAtendenteConfirmacaoSender>();
+
+            return (new PedidoCoreService(queue.Object, restaurantRepo.Object, menu.Object, zonas.Object, horarios.Object, confirmacaoAtendente.Object), queue, menu);
         }
 
         private static ManualOrder Captured(Mock<IPedidoQueueRepository> queue) =>
@@ -524,6 +526,52 @@ namespace APIBack.Tests.Unit
             var order = Captured(queue);
             Assert.Equal(2, order.Avisos.Count);
             Assert.Equal(13m, order.Value);
+        }
+
+        [Fact]
+        public async Task Attendant_order_triggers_the_item_confirmation_to_the_client()
+        {
+            var confirmacaoAtendente = new Mock<IAtendenteConfirmacaoSender>();
+            var queue = new Mock<IPedidoQueueRepository>();
+            queue.Setup(q => q.GetSettingsAsync(It.IsAny<Guid>())).ReturnsAsync(new DeliverySettingsDto { DefaultDeliveryMinutes = 45 });
+            queue.Setup(q => q.CreatePedidoAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<ManualOrder>()))
+                .ReturnsAsync(new CreatedPedidoDto { Id = 55, Status = "pendente", Total = 20m });
+            var restaurantRepo = new Mock<IRestaurantSettingsRepository>();
+            restaurantRepo.Setup(r => r.GetAsync(It.IsAny<Guid>())).ReturnsAsync(CoreFixtures.Restaurant());
+            var menu = new Mock<ICardapioRepository>();
+            var zonas = new Mock<IDeliveryZonaRepository>();
+            zonas.Setup(z => z.ListAtivasOrdenadasAsync(It.IsAny<Guid>())).ReturnsAsync(Array.Empty<DeliveryZonaDto>());
+            var horarios = new Mock<IHorarioOperacaoRepository>();
+            horarios.Setup(h => h.EstaAbertoAgoraAsync(It.IsAny<Guid>(), It.IsAny<DateTimeOffset>(), It.IsAny<string>())).ReturnsAsync(true);
+            var service = new PedidoCoreService(queue.Object, restaurantRepo.Object, menu.Object, zonas.Object, horarios.Object, confirmacaoAtendente.Object);
+
+            await service.CreateAsync(CoreFixtures.Est, 1, CoreFixtures.Request(), null, autoAtribuir: false);
+
+            confirmacaoAtendente.Verify(c => c.TrySendAsync(CoreFixtures.Est, 55), Times.Once);
+        }
+
+        [Fact]
+        public async Task Draft_order_does_not_trigger_the_confirmation_yet()
+        {
+            var confirmacaoAtendente = new Mock<IAtendenteConfirmacaoSender>();
+            var queue = new Mock<IPedidoQueueRepository>();
+            queue.Setup(q => q.GetSettingsAsync(It.IsAny<Guid>())).ReturnsAsync(new DeliverySettingsDto { DefaultDeliveryMinutes = 45 });
+            queue.Setup(q => q.CreatePedidoAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<ManualOrder>()))
+                .ReturnsAsync(new CreatedPedidoDto { Id = 56, Status = "rascunho", Total = 20m });
+            var restaurantRepo = new Mock<IRestaurantSettingsRepository>();
+            restaurantRepo.Setup(r => r.GetAsync(It.IsAny<Guid>())).ReturnsAsync(CoreFixtures.Restaurant());
+            var menu = new Mock<ICardapioRepository>();
+            var zonas = new Mock<IDeliveryZonaRepository>();
+            zonas.Setup(z => z.ListAtivasOrdenadasAsync(It.IsAny<Guid>())).ReturnsAsync(Array.Empty<DeliveryZonaDto>());
+            var horarios = new Mock<IHorarioOperacaoRepository>();
+            horarios.Setup(h => h.EstaAbertoAgoraAsync(It.IsAny<Guid>(), It.IsAny<DateTimeOffset>(), It.IsAny<string>())).ReturnsAsync(true);
+            var service = new PedidoCoreService(queue.Object, restaurantRepo.Object, menu.Object, zonas.Object, horarios.Object, confirmacaoAtendente.Object);
+            var request = CoreFixtures.Request();
+            request.Rascunho = true;
+
+            await service.CreateAsync(CoreFixtures.Est, 1, request, null, autoAtribuir: false);
+
+            confirmacaoAtendente.Verify(c => c.TrySendAsync(It.IsAny<Guid>(), It.IsAny<int>()), Times.Never);
         }
 
         [Fact]

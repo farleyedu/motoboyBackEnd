@@ -7,10 +7,16 @@ namespace APIBack.Service
 {
     public static class NoticeTypes
     {
+        public const string Received = "pedido_enviado_loja";
+        public const string Accepted = "pedido_confirmado_loja";
         public const string Dispatch = "saiu_da_loja";
         public const string Arriving = "motoboy_chegando";
+        public const string Arrived = "chegou";
+        public const string ConfirmacaoAtendente = "confirmacao_atendente";
 
-        public static bool IsValid(string? type) => type == Dispatch || type == Arriving;
+        public static bool IsValid(string? type) =>
+            type == Received || type == Accepted || type == Dispatch || type == Arriving || type == Arrived
+            || type == ConfirmacaoAtendente;
     }
 
     public static class NoticeStatuses
@@ -24,26 +30,54 @@ namespace APIBack.Service
     /// <summary>Parametros dos avisos ao cliente por estabelecimento.</summary>
     public sealed class NoticeSettings
     {
+        public const string DefaultReceivedTemplate =
+            "Ola, {cliente}! Recebemos seu pedido na {loja}:\n{itens}\nTotal: {total}\nEntrega em: {endereco}\n\nJa enviamos para o restaurante.";
+        public const string DefaultAcceptedTemplate =
+            "{cliente}, a {loja} confirmou seu pedido! Ja estamos cuidando dele.";
         public const string DefaultDispatchTemplate =
             "Ola, {cliente}! Seu pedido {numero} saiu do {loja} com {motoboy}. Acompanhe a entrega: {link}";
         public const string DefaultArrivingTemplate =
             "{cliente}, seu pedido {numero} esta chegando: o motoboy chega em cerca de {minutos} min. Acompanhe: {link}";
+        public const string DefaultArrivedTemplate =
+            "{cliente}, {motoboy} chegou com o seu pedido!";
+        public const string DefaultConfirmacaoAtendenteTemplate =
+            "Ola, {cliente}! Confirmando seu pedido na {loja}:\n{itens}\nTotal: {total}\nEndereco: {endereco}\n\nSe algo estiver errado, responda esta mensagem.";
+        public const string DefaultProntoRetiradaTemplate =
+            "{cliente}, seu pedido na {loja} esta pronto! Pode vir retirar.";
 
+        public bool ReceivedEnabled { get; init; } = true;
+        public bool AcceptedEnabled { get; init; } = true;
         public bool DispatchEnabled { get; init; } = true;
         public bool ArrivingEnabled { get; init; } = true;
         public int ArrivingMinutes { get; init; } = 5;
         public int ArrivingRadiusM { get; init; } = 400;
+        public bool ArrivedEnabled { get; init; } = true;
+        public bool ConfirmacaoAtendenteEnabled { get; init; } = true;
+        public bool ProntoRetiradaEnabled { get; init; } = true;
+        public string? TemplateReceived { get; init; }
+        public string? TemplateAccepted { get; init; }
         public string? TemplateDispatch { get; init; }
         public string? TemplateArriving { get; init; }
+        public string? TemplateArrived { get; init; }
+        public string? TemplateConfirmacaoAtendente { get; init; }
+        public string? TemplateProntoRetirada { get; init; }
 
+        public string ReceivedText => string.IsNullOrWhiteSpace(TemplateReceived) ? DefaultReceivedTemplate : TemplateReceived!;
+        public string AcceptedText => string.IsNullOrWhiteSpace(TemplateAccepted) ? DefaultAcceptedTemplate : TemplateAccepted!;
         public string DispatchText => string.IsNullOrWhiteSpace(TemplateDispatch) ? DefaultDispatchTemplate : TemplateDispatch!;
         public string ArrivingText => string.IsNullOrWhiteSpace(TemplateArriving) ? DefaultArrivingTemplate : TemplateArriving!;
+        public string ArrivedText => string.IsNullOrWhiteSpace(TemplateArrived) ? DefaultArrivedTemplate : TemplateArrived!;
+        public string ConfirmacaoAtendenteText =>
+            string.IsNullOrWhiteSpace(TemplateConfirmacaoAtendente) ? DefaultConfirmacaoAtendenteTemplate : TemplateConfirmacaoAtendente!;
+        public string ProntoRetiradaText =>
+            string.IsNullOrWhiteSpace(TemplateProntoRetirada) ? DefaultProntoRetiradaTemplate : TemplateProntoRetirada!;
     }
 
     public static class NoticeSettingsRules
     {
         public const int MinMinutes = 1, MaxMinutes = 60, MinRadius = 50, MaxRadius = 5000, MaxTemplate = 500;
-        public static readonly string[] Variables = { "cliente", "numero", "loja", "motoboy", "minutos", "link" };
+        public static readonly string[] Variables =
+            { "cliente", "numero", "loja", "motoboy", "minutos", "link", "itens", "endereco", "total" };
         private static readonly Regex Token = new(@"\{([a-zA-Z_]+)\}", RegexOptions.Compiled);
 
         public static int NormalizeMinutes(int? value)
