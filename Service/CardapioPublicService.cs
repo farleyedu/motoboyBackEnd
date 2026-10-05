@@ -75,6 +75,12 @@ namespace APIBack.Service
             return response;
         }
 
+        public async Task<CardapioClienteIdentificadoDto> IdentificarClienteAsync(Guid? idEstabelecimento, string? estabelecimentoSlug, string? telefone)
+        {
+            var estabelecimento = await ResolverEstabelecimentoAsync(idEstabelecimento, estabelecimentoSlug);
+            return await _confirmacao.IdentificarClienteRecenteAsync(estabelecimento.Id, telefone);
+        }
+
         public async Task<CardapioPublicoProdutoDto?> ObterProdutoAsync(Guid? idEstabelecimento, string? estabelecimentoSlug, string slug)
         {
             if (string.IsNullOrWhiteSpace(slug))

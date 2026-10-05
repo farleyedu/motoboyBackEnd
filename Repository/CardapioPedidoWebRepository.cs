@@ -146,14 +146,14 @@ UPDATE cardapio_pedido_publico
             return GuardAsync(async connection =>
             {
                 var row = await connection.QueryFirstOrDefaultAsync<ConversaRow>(@"
-SELECT c.id AS ConversaId, c.janela_24h_fim AS JanelaFim
+SELECT c.id AS ConversaId, c.janela_24h_fim AS JanelaFim, c.data_ultima_entrada AS UltimaEntrada
   FROM conversas c
   JOIN clientes cl ON cl.id = c.id_cliente
  WHERE c.id_estabelecimento = @EstabelecimentoId
    AND regexp_replace(cl.telefone_e164, '\D', '', 'g') = ANY(@Variantes)
- ORDER BY c.janela_24h_fim DESC NULLS LAST, c.data_ultima_mensagem DESC NULLS LAST
+ ORDER BY c.janela_24h_fim DESC NULLS LAST, c.data_ultima_entrada DESC NULLS LAST, c.data_ultima_mensagem DESC NULLS LAST
  LIMIT 1;", new { EstabelecimentoId = estabelecimentoId, Variantes = variantes.ToArray() });
-                return row == null ? null : new ConversaPorTelefone(row.ConversaId, row.JanelaFim);
+                return row == null ? null : new ConversaPorTelefone(row.ConversaId, row.JanelaFim, row.UltimaEntrada);
             });
         }
 
@@ -161,6 +161,7 @@ SELECT c.id AS ConversaId, c.janela_24h_fim AS JanelaFim
         {
             public Guid ConversaId { get; set; }
             public DateTimeOffset? JanelaFim { get; set; }
+            public DateTimeOffset? UltimaEntrada { get; set; }
         }
     }
 }

@@ -33,6 +33,7 @@ namespace APIBack.Tests.Unit
             public Mock<ICardapioRepository> Cardapio { get; } = new();
             public Mock<IConversationRepository> Conversas { get; } = new();
             public Mock<IClienteRepository> Clientes { get; } = new();
+            public Mock<IClienteCadastroRepository> ClientesCadastro { get; } = new();
             public Mock<IWabaPhoneRepository> Waba { get; } = new();
             public Mock<ITrackingNoticeSender> Sender { get; } = new();
             public Mock<IPedidoCoreService> Core { get; } = new();
@@ -56,7 +57,7 @@ namespace APIBack.Tests.Unit
             }
 
             public CardapioPedidoWebService Build() => new(
-                Repo.Object, Cardapio.Object, Conversas.Object, Clientes.Object, Waba.Object,
+                Repo.Object, Cardapio.Object, Conversas.Object, Clientes.Object, ClientesCadastro.Object, Waba.Object,
                 Sender.Object, Core.Object, Rastreio.Object, new MemoryCache(new MemoryCacheOptions()),
                 NullLogger<CardapioPedidoWebService>.Instance);
         }
@@ -134,7 +135,7 @@ namespace APIBack.Tests.Unit
             var f = new Fixture();
             var pedido = Pedido();
             f.Repo.Setup(r => r.ObterConversaPorTelefoneAsync(Estabelecimento, It.IsAny<IReadOnlyList<string>>()))
-                .ReturnsAsync(new ConversaPorTelefone(Conversa, DateTimeOffset.UtcNow.AddHours(5)));
+                .ReturnsAsync(new ConversaPorTelefone(Conversa, DateTimeOffset.UtcNow.AddHours(5), null));
             f.Repo.Setup(r => r.MarcarAguardandoAceiteAsync(pedido.Id, "+5534991230001", Conversa)).ReturnsAsync(true);
 
             var confirmacao = await f.Build().IniciarConfirmacaoAsync(pedido, "Pizza Bom");
@@ -154,7 +155,7 @@ namespace APIBack.Tests.Unit
             var f = new Fixture();
             var pedido = Pedido();
             f.Repo.Setup(r => r.ObterConversaPorTelefoneAsync(Estabelecimento, It.IsAny<IReadOnlyList<string>>()))
-                .ReturnsAsync(new ConversaPorTelefone(Conversa, DateTimeOffset.UtcNow.AddHours(1)));
+                .ReturnsAsync(new ConversaPorTelefone(Conversa, DateTimeOffset.UtcNow.AddHours(1), null));
             f.Sender.Setup(s => s.SendAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>()))
                 .ThrowsAsync(new InvalidOperationException("janela fechada"));
             f.Repo.Setup(r => r.DefinirCodigoAsync(pedido.Id, It.IsAny<string>(), CardapioConfirmacaoRules.CodigoValidade))
@@ -178,7 +179,7 @@ namespace APIBack.Tests.Unit
             if (conversaComJanelaVencida)
             {
                 f.Repo.Setup(r => r.ObterConversaPorTelefoneAsync(Estabelecimento, It.IsAny<IReadOnlyList<string>>()))
-                    .ReturnsAsync(new ConversaPorTelefone(Conversa, DateTimeOffset.UtcNow.AddHours(-2)));
+                    .ReturnsAsync(new ConversaPorTelefone(Conversa, DateTimeOffset.UtcNow.AddHours(-2), null));
             }
             f.Repo.Setup(r => r.DefinirCodigoAsync(pedido.Id, It.IsAny<string>(), CardapioConfirmacaoRules.CodigoValidade))
                 .ReturnsAsync((ComCodigo(Pedido(), "4821"), false));
@@ -208,6 +209,71 @@ namespace APIBack.Tests.Unit
             await f.Build().IniciarConfirmacaoAsync(pedido, "Pizza Bom");
 
             Assert.Equal(new[] { "5534991230001", "553491230001" }, variantes);
+        }
+
+        // =====================================================================
+        // Identificar cliente recente (prefill seguro do checkout, Fase 3c)
+        // =====================================================================
+
+        [Fact]
+        public async Task No_conversation_for_the_phone_identifies_nothing()
+        {
+            var f = new Fixture();
+            f.Repo.Setup(r => r.ObterConversaPorTelefoneAsync(Estabelecimento, It.IsAny<IReadOnlyList<string>>()))
+                .ReturnsAsync((ConversaPorTelefone?)null);
+
+            var resultado = await f.Build().IdentificarClienteRecenteAsync(Estabelecimento, "+5534991230001");
+
+            Assert.False(resultado.Identificado);
+            Assert.Null(resultado.Nome);
+            f.ClientesCadastro.Verify(c => c.GetByTelefoneAsync(It.IsAny<Guid>(), It.IsAny<string?>()), Times.Never);
+        }
+
+        [Fact]
+        public async Task Last_inbound_message_older_than_two_hours_identifies_nothing()
+        {
+            var f = new Fixture();
+            f.Repo.Setup(r => r.ObterConversaPorTelefoneAsync(Estabelecimento, It.IsAny<IReadOnlyList<string>>()))
+                .ReturnsAsync(new ConversaPorTelefone(Conversa, null, DateTimeOffset.UtcNow.AddHours(-3)));
+
+            var resultado = await f.Build().IdentificarClienteRecenteAsync(Estabelecimento, "+5534991230001");
+
+            Assert.False(resultado.Identificado);
+        }
+
+        [Fact]
+        public async Task Recent_inbound_message_without_a_client_record_identifies_nothing()
+        {
+            var f = new Fixture();
+            f.Repo.Setup(r => r.ObterConversaPorTelefoneAsync(Estabelecimento, It.IsAny<IReadOnlyList<string>>()))
+                .ReturnsAsync(new ConversaPorTelefone(Conversa, null, DateTimeOffset.UtcNow.AddMinutes(-30)));
+            f.ClientesCadastro.Setup(c => c.GetByTelefoneAsync(Estabelecimento, "+5534991230001")).ReturnsAsync((DTOs.Clientes.ClienteDto?)null);
+
+            var resultado = await f.Build().IdentificarClienteRecenteAsync(Estabelecimento, "+5534991230001");
+
+            Assert.False(resultado.Identificado);
+        }
+
+        [Fact]
+        public async Task Recent_inbound_message_with_a_client_record_returns_name_and_address()
+        {
+            var f = new Fixture();
+            f.Repo.Setup(r => r.ObterConversaPorTelefoneAsync(Estabelecimento, It.IsAny<IReadOnlyList<string>>()))
+                .ReturnsAsync(new ConversaPorTelefone(Conversa, null, DateTimeOffset.UtcNow.AddMinutes(-5)));
+            f.ClientesCadastro.Setup(c => c.GetByTelefoneAsync(Estabelecimento, "+5534991230001")).ReturnsAsync(new DTOs.Clientes.ClienteDto
+            {
+                Nome = "Maria Silva",
+                Logradouro = "Rua A",
+                Numero = "10",
+                Bairro = "Centro"
+            });
+
+            var resultado = await f.Build().IdentificarClienteRecenteAsync(Estabelecimento, "+5534991230001");
+
+            Assert.True(resultado.Identificado);
+            Assert.Equal("Maria Silva", resultado.Nome);
+            Assert.Equal("Rua A", resultado.Logradouro);
+            Assert.Equal("Centro", resultado.Bairro);
         }
 
         [Fact]

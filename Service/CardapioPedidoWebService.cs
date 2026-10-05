@@ -22,10 +22,13 @@ namespace APIBack.Service
         private const string TipoEntrega = "entrega";
         private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
+        private static readonly TimeSpan JanelaIdentificacao = TimeSpan.FromHours(2);
+
         private readonly ICardapioPedidoWebRepository _repository;
         private readonly ICardapioRepository _cardapio;
         private readonly IConversationRepository _conversas;
         private readonly IClienteRepository _clientes;
+        private readonly IClienteCadastroRepository _clientesCadastro;
         private readonly IWabaPhoneRepository _waba;
         private readonly ITrackingNoticeSender _sender;
         private readonly IPedidoCoreService _core;
@@ -38,6 +41,7 @@ namespace APIBack.Service
             ICardapioRepository cardapio,
             IConversationRepository conversas,
             IClienteRepository clientes,
+            IClienteCadastroRepository clientesCadastro,
             IWabaPhoneRepository waba,
             ITrackingNoticeSender sender,
             IPedidoCoreService core,
@@ -49,12 +53,42 @@ namespace APIBack.Service
             _cardapio = cardapio;
             _conversas = conversas;
             _clientes = clientes;
+            _clientesCadastro = clientesCadastro;
             _waba = waba;
             _sender = sender;
             _core = core;
             _rastreio = rastreio;
             _cache = cache;
             _logger = logger;
+        }
+
+        public async Task<CardapioClienteIdentificadoDto> IdentificarClienteRecenteAsync(Guid estabelecimentoId, string? telefoneBruto)
+        {
+            var variantes = CardapioConfirmacaoRules.VariantesTelefone(telefoneBruto);
+            if (variantes.Count == 0) return new CardapioClienteIdentificadoDto();
+
+            var conversa = await _repository.ObterConversaPorTelefoneAsync(estabelecimentoId, variantes);
+            if (conversa == null || !conversa.FalouRecentemente(JanelaIdentificacao))
+            {
+                // Sem prova de que e o dono do numero: nao revela nem se existe cadastro.
+                return new CardapioClienteIdentificadoDto();
+            }
+
+            var cliente = await _clientesCadastro.GetByTelefoneAsync(estabelecimentoId, telefoneBruto);
+            if (cliente == null) return new CardapioClienteIdentificadoDto();
+
+            return new CardapioClienteIdentificadoDto
+            {
+                Identificado = true,
+                Nome = cliente.Nome,
+                Logradouro = cliente.Logradouro,
+                Numero = cliente.Numero,
+                Complemento = cliente.Complemento,
+                Bairro = cliente.Bairro,
+                Cidade = cliente.Cidade,
+                Uf = cliente.Uf,
+                Cep = cliente.Cep
+            };
         }
 
         /// <summary>Monta os valores comuns dos templates configuraveis (avisos ao cliente) para um pedido do cardapio.</summary>

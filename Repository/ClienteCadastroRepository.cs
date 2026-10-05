@@ -201,6 +201,17 @@ UPDATE clientes SET ativo = FALSE, data_atualizacao = NOW()
             return affected > 0;
         }
 
+        public async Task<ClienteDto?> GetByTelefoneAsync(Guid estabelecimentoId, string? telefoneBruto)
+        {
+            var telefone = PhoneKey.ToE164(telefoneBruto);
+            if (telefone == null) return null;
+
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            return await connection.QuerySingleOrDefaultAsync<ClienteDto>(
+                $"SELECT{Columns} FROM clientes WHERE id_estabelecimento = @EstabelecimentoId AND telefone_e164 = @Telefone AND ativo = TRUE LIMIT 1;",
+                new { EstabelecimentoId = estabelecimentoId, Telefone = telefone });
+        }
+
         public async Task<Guid?> ResolverOuCriarAsync(Guid estabelecimentoId, string? telefoneBruto, string? nome)
         {
             var telefone = PhoneKey.ToE164(telefoneBruto);

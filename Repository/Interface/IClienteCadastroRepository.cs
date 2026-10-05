@@ -22,6 +22,9 @@ namespace APIBack.Repository.Interface
         /// </summary>
         Task<Guid?> ResolverOuCriarAsync(Guid estabelecimentoId, string? telefoneBruto, string? nome);
 
+        /// <summary>Cliente ativo pelo telefone, so leitura (sem criar); null quando nao existe ou o telefone e invalido.</summary>
+        Task<ClienteDto?> GetByTelefoneAsync(Guid estabelecimentoId, string? telefoneBruto);
+
         /// <summary>Edicao inline do nome (chat do modo comando); null quando o cliente nao existe.</summary>
         Task<ClienteDto?> UpdateNomeAsync(Guid estabelecimentoId, Guid clienteId, string nome);
     }

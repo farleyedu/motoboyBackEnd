@@ -34,5 +34,11 @@ namespace APIBack.Service.Interface
 
         /// <summary>Disparo manual: avisa que o pedido de retirada ja esta pronto (so depois de aceito, so retirada).</summary>
         Task ProntoParaRetiradaAsync(Guid estabelecimentoId, Guid id);
+
+        /// <summary>
+        /// Prefill seguro do checkout (Fase 3c): so devolve nome/endereco quando o telefone mandou mensagem a loja
+        /// ha pouco (prova minima de quem e o dono do numero). Sem isso, nao revela se o cadastro existe.
+        /// </summary>
+        Task<CardapioClienteIdentificadoDto> IdentificarClienteRecenteAsync(Guid estabelecimentoId, string? telefoneBruto);
     }
 }

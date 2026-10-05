@@ -14,5 +14,8 @@ namespace APIBack.Service.Interface
         Task<CardapioLocalizacaoDto> LocalizarEnderecoAsync(LocalizarCardapioEnderecoRequest request);
         /// <summary>Endereco de um ponto do mapa ("usar minha localizacao").</summary>
         Task<CardapioEnderecoDoPontoDto> ObterEnderecoDoPontoAsync(CardapioEnderecoDoPontoRequest request);
+
+        /// <summary>Prefill seguro do checkout pelo telefone (Fase 3c): ver IdentificarClienteRecenteAsync.</summary>
+        Task<CardapioClienteIdentificadoDto> IdentificarClienteAsync(Guid? idEstabelecimento, string? estabelecimentoSlug, string? telefone);
     }
 }

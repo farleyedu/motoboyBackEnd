@@ -282,6 +282,24 @@ namespace APIBack.DTOs.Cardapio
         public string? Cep { get; set; }
     }
 
+    /// <summary>
+    /// Resultado de "esse telefone falou com a loja ha pouco" (Fase 3c): prova minima para preencher
+    /// nome/endereco no checkout sem esperar a confirmacao por WhatsApp do pedido.
+    /// </summary>
+    public class CardapioClienteIdentificadoDto
+    {
+        /// <summary>Falso = nao preenche nada (sem cadastro, ou cadastro existe mas o numero nao falou com a loja ha pouco).</summary>
+        public bool Identificado { get; set; }
+        public string? Nome { get; set; }
+        public string? Logradouro { get; set; }
+        public string? Numero { get; set; }
+        public string? Complemento { get; set; }
+        public string? Bairro { get; set; }
+        public string? Cidade { get; set; }
+        public string? Uf { get; set; }
+        public string? Cep { get; set; }
+    }
+
     public class CriarCardapioPedidoPublicoRequest : CalcularCardapioPedidoPublicoRequest
     {
         public CriarCardapioPedidoPublicoClienteRequest Cliente { get; set; } = new();

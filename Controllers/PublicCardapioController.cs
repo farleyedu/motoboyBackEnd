@@ -24,6 +24,10 @@ namespace APIBack.Controllers
         private const int MaximoDeBuscasPorJanela = 40;
         private static readonly TimeSpan JanelaDeBuscas = TimeSpan.FromMinutes(10);
 
+        // Nao revela dado de ninguem sem a janela de 2h (Fase 3c), mas o teto evita que um script varra numeros ao acaso.
+        private const int MaximoDeIdentificacoesPorJanela = 30;
+        private static readonly TimeSpan JanelaDeIdentificacoes = TimeSpan.FromMinutes(10);
+
         public PublicCardapioController(ICardapioPublicService service, ICardapioPedidoWebService pedidosWeb, IMemoryCache cache)
         {
             _service = service;
@@ -72,6 +76,42 @@ namespace APIBack.Controllers
             try
             {
                 return Ok(ApiResponse<CardapioEnderecoDoPontoDto>.Ok(await _service.ObterEnderecoDoPontoAsync(request)));
+            }
+            catch (RequestValidationException ex)
+            {
+                return ValidationErrorResponse(ex);
+            }
+            catch (KeyNotFoundException ex)
+            {
+                return NotFoundErrorResponse(ex.Message);
+            }
+        }
+
+        /// <summary>
+        /// Prefill seguro do checkout (Fase 3c): so devolve nome/endereco quando o telefone falou com a loja
+        /// ha pouco; senao, devolve "nao identificado" sem revelar se existe cadastro.
+        /// </summary>
+        [HttpGet("cliente")]
+        public async Task<IActionResult> IdentificarCliente(
+            [FromQuery] string telefone,
+            [FromQuery] Guid? estabelecimentoId = null,
+            [FromQuery] string? estabelecimentoSlug = null)
+        {
+            var chave = "identificar-cliente:" + (HttpContext.Connection.RemoteIpAddress?.ToString() ?? "desconhecido");
+            var usadas = _cache.GetOrCreate(chave, entrada =>
+            {
+                entrada.AbsoluteExpirationRelativeToNow = JanelaDeIdentificacoes;
+                return new int[1];
+            })!;
+            if (System.Threading.Interlocked.Increment(ref usadas[0]) > MaximoDeIdentificacoesPorJanela)
+            {
+                return StatusCode(429, ApiResponse<object>.Fail("Muitas tentativas. Tente de novo em alguns minutos."));
+            }
+
+            try
+            {
+                var response = await _service.IdentificarClienteAsync(estabelecimentoId, estabelecimentoSlug, telefone);
+                return Ok(ApiResponse<CardapioClienteIdentificadoDto>.Ok(response));
             }
             catch (RequestValidationException ex)
             {

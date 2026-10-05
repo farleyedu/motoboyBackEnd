@@ -5,10 +5,13 @@ using APIBack.Model.Cardapio;
 
 namespace APIBack.Repository.Interface
 {
-    /// <summary>Conversa de WhatsApp de um telefone com a loja e quando a janela de 24h dela fecha.</summary>
-    public sealed record ConversaPorTelefone(Guid ConversaId, DateTimeOffset? JanelaFim)
+    /// <summary>Conversa de WhatsApp de um telefone com a loja: quando a janela de 24h fecha e a ultima mensagem recebida dele.</summary>
+    public sealed record ConversaPorTelefone(Guid ConversaId, DateTimeOffset? JanelaFim, DateTimeOffset? UltimaEntrada)
     {
         public bool JanelaAberta => JanelaFim.HasValue && JanelaFim.Value > DateTimeOffset.UtcNow;
+
+        /// <summary>Mandou mensagem a loja dentro da janela dada (ex.: 2h) -- prova minima de que e o dono do numero (Fase 3c).</summary>
+        public bool FalouRecentemente(TimeSpan janela) => UltimaEntrada.HasValue && UltimaEntrada.Value > DateTimeOffset.UtcNow - janela;
     }
 
     /// <summary>
