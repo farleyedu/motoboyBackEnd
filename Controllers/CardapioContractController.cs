@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Threading;
 using System.Threading.Tasks;
 using APIBack.Attributes;
 using APIBack.DTOs.Cardapio;
@@ -17,10 +18,12 @@ namespace APIBack.Controllers
     public class CardapioContractController : EstabelecimentoScopedControllerBase
     {
         private readonly ICardapioContractService _service;
+        private readonly CardapioImagemService _imagemService;
 
-        public CardapioContractController(ICardapioContractService service)
+        public CardapioContractController(ICardapioContractService service, CardapioImagemService imagemService)
         {
             _service = service;
+            _imagemService = imagemService;
         }
 
         [HttpGet("categorias")]
@@ -370,6 +373,49 @@ namespace APIBack.Controllers
             return removed
                 ? Ok(ApiResponse<object>.Ok(new { }))
                 : NotFoundErrorResponse("Produto nao encontrado.");
+        }
+
+        // Upload de foto: devolve so a URL (nao mexe no produto). O front manda essa URL no imagemUrl do
+        // proximo Criar/Atualizar produto -- por isso funciona tanto ao editar um produto existente quanto
+        // ao montar um produto novo que ainda nao tem id.
+        [HttpPost("imagens")]
+        [RequirePermission("Cardapio", "editar")]
+        public async Task<IActionResult> EnviarImagem(Guid estabelecimentoId, IFormFile file, CancellationToken cancellationToken)
+        {
+            var error = await ValidateEstabelecimentoModuloAsync(estabelecimentoId, "Cardapio");
+            if (error != null) return error;
+
+            try
+            {
+                var response = await _imagemService.SalvarAsync(estabelecimentoId, file, cancellationToken);
+                return Ok(ApiResponse<CardapioImagemDto>.Ok(response));
+            }
+            catch (RequestValidationException ex)
+            {
+                return ValidationErrorResponse(ex);
+            }
+        }
+
+        // Importar por link: baixa a imagem do link informado, padroniza e passa a hospedar -- o produto fica
+        // independente do link original (que pode expirar, como os de ferramentas de IA).
+        [HttpPost("imagens/importar")]
+        [RequirePermission("Cardapio", "editar")]
+        public async Task<IActionResult> ImportarImagem(Guid estabelecimentoId, [FromBody] ImportarCardapioImagemRequest? request, CancellationToken cancellationToken)
+        {
+            if (request == null) return BadRequestErrorResponse("Corpo da requisicao e obrigatorio.");
+
+            var error = await ValidateEstabelecimentoModuloAsync(estabelecimentoId, "Cardapio");
+            if (error != null) return error;
+
+            try
+            {
+                var response = await _imagemService.ImportarDeUrlAsync(estabelecimentoId, request.Url, cancellationToken);
+                return Ok(ApiResponse<CardapioImagemDto>.Ok(response));
+            }
+            catch (RequestValidationException ex)
+            {
+                return ValidationErrorResponse(ex);
+            }
         }
 
         [HttpGet("web-config")]
