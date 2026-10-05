@@ -8,19 +8,20 @@ using System.Net.Sockets;
 using System.Threading;
 using System.Threading.Tasks;
 using APIBack.DTOs.Cardapio;
-using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.Http;
+using CloudinaryDotNet;
+using CloudinaryDotNet.Actions;
 using Microsoft.Extensions.Configuration;
 using SkiaSharp;
 
 namespace APIBack.Service
 {
     /// <summary>
-    /// Guarda foto de produto (e, no futuro, de categoria) do cardapio em disco (wwwroot) e devolve a URL
-    /// publica -- o mesmo esquema que Automation/ConversaAnexoService ja usa para anexo de conversa, so que
-    /// escopado por estabelecimento e limitado a imagem. O campo imagem_url do cardapio so guarda a URL,
-    /// nunca o arquivo: antes deste servico existir, o front tentava colocar a foto inteira em base64 ali,
-    /// por isso o limite de 1000 caracteres na validacao de produto/categoria (CardapioContractService).
+    /// Hospeda foto de produto (e, no futuro, de categoria) do cardapio no Cloudinary e devolve a URL publica.
+    /// Antes ficava em disco (wwwroot), mas esse disco e efemero no Render: some a cada deploy/restart/troca
+    /// de instancia, derrubando a foto embora a URL salva continuasse "correta". O campo imagem_url do
+    /// cardapio so guarda a URL, nunca o arquivo: antes deste servico existir, o front tentava colocar a foto
+    /// inteira em base64 ali, por isso o limite de 1000 caracteres na validacao de produto/categoria
+    /// (CardapioContractService).
     ///
     /// Toda imagem que entra aqui -- enviada do computador ou importada de um link -- sai do mesmo jeito:
     /// cortada no quadrado central, reduzida a no maximo <see cref="TargetSize"/>px e salva como JPEG. Assim
@@ -41,21 +42,38 @@ namespace APIBack.Service
         private const int TargetSize = 1024;
         private const int JpegQuality = 85;
 
-        private readonly IWebHostEnvironment _environment;
-        private readonly IConfiguration _configuration;
         private readonly IHttpClientFactory _httpClientFactory;
-        private readonly IHttpContextAccessor _httpContextAccessor;
+        private readonly Cloudinary _cloudinary;
 
         public CardapioImagemService(
-            IWebHostEnvironment environment,
             IConfiguration configuration,
-            IHttpClientFactory httpClientFactory,
-            IHttpContextAccessor httpContextAccessor)
+            IHttpClientFactory httpClientFactory)
         {
-            _environment = environment;
-            _configuration = configuration;
             _httpClientFactory = httpClientFactory;
-            _httpContextAccessor = httpContextAccessor;
+            _cloudinary = BuildCloudinary(configuration);
+        }
+
+        /// <summary>
+        /// As tres chaves vem de "Cloudinary:CloudName/ApiKey/ApiSecret" -- em producao, do
+        /// appsettings.secrets.json montado pelo Render (ver README); localmente, do appsettings.Local.json.
+        /// Falha cedo e com mensagem clara se alguma nao foi preenchida, em vez de deixar a chamada ao
+        /// Cloudinary falhar la na frente com um erro de autenticacao dificil de rastrear ate aqui.
+        /// </summary>
+        private static Cloudinary BuildCloudinary(IConfiguration configuration)
+        {
+            string Required(string key)
+            {
+                var value = configuration[$"Cloudinary:{key}"];
+                if (string.IsNullOrWhiteSpace(value) || value.Contains("__SET_IN_ENV__", StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new InvalidOperationException($"Configuracao ausente: Cloudinary:{key}.");
+                }
+
+                return value;
+            }
+
+            var account = new Account(Required("CloudName"), Required("ApiKey"), Required("ApiSecret"));
+            return new Cloudinary(account) { Api = { Secure = true } };
         }
 
         /// <summary>Foto enviada do computador do atendente (formulario multipart).</summary>
@@ -147,26 +165,30 @@ namespace APIBack.Service
             using var imagem = SKImage.FromBitmap(padronizada);
             using var jpeg = imagem.Encode(SKEncodedImageFormat.Jpeg, JpegQuality);
 
-            var root = _environment.WebRootPath;
-            if (string.IsNullOrWhiteSpace(root))
+            await using var jpegStream = new MemoryStream(jpeg.ToArray());
+            var publicId = $"cardapio/{estabelecimentoId:N}/{Guid.NewGuid():N}";
+            var uploadParams = new ImageUploadParams
             {
-                root = Path.Combine(AppContext.BaseDirectory, "wwwroot");
+                File = new FileDescription($"{publicId}.jpg", jpegStream),
+                PublicId = publicId,
+                UseFilename = false,
+                UniqueFilename = false,
+                Overwrite = false,
+            };
+
+            var uploadResult = await _cloudinary.UploadAsync(uploadParams, cancellationToken);
+            if (uploadResult.Error != null || uploadResult.StatusCode != HttpStatusCode.OK)
+            {
+                throw new InvalidOperationException($"Falha ao enviar imagem ao Cloudinary: {uploadResult.Error?.Message ?? uploadResult.StatusCode.ToString()}.");
             }
 
-            var relativeFolder = Path.Combine("uploads", "cardapio", estabelecimentoId.ToString("N"));
-            var fullFolder = Path.Combine(root, relativeFolder);
-            Directory.CreateDirectory(fullFolder);
-
-            var storedName = $"{Guid.NewGuid():N}.jpg";
-            var fullPath = Path.Combine(fullFolder, storedName);
-
-            await using (var fileStream = new FileStream(fullPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+            var url = uploadResult.SecureUrl?.ToString() ?? uploadResult.Url?.ToString();
+            if (string.IsNullOrWhiteSpace(url))
             {
-                jpeg.SaveTo(fileStream);
+                throw new InvalidOperationException("Cloudinary nao devolveu a URL da imagem enviada.");
             }
 
-            var relativePath = Path.Combine(relativeFolder, storedName).Replace("\\", "/");
-            return new CardapioImagemDto { Url = BuildPublicUrl(relativePath) };
+            return new CardapioImagemDto { Url = url };
         }
 
         /// <summary>Corta no quadrado central e reduz (nunca amplia) para no maximo <see cref="TargetSize"/>px
@@ -262,39 +284,6 @@ namespace APIBack.Service
             if (bytes[0] == 192 && bytes[1] == 168) return true;
             if (bytes[0] == 169 && bytes[1] == 254) return true;
             return false;
-        }
-
-        /// <summary>
-        /// App:BaseUrl so vem preenchido em producao (em dev o appsettings guarda o placeholder
-        /// "__SET_IN_ENV__", que nenhum .env local troca). Sem ele, a URL relativa que sobrava aqui era
-        /// resolvida pelo NAVEGADOR a partir do dominio do PAINEL (zippy-admin), nao do backend -- dava 404 e
-        /// a foto aparecia em branco. Request.Scheme/Host sempre aponta pro host que respondeu essa
-        /// requisicao, local ou em producao, entao serve de base confiavel quando App:BaseUrl nao esta setado.
-        /// </summary>
-        private string BuildPublicUrl(string relativePath)
-        {
-            var baseUrl = ConfiguredBaseUrl();
-            if (string.IsNullOrWhiteSpace(baseUrl))
-            {
-                var request = _httpContextAccessor.HttpContext?.Request;
-                if (request != null)
-                {
-                    baseUrl = $"{request.Scheme}://{request.Host}";
-                }
-            }
-
-            return !string.IsNullOrWhiteSpace(baseUrl) ? $"{baseUrl.TrimEnd('/')}/{relativePath}" : "/" + relativePath;
-        }
-
-        private string? ConfiguredBaseUrl()
-        {
-            var configured = _configuration["App:BaseUrl"];
-            if (string.IsNullOrWhiteSpace(configured) || configured.Contains("__SET_IN_ENV__", StringComparison.OrdinalIgnoreCase))
-            {
-                return null;
-            }
-
-            return configured;
         }
 
         private static RequestValidationException Invalida(string message) =>

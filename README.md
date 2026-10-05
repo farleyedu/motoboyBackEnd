@@ -121,6 +121,9 @@ O arquivo `appsettings.Local.json` é carregado automaticamente fora do ambiente
 | `ConnectionStrings:DefaultConnection` | PostgreSQL connection string |
 | `Jwt:SecretKey` | Chave HMAC ≥ 32 caracteres para assinar JWT |
 | `App:BaseUrl` | URL pública da API (usada para construir URLs de arquivos) |
+| `Cloudinary:CloudName` | Cloud name da conta Cloudinary (hospeda as fotos de produto do cardápio) |
+| `Cloudinary:ApiKey` | API key da conta Cloudinary |
+| `Cloudinary:ApiSecret` | API secret da conta Cloudinary |
 | `OpenAI:ApiKey` | Chave da API OpenAI para o bot |
 | `Automation:Meta:AccessToken` | Token de acesso WhatsApp Cloud API |
 | `Automation:Meta:AppSecret` | Secret para validação de assinatura do webhook |
@@ -236,7 +239,8 @@ npx expo start
 | Banco de dados | PostgreSQL (Render managed) | SSL obrigatório |
 | Admin (zippy-admin) | Vercel / Render Static | Build Next.js |
 | App motoboy | EAS Build (Expo) | `eas.json` configurado para Android/iOS |
-| Arquivos estáticos | `wwwroot/uploads/` na API | Servidos via `app.UseStaticFiles()` |
+| Fotos de produto (cardápio) | Cloudinary | Disco local da API é efêmero no Render (some a cada deploy/restart) |
+| Outros arquivos estáticos | `wwwroot/uploads/` na API | Servidos via `app.UseStaticFiles()` |
 
 ---
 
