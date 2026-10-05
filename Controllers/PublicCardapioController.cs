@@ -260,5 +260,32 @@ namespace APIBack.Controllers
                 return StatusCode(ex.StatusCode, ApiResponse<object>.Fail(ex.Message, ex.Code));
             }
         }
+
+        [HttpPost("pedidos/{id:guid}/trocar-telefone")]
+        public async Task<IActionResult> TrocarTelefone(Guid id, [FromBody] TrocarTelefonePedidoPublicoRequest? request)
+        {
+            if (request == null || string.IsNullOrWhiteSpace(request.Telefone))
+            {
+                return BadRequestErrorResponse("Informe o WhatsApp do pedido.");
+            }
+
+            try
+            {
+                var response = await _pedidosWeb.TrocarTelefoneAsync(id, request.Telefone);
+                return Ok(ApiResponse<CardapioConfirmacaoDto>.Ok(response));
+            }
+            catch (KeyNotFoundException ex)
+            {
+                return NotFoundErrorResponse(ex.Message);
+            }
+            catch (InvalidOperationException ex)
+            {
+                return ConflictErrorResponse(ex.Message);
+            }
+            catch (DeliveryDomainException ex)
+            {
+                return StatusCode(ex.StatusCode, ApiResponse<object>.Fail(ex.Message, ex.Code));
+            }
+        }
     }
 }

@@ -121,6 +121,9 @@ namespace APIBack.Service
         public static string CodigoInvalido() =>
             "Não encontrei esse código ou ele expirou. Volte ao cardápio e finalize o pedido de novo para gerar um código novo.";
 
+        public static string CodigoDeOutroTelefone() =>
+            "Este pedido foi iniciado com outro WhatsApp. Confirme usando o mesmo número informado no cardápio ou troque o WhatsApp do pedido para gerar um código novo.";
+
         public static string PedidoRecusado(string nomeCliente, string loja, string? motivo)
         {
             var porque = string.IsNullOrWhiteSpace(motivo) ? string.Empty : $" Motivo: {motivo.Trim()}.";

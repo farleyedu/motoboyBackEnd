@@ -60,6 +60,22 @@ namespace APIBack.Automation.Controllers
             return Ok(agentes);
         }
 
+        [HttpPost]
+        [RequirePermission("WhatsApp", "enviar_mensagem")]
+        public async Task<IActionResult> CriarConversa([FromBody] CreateConversationRequest request)
+        {
+            var estabelecimentoId = RequireEstabelecimento();
+            if (request == null || request.ClienteId == Guid.Empty)
+            {
+                return BadRequest(new { success = false, error = "Informe um cliente valido." });
+            }
+
+            var conversationId = await _conversationRepository.CriarNovaConversaAsync(request.ClienteId, estabelecimentoId);
+            return conversationId.HasValue
+                ? Ok(new CreateConversationResponse { ConversationId = conversationId.Value, ClientId = request.ClienteId })
+                : NotFound(new { success = false, error = "Cliente nao encontrado neste estabelecimento." });
+        }
+
         [HttpGet("{id:guid}/mensagens")]
         [RequirePermission("WhatsApp", "visualizar")]
         public async Task<IActionResult> ObterMensagens(Guid id, [FromQuery] DateTime? before = null, [FromQuery] int pageSize = DefaultPageSize)

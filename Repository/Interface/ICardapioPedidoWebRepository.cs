@@ -33,11 +33,15 @@ namespace APIBack.Repository.Interface
         /// </summary>
         Task<(CardapioPedidoPublico? Pedido, bool Colisao)> DefinirCodigoAsync(Guid id, string codigo, TimeSpan validade);
 
+        /// <summary>Troca o telefone somente enquanto o pedido aguarda codigo; invalida o codigo anterior.</summary>
+        Task<bool> TrocarTelefoneAsync(Guid id, string telefoneCliente);
+
         /// <summary>Janela aberta: pedido recem-criado vai direto para aguardando_aceite.</summary>
         Task<bool> MarcarAguardandoAceiteAsync(Guid id, string telefoneContato, Guid conversaId);
 
         /// <summary>Codigo ativo da loja chegou por mensagem: aguardando_aceite, com o numero de quem mandou.</summary>
         Task<CardapioPedidoPublico?> ConfirmarPorCodigoAsync(Guid estabelecimentoId, string codigo, string telefoneContato, Guid conversaId);
+        Task<bool> CodigoDeOutroTelefoneAsync(Guid estabelecimentoId, string codigo, string telefoneContato);
 
         Task<IReadOnlyList<CardapioPedidoPublico>> ListarAguardandoAceiteAsync(Guid estabelecimentoId, int limite);
 

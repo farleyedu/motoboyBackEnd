@@ -14,6 +14,7 @@ namespace APIBack.Automation.Interfaces
         Task AcrescentarMensagemAsync(Message mensagem, string? phoneNumberId, string? idWa = null);
         Task<bool> ExisteIdMensagemPorProvedorWaAsync(string idMensagemWa);
         Task<Guid> GarantirClienteAsync(string telefoneE164, Guid idEstabelecimento);
+        Task<Guid?> CriarNovaConversaAsync(Guid idCliente, Guid idEstabelecimento);
         Task<Guid> ObterIdConversaPorClienteAsync(Guid idCliente, Guid idEstabelecimento);
         Task<Guid> ObterIdConversaAbertaPorGrupoAsync(Guid idConversaGrupo, Guid idEstabelecimento);
         Task<IReadOnlyList<Conversation>> ListarConversasAbertasPorTelefoneAsync(string telefoneE164);

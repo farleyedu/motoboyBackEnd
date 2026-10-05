@@ -27,6 +27,8 @@ namespace APIBack.DTOs.Cardapio
         public CardapioConfirmacaoDto? Confirmacao { get; set; }
         public string? MotivoRecusa { get; set; }
         public int? NumeroPedido { get; set; }
+        public string? TelefoneCheckout { get; set; }
+        public string? TelefoneConfirmado { get; set; }
         public string TipoEntrega { get; set; } = "retirada";
     }
 
@@ -66,6 +68,8 @@ namespace APIBack.DTOs.Cardapio
         public DateTimeOffset ConfirmadoEm { get; set; }
         public string NomeCliente { get; set; } = string.Empty;
         public string? Telefone { get; set; }
+        public string? TelefoneCheckout { get; set; }
+        public string? TelefoneConfirmado { get; set; }
         /// <summary>entrega ou retirada.</summary>
         public string TipoEntrega { get; set; } = "retirada";
         public string? Endereco { get; set; }
@@ -78,6 +82,11 @@ namespace APIBack.DTOs.Cardapio
     public class RecusarCardapioPedidoRequest
     {
         public string? Motivo { get; set; }
+    }
+
+    public class TrocarTelefonePedidoPublicoRequest
+    {
+        public string? Telefone { get; set; }
     }
 
     public class AceitarCardapioPedidoResultDto

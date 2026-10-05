@@ -87,6 +87,22 @@ RETURNING {Colunas};", new { Id = id, Codigo = codigo, Segundos = validade.Total
             }
         }
 
+        public async Task<bool> TrocarTelefoneAsync(Guid id, string telefoneCliente)
+        {
+            var affected = await GuardAsync(connection => connection.ExecuteAsync(@"
+UPDATE cardapio_pedido_publico
+   SET telefone_cliente = @Telefone,
+       telefone_contato = NULL,
+       canal_confirmacao = NULL,
+       codigo_confirmacao = NULL,
+       codigo_expira_em = NULL,
+       updated_at = NOW()
+ WHERE id = @Id
+   AND status = 'aguardando_codigo';", new { Id = id, Telefone = telefoneCliente })
+            );
+            return affected > 0;
+        }
+
         public async Task<bool> MarcarAguardandoAceiteAsync(Guid id, string telefoneContato, Guid conversaId) =>
             await GuardAsync(connection => connection.ExecuteAsync(@"
 UPDATE cardapio_pedido_publico
@@ -111,8 +127,21 @@ UPDATE cardapio_pedido_publico
  WHERE id_estabelecimento = @EstabelecimentoId
    AND status = 'aguardando_codigo'
    AND codigo_confirmacao = @Codigo
+   AND telefone_cliente = @Telefone
    AND codigo_expira_em > NOW()
 RETURNING {Colunas};", new { EstabelecimentoId = estabelecimentoId, Codigo = codigo, Telefone = telefoneContato, ConversaId = conversaId }));
+
+        public Task<bool> CodigoDeOutroTelefoneAsync(Guid estabelecimentoId, string codigo, string telefoneContato) =>
+            GuardAsync(async connection => await connection.ExecuteScalarAsync<bool>(@"
+SELECT EXISTS (
+    SELECT 1
+      FROM cardapio_pedido_publico
+     WHERE id_estabelecimento = @EstabelecimentoId
+       AND status = 'aguardando_codigo'
+       AND codigo_confirmacao = @Codigo
+       AND codigo_expira_em > NOW()
+       AND telefone_cliente <> @Telefone
+);", new { EstabelecimentoId = estabelecimentoId, Codigo = codigo, Telefone = telefoneContato }));
 
         public async Task<IReadOnlyList<CardapioPedidoPublico>> ListarAguardandoAceiteAsync(Guid estabelecimentoId, int limite) =>
             (await GuardAsync(connection => connection.QueryAsync<CardapioPedidoPublico>($@"

@@ -22,6 +22,9 @@ namespace APIBack.Service.Interface
         /// <summary>Codigo novo para quem deixou o anterior vencer.</summary>
         Task<CardapioConfirmacaoDto> GerarNovoCodigoAsync(Guid id);
 
+        /// <summary>Troca o telefone do pedido pendente e gera um codigo novo.</summary>
+        Task<CardapioConfirmacaoDto> TrocarTelefoneAsync(Guid id, string telefoneBruto);
+
         /// <summary>
         /// Chamado pelo webhook com cada mensagem recebida. True quando a mensagem era uma confirmacao (o fluxo
         /// normal de atendimento/IA nao deve tratar essa mensagem).

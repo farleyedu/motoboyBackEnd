@@ -141,6 +141,23 @@ namespace APIBack.Service
             return await GerarCodigoAsync(id);
         }
 
+        public async Task<CardapioConfirmacaoDto> TrocarTelefoneAsync(Guid id, string telefoneBruto)
+        {
+            var telefone = PhoneKey.ToE164(telefoneBruto);
+            if (telefone == null)
+            {
+                throw new InvalidOperationException("Informe um WhatsApp valido com DDD.");
+            }
+
+            var atualizado = await _repository.TrocarTelefoneAsync(id, telefone);
+            if (!atualizado)
+            {
+                throw new InvalidOperationException("So e possivel trocar o WhatsApp enquanto o pedido aguarda confirmacao.");
+            }
+
+            return await GerarCodigoAsync(id);
+        }
+
         private async Task<CardapioConfirmacaoDto> GerarCodigoAsync(Guid pedidoId)
         {
             // Dois pre-pedidos da mesma loja podem sortear o mesmo numero: o indice unico recusa e tentamos outro.
@@ -186,6 +203,8 @@ namespace APIBack.Service
                 TipoEntrega = pedido.TipoEntrega,
                 MotivoRecusa = status == CardapioPedidoStatus.Recusado ? pedido.MotivoRecusa : null,
                 NumeroPedido = pedido.IdPedido,
+                TelefoneCheckout = pedido.TelefoneCliente,
+                TelefoneConfirmado = pedido.TelefoneContato,
                 Confirmacao = status == CardapioPedidoStatus.AguardandoCodigo ? await ConfirmacaoPorCodigoAsync(pedido) : null
             };
         }
@@ -211,6 +230,12 @@ namespace APIBack.Service
             if (Bloqueado(chave)) return false;
 
             var telefoneContato = PhoneKey.ToE164(telefone) ?? telefone;
+            if (await _repository.CodigoDeOutroTelefoneAsync(estabelecimentoId, extraido.Value.Codigo, telefoneContato))
+            {
+                await TentarEnviarAsync(conversaId, estabelecimentoId, CardapioConfirmacaoRules.CodigoDeOutroTelefone());
+                return true;
+            }
+
             var pedido = await _repository.ConfirmarPorCodigoAsync(estabelecimentoId, extraido.Value.Codigo, telefoneContato, conversaId);
             if (pedido == null)
             {
@@ -422,6 +447,8 @@ namespace APIBack.Service
                 ConfirmadoEm = pedido.ConfirmadoEm ?? new DateTimeOffset(DateTime.SpecifyKind(pedido.CreatedAt, DateTimeKind.Utc)),
                 NomeCliente = pedido.NomeCliente,
                 Telefone = pedido.TelefoneContato ?? pedido.TelefoneCliente,
+                TelefoneCheckout = pedido.TelefoneCliente,
+                TelefoneConfirmado = pedido.TelefoneContato,
                 TipoEntrega = pedido.TipoEntrega,
                 Endereco = EhEntrega(pedido) ? TextoDoEndereco(LerEndereco(pedido.EnderecoEntregaJson)) : null,
                 Itens = linhas.Count > 0

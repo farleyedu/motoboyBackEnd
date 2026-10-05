@@ -427,6 +427,27 @@ UPDATE conversas
             return await GarantirClienteTxAsync(cx, null, telefoneE164, idEstabelecimento);
         }
 
+        public async Task<Guid?> CriarNovaConversaAsync(Guid idCliente, Guid idEstabelecimento)
+        {
+            await using var cx = new NpgsqlConnection(_connectionString);
+            var telefone = await cx.ExecuteScalarAsync<string?>(
+                "SELECT telefone_e164 FROM clientes WHERE id = @IdCliente AND id_estabelecimento = @IdEstabelecimento LIMIT 1;",
+                new { IdCliente = idCliente, IdEstabelecimento = idEstabelecimento });
+            if (string.IsNullOrWhiteSpace(telefone)) return null;
+
+            var id = Guid.NewGuid();
+            await cx.ExecuteAsync(@"
+INSERT INTO conversas (
+    id, id_conversa_grupo, id_estabelecimento, id_cliente, canal, estado,
+    status_atendimento, qtd_nao_lidas, data_criacao, data_atualizacao
+)
+VALUES (
+    @Id, @Id, @IdEstabelecimento, @IdCliente, 'whatsapp', 'aberto'::estado_conversa_enum,
+    'com_bot', 0, NOW(), NOW()
+);", new { Id = id, IdEstabelecimento = idEstabelecimento, IdCliente = idCliente });
+            return id;
+        }
+
         public async Task<Guid> ObterIdConversaPorClienteAsync(Guid idCliente, Guid idEstabelecimento)
         {
             const string sql = @"SELECT id FROM conversas WHERE id_cliente = @IdCliente AND id_estabelecimento = @IdEstabelecimento AND estado NOT IN ('fechado_automaticamente'::estado_conversa_enum, 'fechado_agente'::estado_conversa_enum, 'arquivada'::estado_conversa_enum) ORDER BY data_criacao DESC LIMIT 1;";
