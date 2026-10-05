@@ -384,9 +384,35 @@ namespace APIBack.Tests.Unit
             Candidates(Candidate(c => { c.DispatchDone = true; c.DistanceMeters = 100; c.MotoboyShares = false; }));
 
             await service.RunOnceAsync(hysteresis, Now);
-            await service.RunOnceAsync(hysteresis, Now.AddMinutes(5));
 
             _sender.Verify(s => s.SendAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>()), Times.Never);
+        }
+
+        [Fact]
+        public async Task Arriving_notice_is_recorded_as_ignored_instead_of_silently_retried_forever_when_motoboy_did_not_authorize()
+        {
+            var service = Service();
+            var hysteresis = new ArrivingHysteresis(TimeSpan.Zero);
+            Candidates(Candidate(c => { c.DispatchDone = true; c.DistanceMeters = 100; c.MotoboyShares = false; }));
+
+            await service.RunOnceAsync(hysteresis, Now);
+
+            Assert.Contains(_marks, m => m.Status == "ignorada" && m.Motivo == "motoboy_nao_autorizou_localizacao");
+        }
+
+        [Fact]
+        public async Task Arriving_notice_keeps_retrying_silently_while_there_is_no_fresh_position_yet()
+        {
+            var service = Service();
+            var hysteresis = new ArrivingHysteresis(TimeSpan.Zero);
+            // Sem posicao ainda (ex.: motoboy acabou de iniciar a rota): nao e um motivo permanente, entao
+            // nao registra nada no historico, so continua tentando nas proximas passadas.
+            Candidates(Candidate(c => { c.DispatchDone = true; c.DistanceMeters = null; c.LocationAgeSeconds = null; }));
+
+            await service.RunOnceAsync(hysteresis, Now);
+
+            _sender.Verify(s => s.SendAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<string>()), Times.Never);
+            Assert.DoesNotContain(_marks, m => m.Status == "ignorada");
             _rastreio.Verify(r => r.TryReserveAsync(It.IsAny<int>(), NoticeTypes.Arriving), Times.Never);
         }
 

@@ -795,8 +795,8 @@ SELECT m.id AS MotoboyId,
             await using var connection = await _dataSource.OpenConnectionAsync();
             await using var transaction = await connection.BeginTransactionAsync();
             var motoboyId = await connection.ExecuteScalarAsync<int>(@"
-INSERT INTO motoboy (nome, telefone, status, id_estabelecimento, is_simulated)
-VALUES (@Nome, @Telefone, 2, @EstabelecimentoId, TRUE)
+INSERT INTO motoboy (nome, telefone, status, id_estabelecimento, is_simulated, compartilhar_localizacao_cliente)
+VALUES (@Nome, @Telefone, 2, @EstabelecimentoId, TRUE, TRUE)
 RETURNING id;", new
             {
                 Nome = nome,

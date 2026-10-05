@@ -67,16 +67,25 @@ namespace APIBack.Service
 
                     if (!candidate.ArrivingDone)
                     {
-                        var (verdict, _) = ArrivingRules.Evaluate(new ArrivingInput(
+                        var (verdict, reason) = ArrivingRules.Evaluate(new ArrivingInput(
                             candidate.MotoboyShares, candidate.DistanceMeters, candidate.LocationAgeSeconds, candidate.SpeedMps, candidate.Settings));
-                        var ready = hysteresis.Observe(candidate.PedidoId, verdict == ArrivingVerdict.Qualifies, now);
-                        if (ready)
+                        if (verdict == ArrivingVerdict.Skip && IsPermanentArrivingSkip(reason))
                         {
-                            var minutes = candidate.DistanceMeters.HasValue
-                                ? Math.Max(1, (int)Math.Ceiling(TrackingEta.Minutes(candidate.DistanceMeters.Value, candidate.SpeedMps)))
-                                : candidate.Settings.ArrivingMinutes;
-                            attempted += await SendAsync(candidate, NoticeTypes.Arriving, minutes);
-                            hysteresis.Forget(candidate.PedidoId);
+                            // Config/consentimento, nao vai mudar sozinho: registra pra aparecer no historico do
+                            // pedido em vez de ficar "aguardando" pra sempre sem explicacao. Reenviar libera de novo.
+                            await RecordIgnoredAsync(candidate.PedidoId, NoticeTypes.Arriving, reason!);
+                        }
+                        else
+                        {
+                            var ready = hysteresis.Observe(candidate.PedidoId, verdict == ArrivingVerdict.Qualifies, now);
+                            if (ready)
+                            {
+                                var minutes = candidate.DistanceMeters.HasValue
+                                    ? Math.Max(1, (int)Math.Ceiling(TrackingEta.Minutes(candidate.DistanceMeters.Value, candidate.SpeedMps)))
+                                    : candidate.Settings.ArrivingMinutes;
+                                attempted += await SendAsync(candidate, NoticeTypes.Arriving, minutes);
+                                hysteresis.Forget(candidate.PedidoId);
+                            }
                         }
                     }
                 }
@@ -142,6 +151,14 @@ namespace APIBack.Service
                 throw;
             }
         }
+
+        /// <summary>
+        /// Motivo que so muda por acao de configuracao (nao por GPS chegar ou ficar fresco de novo): vale
+        /// registrar e parar de tentar, em vez de ficar recalculando silenciosamente a cada passada.
+        /// "sem_posicao"/"posicao_desatualizada" ficam de fora: tendem a se resolver sozinhos no proximo ping.
+        /// </summary>
+        private static bool IsPermanentArrivingSkip(string? reason) =>
+            reason is "aviso_desligado" or "motoboy_nao_autorizou_localizacao";
 
         private async Task RecordIgnoredAsync(int pedidoId, string type, string reason)
         {
