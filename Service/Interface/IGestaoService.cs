@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using APIBack.DTOs.Gestao;
+using APIBack.DTOs.Motoboy;
 
 namespace APIBack.Service.Interface
 {
@@ -24,5 +25,8 @@ namespace APIBack.Service.Interface
         Task<GestaoUsuarioDto> AtualizarUsuarioAsync(int userId, Guid? empresaId, Guid? estabelecimentoId, string? companyRole, string? establishmentRole, bool isSuperAdmin, int targetUserId, SalvarUsuarioRequest request);
         Task AtualizarStatusUsuarioAsync(int userId, Guid? empresaId, Guid? estabelecimentoId, string? companyRole, string? establishmentRole, bool isSuperAdmin, int targetUserId, string status);
         Task RemoverUsuarioAsync(int userId, Guid? empresaId, Guid? estabelecimentoId, string? companyRole, string? establishmentRole, bool isSuperAdmin, int targetUserId);
+
+        Task<MotoboyPerfilDto> ObterPerfilMotoboyAsync(int userId, Guid? empresaId, Guid? estabelecimentoId, string? companyRole, string? establishmentRole, bool isSuperAdmin, int motoboyId);
+        Task<MotoboyPerfilDto> AtualizarPerfilMotoboyAsync(int userId, Guid? empresaId, Guid? estabelecimentoId, string? companyRole, string? establishmentRole, bool isSuperAdmin, int motoboyId, AtualizarMotoboyPerfilRequest request);
     }
 }

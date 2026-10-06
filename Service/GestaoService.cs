@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using APIBack.Automation.Interfaces;
 using APIBack.Automation.Models;
 using APIBack.DTOs.Gestao;
+using APIBack.DTOs.Motoboy;
 using APIBack.Model.Gestao;
 using APIBack.Repository.Interface;
 using APIBack.Security;
@@ -358,6 +359,201 @@ namespace APIBack.Service
             await EnsureTargetUserAccessibleAsync(scope, targetUserId, userId, blockSelfMutation: true);
             await _repository.RemoverUsuarioAsync(targetUserId);
         }
+
+        private static readonly string[] MotoboyVehicleTypes = { "moto", "bicicleta", "carro", "a_pe" };
+        private static readonly string[] MotoboyPixTypes = { "cpf", "cnpj", "email", "telefone", "aleatoria" };
+        private static readonly string[] MotoboyCadastroStatuses = { "ativo", "inativo", "bloqueado" };
+
+        public async Task<MotoboyPerfilDto> ObterPerfilMotoboyAsync(
+            int userId,
+            Guid? empresaId,
+            Guid? estabelecimentoId,
+            string? companyRole,
+            string? establishmentRole,
+            bool isSuperAdmin,
+            int motoboyId)
+        {
+            var scope = BuildScope(empresaId, estabelecimentoId, companyRole, establishmentRole, isSuperAdmin);
+            EnsureCanManageUsers(scope);
+
+            var row = await _repository.ObterPerfilMotoboyAsync(motoboyId)
+                ?? throw new KeyNotFoundException("Motoboy nao encontrado.");
+            await EnsureMotoboyAccessibleAsync(scope, row, userId);
+
+            var vinculos = await _repository.ListarVinculosMotoboyAsync(row.MotoboyId);
+            return MapPerfilMotoboy(row, vinculos);
+        }
+
+        public async Task<MotoboyPerfilDto> AtualizarPerfilMotoboyAsync(
+            int userId,
+            Guid? empresaId,
+            Guid? estabelecimentoId,
+            string? companyRole,
+            string? establishmentRole,
+            bool isSuperAdmin,
+            int motoboyId,
+            AtualizarMotoboyPerfilRequest request)
+        {
+            var scope = BuildScope(empresaId, estabelecimentoId, companyRole, establishmentRole, isSuperAdmin);
+            EnsureCanManageUsers(scope);
+
+            var row = await _repository.ObterPerfilMotoboyAsync(motoboyId)
+                ?? throw new KeyNotFoundException("Motoboy nao encontrado.");
+            await EnsureMotoboyAccessibleAsync(scope, row, userId);
+
+            var command = BuildMotoboyPerfilCommand(request);
+            await _repository.AtualizarPerfilMotoboyAsync(row.MotoboyId, command);
+
+            var updatedRow = await _repository.ObterPerfilMotoboyAsync(row.MotoboyId)
+                ?? throw new InvalidOperationException("Perfil atualizado mas nao encontrado no retorno.");
+            var vinculos = await _repository.ListarVinculosMotoboyAsync(row.MotoboyId);
+            return MapPerfilMotoboy(updatedRow, vinculos);
+        }
+
+        private async Task EnsureMotoboyAccessibleAsync(GestaoEmpresaScope scope, MotoboyPerfilRow row, int actorUserId)
+        {
+            if (row.UsuarioId.HasValue)
+            {
+                await EnsureTargetUserAccessibleAsync(scope, row.UsuarioId.Value, actorUserId, blockSelfMutation: false);
+                return;
+            }
+
+            // Motoboy de teste do simulador pode nao ter usuario vinculado ainda.
+            if (!scope.IsSuperAdmin && !IsCompanyManager(scope) && !IsEstablishmentManager(scope))
+            {
+                throw new UnauthorizedAccessException("Seu perfil nao pode gerenciar este motoboy.");
+            }
+        }
+
+        /// <summary>Internal (nao private) para ser testada direto por Tests/Unit/MotoboyPerfilTests.cs, sem mock de repositorio.</summary>
+        internal static MotoboyPerfilUpdateCommand BuildMotoboyPerfilCommand(AtualizarMotoboyPerfilRequest request)
+        {
+            var errors = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+
+            string? cpf = null;
+            if (!string.IsNullOrWhiteSpace(request.Cpf))
+            {
+                try
+                {
+                    cpf = ClienteRules.Cpf(request.Cpf);
+                }
+                catch (DeliveryDomainException)
+                {
+                    AddError(errors, "cpf", "CPF invalido.");
+                }
+            }
+
+            if (request.DataNascimento.HasValue)
+            {
+                var hoje = DateOnly.FromDateTime(DateTime.UtcNow);
+                if (request.DataNascimento.Value > hoje || CalcularIdade(request.DataNascimento.Value, hoje) < 18)
+                {
+                    AddError(errors, "dataNascimento", "Data de nascimento invalida: motoboy deve ser maior de idade.");
+                }
+            }
+
+            var tipoVeiculo = NormalizeToken(request.TipoVeiculo);
+            if (!string.IsNullOrEmpty(tipoVeiculo) && Array.IndexOf(MotoboyVehicleTypes, tipoVeiculo) < 0)
+            {
+                AddError(errors, "tipoVeiculo", "Tipo de veiculo invalido. Use: " + string.Join(", ", MotoboyVehicleTypes) + ".");
+            }
+
+            var pixTipo = NormalizeToken(request.PixTipo);
+            if (!string.IsNullOrEmpty(pixTipo) && Array.IndexOf(MotoboyPixTypes, pixTipo) < 0)
+            {
+                AddError(errors, "pixTipo", "Tipo de chave Pix invalido. Use: " + string.Join(", ", MotoboyPixTypes) + ".");
+            }
+
+            var statusCadastro = string.IsNullOrWhiteSpace(request.StatusCadastro) ? "ativo" : NormalizeToken(request.StatusCadastro);
+            if (Array.IndexOf(MotoboyCadastroStatuses, statusCadastro) < 0)
+            {
+                AddError(errors, "statusCadastro", "Status invalido. Use: " + string.Join(", ", MotoboyCadastroStatuses) + ".");
+            }
+
+            ThrowIfValidationErrors(errors);
+
+            return new MotoboyPerfilUpdateCommand
+            {
+                Nome = TrimOrNull(request.Nome),
+                Telefone = TrimOrNull(request.Telefone),
+                Cpf = cpf,
+                DataNascimento = request.DataNascimento,
+                Cep = TrimOrNull(request.Cep),
+                Logradouro = TrimOrNull(request.Logradouro),
+                Numero = TrimOrNull(request.Numero),
+                Complemento = TrimOrNull(request.Complemento),
+                Bairro = TrimOrNull(request.Bairro),
+                Cidade = TrimOrNull(request.Cidade),
+                Uf = string.IsNullOrWhiteSpace(request.Uf) ? null : request.Uf.Trim().ToUpperInvariant(),
+                TipoVeiculo = string.IsNullOrEmpty(tipoVeiculo) ? null : tipoVeiculo,
+                PlacaMoto = TrimOrNull(request.PlacaMoto)?.ToUpperInvariant(),
+                MarcaMoto = TrimOrNull(request.MarcaMoto),
+                ModeloMoto = TrimOrNull(request.ModeloMoto),
+                RenavamMoto = TrimOrNull(request.RenavamMoto),
+                CnhNumero = TrimOrNull(request.CnhNumero),
+                CnhCategoria = string.IsNullOrWhiteSpace(request.CnhCategoria) ? null : request.CnhCategoria.Trim().ToUpperInvariant(),
+                CnhValidade = request.CnhValidade,
+                PixTipo = string.IsNullOrEmpty(pixTipo) ? null : pixTipo,
+                PixChave = TrimOrNull(request.PixChave),
+                BancoNome = TrimOrNull(request.BancoNome),
+                BancoAgencia = TrimOrNull(request.BancoAgencia),
+                BancoConta = TrimOrNull(request.BancoConta),
+                StatusCadastro = statusCadastro
+            };
+        }
+
+        private static MotoboyPerfilDto MapPerfilMotoboy(MotoboyPerfilRow row, IReadOnlyCollection<MotoboyPerfilVinculoRow> vinculos)
+        {
+            return new MotoboyPerfilDto
+            {
+                MotoboyId = row.MotoboyId,
+                Nome = row.Nome,
+                Avatar = row.Avatar,
+                Telefone = row.Telefone,
+                Cpf = row.Cpf,
+                DataNascimento = row.DataNascimento,
+                Cep = row.Cep,
+                Logradouro = row.Logradouro,
+                Numero = row.Numero,
+                Complemento = row.Complemento,
+                Bairro = row.Bairro,
+                Cidade = row.Cidade,
+                Uf = row.Uf,
+                TipoVeiculo = row.TipoVeiculo,
+                PlacaMoto = row.PlacaMoto,
+                MarcaMoto = row.MarcaMoto,
+                ModeloMoto = row.ModeloMoto,
+                RenavamMoto = row.RenavamMoto,
+                CnhNumero = row.CnhNumero,
+                CnhCategoria = row.CnhCategoria,
+                CnhValidade = row.CnhValidade,
+                CnhVencida = row.CnhValidade.HasValue && row.CnhValidade.Value < DateOnly.FromDateTime(DateTime.UtcNow),
+                PixTipo = row.PixTipo,
+                PixChave = row.PixChave,
+                BancoNome = row.BancoNome,
+                BancoAgencia = row.BancoAgencia,
+                BancoConta = row.BancoConta,
+                StatusCadastro = row.StatusCadastro,
+                Vinculos = vinculos.Select(v => new MotoboyPerfilVinculoDto
+                {
+                    EstabelecimentoId = v.EstabelecimentoId,
+                    EstabelecimentoNome = v.EstabelecimentoNome,
+                    Ativo = v.Ativo
+                }).ToArray()
+            };
+        }
+
+        private static int CalcularIdade(DateOnly nascimento, DateOnly referencia)
+        {
+            var idade = referencia.Year - nascimento.Year;
+            if (nascimento > referencia.AddYears(-idade))
+            {
+                idade--;
+            }
+            return idade;
+        }
+
+        private static string? TrimOrNull(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
 
         private async Task TryEnsureAgenteAsync(GestaoPersistenciaUsuarioCommand command, int userId)
         {

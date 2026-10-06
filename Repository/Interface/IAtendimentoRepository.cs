@@ -30,5 +30,8 @@ namespace APIBack.Repository.Interface
         Task<MotoboyMessageDto> SendMotoboyMessageAsync(Guid estabelecimentoId, int motoboyId, int? pedidoId, string direction, string body, string? quickKey, int? actorUserId);
         Task<IReadOnlyList<MotoboyMessageDto>> ListMotoboyMessagesAsync(Guid estabelecimentoId, int? motoboyId, int? pedidoId, int limit);
         Task<int> MarkReadAsync(Guid estabelecimentoId, int motoboyId, string readerSide);
+
+        /// <summary>Nome do motoboy (linha canonica), para rotular mensagens que ele origina. Null se nao encontrado.</summary>
+        Task<string?> ObterNomeMotoboyAsync(int motoboyId);
     }
 }

@@ -568,9 +568,10 @@ namespace APIBack.Automation.Services
         }
 
         /// <summary>
-        /// Aviso automatico do sistema ao cliente (Fase 6): grava a mensagem na conversa, marcada como "sistema",
-        /// e envia pelo WhatsApp SEM exigir que a conversa esteja assumida por um atendente. A janela de 24h
-        /// continua valendo: fora dela a conversa nao aceita texto livre e o envio e recusado (409).
+        /// Aviso automatico ao cliente (Fase 6) ou mensagem do motoboy ao cliente (Fase D do fluxo de motoboy):
+        /// grava a mensagem na conversa, marcada por <c>criadaPor</c> ("sistema" por padrao, ou o nome do
+        /// motoboy), e envia pelo WhatsApp SEM exigir que a conversa esteja assumida por um atendente. A janela
+        /// de 24h continua valendo: fora dela a conversa nao aceita texto livre e o envio e recusado (409).
         /// </summary>
         /// <summary>
         /// Numero pelo qual a resposta sai: o numero (canal) em que a conversa nasceu, para o cliente receber a resposta
@@ -592,7 +593,7 @@ namespace APIBack.Automation.Services
             return (display, phoneNumberId);
         }
 
-        public async Task<Guid> SendSystemNoticeAsync(Guid requestedConversationId, Guid idEstabelecimento, string texto)
+        public async Task<Guid> SendSystemNoticeAsync(Guid requestedConversationId, Guid idEstabelecimento, string texto, string criadaPor = "sistema")
         {
             if (string.IsNullOrWhiteSpace(texto))
             {
@@ -626,9 +627,9 @@ namespace APIBack.Automation.Services
                 DataHora = agora,
                 DataCriacao = agora,
                 DataEnvio = agora,
-                CriadaPor = "sistema",
+                CriadaPor = criadaPor,
                 TipoOriginal = "text",
-                Tipo = MessageTypeMapper.MapType("text", DirecaoMensagem.Saida, "sistema"),
+                Tipo = MessageTypeMapper.MapType("text", DirecaoMensagem.Saida, criadaPor),
                 Status = "fila"
             };
 

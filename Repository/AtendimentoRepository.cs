@@ -479,6 +479,15 @@ VALUES (@Id, @Id, @EstabelecimentoId, @ClienteId, 'whatsapp'::canal_chat_enum, '
        id AS Id, motoboy_id AS MotoboyId, pedido_id AS PedidoId, direction AS Direction, body AS Body,
        quick_key AS QuickKey, created_at_utc AS CreatedAtUtc, read_at_utc AS ReadAtUtc";
 
+        public async Task<string?> ObterNomeMotoboyAsync(int motoboyId)
+        {
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            return await connection.QuerySingleOrDefaultAsync<string?>(@"
+SELECT nome FROM motoboy
+ WHERE id = COALESCE((SELECT canonical_motoboy_id FROM motoboy WHERE id = @MotoboyId), @MotoboyId);",
+                new { MotoboyId = motoboyId });
+        }
+
         private static MotoboyMessageDto ToDto(MessageRow row) => new()
         {
             Id = row.Id, MotoboyId = row.MotoboyId, PedidoId = row.PedidoId, Direction = row.Direction,

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using APIBack.DTOs.Common;
 using APIBack.DTOs.Gestao;
+using APIBack.DTOs.Motoboy;
 using APIBack.Service;
 using APIBack.Service.Interface;
 using Microsoft.AspNetCore.Http;
@@ -242,6 +243,93 @@ namespace APIBack.Controllers
             {
                 _logger.LogError(ex, "Erro ao remover usuario {TargetUserId} para UserId={UserId}", userId, CurrentUserId.Value);
                 return StatusCode(500, ApiResponse<object>.Fail("Erro ao remover usuario."));
+            }
+        }
+
+        [HttpGet("motoboys/{motoboyId:int}/perfil")]
+        [ProducesResponseType(typeof(ApiResponse<MotoboyPerfilDto>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> ObterPerfilMotoboy(int motoboyId)
+        {
+            if (!CurrentUserId.HasValue)
+            {
+                return UnauthorizedResponse();
+            }
+
+            if (!HasAnyPermission(("Usuarios", "visualizar"), ("Configuracoes", "visualizar")))
+            {
+                return ForbiddenResponse();
+            }
+
+            try
+            {
+                var response = await _service.ObterPerfilMotoboyAsync(
+                    CurrentUserId.Value,
+                    CurrentEmpresaId,
+                    CurrentEstabelecimentoId,
+                    CurrentCompanyRole,
+                    CurrentEstablishmentRole,
+                    CurrentIsSuperAdmin,
+                    motoboyId);
+                return Ok(ApiResponse<MotoboyPerfilDto>.Ok(response));
+            }
+            catch (KeyNotFoundException ex)
+            {
+                return NotFound(ApiResponse<object>.Fail(ex.Message));
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ex.Message));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao obter perfil do motoboy {MotoboyId} para UserId={UserId}", motoboyId, CurrentUserId.Value);
+                return StatusCode(500, ApiResponse<object>.Fail("Erro ao obter perfil do motoboy."));
+            }
+        }
+
+        [HttpPut("motoboys/{motoboyId:int}/perfil")]
+        [ProducesResponseType(typeof(ApiResponse<MotoboyPerfilDto>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> AtualizarPerfilMotoboy(int motoboyId, [FromBody] AtualizarMotoboyPerfilRequest request)
+        {
+            if (!CurrentUserId.HasValue)
+            {
+                return UnauthorizedResponse();
+            }
+
+            if (!HasAnyPermission(("Usuarios", "editar"), ("Configuracoes", "editar")))
+            {
+                return ForbiddenResponse();
+            }
+
+            try
+            {
+                var response = await _service.AtualizarPerfilMotoboyAsync(
+                    CurrentUserId.Value,
+                    CurrentEmpresaId,
+                    CurrentEstabelecimentoId,
+                    CurrentCompanyRole,
+                    CurrentEstablishmentRole,
+                    CurrentIsSuperAdmin,
+                    motoboyId,
+                    request);
+                return Ok(ApiResponse<MotoboyPerfilDto>.Ok(response));
+            }
+            catch (KeyNotFoundException ex)
+            {
+                return NotFound(ApiResponse<object>.Fail(ex.Message));
+            }
+            catch (RequestValidationException ex)
+            {
+                return ValidationErrorResponse(ex);
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ex.Message));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao atualizar perfil do motoboy {MotoboyId} para UserId={UserId}", motoboyId, CurrentUserId.Value);
+                return StatusCode(500, ApiResponse<object>.Fail("Erro ao atualizar perfil do motoboy."));
             }
         }
     }

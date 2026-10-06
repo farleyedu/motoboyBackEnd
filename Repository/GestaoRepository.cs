@@ -1036,6 +1036,106 @@ UPDATE motoboy_estabelecimento me
             await transaction.CommitAsync();
         }
 
+        public async Task<MotoboyPerfilRow?> ObterPerfilMotoboyAsync(int motoboyId)
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            return await connection.QuerySingleOrDefaultAsync<MotoboyPerfilRow>(@"
+SELECT m.id AS MotoboyId, m.id_usuario AS UsuarioId, m.nome AS Nome, m.avatar AS Avatar, m.telefone AS Telefone,
+       m.cpf AS Cpf, m.data_nascimento AS DataNascimento,
+       m.cep AS Cep, m.logradouro AS Logradouro, m.numero AS Numero, m.complemento AS Complemento,
+       m.bairro AS Bairro, m.cidade AS Cidade, m.uf AS Uf,
+       m.tipo_veiculo AS TipoVeiculo, m.placa_moto AS PlacaMoto, m.marca_moto AS MarcaMoto,
+       m.modelo_moto AS ModeloMoto, m.renavam_moto AS RenavamMoto,
+       m.cnh_numero AS CnhNumero, m.cnh_categoria AS CnhCategoria, m.cnh_validade AS CnhValidade,
+       m.pix_tipo AS PixTipo, m.pix_chave AS PixChave,
+       m.banco_nome AS BancoNome, m.banco_agencia AS BancoAgencia, m.banco_conta AS BancoConta,
+       m.status_cadastro AS StatusCadastro
+  FROM motoboy m
+ WHERE m.id = COALESCE(
+         (SELECT canonical_motoboy_id FROM motoboy WHERE id = @MotoboyId),
+         @MotoboyId);",
+                new { MotoboyId = motoboyId });
+        }
+
+        public async Task<IReadOnlyCollection<MotoboyPerfilVinculoRow>> ListarVinculosMotoboyAsync(int motoboyId)
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            var rows = await connection.QueryAsync<MotoboyPerfilVinculoRow>(@"
+SELECT me.estabelecimento_id AS EstabelecimentoId, e.nome_fantasia AS EstabelecimentoNome, me.ativo AS Ativo
+  FROM motoboy_estabelecimento me
+  JOIN estabelecimentos e ON e.id = me.estabelecimento_id
+ WHERE me.motoboy_id = COALESCE(
+         (SELECT canonical_motoboy_id FROM motoboy WHERE id = @MotoboyId),
+         @MotoboyId)
+ ORDER BY e.nome_fantasia;",
+                new { MotoboyId = motoboyId });
+            return rows.ToArray();
+        }
+
+        public async Task AtualizarPerfilMotoboyAsync(int motoboyId, MotoboyPerfilUpdateCommand command)
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.ExecuteAsync(@"
+UPDATE motoboy
+   SET nome = COALESCE(@Nome, nome),
+       telefone = COALESCE(@Telefone, telefone),
+       cpf = @Cpf,
+       data_nascimento = @DataNascimento,
+       cep = @Cep,
+       logradouro = @Logradouro,
+       numero = @Numero,
+       complemento = @Complemento,
+       bairro = @Bairro,
+       cidade = @Cidade,
+       uf = @Uf,
+       tipo_veiculo = @TipoVeiculo,
+       placa_moto = @PlacaMoto,
+       marca_moto = @MarcaMoto,
+       modelo_moto = @ModeloMoto,
+       renavam_moto = @RenavamMoto,
+       cnh_numero = @CnhNumero,
+       cnh_categoria = @CnhCategoria,
+       cnh_validade = @CnhValidade,
+       pix_tipo = @PixTipo,
+       pix_chave = @PixChave,
+       banco_nome = @BancoNome,
+       banco_agencia = @BancoAgencia,
+       banco_conta = @BancoConta,
+       status_cadastro = @StatusCadastro
+ WHERE id = COALESCE(
+         (SELECT canonical_motoboy_id FROM motoboy WHERE id = @MotoboyId),
+         @MotoboyId);",
+                new
+                {
+                    MotoboyId = motoboyId,
+                    command.Nome,
+                    command.Telefone,
+                    command.Cpf,
+                    command.DataNascimento,
+                    command.Cep,
+                    command.Logradouro,
+                    command.Numero,
+                    command.Complemento,
+                    command.Bairro,
+                    command.Cidade,
+                    command.Uf,
+                    command.TipoVeiculo,
+                    command.PlacaMoto,
+                    command.MarcaMoto,
+                    command.ModeloMoto,
+                    command.RenavamMoto,
+                    command.CnhNumero,
+                    command.CnhCategoria,
+                    command.CnhValidade,
+                    command.PixTipo,
+                    command.PixChave,
+                    command.BancoNome,
+                    command.BancoAgencia,
+                    command.BancoConta,
+                    command.StatusCadastro
+                });
+        }
+
         private async Task<Guid> InserirEmpresaAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, SalvarEmpresaRequest request)
         {
             const string sql = @"

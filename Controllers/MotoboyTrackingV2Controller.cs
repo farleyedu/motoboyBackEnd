@@ -204,6 +204,13 @@ namespace APIBack.Controllers
         [RequireOperationalSession]
         public IActionResult MessageShortcuts() => Ok(ApiResponse<object>.Ok(AtendimentoService.Shortcuts(operatorSide: false)));
 
+        // ---- Mensagem ao cliente do pedido (Fase D) ------------------------------
+
+        [HttpPost("orders/{pedidoId:int}/client-messages")]
+        [RequireOperationalSession]
+        public Task<IActionResult> SendClientMessage(int pedidoId, [FromBody] SendMotoboyClientMessageRequest? request) =>
+            WithOperationalContextAsync((est, motoboyId, _) => _atendimento.SendToClientAsync(est, motoboyId, pedidoId, request));
+
         [HttpGet("transfer-targets")]
         [RequireOperationalSession]
         public Task<IActionResult> GetTransferTargets() =>

@@ -35,5 +35,9 @@ namespace APIBack.Repository.Interface
         Task<int> SalvarUsuarioAsync(GestaoPersistenciaUsuarioCommand command);
         Task AtualizarStatusUsuarioAsync(int userId, bool ativo);
         Task RemoverUsuarioAsync(int userId);
+
+        Task<MotoboyPerfilRow?> ObterPerfilMotoboyAsync(int motoboyId);
+        Task<IReadOnlyCollection<MotoboyPerfilVinculoRow>> ListarVinculosMotoboyAsync(int motoboyId);
+        Task AtualizarPerfilMotoboyAsync(int motoboyId, MotoboyPerfilUpdateCommand command);
     }
 }

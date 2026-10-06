@@ -114,4 +114,16 @@ namespace APIBack.DTOs.Atendimento
         public string Key { get; set; } = string.Empty;
         public string Text { get; set; } = string.Empty;
     }
+
+    /// <summary>Motoboy -> cliente (Fase D do fluxo de motoboy): sai pelo WhatsApp da loja, marcado internamente.</summary>
+    public class SendMotoboyClientMessageRequest
+    {
+        public string? Mensagem { get; set; }
+    }
+
+    public class MotoboyClientMessageResultDto
+    {
+        public Guid ConversaId { get; set; }
+        public Guid MensagemId { get; set; }
+    }
 }
