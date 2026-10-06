@@ -169,7 +169,22 @@ WHERE ue.id_estabelecimento = @id AND u.deleted_at IS NULL ORDER BY u.nome", new
         foreach (var member in members)
             member.PodeEditar = member.UsuarioId != HttpContext.GetUserId() &&
                 (HttpContext.IsSuperAdmin() || rank > RoleCatalog.Rank(member.Papel, member.SuperAdmin));
-        return Ok(new { success = true, data = new { membros = members, catalogo = EstablishmentPermissions.Catalog() } });
+
+        // Motoboy sem conta de acesso (id_usuario nulo): hoje so o criado pelo simulador (is_simulated = TRUE).
+        // Um motoboy real sempre nasce de "Convidar usuario" (EnsureMotoboyProfileAsync), que grava o id_usuario.
+        var motoboysSemConta = (await connection.QueryAsync<MotoboySemContaDto>(@"
+SELECT m.id AS MotoboyId, m.nome AS Nome, m.avatar AS Avatar, m.is_simulated AS IsSimulated,
+       EXISTS (
+           SELECT 1 FROM motoboy_active_sessions s
+            WHERE s.motoboy_id = m.id AND s.id_estabelecimento = @id
+              AND s.ended_at_utc IS NULL AND s.expires_at_utc > NOW()
+       ) AS Online
+  FROM motoboy m
+  JOIN motoboy_estabelecimento me ON me.motoboy_id = m.id
+ WHERE me.estabelecimento_id = @id AND me.ativo = TRUE AND m.id_usuario IS NULL
+ ORDER BY m.nome;", new { id })).ToList();
+
+        return Ok(new { success = true, data = new { membros = members, catalogo = EstablishmentPermissions.Catalog(), motoboysSemConta } });
     }
 
     public sealed class TeamMember
@@ -183,5 +198,15 @@ WHERE ue.id_estabelecimento = @id AND u.deleted_at IS NULL ORDER BY u.nome", new
         public bool Ativo { get; set; }
         public bool SuperAdmin { get; set; }
         public bool PodeEditar { get; set; }
+    }
+
+    /// <summary>Motoboy vinculado a esta loja sem conta de login (hoje, sempre um motoboy de teste do simulador).</summary>
+    public sealed class MotoboySemContaDto
+    {
+        public int MotoboyId { get; set; }
+        public string Nome { get; set; } = "";
+        public string? Avatar { get; set; }
+        public bool IsSimulated { get; set; }
+        public bool Online { get; set; }
     }
 }

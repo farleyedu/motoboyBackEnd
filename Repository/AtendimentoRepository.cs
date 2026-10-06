@@ -390,6 +390,25 @@ SELECT p.nome_cliente::text AS Nome, {origemExpr} AS Origem
             };
         }
 
+        public async Task<IReadOnlyList<PedidoEntregueConversaDto>> GetPedidosEntreguesComConversaAbertaAsync()
+        {
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            if (!await PedidoColumnTypes.HasCoreSchemaAsync(connection, null)) return Array.Empty<PedidoEntregueConversaDto>();
+            // Sem filtro por horario_entrega: a coluna e texto em algumas instalacoes (ver LocalNowSqlAsync), entao
+            // nao da pra comparar com seguranca em SQL. O filtro por conversa ainda aberta ja encolhe a lista
+            // sozinho (conversa fechada sai do resultado); o limite so protege o pior caso de um backlog grande.
+            var rows = await connection.QueryAsync<PedidoEntregueConversaDto>(@"
+SELECT p.id AS PedidoId, p.id_estabelecimento AS EstabelecimentoId, p.conversa_id AS ConversaId
+  FROM pedido p
+  JOIN conversas c ON c.id = p.conversa_id
+ WHERE p.status_pedido = 3 -- Concluido
+   AND p.conversa_id IS NOT NULL
+   AND c.status_atendimento IN ('com_bot', 'em_andamento', 'aguardando_cliente', 'aguardando_interno')
+ ORDER BY p.id DESC
+ LIMIT 200;");
+            return rows.ToList();
+        }
+
         /// <summary>Liga o pedido a uma conversa (e ao cliente dela). Nao apaga vinculo anterior de outro pedido.</summary>
         public async Task<ConversaDoPedidoDto> VincularAsync(Guid estabelecimentoId, Guid conversaId, int pedidoId)
         {

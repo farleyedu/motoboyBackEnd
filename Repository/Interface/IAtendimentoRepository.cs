@@ -24,6 +24,11 @@ namespace APIBack.Repository.Interface
         Task<PedidoCanalDto> GetCanalDoPedidoAsync(Guid estabelecimentoId, int pedidoId);
 
         /// <summary>
+        /// Pedidos entregues cuja conversa ainda esta aberta: candidatos ao fechamento automatico do atendimento.
+        /// </summary>
+        Task<IReadOnlyList<PedidoEntregueConversaDto>> GetPedidosEntreguesComConversaAbertaAsync();
+
+        /// <summary>
         /// Garante uma conversa pro cliente que acabou de ser cadastrado manualmente (sem nenhuma mensagem
         /// ainda), pra ele aparecer na lista de conversas do atendimento. Idempotente: se ja existe conversa
         /// pra esse cliente, devolve o id dela sem criar outra.

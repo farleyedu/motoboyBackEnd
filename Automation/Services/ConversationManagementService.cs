@@ -10,7 +10,7 @@ using Microsoft.Extensions.Logging;
 
 namespace APIBack.Automation.Services
 {
-    public class ConversationManagementService
+    public class ConversationManagementService : IConversationCloser
     {
         private const string WhatsAppWindowExpiredCode = "whatsapp_window_expired";
         private const string WhatsAppWindowExpiredMessage = "A janela de 24 horas do WhatsApp expirou. A Meta nao permite iniciar uma nova conversa por aqui apos esse prazo.";

@@ -140,6 +140,14 @@ namespace APIBack.DTOs.Atendimento
         public string? Motivo { get; set; }
     }
 
+    /// <summary>Candidato ao fechamento automatico do atendimento: pedido entregue com conversa ainda aberta.</summary>
+    public class PedidoEntregueConversaDto
+    {
+        public int PedidoId { get; set; }
+        public Guid EstabelecimentoId { get; set; }
+        public Guid ConversaId { get; set; }
+    }
+
     public class PedidosCanaisRequest
     {
         public List<int>? PedidoIds { get; set; }
