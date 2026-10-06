@@ -107,20 +107,38 @@ namespace APIBack.Service
         public async Task<AvisoDespachoResultDto> SendAvisoDespachoAsync(Guid estabelecimentoId, int pedidoId, SendAvisoDespachoRequest? request)
         {
             var texto = ValidateClientMessageText(request?.Mensagem);
-            var canal = await _repository.GetCanalDoPedidoAsync(estabelecimentoId, EnsurePositive(pedidoId));
+            var conversaId = await EnsureClientePodeReceberAsync(estabelecimentoId, EnsurePositive(pedidoId));
+            var mensagemId = await SendPelaConversaAsync(conversaId, estabelecimentoId, texto, "atendente");
+            return new AvisoDespachoResultDto { PedidoId = pedidoId, ConversaId = conversaId, MensagemId = mensagemId };
+        }
+
+        /// <summary>
+        /// Barra, antes de qualquer envio, o cliente com quem a loja nao tem canal (iFood, sem conversa, nunca escreveu,
+        /// janela de 24h fechada). Vale para toda mensagem ligada a um pedido, venha do atendente ou do motoboy.
+        /// </summary>
+        private async Task<Guid> EnsureClientePodeReceberAsync(Guid estabelecimentoId, int pedidoId)
+        {
+            var canal = await _repository.GetCanalDoPedidoAsync(estabelecimentoId, pedidoId);
             if (!canal.PodeReceber || !canal.ConversaId.HasValue)
             {
                 throw new DeliveryDomainException(409, "CLIENTE_SEM_CANAL", ClienteCanalRules.Explain(canal.Motivo), new { motivo = canal.Motivo });
             }
+            return canal.ConversaId.Value;
+        }
 
+        /// <summary>
+        /// Envia pelo WhatsApp da loja. O erro do modulo de conversas vira erro de dominio: os controllers do delivery
+        /// so tratam <see cref="DeliveryDomainException"/>, e sem isto a falha chegava ao front como 500 sem explicacao.
+        /// </summary>
+        private async Task<Guid> SendPelaConversaAsync(Guid conversaId, Guid estabelecimentoId, string texto, string criadaPor)
+        {
             try
             {
-                var mensagemId = await _conversationManagement.SendSystemNoticeAsync(canal.ConversaId.Value, estabelecimentoId, texto, "atendente");
-                return new AvisoDespachoResultDto { PedidoId = pedidoId, ConversaId = canal.ConversaId.Value, MensagemId = mensagemId };
+                return await _conversationManagement.SendSystemNoticeAsync(conversaId, estabelecimentoId, texto, criadaPor);
             }
             catch (ConversationManagementException ex)
             {
-                throw new DeliveryDomainException(ex.StatusCode, ex.Code ?? "AVISO_NAO_ENVIADO", ex.Message);
+                throw new DeliveryDomainException(ex.StatusCode, ex.Code ?? "MENSAGEM_NAO_ENVIADA", ex.Message);
             }
         }
 
@@ -181,6 +199,12 @@ namespace APIBack.Service
                 throw new DeliveryDomainException(403, "PEDIDO_NOT_IN_YOUR_QUEUE", "Este pedido nao esta na sua fila.");
             }
 
+            // Antes isto abria (ou criava) a conversa e tentava enviar de qualquer jeito: para quem pediu no balcao e
+            // nunca escreveu, ou para pedido do iFood, o WhatsApp recusava e sobrava uma conversa vazia. Agora o
+            // motoboy recebe o motivo na hora e nada e criado.
+            await EnsureClientePodeReceberAsync(estabelecimentoId, pedidoId);
+
+            // Com o canal conferido a conversa ja existe: isto so liga o pedido a ela, se ainda nao estiver ligado.
             var conversa = await _repository.AbrirConversaDoPedidoAsync(estabelecimentoId, pedidoId);
             if (!conversa.ConversaId.HasValue)
             {
@@ -190,7 +214,7 @@ namespace APIBack.Service
             var nomeMotoboy = await _repository.ObterNomeMotoboyAsync(motoboyId);
             var criadaPor = BuildCriadaPorLabel(nomeMotoboy);
 
-            var mensagemId = await _conversationManagement.SendSystemNoticeAsync(conversa.ConversaId.Value, estabelecimentoId, texto, criadaPor);
+            var mensagemId = await SendPelaConversaAsync(conversa.ConversaId.Value, estabelecimentoId, texto, criadaPor);
             return new MotoboyClientMessageResultDto { ConversaId = conversa.ConversaId.Value, MensagemId = mensagemId };
         }
 

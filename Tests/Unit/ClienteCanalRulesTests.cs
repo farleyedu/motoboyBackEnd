@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using APIBack.DTOs.Atendimento;
+using APIBack.DTOs.Delivery;
 using APIBack.Repository.Interface;
 using APIBack.Service;
 using APIBack.Service.Interface;
@@ -74,10 +75,11 @@ namespace APIBack.Tests.Unit
     public sealed class AvisoDespachoServiceTests
     {
         private readonly Mock<IAtendimentoRepository> _repository = new();
+        private readonly Mock<IPedidoQueueService> _queue = new();
         private readonly Guid _est = Guid.NewGuid();
 
         // O envio em si (ConversationManagementService) so e alcancado quando o canal esta liberado; aqui so se testa o que vem antes.
-        private AtendimentoService Create() => new(_repository.Object, Mock.Of<IPedidoQueueService>(), null!);
+        private AtendimentoService Create() => new(_repository.Object, _queue.Object, null!);
 
         [Fact]
         public async Task Canais_ignora_ids_invalidos_e_repetidos_e_pedido_de_outra_loja()
@@ -117,6 +119,37 @@ namespace APIBack.Tests.Unit
 
             Assert.Equal(409, erro.StatusCode);
             Assert.Equal("CLIENTE_SEM_CANAL", erro.Code);
+        }
+
+        [Theory]
+        [InlineData(ClienteCanalRules.Ifood)]
+        [InlineData(ClienteCanalRules.NuncaEscreveu)]
+        [InlineData(ClienteCanalRules.JanelaFechada)]
+        [InlineData(ClienteCanalRules.SemConversa)]
+        public async Task Mensagem_do_motoboy_ao_cliente_sem_canal_e_recusada_sem_criar_conversa(string motivo)
+        {
+            _queue.Setup(q => q.GetQueueAsync(_est, 3)).ReturnsAsync(new MotoboyQueueDto { Current = new RouteStopDto { PedidoId = 7 } });
+            _repository.Setup(r => r.GetCanalDoPedidoAsync(_est, 7)).ReturnsAsync(new PedidoCanalDto { PedidoId = 7, PodeReceber = false, Motivo = motivo });
+
+            var erro = await Assert.ThrowsAsync<DeliveryDomainException>(() =>
+                Create().SendToClientAsync(_est, 3, 7, new SendMotoboyClientMessageRequest { Mensagem = "Cheguei." }));
+
+            Assert.Equal(409, erro.StatusCode);
+            Assert.Equal("CLIENTE_SEM_CANAL", erro.Code);
+            Assert.Equal(ClienteCanalRules.Explain(motivo), erro.Message);
+            _repository.Verify(r => r.AbrirConversaDoPedidoAsync(It.IsAny<Guid>(), It.IsAny<int>()), Times.Never);
+        }
+
+        [Fact]
+        public async Task Mensagem_do_motoboy_sobre_pedido_fora_da_fila_dele_nem_consulta_o_canal()
+        {
+            _queue.Setup(q => q.GetQueueAsync(_est, 3)).ReturnsAsync(new MotoboyQueueDto());
+
+            var erro = await Assert.ThrowsAsync<DeliveryDomainException>(() =>
+                Create().SendToClientAsync(_est, 3, 7, new SendMotoboyClientMessageRequest { Mensagem = "Cheguei." }));
+
+            Assert.Equal(403, erro.StatusCode);
+            _repository.Verify(r => r.GetCanalDoPedidoAsync(It.IsAny<Guid>(), It.IsAny<int>()), Times.Never);
         }
 
         [Fact]
