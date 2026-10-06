@@ -20,6 +20,9 @@ namespace APIBack.Repository.Interface
         Task<ConversaDoPedidoDto> VincularAsync(Guid estabelecimentoId, Guid conversaId, int pedidoId);
         Task<ConversaDoPedidoDto> AbrirConversaDoPedidoAsync(Guid estabelecimentoId, int pedidoId);
 
+        /// <summary>Origem do pedido e a conversa do cliente (sem criar nada): diz se a loja consegue falar com ele.</summary>
+        Task<PedidoCanalDto> GetCanalDoPedidoAsync(Guid estabelecimentoId, int pedidoId);
+
         /// <summary>
         /// Garante uma conversa pro cliente que acabou de ser cadastrado manualmente (sem nenhuma mensagem
         /// ainda), pra ele aparecer na lista de conversas do atendimento. Idempotente: se ja existe conversa

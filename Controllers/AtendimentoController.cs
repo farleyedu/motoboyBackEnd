@@ -86,6 +86,20 @@ namespace APIBack.Controllers
         public Task<IActionResult> Vincular(Guid conversaId, int pedidoId) =>
             Run((est, _) => _service.VincularAsync(est, conversaId, pedidoId));
 
+        // ---- aviso de despacho ao cliente --------------------------------------
+
+        /// <summary>Quais clientes destes pedidos a loja consegue avisar pelo WhatsApp (iFood e quem nunca escreveu ficam de fora).</summary>
+        [HttpPost("pedidos/canais")]
+        [RequirePermission("Delivery", "visualizar")]
+        public Task<IActionResult> GetCanais([FromBody] PedidosCanaisRequest? request) =>
+            Run((est, _) => _service.GetCanaisAsync(est, request));
+
+        /// <summary>Avisa o cliente de que o pedido foi para a rota de um motoboy.</summary>
+        [HttpPost("pedidos/{pedidoId:int}/aviso-despacho")]
+        [RequirePermission("Delivery", "atribuir_motoboy")]
+        public Task<IActionResult> SendAvisoDespacho(int pedidoId, [FromBody] SendAvisoDespachoRequest? request) =>
+            Run((est, _) => _service.SendAvisoDespachoAsync(est, pedidoId, request));
+
         // ---- mensagens atendente <-> motoboy -----------------------------------
 
         [HttpGet("motoboy-atalhos")]

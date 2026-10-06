@@ -289,6 +289,37 @@ namespace APIBack.Service
         public static string FormatTime(DateTime? value) => value.HasValue ? value.Value.ToString("HH:mm", CultureInfo.InvariantCulture) : string.Empty;
     }
 
+    /// <summary>
+    /// A loja consegue mandar mensagem para o cliente deste pedido? O unico canal e o WhatsApp da loja, e fora da
+    /// janela de 24h so vale template aprovado (que ainda nao existe). Entao ficam de fora: pedido do iFood (la o
+    /// cliente fala pelo app do iFood, mesmo que o telefone bata com um contato), pedido de balcao/telefone de quem
+    /// nunca escreveu no WhatsApp e cliente cuja janela ja fechou.
+    /// </summary>
+    public static class ClienteCanalRules
+    {
+        public const string Ifood = "ifood";
+        public const string SemConversa = "sem_conversa";
+        public const string NuncaEscreveu = "nunca_escreveu";
+        public const string JanelaFechada = "janela_fechada";
+
+        public static (bool PodeReceber, string? Motivo) Evaluate(string? origem, Guid? conversaId, DateTimeOffset? janelaFimUtc, DateTimeOffset now)
+        {
+            if (string.Equals(origem?.Trim(), APIBack.Model.Delivery.PedidoOrigem.Ifood, StringComparison.OrdinalIgnoreCase)) return (false, Ifood);
+            if (!conversaId.HasValue) return (false, SemConversa);
+            if (!janelaFimUtc.HasValue) return (false, NuncaEscreveu);
+            return janelaFimUtc.Value > now ? (true, null) : (false, JanelaFechada);
+        }
+
+        public static string Explain(string? motivo) => motivo switch
+        {
+            Ifood => "Pedido do iFood: a loja nao tem canal para falar com este cliente.",
+            SemConversa => "Este cliente nao tem conversa no WhatsApp da loja.",
+            NuncaEscreveu => "Este cliente nunca escreveu no WhatsApp da loja.",
+            JanelaFechada => "A janela de 24h do WhatsApp esta fechada para este cliente.",
+            _ => "Nao e possivel enviar mensagem para este cliente agora."
+        };
+    }
+
     /// <summary>Telefone em varias formas ("(34) 99123-0001", "+5534991230001", "34991230001") comparado pela chave dos 11 ultimos digitos.</summary>
     public static class PhoneKey
     {

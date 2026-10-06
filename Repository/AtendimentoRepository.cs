@@ -358,6 +358,38 @@ SELECT p.telefone_cliente::text AS Telefone, p.nome_cliente::text AS Nome, {(cor
             return row == null ? null : ToDto(row);
         }
 
+        private sealed class PedidoCanalRow
+        {
+            public string? Nome { get; set; }
+            public string? Origem { get; set; }
+        }
+
+        public async Task<PedidoCanalDto> GetCanalDoPedidoAsync(Guid estabelecimentoId, int pedidoId)
+        {
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            var core = await PedidoColumnTypes.HasCoreSchemaAsync(connection, null);
+            // Pedido antigo (antes do nucleo) nao tem a coluna origem: la, quem tem id_ifood e do iFood.
+            var origemExpr = core ? "p.origem::text" : "CASE WHEN p.id_ifood IS NOT NULL THEN 'ifood' ELSE 'atendente' END";
+            var pedido = await connection.QuerySingleOrDefaultAsync<PedidoCanalRow>($@"
+SELECT p.nome_cliente::text AS Nome, {origemExpr} AS Origem
+  FROM pedido p WHERE p.id = @PedidoId AND p.id_estabelecimento = @EstabelecimentoId;",
+                new { PedidoId = pedidoId, EstabelecimentoId = estabelecimentoId })
+                ?? throw new DeliveryDomainException(404, "PEDIDO_NOT_FOUND", "Pedido nao encontrado neste estabelecimento.");
+
+            var conversa = await FindConversaAsync(connection, estabelecimentoId, pedidoId);
+            var (podeReceber, motivo) = ClienteCanalRules.Evaluate(pedido.Origem, conversa?.ConversaId, conversa?.JanelaFimUtc, DateTimeOffset.UtcNow);
+            return new PedidoCanalDto
+            {
+                PedidoId = pedidoId,
+                Origem = pedido.Origem,
+                ClienteNome = string.IsNullOrWhiteSpace(pedido.Nome) ? conversa?.ClienteNome : pedido.Nome,
+                ConversaId = conversa?.ConversaId,
+                JanelaFimUtc = conversa?.JanelaFimUtc,
+                PodeReceber = podeReceber,
+                Motivo = motivo
+            };
+        }
+
         /// <summary>Liga o pedido a uma conversa (e ao cliente dela). Nao apaga vinculo anterior de outro pedido.</summary>
         public async Task<ConversaDoPedidoDto> VincularAsync(Guid estabelecimentoId, Guid conversaId, int pedidoId)
         {

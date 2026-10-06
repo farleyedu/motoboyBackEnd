@@ -71,6 +71,59 @@ namespace APIBack.Service
         public Task<ConversaDoPedidoDto> AbrirConversaDoPedidoAsync(Guid estabelecimentoId, int pedidoId) =>
             _repository.AbrirConversaDoPedidoAsync(estabelecimentoId, EnsurePositive(pedidoId));
 
+        // ---- aviso de despacho ao cliente --------------------------------------
+
+        public const int MaxPedidosPorConsultaDeCanal = 30;
+
+        /// <summary>Para cada pedido da rota: a loja consegue mandar mensagem ao cliente? Pedido que nao e desta loja fica de fora.</summary>
+        public async Task<IReadOnlyList<PedidoCanalDto>> GetCanaisAsync(Guid estabelecimentoId, PedidosCanaisRequest? request)
+        {
+            var ids = (request?.PedidoIds ?? new List<int>()).Where(id => id > 0).Distinct().ToList();
+            if (ids.Count == 0) throw new DeliveryDomainException(422, "INVALID_REQUEST", "Informe ao menos um pedido.");
+            if (ids.Count > MaxPedidosPorConsultaDeCanal)
+            {
+                throw new DeliveryDomainException(422, "INVALID_REQUEST", $"Consulte no maximo {MaxPedidosPorConsultaDeCanal} pedidos por vez.");
+            }
+
+            var canais = new List<PedidoCanalDto>(ids.Count);
+            foreach (var id in ids)
+            {
+                try
+                {
+                    canais.Add(await _repository.GetCanalDoPedidoAsync(estabelecimentoId, id));
+                }
+                catch (DeliveryDomainException ex) when (ex.Code == "PEDIDO_NOT_FOUND")
+                {
+                    // some da resposta: quem chamou trata como "sem canal"
+                }
+            }
+            return canais;
+        }
+
+        /// <summary>
+        /// Manda ao cliente o aviso de que o pedido foi para a rota de um motoboy. A regra de quem pode receber e
+        /// conferida aqui de novo (nao so na tela): iFood, quem nunca escreveu e janela fechada sao recusados.
+        /// </summary>
+        public async Task<AvisoDespachoResultDto> SendAvisoDespachoAsync(Guid estabelecimentoId, int pedidoId, SendAvisoDespachoRequest? request)
+        {
+            var texto = ValidateClientMessageText(request?.Mensagem);
+            var canal = await _repository.GetCanalDoPedidoAsync(estabelecimentoId, EnsurePositive(pedidoId));
+            if (!canal.PodeReceber || !canal.ConversaId.HasValue)
+            {
+                throw new DeliveryDomainException(409, "CLIENTE_SEM_CANAL", ClienteCanalRules.Explain(canal.Motivo), new { motivo = canal.Motivo });
+            }
+
+            try
+            {
+                var mensagemId = await _conversationManagement.SendSystemNoticeAsync(canal.ConversaId.Value, estabelecimentoId, texto, "atendente");
+                return new AvisoDespachoResultDto { PedidoId = pedidoId, ConversaId = canal.ConversaId.Value, MensagemId = mensagemId };
+            }
+            catch (ConversationManagementException ex)
+            {
+                throw new DeliveryDomainException(ex.StatusCode, ex.Code ?? "AVISO_NAO_ENVIADO", ex.Message);
+            }
+        }
+
         // ---- mensagens atendente <-> motoboy -----------------------------------
 
         public Task<MotoboyMessageDto> SendToMotoboyAsync(Guid estabelecimentoId, int actorUserId, int motoboyId, SendMotoboyMessageRequest? request)

@@ -127,6 +127,37 @@ namespace APIBack.DTOs.Atendimento
         public Guid MensagemId { get; set; }
     }
 
+    /// <summary>Se a loja consegue mandar mensagem ao cliente do pedido (ver <c>ClienteCanalRules</c>).</summary>
+    public class PedidoCanalDto
+    {
+        public int PedidoId { get; set; }
+        public string? Origem { get; set; }
+        public string? ClienteNome { get; set; }
+        public Guid? ConversaId { get; set; }
+        public DateTimeOffset? JanelaFimUtc { get; set; }
+        public bool PodeReceber { get; set; }
+        /// <summary>ifood, sem_conversa, nunca_escreveu ou janela_fechada; null quando pode receber.</summary>
+        public string? Motivo { get; set; }
+    }
+
+    public class PedidosCanaisRequest
+    {
+        public List<int>? PedidoIds { get; set; }
+    }
+
+    /// <summary>Aviso que o atendente manda ao cliente depois de colocar o pedido na rota de um motoboy.</summary>
+    public class SendAvisoDespachoRequest
+    {
+        public string? Mensagem { get; set; }
+    }
+
+    public class AvisoDespachoResultDto
+    {
+        public int PedidoId { get; set; }
+        public Guid ConversaId { get; set; }
+        public Guid MensagemId { get; set; }
+    }
+
     /// <summary>Um motoboy da lista de contatos do atendimento (Fase D/E): vinculo ativo com esta loja, online ou nao.</summary>
     public class MotoboyRosterEntryDto
     {
