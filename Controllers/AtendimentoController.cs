@@ -107,6 +107,23 @@ namespace APIBack.Controllers
         public Task<IActionResult> MarkRead(int motoboyId) =>
             Run(async (est, _) => new { marcadas = await _service.MarkReadAsync(est, motoboyId, readerIsMotoboy: false) });
 
+        /// <summary>Lista de motoboys vinculados a esta loja (contatos), online primeiro.</summary>
+        [HttpGet("motoboys")]
+        [RequirePermission("Delivery", "visualizar")]
+        public Task<IActionResult> ListMotoboys() => Run((est, _) => _service.ListMotoboysAsync(est));
+
+        // ---- grupo de motoboys da loja (Fase E) --------------------------------
+
+        [HttpGet("motoboy-grupo/mensagens")]
+        [RequirePermission("Delivery", "visualizar")]
+        public Task<IActionResult> ListGroupMessages([FromQuery] int limit = 50) =>
+            Run((est, _) => _service.ListGroupMessagesAsync(est, limit));
+
+        [HttpPost("motoboy-grupo/mensagens")]
+        [RequirePermission("Delivery", "atribuir_motoboy")]
+        public Task<IActionResult> SendGroupMessage([FromBody] SendMotoboyGroupMessageRequest? request) =>
+            Run((est, user) => _service.SendGroupMessageFromOperatorAsync(est, user, request));
+
         private async Task<IActionResult> Run<T>(Func<Guid, int, Task<T>> action)
         {
             var userId = HttpContext.GetUserId() ?? 0;

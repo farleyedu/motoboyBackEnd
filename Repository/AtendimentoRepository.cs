@@ -488,6 +488,101 @@ SELECT nome FROM motoboy
                 new { MotoboyId = motoboyId });
         }
 
+        // =====================================================================
+        // Lista de motoboys vinculados (contatos) e grupo da loja (Fase D/E)
+        // =====================================================================
+
+        public async Task<IReadOnlyList<MotoboyRosterEntryDto>> ListMotoboysVinculadosAsync(Guid estabelecimentoId)
+        {
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            var rows = await connection.QueryAsync<MotoboyRosterEntryDto>(@"
+SELECT m.id AS MotoboyId, m.nome AS Nome, m.avatar AS Avatar,
+       EXISTS (
+           SELECT 1 FROM motoboy_active_sessions s
+            WHERE s.motoboy_id = m.id AND s.id_estabelecimento = @EstabelecimentoId
+              AND s.ended_at_utc IS NULL AND s.expires_at_utc > NOW()
+       ) AS Online
+  FROM motoboy_estabelecimento me
+  JOIN motoboy m ON m.id = me.motoboy_id
+ WHERE me.estabelecimento_id = @EstabelecimentoId AND me.ativo = TRUE
+ ORDER BY Online DESC, m.nome;",
+                new { EstabelecimentoId = estabelecimentoId });
+            return rows.ToList();
+        }
+
+        private sealed class GroupMessageRow
+        {
+            public long Id { get; set; }
+            public string SenderType { get; set; } = "operator";
+            public int? MotoboyId { get; set; }
+            public string? MotoboyNome { get; set; }
+            public string Body { get; set; } = string.Empty;
+            public DateTimeOffset CreatedAtUtc { get; set; }
+        }
+
+        private const string GroupMessageSelect = @"
+SELECT gm.id AS Id, gm.sender_type AS SenderType, gm.motoboy_id AS MotoboyId, m.nome::text AS MotoboyNome,
+       gm.body AS Body, gm.created_at_utc AS CreatedAtUtc
+  FROM motoboy_group_message gm
+  LEFT JOIN motoboy m ON m.id = gm.motoboy_id";
+
+        private static MotoboyGroupMessageDto ToGroupDto(GroupMessageRow row) => new()
+        {
+            Id = row.Id, SenderType = row.SenderType, MotoboyId = row.MotoboyId, MotoboyNome = row.MotoboyNome,
+            Body = row.Body, CreatedAtUtc = row.CreatedAtUtc
+        };
+
+        public async Task<IReadOnlyList<MotoboyGroupMessageDto>> ListGroupMessagesAsync(Guid estabelecimentoId, int limit)
+        {
+            try
+            {
+                await using var connection = await _dataSource.OpenConnectionAsync();
+                var rows = await connection.QueryAsync<GroupMessageRow>($@"{GroupMessageSelect}
+ WHERE gm.estabelecimento_id = @EstabelecimentoId
+ ORDER BY gm.created_at_utc DESC
+ LIMIT @Limit;",
+                    new { EstabelecimentoId = estabelecimentoId, Limit = limit });
+                return rows.Select(ToGroupDto).Reverse().ToList();
+            }
+            catch (PostgresException ex) when (IsMissingTable(ex))
+            {
+                return Array.Empty<MotoboyGroupMessageDto>();
+            }
+        }
+
+        public async Task<MotoboyGroupMessageDto> SendGroupMessageAsync(Guid estabelecimentoId, string senderType, int? motoboyId, int? sentByUserId, string body)
+        {
+            try
+            {
+                await using var connection = await _dataSource.OpenConnectionAsync();
+                if (motoboyId.HasValue)
+                {
+                    var linked = await connection.ExecuteScalarAsync<bool>(@"
+SELECT EXISTS (SELECT 1 FROM motoboy_estabelecimento me
+                WHERE me.motoboy_id = @MotoboyId AND me.estabelecimento_id = @EstabelecimentoId AND me.ativo = TRUE);",
+                        new { MotoboyId = motoboyId, EstabelecimentoId = estabelecimentoId });
+                    if (!linked) throw new DeliveryDomainException(404, "MOTOBOY_NOT_FOUND", "Motoboy nao encontrado neste estabelecimento.");
+                }
+
+                var row = await connection.QuerySingleAsync<GroupMessageRow>($@"
+WITH inserted AS (
+    INSERT INTO motoboy_group_message (estabelecimento_id, sender_type, motoboy_id, sent_by_user_id, body)
+    VALUES (@EstabelecimentoId, @SenderType, @MotoboyId, @SentByUserId, @Body)
+    RETURNING id, estabelecimento_id, sender_type, motoboy_id, sent_by_user_id, body, created_at_utc
+)
+SELECT inserted.id AS Id, inserted.sender_type AS SenderType, inserted.motoboy_id AS MotoboyId, m.nome::text AS MotoboyNome,
+       inserted.body AS Body, inserted.created_at_utc AS CreatedAtUtc
+  FROM inserted
+  LEFT JOIN motoboy m ON m.id = inserted.motoboy_id;",
+                    new { EstabelecimentoId = estabelecimentoId, SenderType = senderType, MotoboyId = motoboyId, SentByUserId = sentByUserId, Body = body });
+                return ToGroupDto(row);
+            }
+            catch (PostgresException ex) when (IsMissingTable(ex))
+            {
+                throw MigrationPending();
+            }
+        }
+
         private static MotoboyMessageDto ToDto(MessageRow row) => new()
         {
             Id = row.Id, MotoboyId = row.MotoboyId, PedidoId = row.PedidoId, Direction = row.Direction,

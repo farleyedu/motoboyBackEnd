@@ -126,4 +126,30 @@ namespace APIBack.DTOs.Atendimento
         public Guid ConversaId { get; set; }
         public Guid MensagemId { get; set; }
     }
+
+    /// <summary>Um motoboy da lista de contatos do atendimento (Fase D/E): vinculo ativo com esta loja, online ou nao.</summary>
+    public class MotoboyRosterEntryDto
+    {
+        public int MotoboyId { get; set; }
+        public string Nome { get; set; } = string.Empty;
+        public string? Avatar { get; set; }
+        public bool Online { get; set; }
+    }
+
+    /// <summary>Mensagem do grupo de motoboys da loja (Fase E): chat/avisos, nunca despacha pedido.</summary>
+    public class MotoboyGroupMessageDto
+    {
+        public long Id { get; set; }
+        /// <summary>operator ou motoboy.</summary>
+        public string SenderType { get; set; } = "operator";
+        public int? MotoboyId { get; set; }
+        public string? MotoboyNome { get; set; }
+        public string Body { get; set; } = string.Empty;
+        public DateTimeOffset CreatedAtUtc { get; set; }
+    }
+
+    public class SendMotoboyGroupMessageRequest
+    {
+        public string? Body { get; set; }
+    }
 }

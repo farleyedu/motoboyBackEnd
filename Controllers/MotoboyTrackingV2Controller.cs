@@ -211,6 +211,18 @@ namespace APIBack.Controllers
         public Task<IActionResult> SendClientMessage(int pedidoId, [FromBody] SendMotoboyClientMessageRequest? request) =>
             WithOperationalContextAsync((est, motoboyId, _) => _atendimento.SendToClientAsync(est, motoboyId, pedidoId, request));
 
+        // ---- Grupo de motoboys da loja (Fase E) ----------------------------------
+
+        [HttpGet("group-messages")]
+        [RequireOperationalSession]
+        public Task<IActionResult> GetGroupMessages([FromQuery] int limit = 50) =>
+            WithOperationalContextAsync((est, _, __) => _atendimento.ListGroupMessagesAsync(est, limit));
+
+        [HttpPost("group-messages")]
+        [RequireOperationalSession]
+        public Task<IActionResult> SendGroupMessage([FromBody] SendMotoboyGroupMessageRequest? request) =>
+            WithOperationalContextAsync((est, motoboyId, _) => _atendimento.SendGroupMessageFromMotoboyAsync(est, motoboyId, request));
+
         [HttpGet("transfer-targets")]
         [RequireOperationalSession]
         public Task<IActionResult> GetTransferTargets() =>

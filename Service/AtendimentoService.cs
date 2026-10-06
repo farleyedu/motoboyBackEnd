@@ -91,6 +91,26 @@ namespace APIBack.Service
         public Task<int> MarkReadAsync(Guid estabelecimentoId, int motoboyId, bool readerIsMotoboy) =>
             _repository.MarkReadAsync(estabelecimentoId, EnsurePositive(motoboyId), readerIsMotoboy ? "motoboy" : "operator");
 
+        // ---- lista de motoboys (contatos) e grupo da loja (Fase D/E) -----------
+
+        public Task<IReadOnlyList<MotoboyRosterEntryDto>> ListMotoboysAsync(Guid estabelecimentoId) =>
+            _repository.ListMotoboysVinculadosAsync(estabelecimentoId);
+
+        public Task<IReadOnlyList<MotoboyGroupMessageDto>> ListGroupMessagesAsync(Guid estabelecimentoId, int limit) =>
+            _repository.ListGroupMessagesAsync(estabelecimentoId, limit <= 0 ? 50 : limit);
+
+        public Task<MotoboyGroupMessageDto> SendGroupMessageFromOperatorAsync(Guid estabelecimentoId, int actorUserId, SendMotoboyGroupMessageRequest? request)
+        {
+            var (body, _) = MotoboyMessageRules.Normalize(request?.Body, null, operatorSide: true);
+            return _repository.SendGroupMessageAsync(estabelecimentoId, "operator", null, actorUserId, body);
+        }
+
+        public Task<MotoboyGroupMessageDto> SendGroupMessageFromMotoboyAsync(Guid estabelecimentoId, int motoboyId, SendMotoboyGroupMessageRequest? request)
+        {
+            var (body, _) = MotoboyMessageRules.Normalize(request?.Body, null, operatorSide: false);
+            return _repository.SendGroupMessageAsync(estabelecimentoId, "motoboy", EnsurePositive(motoboyId), null, body);
+        }
+
         // ---- mensagem motoboy -> cliente (Fase D) ------------------------------
 
         /// <summary>
