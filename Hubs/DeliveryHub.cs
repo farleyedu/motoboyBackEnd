@@ -19,6 +19,7 @@ namespace APIBack.Hubs
         public const string DeliveryRouteReturned = "delivery.route.returned";
         /// <summary>Mensagem interna atendente <-> motoboy presa ao pedido (Fase 5).</summary>
         public const string DeliveryMotoboyMessage = "delivery.motoboy.message";
+        public const string MotoboyLinkRequested = "motoboy.link.requested";
 
         public static string EstablishmentGroup(Guid estabelecimentoId) => $"establishment:{estabelecimentoId:N}";
         public static string SessionGroup(Guid sessionId) => $"delivery-session:{sessionId:N}";
@@ -49,7 +50,7 @@ namespace APIBack.Hubs
                 return;
             }
 
-            var canViewDelivery = httpContext!.IsSuperAdmin() || httpContext.TemPermissao("Delivery", "visualizar");
+            var canViewDelivery = httpContext!.IsSuperAdmin() || httpContext.TemPermissao("Delivery", "visualizar") || httpContext.TemPermissao("Delivery", "gestao_motoboy");
             var canViewChat = httpContext.IsSuperAdmin() || httpContext.TemPermissao("WhatsApp", "visualizar");
             if (!canViewDelivery && !canViewChat)
             {
