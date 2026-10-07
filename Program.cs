@@ -308,10 +308,17 @@ builder.Services.AddCors(options =>
                   if (string.IsNullOrWhiteSpace(origin)) return false;
                   if (corsAllowedOrigins.Contains(origin, StringComparer.OrdinalIgnoreCase)) return true;
 
+                  if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri)) return false;
+
                   // Deploys de preview da Vercel trocam de subdominio a cada build.
-                  return Uri.TryCreate(origin, UriKind.Absolute, out var uri)
-                         && uri.Scheme == Uri.UriSchemeHttps
-                         && uri.Host.EndsWith(".vercel.app", StringComparison.OrdinalIgnoreCase);
+                  if (uri.Scheme == Uri.UriSchemeHttps && uri.Host.EndsWith(".vercel.app", StringComparison.OrdinalIgnoreCase))
+                      return true;
+
+                  // Libera qualquer porta local (apps/paginas rodando na maquina de quem acessa,
+                  // ex. Expo web do app motoboy). Nao depende de configurar Cors:AllowedOrigins
+                  // a cada porta nova de dev; so quem roda algo na propria maquina usa essa origem.
+                  return uri.Scheme == Uri.UriSchemeHttp &&
+                         (uri.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase) || uri.Host == "127.0.0.1");
               })
               .AllowAnyMethod()
               .AllowAnyHeader()
