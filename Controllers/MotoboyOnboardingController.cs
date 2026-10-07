@@ -7,6 +7,7 @@ using APIBack.DTOs.Common;
 using APIBack.DTOs.Motoboy;
 using APIBack.Extensions;
 using APIBack.Hubs;
+using APIBack.Model.Gestao;
 using APIBack.Security;
 using Dapper;
 using Microsoft.AspNetCore.Authorization;
@@ -113,6 +114,48 @@ SELECT e.id AS Id,
  ORDER BY e.nome_fantasia;");
 
             return Ok(ApiResponse<IReadOnlyCollection<MotoboyEstabelecimentoDisponivelDto>>.Ok(rows));
+        }
+
+        // Fonte única dos vínculos do motoboy: motoboy_estabelecimento ativo.
+        // Aprovado uma vez, o vínculo vale até ser desativado, inclusive para contas superadmin.
+        [HttpGet("me/vinculos")]
+        [CustomAuthorize]
+        public async Task<IActionResult> MeusVinculos()
+        {
+            var userId = HttpContext.GetUserId();
+            if (!userId.HasValue) return Unauthorized(ApiResponse<object>.Fail("Usuário não autenticado."));
+
+            var rows = await QueryAsync<MotoboyVinculoAtivoDto>(@"
+SELECT DISTINCT ON (e.id)
+       e.id AS EstabelecimentoId,
+       e.nome_fantasia AS Nome,
+       te.nome AS TipoEstabelecimento,
+       'ativo' AS StatusVinculo,
+       COALESCE(e.status, 'ativo') AS StatusEstabelecimento,
+       'motoboy' AS TipoAcesso,
+       (u.ultimo_estabelecimento_acessado = e.id) IS TRUE AS IsAtual,
+       COALESCE(e.modulos_ativos::text[], ARRAY[]::text[]) AS ModulosAtivos
+  FROM motoboy alias
+  JOIN motoboy_estabelecimento me ON me.motoboy_id = alias.canonical_motoboy_id
+  JOIN usuario u ON u.id = alias.id_usuario
+  JOIN estabelecimentos e ON e.id = me.estabelecimento_id
+  LEFT JOIN tipo_estabelecimento te ON te.id = e.id_tipo_estabelecimento
+ WHERE alias.id_usuario = @UserId
+   AND me.ativo = TRUE
+   AND COALESCE(e.ativo, TRUE) = TRUE
+   AND COALESCE(e.status, 'ativo') IN ('ativo', 'trial')
+ ORDER BY e.id;", new { UserId = userId.Value });
+
+            var vinculos = rows
+                .Select(row =>
+                {
+                    row.ModulosAtivos = EstabelecimentoModuleMapper.ToUiModules(row.Nome, row.ModulosAtivos).ToArray();
+                    return row;
+                })
+                .OrderBy(row => row.Nome)
+                .ToList();
+
+            return Ok(ApiResponse<IReadOnlyCollection<MotoboyVinculoAtivoDto>>.Ok(vinculos));
         }
 
         [HttpGet("me/vinculos/solicitacoes")]

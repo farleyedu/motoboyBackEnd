@@ -107,18 +107,47 @@ SELECT  e.id            AS Id,
 
         public async Task<UsuarioEstabelecimentoAcesso?> ObterVinculoAsync(int userId, Guid estabelecimentoId)
         {
+            // Para motoboys a fonte da verdade é motoboy_estabelecimento: se o vínculo de
+            // motoboy está ativo, ele vale mesmo sem linha ativa em usuario_estabelecimentos.
             const string sql = @"
-SELECT  ue.id                   AS Id,
-        ue.id_usuario           AS UsuarioId,
-        ue.id_estabelecimento   AS EstabelecimentoId,
-        ue.status               AS Status,
-        ue.ativo                AS VinculoAtivo,
-        ue.tipo_acesso          AS TipoAcesso,
-        ue.permissoes_customizadas::text AS PermissoesCustomizadas
- FROM usuario_estabelecimentos ue
- WHERE ue.id_usuario = @UserId
-   AND ue.id_estabelecimento = @EstabelecimentoId
- ORDER BY ue.created_at DESC
+WITH ue_row AS (
+    SELECT  ue.id                   AS Id,
+            ue.id_usuario           AS UsuarioId,
+            ue.id_estabelecimento   AS EstabelecimentoId,
+            ue.status::text         AS Status,
+            ue.ativo                AS VinculoAtivo,
+            ue.tipo_acesso::text    AS TipoAcesso,
+            ue.permissoes_customizadas::text AS PermissoesCustomizadas
+      FROM usuario_estabelecimentos ue
+     WHERE ue.id_usuario = @UserId
+       AND ue.id_estabelecimento = @EstabelecimentoId
+     ORDER BY ue.created_at DESC
+     LIMIT 1
+),
+motoboy_row AS (
+    SELECT  COALESCE((SELECT Id FROM ue_row), '00000000-0000-0000-0000-000000000000'::uuid) AS Id,
+            @UserId                 AS UsuarioId,
+            me.estabelecimento_id   AS EstabelecimentoId,
+            'ativo'                 AS Status,
+            TRUE                    AS VinculoAtivo,
+            'motoboy'               AS TipoAcesso,
+            NULL::text              AS PermissoesCustomizadas
+      FROM motoboy alias
+      JOIN motoboy_estabelecimento me ON me.motoboy_id = alias.canonical_motoboy_id
+     WHERE alias.id_usuario = @UserId
+       AND me.estabelecimento_id = @EstabelecimentoId
+       AND me.ativo = TRUE
+     LIMIT 1
+)
+SELECT Id, UsuarioId, EstabelecimentoId, Status, VinculoAtivo, TipoAcesso, PermissoesCustomizadas
+  FROM (
+        SELECT *, 0 AS prioridade FROM ue_row WHERE VinculoAtivo = TRUE AND LOWER(Status) = 'ativo'
+        UNION ALL
+        SELECT *, 1 AS prioridade FROM motoboy_row
+        UNION ALL
+        SELECT *, 2 AS prioridade FROM ue_row
+       ) vinculos
+ ORDER BY prioridade
  LIMIT 1";
 
             await using var connection = new NpgsqlConnection(_connectionString);

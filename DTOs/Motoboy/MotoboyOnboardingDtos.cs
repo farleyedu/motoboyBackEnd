@@ -36,6 +36,18 @@ namespace APIBack.DTOs.Motoboy
         public string[] ModulosAtivos { get; set; } = Array.Empty<string>();
     }
 
+    public sealed class MotoboyVinculoAtivoDto
+    {
+        public Guid EstabelecimentoId { get; set; }
+        public string Nome { get; set; } = string.Empty;
+        public string? TipoEstabelecimento { get; set; }
+        public string StatusVinculo { get; set; } = "ativo";
+        public string? StatusEstabelecimento { get; set; }
+        public string TipoAcesso { get; set; } = "motoboy";
+        public bool IsAtual { get; set; }
+        public string[] ModulosAtivos { get; set; } = Array.Empty<string>();
+    }
+
     public sealed class MotoboyLinkRequestDto
     {
         public Guid Id { get; set; }

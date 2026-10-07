@@ -285,15 +285,6 @@ UPDATE motoboy_active_sessions
               (motoboy_active_sessions.origin = 'simulator' AND me.simulator_enabled = TRUE AND m.is_simulated = TRUE)
               OR (
                   motoboy_active_sessions.origin = 'mobile'
-                  AND EXISTS (
-                      SELECT 1
-                        FROM usuario_estabelecimentos ue
-                       WHERE ue.id_usuario = motoboy_active_sessions.id_usuario
-                         AND ue.id_estabelecimento = motoboy_active_sessions.id_estabelecimento
-                         AND LOWER(COALESCE(ue.tipo_acesso, '')) = 'motoboy'
-                         AND COALESCE(ue.ativo, TRUE) = TRUE
-                         AND LOWER(COALESCE(ue.status, 'ativo')) = 'ativo'
-                  )
               )
           )
    )
@@ -410,15 +401,6 @@ SELECT EXISTS (
            (@Origin = 'simulator' AND me.simulator_enabled = TRUE AND m.is_simulated = TRUE)
            OR (
                @Origin = 'mobile'
-               AND EXISTS (
-                   SELECT 1
-                     FROM usuario_estabelecimentos ue
-                    WHERE ue.id_usuario = @UsuarioId
-                      AND ue.id_estabelecimento = @EstabelecimentoId
-                      AND LOWER(COALESCE(ue.tipo_acesso, '')) = 'motoboy'
-                      AND COALESCE(ue.ativo, TRUE) = TRUE
-                      AND LOWER(COALESCE(ue.status, 'ativo')) = 'ativo'
-               )
            )
        )
 );", new
@@ -653,15 +635,6 @@ SELECT s.motoboy_id AS MotoboyId,
        (s.origin = 'simulator' AND me.simulator_enabled = TRUE AND m.is_simulated = TRUE)
        OR (
            s.origin = 'mobile'
-           AND EXISTS (
-               SELECT 1
-                 FROM usuario_estabelecimentos ue
-                WHERE ue.id_usuario = s.id_usuario
-                  AND ue.id_estabelecimento = s.id_estabelecimento
-                  AND LOWER(COALESCE(ue.tipo_acesso, '')) = 'motoboy'
-                  AND COALESCE(ue.ativo, TRUE) = TRUE
-                  AND LOWER(COALESCE(ue.status, 'ativo')) = 'ativo'
-           )
        )
    )
  ORDER BY m.nome, m.id;";
@@ -1016,15 +989,6 @@ SELECT canonical.id AS MotoboyId,
    AND LOWER(COALESCE(e.status, 'ativo')) IN ('ativo', 'trial')
  WHERE alias.id_usuario = @UserId
    AND canonical.is_simulated = FALSE
-   AND EXISTS (
-       SELECT 1
-         FROM usuario_estabelecimentos ue
-        WHERE ue.id_usuario = @UserId
-          AND ue.id_estabelecimento = @EstabelecimentoId
-          AND LOWER(COALESCE(ue.tipo_acesso, '')) = 'motoboy'
-          AND COALESCE(ue.ativo, TRUE) = TRUE
-          AND LOWER(COALESCE(ue.status, 'ativo')) = 'ativo'
-   )
  ORDER BY canonical.id
  FOR UPDATE OF canonical
  LIMIT 1;";
@@ -1206,15 +1170,6 @@ UPDATE motoboy_active_sessions
                    (s2.origin = 'simulator' AND me.simulator_enabled = TRUE AND m.is_simulated = TRUE)
                    OR (
                        s2.origin = 'mobile'
-                       AND EXISTS (
-                           SELECT 1
-                             FROM usuario_estabelecimentos ue
-                            WHERE ue.id_usuario = s2.id_usuario
-                              AND ue.id_estabelecimento = s2.id_estabelecimento
-                              AND LOWER(COALESCE(ue.tipo_acesso, '')) = 'motoboy'
-                              AND COALESCE(ue.ativo, TRUE) = TRUE
-                              AND LOWER(COALESCE(ue.status, 'ativo')) = 'ativo'
-                       )
                    )
                )
         )
