@@ -33,6 +33,7 @@ namespace APIBack.DTOs.Motoboy
         public string? Cidade { get; set; }
         public string? Uf { get; set; }
         public string? TipoEstabelecimento { get; set; }
+        public string[] ModulosAtivos { get; set; } = Array.Empty<string>();
     }
 
     public sealed class MotoboyLinkRequestDto

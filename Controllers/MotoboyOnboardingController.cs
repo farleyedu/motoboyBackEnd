@@ -20,7 +20,6 @@ using CustomAuthorize = APIBack.Attributes.AuthorizeAttribute;
 namespace APIBack.Controllers
 {
     [Route("api/motoboys")]
-    [ApiController]
     public sealed class MotoboyOnboardingController : ControllerBase
     {
         private readonly NpgsqlDataSource _dataSource;
@@ -104,11 +103,13 @@ SELECT e.id AS Id,
        e.nome_fantasia AS Nome,
        e.cidade AS Cidade,
        e.uf AS Uf,
-       te.nome AS TipoEstabelecimento
+       te.nome AS TipoEstabelecimento,
+       COALESCE(e.modulos_ativos::text[], ARRAY[]::text[]) AS ModulosAtivos
   FROM estabelecimentos e
   LEFT JOIN tipo_estabelecimento te ON te.id = e.id_tipo_estabelecimento
  WHERE COALESCE(e.ativo, TRUE) = TRUE
    AND COALESCE(e.status, 'ativo') IN ('ativo', 'trial')
+   AND e.modulos_ativos @> ARRAY['DELIVERY']::modulo_enum[]
  ORDER BY e.nome_fantasia;");
 
             return Ok(ApiResponse<IReadOnlyCollection<MotoboyEstabelecimentoDisponivelDto>>.Ok(rows));
@@ -160,9 +161,25 @@ SELECT id AS Id, nome AS Nome
  WHERE id_usuario = @UserId AND canonical_motoboy_id = id
  LIMIT 1;", new { UserId = userId.Value }, transaction);
 
+            // Contas antigas podem ter sido criadas antes do perfil estruturado de motoboy.
+            // Regulariza o perfil no primeiro pedido de vínculo, sem criar vínculo ainda.
             if (motoboy == null || motoboy.Id <= 0)
             {
-                return BadRequest(ApiResponse<object>.Fail("Perfil de motoboy não encontrado."));
+                var user = await connection.QuerySingleOrDefaultAsync<MotoboyUserRow>(@"
+SELECT id AS Id, nome AS Nome
+  FROM usuario
+ WHERE id = @UserId AND deleted_at IS NULL
+ LIMIT 1;", new { UserId = userId.Value }, transaction);
+
+                if (user == null || user.Id <= 0)
+                {
+                    return BadRequest(ApiResponse<object>.Fail("Usuário não encontrado."));
+                }
+
+                motoboy = await connection.QuerySingleAsync<MotoboyIdentityRow>(@"
+INSERT INTO motoboy (nome, status, id_usuario, is_simulated, status_cadastro)
+VALUES (@Nome, 2, @UserId, FALSE, 'ativo')
+RETURNING id AS Id, nome AS Nome;", new { user.Nome, UserId = user.Id }, transaction);
             }
 
             var estabelecimentoExists = await connection.ExecuteScalarAsync<bool>(@"
@@ -382,6 +399,12 @@ UPDATE motoboy_link_requests
             public int MotoboyId { get; set; }
             public int MotoboyUserId { get; set; }
             public Guid EmpresaId { get; set; }
+        }
+
+        private sealed class MotoboyUserRow
+        {
+            public int Id { get; set; }
+            public string Nome { get; set; } = string.Empty;
         }
     }
 }
