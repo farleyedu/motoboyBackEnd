@@ -529,6 +529,7 @@ SELECT r.motoboy_id AS MotoboyId,
   JOIN estabelecimentos e ON e.id = r.estabelecimento_id
  WHERE r.id = @RequestId
    AND r.estabelecimento_id = @EstabelecimentoId
+   AND r.origem = 'motoboy'
    AND r.status = 'pending'
  FOR UPDATE;", new { RequestId = requestId, EstabelecimentoId = estabelecimentoId.Value }, transaction);
 
@@ -566,7 +567,7 @@ UPDATE motoboy_link_requests
             {
                 UserId = row.MotoboyUserId,
                 row.EmpresaId,
-                EstablishmentId = estabelecimentoId.Value,
+                EstabelecimentoId = estabelecimentoId.Value,
                 MotoboyId = row.MotoboyId,
                 Actor = actorUserId.Value,
                 RequestId = requestId
@@ -592,6 +593,7 @@ UPDATE motoboy_link_requests
        rejection_reason = @Motivo
  WHERE id = @RequestId
    AND estabelecimento_id = @EstabelecimentoId
+   AND origem = 'motoboy'
    AND status = 'pending';", new
             {
                 RequestId = requestId,
