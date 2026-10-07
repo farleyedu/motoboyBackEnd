@@ -8,6 +8,11 @@ namespace APIBack.DTOs.Delivery
         public int MotoboyId { get; set; }
     }
 
+    public sealed class ArrivalStopRequest
+    {
+        public int? ExpectedPedidoId { get; set; }
+    }
+
     public sealed class CancelPedidoRequest
     {
         public string? Motivo { get; set; }

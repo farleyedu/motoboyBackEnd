@@ -127,6 +127,24 @@ namespace APIBack.DTOs.Atendimento
         public Guid MensagemId { get; set; }
     }
 
+    public class MotoboyClientChatMessageDto
+    {
+        public Guid Id { get; set; }
+        public string Body { get; set; } = string.Empty;
+        public string Type { get; set; } = "texto";
+        public string Status { get; set; } = string.Empty;
+        public DateTime CreatedAtUtc { get; set; }
+        public bool Mine { get; set; }
+    }
+
+    public class MotoboyClientChatDto
+    {
+        public PedidoCanalDto Channel { get; set; } = new();
+        public IReadOnlyList<MotoboyClientChatMessageDto> Messages { get; set; } = Array.Empty<MotoboyClientChatMessageDto>();
+        public bool HasMore { get; set; }
+        public string? Cursor { get; set; }
+    }
+
     /// <summary>Se a loja consegue mandar mensagem ao cliente do pedido (ver <c>ClienteCanalRules</c>).</summary>
     public class PedidoCanalDto
     {

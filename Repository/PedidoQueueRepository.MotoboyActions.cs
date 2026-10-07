@@ -24,12 +24,15 @@ namespace APIBack.Repository
         public Task<MotoboyQueueDto> MarkArrivedAsync(Guid estabelecimentoId, int motoboyId) =>
             MarkCurrentMilestoneAsync(estabelecimentoId, motoboyId, "arrived_at_utc", "arrived");
 
+        public Task<MotoboyQueueDto> MarkArrivedForPedidoAsync(Guid estabelecimentoId, int motoboyId, int expectedPedidoId) =>
+            MarkCurrentMilestoneAsync(estabelecimentoId, motoboyId, "arrived_at_utc", "arrived", expectedPedidoId);
+
         /// <summary>
         /// Coletei / cheguei: marco na entrega atual. Repetir a acao nao altera o horario
         /// ja gravado (idempotente para reenvio do app).
         /// </summary>
         private async Task<MotoboyQueueDto> MarkCurrentMilestoneAsync(
-            Guid estabelecimentoId, int motoboyId, string column, string action)
+            Guid estabelecimentoId, int motoboyId, string column, string action, int? expectedPedidoId = null)
         {
             await using var connection = await _dataSource.OpenConnectionAsync();
             await using var transaction = await connection.BeginTransactionAsync();
@@ -37,6 +40,8 @@ namespace APIBack.Repository
             var version = await LockQueuesAsync(connection, transaction, estabelecimentoId, motoboyId);
             var current = await GetCurrentStopAsync(connection, transaction, estabelecimentoId, motoboyId, forUpdate: true)
                 ?? throw new DeliveryDomainException(409, "NO_CURRENT_DELIVERY", "Voce nao tem entrega atual em rota.");
+
+            DeliveryArrivalRules.EnsureExpectedPedido(expectedPedidoId, current.PedidoId);
 
             var alreadyMarked = column == "picked_up_at_utc" ? current.PickedUpAtUtc.HasValue : current.ArrivedAtUtc.HasValue;
             if (!alreadyMarked)

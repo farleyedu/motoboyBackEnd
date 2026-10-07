@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using APIBack.Automation.Services;
+using APIBack.Automation.Interfaces;
 using APIBack.DTOs.Atendimento;
 using APIBack.Repository.Interface;
 using APIBack.Service.Interface;
@@ -15,12 +16,14 @@ namespace APIBack.Service
         private readonly IAtendimentoRepository _repository;
         private readonly IPedidoQueueService _queueService;
         private readonly ConversationManagementService _conversationManagement;
+        private readonly IConversationRepository _conversations;
 
-        public AtendimentoService(IAtendimentoRepository repository, IPedidoQueueService queueService, ConversationManagementService conversationManagement)
+        public AtendimentoService(IAtendimentoRepository repository, IPedidoQueueService queueService, ConversationManagementService conversationManagement, IConversationRepository conversations)
         {
             _repository = repository;
             _queueService = queueService;
             _conversationManagement = conversationManagement;
+            _conversations = conversations;
         }
 
         // ---- configuracao ------------------------------------------------------
@@ -183,6 +186,29 @@ namespace APIBack.Service
         }
 
         // ---- mensagem motoboy -> cliente (Fase D) ------------------------------
+
+        /// <summary>Histórico externo do cliente da própria entrega. Não devolve controle nem eventos internos do atendimento.</summary>
+        public async Task<MotoboyClientChatDto> ListClientMessagesAsync(Guid estabelecimentoId, int motoboyId, int pedidoId, DateTime? before, int limit)
+        {
+            var queue = await _queueService.GetQueueAsync(estabelecimentoId, EnsurePositive(motoboyId));
+            if (!PedidoEstaNaFila(queue, pedidoId))
+                throw new DeliveryDomainException(403, "PEDIDO_NOT_IN_YOUR_QUEUE", "Este pedido não está na sua fila.");
+            var channel = await _repository.GetCanalDoPedidoAsync(estabelecimentoId, pedidoId);
+            if (!channel.ConversaId.HasValue) return new MotoboyClientChatDto { Channel = channel };
+            var history = await _conversations.ObterHistoricoConversaAsync(channel.ConversaId.Value, before, Math.Clamp(limit, 1, 100), estabelecimentoId);
+            if (history == null) return new MotoboyClientChatDto { Channel = channel };
+            var sender = BuildCriadaPorLabel(await _repository.ObterNomeMotoboyAsync(motoboyId));
+            return new MotoboyClientChatDto
+            {
+                Channel = channel, HasMore = history.HasMore, Cursor = history.Cursor,
+                Messages = history.Mensagens.Select(message => new MotoboyClientChatMessageDto
+                {
+                    Id = message.Id, Body = message.Conteudo, Type = message.Tipo, Status = message.Status,
+                    CreatedAtUtc = DateTime.SpecifyKind(message.DataCriacao, DateTimeKind.Utc),
+                    Mine = string.Equals(message.CriadaPor, sender, StringComparison.OrdinalIgnoreCase)
+                }).ToArray()
+            };
+        }
 
         /// <summary>
         /// Motoboy manda mensagem ao cliente do pedido, pelo WhatsApp da loja (unico canal que o cliente tem).

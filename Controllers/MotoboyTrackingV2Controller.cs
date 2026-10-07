@@ -23,9 +23,11 @@ namespace APIBack.Controllers
         private readonly IPedidoQueueService _queueService;
         private readonly AtendimentoService _atendimento;
         private readonly IRastreioRepository _rastreio;
+        private readonly MotoboyPedidoService _pedido;
 
-        public MotoboyTrackingV2Controller(IOperationalSessionService service, IPedidoQueueService queueService, AtendimentoService atendimento, IRastreioRepository rastreio)
+        public MotoboyTrackingV2Controller(IOperationalSessionService service, IPedidoQueueService queueService, AtendimentoService atendimento, IRastreioRepository rastreio, MotoboyPedidoService pedido)
         {
+            _pedido = pedido;
             _rastreio = rastreio;
             _service = service;
             _queueService = queueService;
@@ -119,8 +121,10 @@ namespace APIBack.Controllers
 
         [HttpPost("stops/current/arrive")]
         [RequireOperationalSession]
-        public Task<IActionResult> Arrive() =>
-            WithOperationalContextAsync((est, motoboyId, _) => _queueService.MarkArrivedAsync(est, motoboyId));
+        public Task<IActionResult> Arrive([FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)] ArrivalStopRequest? request) =>
+            WithOperationalContextAsync((est, motoboyId, _) => request?.ExpectedPedidoId is int pedidoId
+                ? _queueService.MarkArrivedForPedidoAsync(est, motoboyId, pedidoId)
+                : _queueService.MarkArrivedAsync(est, motoboyId));
 
         [HttpPost("stops/current/deliver")]
         [RequireOperationalSession]
@@ -206,10 +210,35 @@ namespace APIBack.Controllers
 
         // ---- Mensagem ao cliente do pedido (Fase D) ------------------------------
 
+        /// <summary>Itens e fotos do catálogo do pedido na própria fila, sem revelar o código de entrega.</summary>
+        [HttpGet("orders/{pedidoId:int}")]
+        [RequireOperationalSession]
+        public Task<IActionResult> GetOrder(int pedidoId) =>
+            WithOperationalContextAsync((est, motoboyId, _) => _pedido.GetAsync(est, motoboyId, pedidoId));
+
+        [HttpGet("orders/{pedidoId:int}/client-channel")]
+        [RequireOperationalSession]
+        public Task<IActionResult> GetClientChannel(int pedidoId) =>
+            WithOperationalContextAsync(async (est, motoboyId, _) =>
+            {
+                await _pedido.GetAsync(est, motoboyId, pedidoId);
+                return await _atendimento.GetCanaisAsync(est, new PedidosCanaisRequest { PedidoIds = new() { pedidoId } });
+            });
+
+        [HttpGet("contacts")]
+        [RequireOperationalSession]
+        public Task<IActionResult> GetContacts() =>
+            WithOperationalContextAsync((est, _, __) => _atendimento.ListMotoboysAsync(est));
+
         [HttpPost("orders/{pedidoId:int}/client-messages")]
         [RequireOperationalSession]
         public Task<IActionResult> SendClientMessage(int pedidoId, [FromBody] SendMotoboyClientMessageRequest? request) =>
             WithOperationalContextAsync((est, motoboyId, _) => _atendimento.SendToClientAsync(est, motoboyId, pedidoId, request));
+
+        [HttpGet("orders/{pedidoId:int}/client-messages")]
+        [RequireOperationalSession]
+        public Task<IActionResult> GetClientMessages(int pedidoId, [FromQuery] DateTime? before, [FromQuery] int limit = 50) =>
+            WithOperationalContextAsync((est, motoboyId, _) => _atendimento.ListClientMessagesAsync(est, motoboyId, pedidoId, before, limit));
 
         // ---- Grupo de motoboys da loja (Fase E) ----------------------------------
 

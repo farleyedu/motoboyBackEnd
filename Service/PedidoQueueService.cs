@@ -124,6 +124,13 @@ namespace APIBack.Service
             return _repository.MarkArrivedAsync(estabelecimentoId, motoboyId);
         }
 
+        public Task<MotoboyQueueDto> MarkArrivedForPedidoAsync(Guid estabelecimentoId, int motoboyId, int expectedPedidoId)
+        {
+            EnsurePositive(motoboyId, "motoboyId");
+            EnsurePositive(expectedPedidoId, "expectedPedidoId");
+            return _repository.MarkArrivedForPedidoAsync(estabelecimentoId, motoboyId, expectedPedidoId);
+        }
+
         public Task<MotoboyQueueDto> DeliverCurrentAsync(Guid estabelecimentoId, int motoboyId, string? codigo)
         {
             EnsurePositive(motoboyId, "motoboyId");

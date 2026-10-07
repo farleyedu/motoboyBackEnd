@@ -79,7 +79,7 @@ namespace APIBack.Tests.Unit
         private readonly Guid _est = Guid.NewGuid();
 
         // O envio em si (ConversationManagementService) so e alcancado quando o canal esta liberado; aqui so se testa o que vem antes.
-        private AtendimentoService Create() => new(_repository.Object, _queue.Object, null!);
+        private AtendimentoService Create() => new(_repository.Object, _queue.Object, null!, Mock.Of<APIBack.Automation.Interfaces.IConversationRepository>());
 
         [Fact]
         public async Task Canais_ignora_ids_invalidos_e_repetidos_e_pedido_de_outra_loja()

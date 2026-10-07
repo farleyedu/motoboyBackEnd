@@ -130,6 +130,7 @@ builder.Services.AddScoped<EncerramentoService>();
 builder.Services.AddHostedService<PedidoEncerramentoWorker>();
 builder.Services.AddHostedService<OfertaRotaWorker>();
 builder.Services.AddScoped<AtendimentoService>();
+builder.Services.AddScoped<MotoboyPedidoService>();
 builder.Services.AddScoped<ICardapioFichaService, CardapioFichaService>();
 builder.Services.AddScoped<IPedidoHistoricoRepository, PedidoHistoricoRepository>();
 builder.Services.AddScoped<IRestaurantSettingsRepository, RestaurantSettingsRepository>();
