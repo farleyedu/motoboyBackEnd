@@ -26,7 +26,7 @@ ALTER TABLE pedido_notificacao DROP CONSTRAINT IF EXISTS pedido_notificacao_tipo
 ALTER TABLE pedido_notificacao
     ADD CONSTRAINT pedido_notificacao_tipo_check
     CHECK (tipo IN ('saiu_da_loja', 'motoboy_chegando', 'pedido_enviado_loja', 'pedido_confirmado_loja', 'chegou',
-                     'confirmacao_atendente'));
+                     'confirmacao_atendente', 'atendimento_fechado_entrega'));
 
 INSERT INTO delivery_tracking_schema_versions (version)
 VALUES ('20261005_03_avisos_pedido')
