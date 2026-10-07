@@ -294,7 +294,9 @@ var corsAllowedOrigins = builder.Configuration
     {
         "https://zippy-admin-one.vercel.app",
         "http://localhost:3000",
-        "http://127.0.0.1:3000"
+        "http://127.0.0.1:3000",
+        "http://localhost:8081",
+        "http://127.0.0.1:8081"
     };
 
 builder.Services.AddCors(options =>
