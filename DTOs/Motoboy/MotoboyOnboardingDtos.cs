@@ -43,6 +43,7 @@ namespace APIBack.DTOs.Motoboy
         public Guid EstabelecimentoId { get; set; }
         public string EstabelecimentoNome { get; set; } = string.Empty;
         public string Status { get; set; } = string.Empty;
+        public string Origem { get; set; } = "motoboy";
         public DateTimeOffset RequestedAtUtc { get; set; }
         public DateTimeOffset? ReviewedAtUtc { get; set; }
         public string? RejectionReason { get; set; }
@@ -61,5 +62,20 @@ namespace APIBack.DTOs.Motoboy
     {
         [MaxLength(300)]
         public string? Motivo { get; set; }
+    }
+
+    public sealed class ConvidarMotoboyRequest
+    {
+        [Required]
+        public int MotoboyId { get; set; }
+    }
+
+    public sealed class MotoboyConviteCandidatoDto
+    {
+        public int MotoboyId { get; set; }
+        public string Nome { get; set; } = string.Empty;
+        public string? Email { get; set; }
+        public string? Telefone { get; set; }
+        public string? Avatar { get; set; }
     }
 }

@@ -128,6 +128,7 @@ SELECT r.id AS Id,
        r.estabelecimento_id AS EstabelecimentoId,
        e.nome_fantasia AS EstabelecimentoNome,
        r.status AS Status,
+       r.origem AS Origem,
        r.requested_at_utc AS RequestedAtUtc,
        r.reviewed_at_utc AS ReviewedAtUtc,
        r.rejection_reason AS RejectionReason,
@@ -213,6 +214,7 @@ SELECT r.id AS Id,
        r.estabelecimento_id AS EstabelecimentoId,
        e.nome_fantasia AS EstabelecimentoNome,
        r.status AS Status,
+       r.origem AS Origem,
        r.requested_at_utc AS RequestedAtUtc,
        r.reviewed_at_utc AS ReviewedAtUtc,
        r.rejection_reason AS RejectionReason
@@ -229,16 +231,17 @@ SELECT r.id AS Id,
             }
 
             var created = await connection.QuerySingleAsync<MotoboyLinkRequestDto>(@"
-INSERT INTO motoboy_link_requests (motoboy_id, estabelecimento_id, status)
-VALUES (@MotoboyId, @EstabelecimentoId, 'pending')
+INSERT INTO motoboy_link_requests (motoboy_id, estabelecimento_id, status, origem, solicitado_por_usuario_id)
+VALUES (@MotoboyId, @EstabelecimentoId, 'pending', 'motoboy', @UserId)
 RETURNING id AS Id,
           motoboy_id AS MotoboyId,
           estabelecimento_id AS EstabelecimentoId,
           (SELECT nome_fantasia FROM estabelecimentos WHERE id = estabelecimento_id) AS EstabelecimentoNome,
           status AS Status,
+          origem AS Origem,
           requested_at_utc AS RequestedAtUtc,
           reviewed_at_utc AS ReviewedAtUtc,
-          rejection_reason AS RejectionReason;", new { MotoboyId = motoboy.Id, request.EstabelecimentoId }, transaction);
+          rejection_reason AS RejectionReason;", new { MotoboyId = motoboy.Id, request.EstabelecimentoId, UserId = userId.Value }, transaction);
 
             await transaction.CommitAsync();
 
@@ -252,6 +255,225 @@ RETURNING id AS Id,
                     created.RequestedAtUtc
                 });
 
+            return StatusCode(StatusCodes.Status201Created, ApiResponse<MotoboyLinkRequestDto>.Ok(created));
+        }
+
+        [HttpGet("convites/candidatos")]
+        [RequirePermission("Delivery", "gestao_motoboy")]
+        public async Task<IActionResult> ListarCandidatosParaConvite()
+        {
+            var estabelecimentoId = HttpContext.GetEstabelecimentoId();
+            if (!estabelecimentoId.HasValue || estabelecimentoId.Value == Guid.Empty)
+                return BadRequest(ApiResponse<object>.Fail("Selecione um restaurante."));
+
+            var rows = await QueryAsync<MotoboyConviteCandidatoDto>(@"
+SELECT m.id AS MotoboyId,
+       m.nome AS Nome,
+       u.email AS Email,
+       m.telefone AS Telefone,
+       m.avatar AS Avatar
+  FROM motoboy m
+  JOIN usuario u ON u.id = m.id_usuario
+  LEFT JOIN motoboy_estabelecimento me
+    ON me.motoboy_id = m.id
+   AND me.estabelecimento_id = @EstabelecimentoId
+   AND me.ativo = TRUE
+  LEFT JOIN motoboy_link_requests r
+    ON r.motoboy_id = m.id
+   AND r.estabelecimento_id = @EstabelecimentoId
+   AND r.status = 'pending'
+ WHERE m.canonical_motoboy_id = m.id
+   AND COALESCE(m.is_simulated, FALSE) = FALSE
+   AND COALESCE(m.status_cadastro, 'ativo') = 'ativo'
+   AND u.deleted_at IS NULL
+   AND me.motoboy_id IS NULL
+   AND r.id IS NULL
+ ORDER BY m.nome;", new { EstabelecimentoId = estabelecimentoId.Value });
+
+            return Ok(ApiResponse<IReadOnlyCollection<MotoboyConviteCandidatoDto>>.Ok(rows));
+        }
+
+        [HttpPost("me/vinculos/convites/{requestId:guid}/aceitar")]
+        [CustomAuthorize]
+        public async Task<IActionResult> AceitarConvite(Guid requestId)
+        {
+            var userId = HttpContext.GetUserId();
+            if (!userId.HasValue)
+                return Unauthorized(ApiResponse<object>.Fail("Usuario nao autenticado."));
+
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            var row = await connection.QuerySingleOrDefaultAsync<PendingMotoboyInviteRow>(@"
+SELECT r.motoboy_id AS MotoboyId,
+       r.estabelecimento_id AS EstabelecimentoId,
+       e.id_empresa AS EmpresaId,
+       r.solicitado_por_usuario_id AS ConvidadoPor
+  FROM motoboy_link_requests r
+  JOIN motoboy m ON m.id = r.motoboy_id
+  JOIN estabelecimentos e ON e.id = r.estabelecimento_id
+ WHERE r.id = @RequestId
+   AND m.id_usuario = @UserId
+   AND r.origem = 'estabelecimento'
+   AND r.status = 'pending'
+ FOR UPDATE;", new { RequestId = requestId, UserId = userId.Value }, transaction);
+
+            if (row == null)
+                return NotFound(ApiResponse<object>.Fail("Convite pendente nao encontrado."));
+
+            await connection.ExecuteAsync(@"
+INSERT INTO usuario_empresas (
+    id, id_usuario, id_empresa, tipo_acesso, status, convidado_por, aprovado_por,
+    data_convite, data_aprovacao, ativo, created_at, updated_at)
+VALUES (gen_random_uuid(), @UserId, @EmpresaId, 'colaborador', 'ativo', @ConvidadoPor, @UserId,
+        NOW(), NOW(), TRUE, NOW(), NOW())
+ON CONFLICT (id_usuario, id_empresa) DO UPDATE
+   SET status = 'ativo', ativo = TRUE, aprovado_por = EXCLUDED.aprovado_por,
+       data_aprovacao = NOW(), data_remocao = NULL, updated_at = NOW();
+
+INSERT INTO usuario_estabelecimentos (
+    id, id_usuario, id_estabelecimento, tipo_acesso, status, convidado_por, aprovado_por,
+    data_convite, data_aprovacao, permissoes_customizadas, ativo, created_at, updated_at)
+VALUES (gen_random_uuid(), @UserId, @EstabelecimentoId, 'motoboy', 'ativo', @ConvidadoPor, @UserId,
+        NOW(), NOW(), NULL, TRUE, NOW(), NOW())
+ON CONFLICT (id_usuario, id_estabelecimento) DO UPDATE
+   SET tipo_acesso = 'motoboy', status = 'ativo', ativo = TRUE, aprovado_por = EXCLUDED.aprovado_por,
+       data_aprovacao = NOW(), data_remocao = NULL, updated_at = NOW();
+
+INSERT INTO motoboy_estabelecimento (motoboy_id, estabelecimento_id, ativo, simulator_enabled)
+VALUES (@MotoboyId, @EstabelecimentoId, TRUE, FALSE)
+ON CONFLICT (motoboy_id, estabelecimento_id) DO UPDATE
+   SET ativo = TRUE, disabled_at_utc = NULL, updated_at_utc = NOW(), simulator_enabled = FALSE;
+
+UPDATE motoboy_link_requests
+   SET status = 'approved', reviewed_at_utc = NOW(), reviewed_by_user_id = @UserId,
+       rejection_reason = NULL
+ WHERE id = @RequestId;", new
+            {
+                UserId = userId.Value,
+                ConvidadoPor = row.ConvidadoPor,
+                row.EmpresaId,
+                row.EstabelecimentoId,
+                row.MotoboyId,
+                RequestId = requestId
+            }, transaction);
+
+            await transaction.CommitAsync();
+            return Ok(ApiResponse<object>.Ok(new { requestId, status = "approved" }));
+        }
+
+        [HttpPost("me/vinculos/convites/{requestId:guid}/recusar")]
+        [CustomAuthorize]
+        public async Task<IActionResult> RecusarConvite(Guid requestId, [FromBody] RecusarVinculoMotoboyRequest? request)
+        {
+            var userId = HttpContext.GetUserId();
+            if (!userId.HasValue)
+                return Unauthorized(ApiResponse<object>.Fail("Usuario nao autenticado."));
+
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            var updated = await connection.ExecuteAsync(@"
+UPDATE motoboy_link_requests r
+   SET status = 'rejected', reviewed_at_utc = NOW(), reviewed_by_user_id = @UserId,
+       rejection_reason = @Motivo
+ WHERE r.id = @RequestId
+   AND r.status = 'pending'
+   AND r.origem = 'estabelecimento'
+   AND EXISTS (SELECT 1 FROM motoboy m WHERE m.id = r.motoboy_id AND m.id_usuario = @UserId);", new
+            {
+                RequestId = requestId,
+                UserId = userId.Value,
+                Motivo = string.IsNullOrWhiteSpace(request?.Motivo) ? null : request.Motivo.Trim()
+            });
+
+            if (updated == 0)
+                return NotFound(ApiResponse<object>.Fail("Convite pendente nao encontrado."));
+
+            return Ok(ApiResponse<object>.Ok(new { requestId, status = "rejected" }));
+        }
+
+        [HttpPost("convites")]
+        [RequirePermission("Delivery", "gestao_motoboy")]
+        public async Task<IActionResult> ConvidarMotoboy([FromBody] ConvidarMotoboyRequest? request)
+        {
+            var estabelecimentoId = HttpContext.GetEstabelecimentoId();
+            var actorUserId = HttpContext.GetUserId();
+            if (!estabelecimentoId.HasValue || !actorUserId.HasValue)
+                return Unauthorized(ApiResponse<object>.Fail("Contexto autenticado invalido."));
+            if (request == null || request.MotoboyId <= 0)
+                return BadRequest(ApiResponse<object>.Fail("Informe um motoboy valido."));
+
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+
+            var candidate = await connection.QuerySingleOrDefaultAsync<MotoboyInviteRow>(@"
+SELECT m.id AS MotoboyId,
+       m.nome AS Nome
+  FROM motoboy m
+  JOIN usuario u ON u.id = m.id_usuario
+ WHERE m.id = @MotoboyId
+   AND m.canonical_motoboy_id = m.id
+   AND COALESCE(m.is_simulated, FALSE) = FALSE
+   AND COALESCE(m.status_cadastro, 'ativo') = 'ativo'
+   AND u.deleted_at IS NULL
+ LIMIT 1;", new { request.MotoboyId }, transaction);
+
+            if (candidate == null)
+                return NotFound(ApiResponse<object>.Fail("Motoboy nao encontrado ou indisponivel."));
+
+            var alreadyLinked = await connection.ExecuteScalarAsync<bool>(@"
+SELECT EXISTS (
+    SELECT 1 FROM motoboy_estabelecimento
+     WHERE motoboy_id = @MotoboyId AND estabelecimento_id = @EstabelecimentoId AND ativo = TRUE
+);", new { request.MotoboyId, EstabelecimentoId = estabelecimentoId.Value }, transaction);
+
+            if (alreadyLinked)
+                return Conflict(ApiResponse<object>.Fail("Este motoboy ja esta vinculado ao restaurante.", "ALREADY_LINKED"));
+
+            var existing = await connection.QuerySingleOrDefaultAsync<MotoboyLinkRequestDto>(@"
+SELECT r.id AS Id,
+       r.motoboy_id AS MotoboyId,
+       r.estabelecimento_id AS EstabelecimentoId,
+       e.nome_fantasia AS EstabelecimentoNome,
+       r.status AS Status,
+       r.origem AS Origem,
+       r.requested_at_utc AS RequestedAtUtc,
+       r.reviewed_at_utc AS ReviewedAtUtc,
+       r.rejection_reason AS RejectionReason,
+       m.nome AS MotoboyNome,
+       u.email AS MotoboyEmail,
+       m.telefone AS MotoboyTelefone
+  FROM motoboy_link_requests r
+  JOIN motoboy m ON m.id = r.motoboy_id
+  JOIN usuario u ON u.id = m.id_usuario
+  JOIN estabelecimentos e ON e.id = r.estabelecimento_id
+ WHERE r.motoboy_id = @MotoboyId
+   AND r.estabelecimento_id = @EstabelecimentoId
+   AND r.status = 'pending';", new { request.MotoboyId, EstabelecimentoId = estabelecimentoId.Value }, transaction);
+
+            if (existing != null)
+            {
+                await transaction.CommitAsync();
+                return Ok(ApiResponse<MotoboyLinkRequestDto>.Ok(existing));
+            }
+
+            var created = await connection.QuerySingleAsync<MotoboyLinkRequestDto>(@"
+INSERT INTO motoboy_link_requests (motoboy_id, estabelecimento_id, status, origem, solicitado_por_usuario_id)
+VALUES (@MotoboyId, @EstabelecimentoId, 'pending', 'estabelecimento', @Actor)
+RETURNING id AS Id,
+          motoboy_id AS MotoboyId,
+          estabelecimento_id AS EstabelecimentoId,
+          (SELECT nome_fantasia FROM estabelecimentos WHERE id = estabelecimento_id) AS EstabelecimentoNome,
+          status AS Status,
+          origem AS Origem,
+          requested_at_utc AS RequestedAtUtc,
+          reviewed_at_utc AS ReviewedAtUtc,
+          rejection_reason AS RejectionReason;", new
+            {
+                request.MotoboyId,
+                EstabelecimentoId = estabelecimentoId.Value,
+                Actor = actorUserId.Value
+            }, transaction);
+
+            await transaction.CommitAsync();
             return StatusCode(StatusCodes.Status201Created, ApiResponse<MotoboyLinkRequestDto>.Ok(created));
         }
 
@@ -269,6 +491,7 @@ SELECT r.id AS Id,
        r.estabelecimento_id AS EstabelecimentoId,
        e.nome_fantasia AS EstabelecimentoNome,
        r.status AS Status,
+       r.origem AS Origem,
        r.requested_at_utc AS RequestedAtUtc,
        r.reviewed_at_utc AS ReviewedAtUtc,
        r.rejection_reason AS RejectionReason,
@@ -406,6 +629,20 @@ UPDATE motoboy_link_requests
         {
             public int Id { get; set; }
             public string Nome { get; set; } = string.Empty;
+        }
+
+        private sealed class MotoboyInviteRow
+        {
+            public int MotoboyId { get; set; }
+            public string Nome { get; set; } = string.Empty;
+        }
+
+        private sealed class PendingMotoboyInviteRow
+        {
+            public int MotoboyId { get; set; }
+            public Guid EstabelecimentoId { get; set; }
+            public Guid EmpresaId { get; set; }
+            public int? ConvidadoPor { get; set; }
         }
     }
 }
