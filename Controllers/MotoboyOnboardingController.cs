@@ -146,11 +146,12 @@ SELECT r.id AS Id,
 
         [HttpPost("me/vinculos/solicitar")]
         [CustomAuthorize]
-        public async Task<IActionResult> SolicitarVinculo([FromBody] SolicitarVinculoMotoboyRequest request)
+        public async Task<IActionResult> SolicitarVinculo([FromBody] SolicitarVinculoMotoboyRequest? request)
         {
             var userId = HttpContext.GetUserId();
             if (!userId.HasValue) return Unauthorized(ApiResponse<object>.Fail("Usuário não autenticado."));
-            if (request.EstabelecimentoId == Guid.Empty) return BadRequest(ApiResponse<object>.Fail("Restaurante inválido."));
+            if (request == null || request.EstabelecimentoId == Guid.Empty)
+                return BadRequest(ApiResponse<object>.Fail("Informe um restaurante válido."));
 
             await using var connection = await _dataSource.OpenConnectionAsync();
             await using var transaction = await connection.BeginTransactionAsync();
