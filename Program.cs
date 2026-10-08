@@ -112,6 +112,8 @@ builder.Services.AddScoped<IPedidoService, PedidoService>();
 builder.Services.AddScoped<IMotoboyRepository, MotoboyRepository>();
 builder.Services.AddScoped<ITrackingRepository, TrackingRepository>();
 builder.Services.AddScoped<IOperationalSessionRepository, OperationalSessionRepository>();
+builder.Services.AddSingleton<DeliverySyncMetrics>();
+builder.Services.AddSingleton<IDeliveryOutboxRepository, DeliveryOutboxRepository>();
 builder.Services.AddScoped<IPedidoQueueRepository, PedidoQueueRepository>();
 builder.Services.AddScoped<IPedidoQueueService, PedidoQueueService>();
 builder.Services.AddScoped<IPedidoCoreService, PedidoCoreService>();
@@ -201,6 +203,17 @@ builder.Services.AddRateLimiter(options =>
                 QueueLimit = 0,
                 QueueProcessingOrder = QueueProcessingOrder.OldestFirst
             });
+    });
+    // O lote aceita ate 20 pontos: limitar requisicoes separadamente evita multiplicar
+    // por 20 a taxa permitida ao endpoint legado.
+    options.AddPolicy("delivery-location-batch", httpContext =>
+    {
+        var payload = httpContext.Items.TryGetValue("JwtPayload", out var raw)
+            ? raw as APIBack.Model.Auth.JwtPayload : null;
+        return RateLimitPartition.GetTokenBucketLimiter(
+            payload?.MotoboySessionId?.ToString("N") ?? httpContext.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
+            _ => new TokenBucketRateLimiterOptions { TokenLimit = 5, TokensPerPeriod = 1,
+                ReplenishmentPeriod = TimeSpan.FromSeconds(2), AutoReplenishment = true, QueueLimit = 0 });
     });
 });
 builder.Services.AddHostedService<DeliveryMigrationHostedService>();
@@ -377,6 +390,7 @@ if (app.Environment.IsDevelopment() || app.Environment.IsProduction())
 // Usar o middleware de CORS
 app.UseRouting();
 app.UseCors("AllowAll");
+app.UseMiddleware<DeliverySyncMetricsMiddleware>();
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseStaticFiles();
 

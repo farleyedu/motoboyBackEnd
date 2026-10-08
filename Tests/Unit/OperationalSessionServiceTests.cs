@@ -86,7 +86,7 @@ namespace APIBack.Tests.Unit
         public async Task Heartbeat_RotatesTokenForSameSession()
         {
             var session = CreateSession("mobile");
-            _repository.Setup(r => r.HeartbeatAsync(session.SessionId, session.MotoboyId, session.SessionEpoch))
+            _repository.Setup(r => r.HeartbeatAsync(session.SessionId, session.MotoboyId, session.SessionEpoch, default))
                 .ReturnsAsync(session);
             _jwtService.Setup(j => j.GenerateToken(It.IsAny<JwtPayload>(), It.IsAny<TimeSpan>()))
                 .Returns("renewed-token");
@@ -102,7 +102,7 @@ namespace APIBack.Tests.Unit
 
             Assert.Equal("renewed-token", response.AccessToken);
             Assert.Equal(session.SessionId, response.Session.SessionId);
-            _repository.Verify(r => r.HeartbeatAsync(session.SessionId, session.MotoboyId, session.SessionEpoch), Times.Once);
+            _repository.Verify(r => r.HeartbeatAsync(session.SessionId, session.MotoboyId, session.SessionEpoch, default), Times.Once);
         }
 
         [Fact]

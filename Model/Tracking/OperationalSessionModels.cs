@@ -68,10 +68,21 @@ namespace APIBack.Model.Tracking
 
     public sealed class DeliveryOutboxRecord
     {
+        public int? MotoboyId { get; set; }
         public Guid EventId { get; set; }
         public string EventName { get; set; } = string.Empty;
         public string TargetGroup { get; set; } = string.Empty;
         public string Payload { get; set; } = "{}";
+        public DateTimeOffset OccurredAtUtc { get; set; }
+    }
+
+    public sealed class StoredLocationSample
+    {
+        public Guid SampleId { get; set; }
+        public long Sequence { get; set; }
+        public string PayloadHash { get; set; } = string.Empty;
+        public DateTimeOffset ReceivedAtUtc { get; set; }
+        public bool UpdatedCurrent { get; set; }
     }
 
     /// <summary>Resultado de tirar um motoboy de teste do estabelecimento.</summary>

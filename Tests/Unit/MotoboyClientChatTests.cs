@@ -19,7 +19,7 @@ namespace APIBack.Tests.Unit
         {
             var est = Guid.NewGuid(); var queue = new Mock<IPedidoQueueService>();
             var atendimento = new Mock<IAtendimentoRepository>(); var conversation = new Mock<IConversationRepository>();
-            queue.Setup(q => q.GetQueueAsync(est, 7)).ReturnsAsync(new MotoboyQueueDto { Current = new RouteStopDto { PedidoId = 23 } });
+            queue.Setup(q => q.GetQueueAsync(est, 7, default)).ReturnsAsync(new MotoboyQueueDto { Current = new RouteStopDto { PedidoId = 23 } });
             var service = new AtendimentoService(atendimento.Object, queue.Object, null!, conversation.Object);
             await Assert.ThrowsAsync<DeliveryDomainException>(() => service.ListClientMessagesAsync(est, 7, 24, null, 50));
             atendimento.Verify(q => q.GetCanalDoPedidoAsync(It.IsAny<Guid>(), It.IsAny<int>()), Times.Never);
@@ -31,7 +31,7 @@ namespace APIBack.Tests.Unit
         {
             var est = Guid.NewGuid(); var queue = new Mock<IPedidoQueueService>();
             var atendimento = new Mock<IAtendimentoRepository>(); var conversation = new Mock<IConversationRepository>();
-            queue.Setup(q => q.GetQueueAsync(est, 7)).ReturnsAsync(new MotoboyQueueDto { Next = new List<RouteStopDto> { new() { PedidoId = 24 } } });
+            queue.Setup(q => q.GetQueueAsync(est, 7, default)).ReturnsAsync(new MotoboyQueueDto { Next = new List<RouteStopDto> { new() { PedidoId = 24 } } });
             atendimento.Setup(q => q.GetCanalDoPedidoAsync(est, 24)).ReturnsAsync(new PedidoCanalDto { PedidoId = 24, PodeReceber = false, Motivo = "sem_conversa" });
             var service = new AtendimentoService(atendimento.Object, queue.Object, null!, conversation.Object);
             var result = await service.ListClientMessagesAsync(est, 7, 24, null, 50);

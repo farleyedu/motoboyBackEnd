@@ -7,6 +7,7 @@ using APIBack.Model.Tracking;
 using APIBack.Options;
 using APIBack.Repository.Interface;
 using APIBack.Service.Interface;
+using APIBack.Services;
 using Microsoft.Extensions.Options;
 
 namespace APIBack.Service
@@ -17,13 +18,15 @@ namespace APIBack.Service
         private readonly IJwtService _jwtService;
         private readonly DeliveryTrackingOptions _options;
         private readonly IPedidoQueueRepository _queueRepository;
+        private readonly DeliverySyncMetrics? _metrics;
 
         public OperationalSessionService(
             IOperationalSessionRepository repository,
             IJwtService jwtService,
             IOptions<DeliveryTrackingOptions> options,
-            IPedidoQueueRepository queueRepository)
+            IPedidoQueueRepository queueRepository, DeliverySyncMetrics? metrics = null)
         {
+            _metrics = metrics;
             _queueRepository = queueRepository ?? throw new ArgumentNullException(nameof(queueRepository));
             _repository = repository ?? throw new ArgumentNullException(nameof(repository));
             _jwtService = jwtService ?? throw new ArgumentNullException(nameof(jwtService));
@@ -108,11 +111,11 @@ namespace APIBack.Service
             return response;
         }
 
-        public async Task<OperationalHeartbeatResponse> HeartbeatAsync(JwtPayload payload)
+        public async Task<OperationalHeartbeatResponse> HeartbeatAsync(JwtPayload payload, CancellationToken cancellationToken = default)
         {
             EnsureEnabled();
             var context = RequireOperationalContext(payload);
-            var session = await _repository.HeartbeatAsync(context.SessionId, context.MotoboyId, context.SessionEpoch);
+            var session = await _repository.HeartbeatAsync(context.SessionId, context.MotoboyId, context.SessionEpoch, cancellationToken);
             var token = GenerateOperationalToken(session);
             return new OperationalHeartbeatResponse
             {
@@ -137,7 +140,7 @@ namespace APIBack.Service
 
         public async Task<OperationalLocationAckDto> ReceiveLocationAsync(
             JwtPayload payload,
-            OperationalLocationRequest request)
+            OperationalLocationRequest request, CancellationToken cancellationToken = default)
         {
             EnsureEnabled();
             var context = RequireOperationalContext(payload);
@@ -146,8 +149,9 @@ namespace APIBack.Service
                 context.SessionId,
                 context.MotoboyId,
                 context.SessionEpoch,
-                location);
-            if (result.Outcome == "accepted" && payload.EstabelecimentoId.HasValue)
+                location, cancellationToken);
+            if (result.Outcome == "accepted" && result.UpdatedCurrent && payload.EstabelecimentoId.HasValue &&
+                DeliveryTrackingPolicy.IsLocationFresh(location.CapturedAtUtc, DateTimeOffset.UtcNow, _options.LocationFreshnessSeconds))
             {
                 // Retorno a loja: se a rota esta "retornando" e a posicao entrou no raio da loja, encerra.
                 // Nunca lanca (a posicao ja foi aceita).
@@ -163,6 +167,51 @@ namespace APIBack.Service
                 SessionVersion = result.SessionVersion,
                 ReceivedAtUtc = result.ReceivedAtUtc
             };
+        }
+
+        public async Task<OperationalLocationBatchAckDto> ReceiveLocationsAsync(
+            JwtPayload payload, OperationalLocationBatchRequest request, CancellationToken cancellationToken = default)
+        {
+            EnsureEnabled();
+            var context = RequireOperationalContext(payload);
+            var samples = OperationalLocationBatchRules.ValidateShape(request);
+            var now = DateTimeOffset.UtcNow;
+            var locations = new List<OperationalLocationWrite>();
+            var validIndices = new List<int>();
+            var acknowledgments = new OperationalLocationAckDto[samples.Count];
+            for (var i = 0; i < samples.Count; i++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                try
+                {
+                    locations.Add(DeliveryTrackingPolicy.ValidateAndMap(samples[i], _options, now));
+                    validIndices.Add(i);
+                }
+                catch (DeliveryDomainException ex) when (ex.Code == "LOCATION_INVALID")
+                {
+                    _metrics?.RecordLocations("rejected", 1);
+                    acknowledgments[i] = new OperationalLocationAckDto { SampleId = samples[i].SampleId!.Value,
+                        Sequence = samples[i].Sequence, Outcome = "rejected", Code = ex.Code, ReceivedAtUtc = now };
+                }
+            }
+            if (locations.Count > 0)
+            {
+                var results = await _repository.WriteLocationsAsync(context.SessionId, context.MotoboyId,
+                    context.SessionEpoch, locations, cancellationToken);
+                for (var i = 0; i < locations.Count; i++)
+                {
+                    var location = locations[i];
+                    var result = results[i];
+                    acknowledgments[validIndices[i]] = new OperationalLocationAckDto { SampleId = location.SampleId,
+                        Sequence = location.Sequence, Outcome = result.Outcome, UpdatedCurrent = result.UpdatedCurrent,
+                        SessionVersion = result.SessionVersion, ReceivedAtUtc = result.ReceivedAtUtc };
+                    if (result.Outcome == "accepted" && result.UpdatedCurrent && payload.EstabelecimentoId.HasValue &&
+                        DeliveryTrackingPolicy.IsLocationFresh(location.CapturedAtUtc, now, _options.LocationFreshnessSeconds))
+                        await _queueRepository.TryFinishReturnByLocationAsync(payload.EstabelecimentoId.Value,
+                            context.MotoboyId, location.Latitude, location.Longitude);
+                }
+            }
+            return new OperationalLocationBatchAckDto { Samples = acknowledgments };
         }
 
         public async Task<OperationalSessionDto?> GetSessionAsync(JwtPayload payload)
@@ -363,6 +412,7 @@ namespace APIBack.Service
             PresenceExpiresAtUtc = session.ExpiresAtUtc,
             HeartbeatIntervalSeconds = _options.HeartbeatIntervalSeconds,
             Version = session.Version,
+            NextLocationSequence = session.NextLocationSequence,
             IsEnded = session.EndedAtUtc.HasValue,
             EndedAtUtc = session.EndedAtUtc,
             EndReason = session.EndReason

@@ -39,15 +39,15 @@ SELECT data_type AS DataType, character_maximum_length AS MaxLength
         /// True quando a migration 20260927_01 (Fase 4: lock e retorno a loja) foi aplicada. So cacheia o
         /// "sim": enquanto ausente, reconsulta, e a API antes da migration segue como antes.
         /// </summary>
-        public static async Task<bool> HasRouteRulesSchemaAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction)
+        public static async Task<bool> HasRouteRulesSchemaAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, CancellationToken cancellationToken = default)
         {
             if (_routeRulesKnown) return true;
-            var present = await connection.ExecuteScalarAsync<bool>(@"
+            var present = await connection.ExecuteScalarAsync<bool>(new CommandDefinition(@"
 SELECT (SELECT COUNT(*) FROM information_schema.columns
          WHERE table_schema = current_schema()
            AND ((table_name = 'delivery_route_stops' AND column_name = 'locked')
              OR (table_name = 'delivery_motoboy_route' AND column_name = 'route_state')
-             OR (table_name = 'delivery_settings' AND column_name = 'store_return_radius_m'))) = 3;", transaction: transaction);
+             OR (table_name = 'delivery_settings' AND column_name = 'store_return_radius_m'))) = 3;", transaction: transaction, commandTimeout: 10, cancellationToken: cancellationToken));
             if (present) _routeRulesKnown = true;
             return present;
         }
@@ -95,14 +95,14 @@ SELECT (SELECT COUNT(*) FROM information_schema.columns
         /// True quando a migration 20261002_02 (confirmacao do motoboy: ofertas de rota) foi aplicada.
         /// So cacheia o "sim"; antes dela a atribuicao continua virando entrega na hora.
         /// </summary>
-        public static async Task<bool> HasOfertaSchemaAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction)
+        public static async Task<bool> HasOfertaSchemaAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, CancellationToken cancellationToken = default)
         {
             if (_ofertaSchemaKnown) return true;
-            var present = await connection.ExecuteScalarAsync<bool>(@"
+            var present = await connection.ExecuteScalarAsync<bool>(new CommandDefinition(@"
 SELECT (SELECT COUNT(*) FROM information_schema.columns
          WHERE table_schema = current_schema()
            AND ((table_name = 'delivery_route_stops' AND column_name IN ('offer_id', 'offered_at_utc'))
-             OR (table_name = 'delivery_settings' AND column_name IN ('require_motoboy_acceptance', 'offer_timeout_minutes')))) = 4;", transaction: transaction);
+             OR (table_name = 'delivery_settings' AND column_name IN ('require_motoboy_acceptance', 'offer_timeout_minutes')))) = 4;", transaction: transaction, commandTimeout: 10, cancellationToken: cancellationToken));
             if (present) _ofertaSchemaKnown = true;
             return present;
         }

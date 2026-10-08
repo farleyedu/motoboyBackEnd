@@ -25,6 +25,8 @@ namespace APIBack.Options
         public int ExpirationWorkerIntervalSeconds { get; set; } = 10;
         public int OutboxPollIntervalMilliseconds { get; set; } = 1000;
         public int OutboxBatchSize { get; set; } = 100;
+        public int OutboxLeaseSeconds { get; set; } = 60;
+        public int OutboxSendTimeoutSeconds { get; set; } = 5;
         public string MigrationsPath { get; set; } = "Migrations/Delivery";
         /// <summary>
         /// Pastas extras varridas junto com <see cref="MigrationsPath"/> no boot (mesmo lock,

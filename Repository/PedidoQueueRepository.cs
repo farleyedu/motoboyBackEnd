@@ -307,13 +307,13 @@ SELECT m.id
             return snapshot;
         }
 
-        public async Task<MotoboyQueueDto> GetQueueAsync(Guid estabelecimentoId, int motoboyId)
+        public async Task<MotoboyQueueDto> GetQueueAsync(Guid estabelecimentoId, int motoboyId, CancellationToken cancellationToken = default)
         {
-            await using var connection = await _dataSource.OpenConnectionAsync();
-            await using var transaction = await connection.BeginTransactionAsync();
-            var version = await GetVersionAsync(connection, transaction, estabelecimentoId, motoboyId);
-            var snapshot = await BuildSnapshotAsync(connection, transaction, estabelecimentoId, motoboyId, version);
-            await transaction.CommitAsync();
+            await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+            await using var transaction = await connection.BeginTransactionAsync(System.Data.IsolationLevel.RepeatableRead, cancellationToken);
+            var version = await GetVersionAsync(connection, transaction, estabelecimentoId, motoboyId, cancellationToken);
+            var snapshot = await BuildSnapshotAsync(connection, transaction, estabelecimentoId, motoboyId, version, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
             return snapshot;
         }
 
@@ -536,10 +536,10 @@ RETURNING id;",
         }
 
         private static async Task<long> GetVersionAsync(
-            NpgsqlConnection connection, NpgsqlTransaction transaction, Guid estabelecimentoId, int motoboyId) =>
-            await connection.ExecuteScalarAsync<long?>(
+            NpgsqlConnection connection, NpgsqlTransaction transaction, Guid estabelecimentoId, int motoboyId, CancellationToken cancellationToken = default) =>
+            await connection.ExecuteScalarAsync<long?>(new CommandDefinition(
                 "SELECT version FROM delivery_motoboy_route WHERE motoboy_id = @MotoboyId AND estabelecimento_id = @EstabelecimentoId;",
-                new { MotoboyId = motoboyId, EstabelecimentoId = estabelecimentoId }, transaction) ?? 0;
+                new { MotoboyId = motoboyId, EstabelecimentoId = estabelecimentoId }, transaction, commandTimeout: 10, cancellationToken: cancellationToken)) ?? 0;
 
         private static async Task<long> BumpRouteVersionAsync(
             NpgsqlConnection connection, NpgsqlTransaction transaction, Guid estabelecimentoId, int motoboyId) =>
@@ -745,13 +745,13 @@ SELECT
         }
 
         private static async Task<MotoboyQueueDto> BuildSnapshotAsync(
-            NpgsqlConnection connection, NpgsqlTransaction transaction, Guid estabelecimentoId, int motoboyId, long version)
+            NpgsqlConnection connection, NpgsqlTransaction transaction, Guid estabelecimentoId, int motoboyId, long version, CancellationToken cancellationToken = default)
         {
-            var rules = await HasRouteRulesSchemaAsync(connection, transaction);
-            var offers = await PedidoColumnTypes.HasOfertaSchemaAsync(connection, transaction);
+            var rules = await HasRouteRulesSchemaAsync(connection, transaction, cancellationToken);
+            var offers = await PedidoColumnTypes.HasOfertaSchemaAsync(connection, transaction, cancellationToken);
             // Colunas legadas podem ser text/numeric/time: le como texto e converte com
             // seguranca, para um cadastro mal preenchido nao derrubar a fila inteira.
-            var rows = (await connection.QueryAsync<StopDetailRow>($@"
+            var rows = (await connection.QueryAsync<StopDetailRow>(new CommandDefinition($@"
 SELECT s.id AS Id, s.pedido_id AS PedidoId, s.position AS Position, s.stop_status AS StopStatus,
        s.assigned_at_utc AS AssignedAtUtc, s.picked_up_at_utc AS PickedUpAtUtc, s.arrived_at_utc AS ArrivedAtUtc,
        p.nome_cliente::text AS NomeCliente,
@@ -781,9 +781,9 @@ SELECT s.id AS Id, s.pedido_id AS PedidoId, s.position AS Position, s.stop_statu
   JOIN pedido p ON p.id = s.pedido_id
  WHERE s.motoboy_id = @MotoboyId AND s.estabelecimento_id = @EstabelecimentoId AND s.stop_status IN {ActiveStatusesSql}
  ORDER BY s.position;",
-                new { MotoboyId = motoboyId, EstabelecimentoId = estabelecimentoId }, transaction)).ToList();
+                new { MotoboyId = motoboyId, EstabelecimentoId = estabelecimentoId }, transaction, commandTimeout: 10, cancellationToken: cancellationToken))).ToList();
 
-            var settings = await GetSettingsInternalAsync(connection, transaction, estabelecimentoId);
+            var settings = await GetSettingsInternalAsync(connection, transaction, estabelecimentoId, cancellationToken);
 
             RouteStopDto Map(StopDetailRow row) => new()
             {
@@ -826,8 +826,8 @@ SELECT s.id AS Id, s.pedido_id AS PedidoId, s.position AS Position, s.stop_statu
                 ? null
                 : OfertaRotaRules.BuildOffer(
                     offeredRows.Select(Map).ToList(), offeredRows[0].OfferId, offeredRows.Min(r => r.OfferedAtUtc),
-                    (await ReadOfferSettingsAsync(connection, transaction, estabelecimentoId)).Minutes);
-            var routeState = await ReadRouteStateAsync(connection, transaction, estabelecimentoId, motoboyId, rules);
+                    (await ReadOfferSettingsAsync(connection, transaction, estabelecimentoId, cancellationToken)).Minutes);
+            var routeState = await ReadRouteStateAsync(connection, transaction, estabelecimentoId, motoboyId, rules, cancellationToken);
             return new MotoboyQueueDto
             {
                 RouteState = routeState.State,

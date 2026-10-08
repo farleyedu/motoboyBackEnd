@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
+using System.Diagnostics;
+using APIBack.Services;
 using APIBack.DTOs.Tracking;
 using APIBack.Hubs;
 using APIBack.Model.Tracking;
@@ -43,11 +45,13 @@ SELECT s.session_id AS SessionId,
 
         private readonly NpgsqlDataSource _dataSource;
         private readonly DeliveryTrackingOptions _options;
+        private readonly DeliverySyncMetrics? _metrics;
 
         public OperationalSessionRepository(
             NpgsqlDataSource dataSource,
-            IOptions<DeliveryTrackingOptions> options)
+            IOptions<DeliveryTrackingOptions> options, DeliverySyncMetrics? metrics = null)
         {
+            _metrics = metrics;
             _dataSource = dataSource ?? throw new ArgumentNullException(nameof(dataSource));
             _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
         }
@@ -251,68 +255,46 @@ SELECT latitude AS Latitude, longitude AS Longitude
                 new { SessionId = sessionId });
         }
 
-        public async Task<OperationalSessionRecord> HeartbeatAsync(Guid sessionId, int motoboyId, long sessionEpoch)
+        public async Task<OperationalSessionRecord> HeartbeatAsync(
+            Guid sessionId, int motoboyId, long sessionEpoch, CancellationToken cancellationToken = default)
         {
-            await using var connection = await _dataSource.OpenConnectionAsync();
-            await using var transaction = await connection.BeginTransactionAsync();
-            var serverNow = await GetServerNowAsync(connection, transaction);
-
-            const string updateSql = @"
-UPDATE motoboy_active_sessions
-   SET last_heartbeat_at_utc = @ServerNow,
-       last_seen_at = @ServerNow,
-       expires_at_utc = CASE WHEN origin = 'simulator'
-                             THEN @SimulatorPresenceExpiresAtUtc
-                             ELSE @PresenceExpiresAtUtc END,
-       version = version + 1
- WHERE session_id = @SessionId
-   AND motoboy_id = @MotoboyId
-   AND session_epoch = @SessionEpoch
-   AND ended_at_utc IS NULL
-   AND revoked_at IS NULL
-   AND expires_at_utc > @ServerNow
-   AND EXISTS (
-       SELECT 1
-         FROM motoboy_estabelecimento me
-         JOIN estabelecimentos e ON e.id = me.estabelecimento_id
-         JOIN motoboy m ON m.id = me.motoboy_id
-        WHERE me.motoboy_id = motoboy_active_sessions.motoboy_id
-          AND me.estabelecimento_id = motoboy_active_sessions.id_estabelecimento
-          AND me.ativo = TRUE
-          AND COALESCE(e.ativo, TRUE) = TRUE
-          AND LOWER(COALESCE(e.status, 'ativo')) IN ('ativo', 'trial')
-          AND (
-              (motoboy_active_sessions.origin = 'simulator' AND me.simulator_enabled = TRUE AND m.is_simulated = TRUE)
-              OR (
-                  motoboy_active_sessions.origin = 'mobile'
-              )
-          )
-   )
-RETURNING version;";
-            var version = await connection.ExecuteScalarAsync<long?>(updateSql, new
-            {
-                SessionId = sessionId,
-                MotoboyId = motoboyId,
-                SessionEpoch = sessionEpoch,
-                ServerNow = serverNow,
-                PresenceExpiresAtUtc = serverNow.AddSeconds(_options.PresenceTtlSeconds),
-                SimulatorPresenceExpiresAtUtc = serverNow.AddSeconds(PresenceTtlSecondsFor("simulator"))
-            }, transaction);
-            if (!version.HasValue)
-            {
-                throw new DeliveryDomainException(401, "SESSION_EXPIRED", "Sessao operacional encerrada ou expirada.");
-            }
-
-            var session = await GetSessionForUpdateAsync(connection, transaction, sessionId)
-                ?? throw new DeliveryDomainException(401, "SESSION_EXPIRED", "Sessao operacional nao encontrada.");
-            await InsertRealtimeEventAsync(
-                connection,
-                transaction,
-                DeliveryRealtimeEvents.MotoboyStatusChanged,
-                "presence.heartbeat",
-                session,
-                new { status = "online", presenceExpiresAtUtc = session.ExpiresAtUtc });
-            await transaction.CommitAsync();
+            using var measurement = _metrics?.MeasureDatabase("heartbeat");
+            await using var connection = await OpenSyncConnectionAsync("heartbeat", cancellationToken);
+            await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+            // UPDATE RETURNING e a leitura dos dados para o JWT viajam juntos ao banco.
+            // NOW() usa o relogio do PostgreSQL e o UPDATE mantem a validacao atomica.
+            var sql = @"
+WITH updated AS (
+    UPDATE motoboy_active_sessions s
+       SET last_heartbeat_at_utc = NOW(), last_seen_at = NOW(),
+           expires_at_utc = NOW() + (CASE WHEN s.origin = 'simulator' THEN @SimulatorTtl ELSE @Ttl END * INTERVAL '1 second'),
+           version = s.version + 1
+     WHERE s.session_id = @SessionId AND s.motoboy_id = @MotoboyId AND s.session_epoch = @SessionEpoch
+       AND s.ended_at_utc IS NULL AND s.revoked_at IS NULL AND s.expires_at_utc > NOW()
+       AND EXISTS (
+           SELECT 1 FROM motoboy_estabelecimento me
+           JOIN estabelecimentos e ON e.id = me.estabelecimento_id
+           JOIN motoboy m ON m.id = me.motoboy_id
+           WHERE me.motoboy_id = s.motoboy_id AND me.estabelecimento_id = s.id_estabelecimento
+             AND me.ativo = TRUE AND COALESCE(e.ativo, TRUE) = TRUE
+             AND LOWER(COALESCE(e.status, 'ativo')) IN ('ativo', 'trial')
+             AND ((s.origin = 'simulator' AND me.simulator_enabled = TRUE AND m.is_simulated = TRUE)
+                  OR (s.origin = 'mobile' AND EXISTS (
+                      SELECT 1 FROM usuario_estabelecimentos ue
+                       WHERE ue.id_usuario = s.id_usuario AND ue.id_estabelecimento = s.id_estabelecimento
+                         AND LOWER(COALESCE(ue.tipo_acesso, '')) = 'motoboy'
+                         AND COALESCE(ue.ativo, TRUE) = TRUE AND LOWER(COALESCE(ue.status, 'ativo')) = 'ativo'))))
+    RETURNING s.*
+) " + SessionSelect.Replace("FROM motoboy_active_sessions s", "FROM updated s");
+            var session = await connection.QuerySingleOrDefaultAsync<OperationalSessionRecord>(new CommandDefinition(sql,
+                new { SessionId = sessionId, MotoboyId = motoboyId, SessionEpoch = sessionEpoch,
+                    Ttl = _options.PresenceTtlSeconds, SimulatorTtl = PresenceTtlSecondsFor("simulator") },
+                transaction, commandTimeout: 10, cancellationToken: cancellationToken))
+                ?? throw new DeliveryDomainException(401, "SESSION_EXPIRED", "Sessao operacional encerrada ou expirada.");
+            await InsertRealtimeEventAsync(connection, transaction, DeliveryRealtimeEvents.MotoboyStatusChanged,
+                "presence.heartbeat", session, new { status = "online", presenceExpiresAtUtc = session.ExpiresAtUtc }, cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+            measurement?.Complete();
             return session;
         }
 
@@ -370,212 +352,131 @@ SELECT
         }
 
         public async Task<OperationalLocationWriteResult> WriteLocationAsync(
-            Guid sessionId,
-            int motoboyId,
-            long sessionEpoch,
-            OperationalLocationWrite location)
+            Guid sessionId, int motoboyId, long sessionEpoch, OperationalLocationWrite location,
+            CancellationToken cancellationToken = default) =>
+            (await WriteLocationsCoreAsync(sessionId, motoboyId, sessionEpoch, new[] { location }, true, cancellationToken))[0];
+
+        public Task<IReadOnlyList<OperationalLocationWriteResult>> WriteLocationsAsync(
+            Guid sessionId, int motoboyId, long sessionEpoch, IReadOnlyList<OperationalLocationWrite> locations,
+            CancellationToken cancellationToken = default) =>
+            WriteLocationsCoreAsync(sessionId, motoboyId, sessionEpoch, locations, false, cancellationToken);
+
+        private async Task<IReadOnlyList<OperationalLocationWriteResult>> WriteLocationsCoreAsync(
+            Guid sessionId, int motoboyId, long sessionEpoch, IReadOnlyList<OperationalLocationWrite> locations,
+            bool rejectStale, CancellationToken cancellationToken)
         {
-            await using var connection = await _dataSource.OpenConnectionAsync();
-            await using var transaction = await connection.BeginTransactionAsync();
-            var serverNow = await GetServerNowAsync(connection, transaction);
-            var session = await GetSessionForUpdateAsync(connection, transaction, sessionId)
+            if (locations.Count is < 1 or > OperationalLocationBatchRules.MaxSamples)
+                throw new DeliveryDomainException(422, "LOCATION_BATCH_INVALID", "Quantidade de localizacoes invalida.");
+            using var measurement = _metrics?.MeasureDatabase("location.write");
+            await using var connection = await OpenSyncConnectionAsync("location", cancellationToken);
+            await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+            var serverNow = await connection.ExecuteScalarAsync<DateTimeOffset>(new CommandDefinition("SELECT NOW();",
+                transaction: transaction, commandTimeout: 10, cancellationToken: cancellationToken));
+            var session = await GetSessionForUpdateAsync(connection, transaction, sessionId, cancellationToken)
                 ?? throw new DeliveryDomainException(401, "SESSION_EXPIRED", "Sessao operacional nao encontrada.");
             if (session.MotoboyId != motoboyId || session.SessionEpoch != sessionEpoch ||
                 session.EndedAtUtc.HasValue || session.ExpiresAtUtc <= serverNow)
-            {
                 throw new DeliveryDomainException(401, "SESSION_EXPIRED", "Sessao operacional encerrada ou expirada.");
-            }
-
-            var hasActiveLink = await connection.ExecuteScalarAsync<bool>(@"
+            var hasActiveLink = await connection.ExecuteScalarAsync<bool>(new CommandDefinition(@"
 SELECT EXISTS (
-    SELECT 1
-      FROM motoboy_estabelecimento me
-      JOIN estabelecimentos e ON e.id = me.estabelecimento_id
-      JOIN motoboy m ON m.id = me.motoboy_id
-     WHERE me.motoboy_id = @MotoboyId
-       AND me.estabelecimento_id = @EstabelecimentoId
-       AND me.ativo = TRUE
-       AND COALESCE(e.ativo, TRUE) = TRUE
-       AND LOWER(COALESCE(e.status, 'ativo')) IN ('ativo', 'trial')
-       AND (
-           (@Origin = 'simulator' AND me.simulator_enabled = TRUE AND m.is_simulated = TRUE)
-           OR (
-               @Origin = 'mobile'
-           )
-       )
-);", new
-            {
-                MotoboyId = motoboyId,
-                session.EstabelecimentoId,
-                session.Origin,
-                session.UsuarioId
-            }, transaction);
+    SELECT 1 FROM motoboy_estabelecimento me
+    JOIN estabelecimentos e ON e.id = me.estabelecimento_id
+    JOIN motoboy m ON m.id = me.motoboy_id
+    WHERE me.motoboy_id = @MotoboyId AND me.estabelecimento_id = @EstabelecimentoId
+      AND me.ativo = TRUE AND COALESCE(e.ativo, TRUE) = TRUE
+      AND LOWER(COALESCE(e.status, 'ativo')) IN ('ativo', 'trial')
+      AND ((@Origin = 'simulator' AND me.simulator_enabled = TRUE AND m.is_simulated = TRUE)
+           OR (@Origin = 'mobile' AND EXISTS (
+               SELECT 1 FROM usuario_estabelecimentos ue
+                WHERE ue.id_usuario = @UsuarioId AND ue.id_estabelecimento = @EstabelecimentoId
+                  AND LOWER(COALESCE(ue.tipo_acesso, '')) = 'motoboy'
+                  AND COALESCE(ue.ativo, TRUE) = TRUE AND LOWER(COALESCE(ue.status, 'ativo')) = 'ativo'))));",
+                new { MotoboyId = motoboyId, session.EstabelecimentoId, session.Origin, session.UsuarioId },
+                transaction, commandTimeout: 10, cancellationToken: cancellationToken));
             if (!hasActiveLink)
-            {
                 throw new DeliveryDomainException(403, "LINK_FORBIDDEN", "Vinculo operacional foi desativado.");
+
+            // Consultar todas as identidades e a posicao corrente uma vez, com a sessao bloqueada.
+            using var reader = await connection.QueryMultipleAsync(new CommandDefinition(@"
+SELECT sample_id AS SampleId, sequence AS Sequence, payload_hash AS PayloadHash,
+       received_at_utc AS ReceivedAtUtc, updated_current AS UpdatedCurrent
+  FROM motoboy_location_samples WHERE session_id = @SessionId
+   AND (sample_id = ANY(@SampleIds) OR sequence = ANY(@Sequences));
+SELECT sequence FROM motoboy_location_current WHERE session_id = @SessionId FOR UPDATE;",
+                new { SessionId = sessionId, SampleIds = locations.Select(l => l.SampleId).ToArray(),
+                    Sequences = locations.Select(l => l.Sequence).ToArray() },
+                transaction, commandTimeout: 10, cancellationToken: cancellationToken));
+            var known = (await reader.ReadAsync<StoredLocationSample>()).ToArray();
+            var currentSequence = await reader.ReadSingleOrDefaultAsync<long?>() ?? 0;
+            var results = OperationalLocationBatchRules.Plan(locations, known, currentSequence, session.Version, serverNow, rejectStale);
+            var accepted = locations.Where((_, i) => results[i].Outcome == "accepted").ToArray();
+            if (accepted.Length > 0)
+            {
+                var latest = accepted[^1];
+                // Uma transacao, um incremento e um evento por lote. Todos os pontos novos
+                // ficam no historico; somente o ultimo substitui a localizacao corrente.
+                session.Version = await connection.QuerySingleAsync<long>(new CommandDefinition(@"
+WITH changed_session AS (
+    UPDATE motoboy_active_sessions SET last_seen_at = @ReceivedAtUtc, version = version + 1
+     WHERE session_id = @SessionId RETURNING version
+), inserted_samples AS (
+    INSERT INTO motoboy_location_samples (
+        sample_id, session_id, motoboy_id, estabelecimento_id, sequence, latitude, longitude,
+        accuracy_meters, speed_mps, heading_degrees, tracking_mode, quality,
+        captured_at_utc, received_at_utc, payload_hash, updated_current)
+    SELECT x.sample_id, @SessionId, @MotoboyId, @EstabelecimentoId, x.sequence, x.latitude, x.longitude,
+           x.accuracy, x.speed, x.heading, x.mode, x.quality, x.captured, @ReceivedAtUtc, x.hash,
+           x.sequence = @Sequence
+      FROM UNNEST(@SampleIds::uuid[], @Sequences::bigint[], @Latitudes::double precision[], @Longitudes::double precision[],
+                  @Accuracies::double precision[], @Speeds::double precision[], @Headings::double precision[],
+                  @Modes::text[], @Qualities::text[], @Captured::timestamptz[], @Hashes::text[])
+           AS x(sample_id, sequence, latitude, longitude, accuracy, speed, heading, mode, quality, captured, hash)
+    RETURNING id
+), changed_current AS (
+    INSERT INTO motoboy_location_current (
+        session_id, motoboy_id, estabelecimento_id, sample_id, sequence, latitude, longitude,
+        accuracy_meters, speed_mps, heading_degrees, tracking_mode, quality, captured_at_utc, received_at_utc, version)
+    VALUES (@SessionId, @MotoboyId, @EstabelecimentoId, @SampleId, @Sequence, @Latitude, @Longitude,
+        @AccuracyMeters, @SpeedMps, @HeadingDegrees, @TrackingMode, @Quality, @CapturedAtUtc, @ReceivedAtUtc, 1)
+    ON CONFLICT (session_id) DO UPDATE SET
+        sample_id = EXCLUDED.sample_id, sequence = EXCLUDED.sequence,
+        latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude,
+        accuracy_meters = EXCLUDED.accuracy_meters, speed_mps = EXCLUDED.speed_mps,
+        heading_degrees = EXCLUDED.heading_degrees, tracking_mode = EXCLUDED.tracking_mode,
+        quality = EXCLUDED.quality, captured_at_utc = EXCLUDED.captured_at_utc,
+        received_at_utc = EXCLUDED.received_at_utc, version = motoboy_location_current.version + 1
+    WHERE motoboy_location_current.sequence < EXCLUDED.sequence
+    RETURNING version
+)
+SELECT version FROM changed_session;",
+                    new { SessionId = sessionId, MotoboyId = motoboyId, session.EstabelecimentoId, ReceivedAtUtc = serverNow,
+                        SampleIds = accepted.Select(l => l.SampleId).ToArray(), Sequences = accepted.Select(l => l.Sequence).ToArray(),
+                        Latitudes = accepted.Select(l => l.Latitude).ToArray(), Longitudes = accepted.Select(l => l.Longitude).ToArray(),
+                        Accuracies = accepted.Select(l => l.AccuracyMeters).ToArray(), Speeds = accepted.Select(l => l.SpeedMps).ToArray(),
+                        Headings = accepted.Select(l => l.HeadingDegrees).ToArray(), Modes = accepted.Select(l => l.TrackingMode).ToArray(),
+                        Qualities = accepted.Select(l => l.Quality).ToArray(), Captured = accepted.Select(l => l.CapturedAtUtc).ToArray(),
+                        Hashes = accepted.Select(l => l.PayloadHash).ToArray(), latest.SampleId, latest.Sequence, latest.Latitude,
+                        latest.Longitude, latest.AccuracyMeters, latest.SpeedMps, latest.HeadingDegrees,
+                        latest.TrackingMode, latest.Quality, latest.CapturedAtUtc },
+                    transaction, commandTimeout: 10, cancellationToken: cancellationToken));
+                await InsertRealtimeEventAsync(connection, transaction, DeliveryRealtimeEvents.MotoboyLocationUpdated,
+                    "location.updated", session, new { sampleId = latest.SampleId, sequence = latest.Sequence,
+                        latitude = latest.Latitude, longitude = latest.Longitude, accuracyMeters = latest.AccuracyMeters,
+                        speedMps = latest.SpeedMps, headingDegrees = latest.HeadingDegrees, trackingMode = latest.TrackingMode,
+                        quality = latest.Quality, capturedAtUtc = latest.CapturedAtUtc, receivedAtUtc = serverNow }, cancellationToken);
             }
+            foreach (var result in results) result.SessionVersion = session.Version;
+            await transaction.CommitAsync(cancellationToken);
+            measurement?.Complete();
+            foreach (var group in results.GroupBy(r => r.Outcome)) _metrics?.RecordLocations(group.Key, group.Count());
+            return results;
+        }
 
-            const string duplicateSql = @"
-SELECT sample_id AS SampleId,
-       sequence AS Sequence,
-       payload_hash AS PayloadHash,
-       received_at_utc AS ReceivedAtUtc,
-       updated_current AS UpdatedCurrent
-  FROM motoboy_location_samples
- WHERE session_id = @SessionId
-   AND (sample_id = @SampleId OR sequence = @Sequence)
- LIMIT 1;";
-            var duplicate = await connection.QueryFirstOrDefaultAsync<LocationDuplicateRow>(duplicateSql, new
-            {
-                SessionId = sessionId,
-                location.SampleId,
-                location.Sequence
-            }, transaction);
-            if (duplicate != null)
-            {
-                if (duplicate.SampleId == location.SampleId &&
-                    duplicate.Sequence == location.Sequence &&
-                    string.Equals(duplicate.PayloadHash, location.PayloadHash, StringComparison.Ordinal))
-                {
-                    await transaction.CommitAsync();
-                    return new OperationalLocationWriteResult
-                    {
-                        Outcome = "duplicate",
-                        UpdatedCurrent = duplicate.UpdatedCurrent,
-                        SessionVersion = session.Version,
-                        ReceivedAtUtc = duplicate.ReceivedAtUtc
-                    };
-                }
-
-                throw new DeliveryDomainException(
-                    409,
-                    "SEQUENCE_CONFLICT",
-                    "A mesma sequence ou sampleId ja foi usada com outro conteudo.");
-            }
-
-            var currentSequence = await connection.ExecuteScalarAsync<long?>(@"
-SELECT sequence
-  FROM motoboy_location_current
- WHERE session_id = @SessionId
- FOR UPDATE;", new { SessionId = sessionId }, transaction);
-            if (currentSequence.HasValue && location.Sequence < currentSequence.Value)
-            {
-                throw new DeliveryDomainException(409, "STALE_SEQUENCE", "A sequence e anterior a ultima posicao aceita.");
-            }
-
-            if (currentSequence.HasValue && location.Sequence == currentSequence.Value)
-            {
-                throw new DeliveryDomainException(409, "SEQUENCE_CONFLICT", "A sequence atual possui outro conteudo.");
-            }
-
-            var sessionVersion = await connection.ExecuteScalarAsync<long>(@"
-UPDATE motoboy_active_sessions
-   SET last_seen_at = @ServerNow,
-       version = version + 1
- WHERE session_id = @SessionId
-RETURNING version;", new { SessionId = sessionId, ServerNow = serverNow }, transaction);
-
-            await connection.ExecuteAsync(@"
-INSERT INTO motoboy_location_samples (
-    sample_id, session_id, motoboy_id, estabelecimento_id, sequence,
-    latitude, longitude, accuracy_meters, speed_mps, heading_degrees,
-    tracking_mode, quality, captured_at_utc, received_at_utc, payload_hash, updated_current)
-VALUES (
-    @SampleId, @SessionId, @MotoboyId, @EstabelecimentoId, @Sequence,
-    @Latitude, @Longitude, @AccuracyMeters, @SpeedMps, @HeadingDegrees,
-    @TrackingMode, @Quality, @CapturedAtUtc, @ReceivedAtUtc, @PayloadHash, TRUE);",
-                new
-                {
-                    location.SampleId,
-                    SessionId = sessionId,
-                    MotoboyId = motoboyId,
-                    session.EstabelecimentoId,
-                    location.Sequence,
-                    location.Latitude,
-                    location.Longitude,
-                    location.AccuracyMeters,
-                    location.SpeedMps,
-                    location.HeadingDegrees,
-                    location.TrackingMode,
-                    location.Quality,
-                    location.CapturedAtUtc,
-                    ReceivedAtUtc = serverNow,
-                    location.PayloadHash
-                },
-                transaction);
-
-            await connection.ExecuteAsync(@"
-INSERT INTO motoboy_location_current (
-    session_id, motoboy_id, estabelecimento_id, sample_id, sequence,
-    latitude, longitude, accuracy_meters, speed_mps, heading_degrees,
-    tracking_mode, quality, captured_at_utc, received_at_utc, version)
-VALUES (
-    @SessionId, @MotoboyId, @EstabelecimentoId, @SampleId, @Sequence,
-    @Latitude, @Longitude, @AccuracyMeters, @SpeedMps, @HeadingDegrees,
-    @TrackingMode, @Quality, @CapturedAtUtc, @ReceivedAtUtc, 1)
-ON CONFLICT (session_id) DO UPDATE SET
-    sample_id = EXCLUDED.sample_id,
-    sequence = EXCLUDED.sequence,
-    latitude = EXCLUDED.latitude,
-    longitude = EXCLUDED.longitude,
-    accuracy_meters = EXCLUDED.accuracy_meters,
-    speed_mps = EXCLUDED.speed_mps,
-    heading_degrees = EXCLUDED.heading_degrees,
-    tracking_mode = EXCLUDED.tracking_mode,
-    quality = EXCLUDED.quality,
-    captured_at_utc = EXCLUDED.captured_at_utc,
-    received_at_utc = EXCLUDED.received_at_utc,
-    version = motoboy_location_current.version + 1
-WHERE motoboy_location_current.sequence < EXCLUDED.sequence;",
-                new
-                {
-                    SessionId = sessionId,
-                    MotoboyId = motoboyId,
-                    session.EstabelecimentoId,
-                    location.SampleId,
-                    location.Sequence,
-                    location.Latitude,
-                    location.Longitude,
-                    location.AccuracyMeters,
-                    location.SpeedMps,
-                    location.HeadingDegrees,
-                    location.TrackingMode,
-                    location.Quality,
-                    location.CapturedAtUtc,
-                    ReceivedAtUtc = serverNow
-                },
-                transaction);
-
-            session.Version = sessionVersion;
-            await InsertRealtimeEventAsync(
-                connection,
-                transaction,
-                DeliveryRealtimeEvents.MotoboyLocationUpdated,
-                "location.updated",
-                session,
-                new
-                {
-                    sampleId = location.SampleId,
-                    sequence = location.Sequence,
-                    latitude = location.Latitude,
-                    longitude = location.Longitude,
-                    accuracyMeters = location.AccuracyMeters,
-                    speedMps = location.SpeedMps,
-                    headingDegrees = location.HeadingDegrees,
-                    trackingMode = location.TrackingMode,
-                    quality = location.Quality,
-                    capturedAtUtc = location.CapturedAtUtc,
-                    receivedAtUtc = serverNow
-                });
-            await transaction.CommitAsync();
-
-            return new OperationalLocationWriteResult
-            {
-                Outcome = "accepted",
-                UpdatedCurrent = true,
-                SessionVersion = sessionVersion,
-                ReceivedAtUtc = serverNow
-            };
+        private async Task<NpgsqlConnection> OpenSyncConnectionAsync(string operation, CancellationToken cancellationToken)
+        {
+            var started = Stopwatch.GetTimestamp();
+            try { return await _dataSource.OpenConnectionAsync(cancellationToken); }
+            finally { _metrics?.RecordPoolWait(operation, Stopwatch.GetElapsedTime(started).TotalMilliseconds); }
         }
 
         public async Task<DeliveryTrackingSnapshotDto> GetSnapshotAsync(Guid estabelecimentoId)
@@ -1036,12 +937,11 @@ SELECT canonical.id AS MotoboyId,
         private async Task<OperationalSessionRecord?> GetSessionForUpdateAsync(
             NpgsqlConnection connection,
             NpgsqlTransaction transaction,
-            Guid sessionId)
+            Guid sessionId, CancellationToken cancellationToken = default)
         {
-            return await connection.QueryFirstOrDefaultAsync<OperationalSessionRecord>(
+            return await connection.QueryFirstOrDefaultAsync<OperationalSessionRecord>(new CommandDefinition(
                 SessionSelect + " WHERE s.session_id = @SessionId LIMIT 1 FOR UPDATE OF s;",
-                new { SessionId = sessionId },
-                transaction);
+                new { SessionId = sessionId }, transaction, commandTimeout: 10, cancellationToken: cancellationToken));
         }
 
         private async Task<OperationalSessionRecord> InsertSessionAsync(
@@ -1300,7 +1200,7 @@ VALUES (
             string eventName,
             string eventType,
             OperationalSessionRecord session,
-            object data)
+            object data, CancellationToken cancellationToken = default)
         {
             var eventId = Guid.NewGuid();
             var occurredAtUtc = DateTimeOffset.UtcNow;
@@ -1317,7 +1217,7 @@ VALUES (
                 occurredAtUtc,
                 data
             });
-            return connection.ExecuteAsync(@"
+            return connection.ExecuteAsync(new CommandDefinition(@"
 INSERT INTO delivery_realtime_outbox (
     event_id, event_name, target_group, estabelecimento_id, motoboy_id,
     session_id, session_epoch, aggregate_version, payload, occurred_at_utc)
@@ -1337,16 +1237,7 @@ VALUES (
                     Payload = payload,
                     OccurredAtUtc = occurredAtUtc
                 },
-                transaction);
-        }
-
-        private sealed class LocationDuplicateRow
-        {
-            public Guid SampleId { get; set; }
-            public long Sequence { get; set; }
-            public string PayloadHash { get; set; } = string.Empty;
-            public DateTimeOffset ReceivedAtUtc { get; set; }
-            public bool UpdatedCurrent { get; set; }
+                transaction, commandTimeout: 10, cancellationToken: cancellationToken));
         }
 
         private sealed class SnapshotRow

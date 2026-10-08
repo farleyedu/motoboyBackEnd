@@ -83,7 +83,7 @@ namespace APIBack.Controllers
 
             return await ExecuteAsync(async () =>
                 ApiResponse<MotoboyQueueDto>.Ok(
-                    await _queueService.GetQueueAsync(estabelecimentoId, payload.MotoboyId.Value)));
+                    await _queueService.GetQueueAsync(estabelecimentoId, payload.MotoboyId.Value, HttpContext.RequestAborted)));
         }
 
         [HttpPost("heartbeat")]
@@ -91,7 +91,7 @@ namespace APIBack.Controllers
         public async Task<IActionResult> Heartbeat() =>
             await ExecuteAsync(async () =>
                 ApiResponse<OperationalHeartbeatResponse>.Ok(
-                    await _service.HeartbeatAsync(HttpContext.GetJwtPayload())));
+                    await _service.HeartbeatAsync(HttpContext.GetJwtPayload(), HttpContext.RequestAborted)));
 
         [HttpPost("location")]
         [RequireOperationalSession]
@@ -100,7 +100,16 @@ namespace APIBack.Controllers
         public async Task<IActionResult> SendLocation([FromBody] OperationalLocationRequest request) =>
             await ExecuteAsync(async () =>
                 ApiResponse<OperationalLocationAckDto>.Ok(
-                    await _service.ReceiveLocationAsync(HttpContext.GetJwtPayload(), request)));
+                    await _service.ReceiveLocationAsync(HttpContext.GetJwtPayload(), request, HttpContext.RequestAborted)));
+
+        [HttpPost("location/batch")]
+        [RequireOperationalSession]
+        [EnableRateLimiting("delivery-location-batch")]
+        [RequestSizeLimit(32_768)]
+        public async Task<IActionResult> SendLocations([FromBody] OperationalLocationBatchRequest request) =>
+            await ExecuteAsync(async () =>
+                ApiResponse<OperationalLocationBatchAckDto>.Ok(
+                    await _service.ReceiveLocationsAsync(HttpContext.GetJwtPayload(), request, HttpContext.RequestAborted)));
 
         [HttpDelete]
         [RequireOperationalSession]

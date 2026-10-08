@@ -1,124 +1,80 @@
-using System;
-using System.Linq;
+﻿using System.Diagnostics;
 using System.Text.Json;
-using System.Threading;
-using System.Threading.Tasks;
 using APIBack.Hubs;
-using APIBack.Model.Tracking;
 using APIBack.Options;
-using Dapper;
+using APIBack.Repository.Interface;
 using Microsoft.AspNetCore.SignalR;
-using Microsoft.Extensions.Hosting;
-using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
-using Npgsql;
 
-namespace APIBack.Services
+namespace APIBack.Services;
+
+public sealed class DeliveryOutboxPublisher(
+    IDeliveryOutboxRepository repository, IHubContext<DeliveryHub> hubContext,
+    IOptions<DeliveryTrackingOptions> options, ILogger<DeliveryOutboxPublisher> logger,
+    DeliverySyncMetrics? metrics = null) : BackgroundService
 {
-    public sealed class DeliveryOutboxPublisher : BackgroundService
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        private const long PublisherAdvisoryLock = 75442201;
-        private readonly NpgsqlDataSource _dataSource;
-        private readonly IHubContext<DeliveryHub> _hubContext;
-        private readonly DeliveryTrackingOptions _options;
-        private readonly ILogger<DeliveryOutboxPublisher> _logger;
-
-        public DeliveryOutboxPublisher(
-            NpgsqlDataSource dataSource,
-            IHubContext<DeliveryHub> hubContext,
-            IOptions<DeliveryTrackingOptions> options,
-            ILogger<DeliveryOutboxPublisher> logger)
+        var delay = TimeSpan.FromMilliseconds(Math.Max(250, options.Value.OutboxPollIntervalMilliseconds));
+        while (!stoppingToken.IsCancellationRequested)
         {
-            _dataSource = dataSource;
-            _hubContext = hubContext;
-            _options = options.Value;
-            _logger = logger;
-        }
-
-        protected override async Task ExecuteAsync(CancellationToken stoppingToken)
-        {
-            var delay = TimeSpan.FromMilliseconds(Math.Max(250, _options.OutboxPollIntervalMilliseconds));
-            while (!stoppingToken.IsCancellationRequested)
+            if (options.Value.Enabled)
             {
-                if (_options.Enabled)
-                {
-                    try
-                    {
-                        await PublishBatchAsync(stoppingToken);
-                    }
-                    catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-                    {
-                        break;
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.LogError(ex, "Falha ao publicar outbox do delivery.");
-                    }
-                }
-
-                await Task.Delay(delay, stoppingToken);
+                try { await PublishBatchAsync(stoppingToken); }
+                catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
+                catch (Exception ex) { logger.LogError(ex, "Falha ao publicar outbox do delivery."); }
             }
+            try { await Task.Delay(delay, stoppingToken); }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
         }
+    }
 
-        private async Task PublishBatchAsync(CancellationToken cancellationToken)
+    internal async Task PublishBatchAsync(CancellationToken cancellationToken)
+    {
+        var leaseId = Guid.NewGuid();
+        var seconds = Math.Clamp(options.Value.OutboxLeaseSeconds, 30, 300);
+        var renewedAt = Stopwatch.GetTimestamp();
+        var records = await repository.ClaimAsync(leaseId, seconds, Math.Clamp(options.Value.OutboxBatchSize, 1, 500), cancellationToken);
+        if (records == null) return;
+        var blocked = new HashSet<(string Group, int? Motoboy)>();
+        try
         {
-            await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
-            await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
-            var ownsLock = await connection.ExecuteScalarAsync<bool>(
-                "SELECT pg_try_advisory_xact_lock(@LockId);",
-                new { LockId = PublisherAdvisoryLock },
-                transaction);
-            if (!ownsLock)
-            {
-                await transaction.CommitAsync(cancellationToken);
-                return;
-            }
-
-            var records = (await connection.QueryAsync<DeliveryOutboxRecord>(@"
-SELECT event_id AS EventId,
-       event_name AS EventName,
-       target_group AS TargetGroup,
-       payload::text AS Payload
-  FROM delivery_realtime_outbox
- WHERE published_at_utc IS NULL
-   AND next_attempt_at_utc <= NOW()
- ORDER BY occurred_at_utc, event_id
- FOR UPDATE SKIP LOCKED
- LIMIT @Limit;",
-                new { Limit = Math.Clamp(_options.OutboxBatchSize, 1, 500) },
-                transaction)).ToArray();
-
             foreach (var record in records)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                if (blocked.Contains((record.TargetGroup, record.MotoboyId))) continue;
+                if (Stopwatch.GetElapsedTime(renewedAt).TotalSeconds >= seconds / 3.0)
+                {
+                    if (!await repository.RenewAsync(leaseId, seconds, cancellationToken)) break;
+                    renewedAt = Stopwatch.GetTimestamp();
+                }
+                string? error = null;
                 try
                 {
                     using var document = JsonDocument.Parse(record.Payload);
-                    await _hubContext.Clients
-                        .Group(record.TargetGroup)
-                        .SendAsync(record.EventName, document.RootElement.Clone(), cancellationToken);
-                    await connection.ExecuteAsync(@"
-UPDATE delivery_realtime_outbox
-   SET published_at_utc = NOW(),
-       attempts = attempts + 1,
-       last_error = NULL
- WHERE event_id = @EventId;", new { record.EventId }, transaction);
+                    using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    timeout.CancelAfter(TimeSpan.FromSeconds(Math.Clamp(options.Value.OutboxSendTimeoutSeconds, 1, 10)));
+                    // A reserva ja devolveu sua conexao ao pool: aqui so existe trabalho de rede.
+                    await hubContext.Clients.Group(record.TargetGroup)
+                        .SendAsync(record.EventName, document.RootElement.Clone(), timeout.Token);
                 }
-                catch (Exception ex) when (ex is not OperationCanceledException)
+                catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
                 {
-                    await connection.ExecuteAsync(@"
-UPDATE delivery_realtime_outbox
-   SET attempts = attempts + 1,
-       last_error = LEFT(@Error, 2000),
-       next_attempt_at_utc = NOW() + (LEAST(attempts + 1, 60) * INTERVAL '1 second')
- WHERE event_id = @EventId;",
-                        new { record.EventId, Error = ex.Message },
-                        transaction);
-                    _logger.LogWarning(ex, "Falha temporaria ao publicar evento {EventId}.", record.EventId);
+                    error = ex is OperationCanceledException ? "Timeout ao enviar evento." : ex.Message;
+                    blocked.Add((record.TargetGroup, record.MotoboyId));
+                    metrics?.RecordPublishFailure();
+                    logger.LogWarning("Falha temporaria ao publicar evento {EventId}: {ErrorType}.", record.EventId, ex.GetType().Name);
                 }
+                if (!await repository.CompleteAsync(leaseId, record.EventId, error, cancellationToken)) break;
+                if (error == null) metrics?.RecordPublished(record.OccurredAtUtc);
             }
-
-            await transaction.CommitAsync(cancellationToken);
+        }
+        finally
+        {
+            // Em shutdown liberar a reserva; se o banco falhar ela expira sozinha.
+            using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+            try { await repository.ReleaseAsync(leaseId, cleanup.Token); }
+            catch (Exception ex) { logger.LogWarning("Reserva da outbox aguardara expiracao ({ErrorType}).", ex.GetType().Name); }
         }
     }
 }
-

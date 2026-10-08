@@ -22,9 +22,10 @@ namespace APIBack.Service.Interface
             Guid estabelecimentoId,
             StartSimulatorSessionRequest request);
 
-        Task<OperationalHeartbeatResponse> HeartbeatAsync(JwtPayload payload);
+        Task<OperationalHeartbeatResponse> HeartbeatAsync(JwtPayload payload, CancellationToken cancellationToken = default);
         Task<OperationalSessionDto> EndSessionAsync(JwtPayload payload, string reason);
-        Task<OperationalLocationAckDto> ReceiveLocationAsync(JwtPayload payload, OperationalLocationRequest request);
+        Task<OperationalLocationAckDto> ReceiveLocationAsync(JwtPayload payload, OperationalLocationRequest request, CancellationToken cancellationToken = default);
+        Task<OperationalLocationBatchAckDto> ReceiveLocationsAsync(JwtPayload payload, OperationalLocationBatchRequest request, CancellationToken cancellationToken = default);
         Task<OperationalSessionDto?> GetSessionAsync(JwtPayload payload);
         Task<DeliveryTrackingSnapshotDto> GetSnapshotAsync(Guid estabelecimentoId);
         Task<IReadOnlyCollection<SimulatorCandidateDto>> GetSimulatorCandidatesAsync(Guid estabelecimentoId);

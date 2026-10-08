@@ -128,7 +128,7 @@ namespace APIBack.Tests.Unit
         [InlineData(ClienteCanalRules.SemConversa)]
         public async Task Mensagem_do_motoboy_ao_cliente_sem_canal_e_recusada_sem_criar_conversa(string motivo)
         {
-            _queue.Setup(q => q.GetQueueAsync(_est, 3)).ReturnsAsync(new MotoboyQueueDto { Current = new RouteStopDto { PedidoId = 7 } });
+            _queue.Setup(q => q.GetQueueAsync(_est, 3, default)).ReturnsAsync(new MotoboyQueueDto { Current = new RouteStopDto { PedidoId = 7 } });
             _repository.Setup(r => r.GetCanalDoPedidoAsync(_est, 7)).ReturnsAsync(new PedidoCanalDto { PedidoId = 7, PodeReceber = false, Motivo = motivo });
 
             var erro = await Assert.ThrowsAsync<DeliveryDomainException>(() =>
@@ -143,7 +143,7 @@ namespace APIBack.Tests.Unit
         [Fact]
         public async Task Mensagem_do_motoboy_sobre_pedido_fora_da_fila_dele_nem_consulta_o_canal()
         {
-            _queue.Setup(q => q.GetQueueAsync(_est, 3)).ReturnsAsync(new MotoboyQueueDto());
+            _queue.Setup(q => q.GetQueueAsync(_est, 3, default)).ReturnsAsync(new MotoboyQueueDto());
 
             var erro = await Assert.ThrowsAsync<DeliveryDomainException>(() =>
                 Create().SendToClientAsync(_est, 3, 7, new SendMotoboyClientMessageRequest { Mensagem = "Cheguei." }));

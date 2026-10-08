@@ -104,10 +104,10 @@ namespace APIBack.Service
                 DeliveryRules.NormalizeReason(motivo, required: false));
         }
 
-        public Task<MotoboyQueueDto> GetQueueAsync(Guid estabelecimentoId, int motoboyId)
+        public Task<MotoboyQueueDto> GetQueueAsync(Guid estabelecimentoId, int motoboyId, CancellationToken cancellationToken = default)
         {
             EnsurePositive(motoboyId, "motoboyId");
-            return _repository.GetQueueAsync(estabelecimentoId, motoboyId);
+            return _repository.GetQueueAsync(estabelecimentoId, motoboyId, cancellationToken);
         }
 
         // ---- Motoboy -----------------------------------------------------------

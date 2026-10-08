@@ -37,13 +37,13 @@ namespace APIBack.Repository
         // ---- parametros -----------------------------------------------------------------
 
         private static async Task<OfferSettingsRow> ReadOfferSettingsAsync(
-            NpgsqlConnection connection, NpgsqlTransaction? transaction, Guid estabelecimentoId)
+            NpgsqlConnection connection, NpgsqlTransaction? transaction, Guid estabelecimentoId, CancellationToken cancellationToken = default)
         {
-            if (!await PedidoColumnTypes.HasOfertaSchemaAsync(connection, transaction)) return new OfferSettingsRow();
-            var row = await connection.QuerySingleOrDefaultAsync<OfferSettingsRow?>(@"
+            if (!await PedidoColumnTypes.HasOfertaSchemaAsync(connection, transaction, cancellationToken)) return new OfferSettingsRow();
+            var row = await connection.QuerySingleOrDefaultAsync<OfferSettingsRow?>(new CommandDefinition(@"
 SELECT require_motoboy_acceptance AS Required, offer_timeout_minutes AS Minutes
   FROM delivery_settings WHERE estabelecimento_id = @EstabelecimentoId;",
-                new { EstabelecimentoId = estabelecimentoId }, transaction);
+                new { EstabelecimentoId = estabelecimentoId }, transaction, commandTimeout: 10, cancellationToken: cancellationToken));
             return row ?? new OfferSettingsRow();
         }
 

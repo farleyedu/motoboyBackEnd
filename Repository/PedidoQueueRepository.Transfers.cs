@@ -149,9 +149,9 @@ ON CONFLICT (estabelecimento_id) DO UPDATE SET
 
         /// <summary>Sem linha em delivery_settings valem os padroes (comportamento permissivo).</summary>
         private static async Task<DeliverySettingsDto> GetSettingsInternalAsync(
-            NpgsqlConnection connection, NpgsqlTransaction transaction, Guid estabelecimentoId)
+            NpgsqlConnection connection, NpgsqlTransaction transaction, Guid estabelecimentoId, CancellationToken cancellationToken = default)
         {
-            var row = await connection.QuerySingleOrDefaultAsync<SettingsRow?>(@"
+            var row = await connection.QuerySingleOrDefaultAsync<SettingsRow?>(new CommandDefinition(@"
 SELECT transfer_policy AS TransferPolicy,
        require_delivery_code AS RequireDeliveryCode,
        allow_motoboy_reorder AS AllowMotoboyReorder,
@@ -159,7 +159,7 @@ SELECT transfer_policy AS TransferPolicy,
        updated_at_utc AS UpdatedAtUtc
   FROM delivery_settings
  WHERE estabelecimento_id = @EstabelecimentoId;",
-                new { EstabelecimentoId = estabelecimentoId }, transaction);
+                new { EstabelecimentoId = estabelecimentoId }, transaction, commandTimeout: 10, cancellationToken: cancellationToken));
 
             if (row == null)
             {

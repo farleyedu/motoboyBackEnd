@@ -32,6 +32,7 @@ namespace APIBack.DTOs.Tracking
         public DateTimeOffset PresenceExpiresAtUtc { get; set; }
         public int HeartbeatIntervalSeconds { get; set; }
         public long Version { get; set; }
+        public long NextLocationSequence { get; set; } = 1;
         public bool IsEnded { get; set; }
         public DateTimeOffset? EndedAtUtc { get; set; }
         public string? EndReason { get; set; }
@@ -91,6 +92,17 @@ namespace APIBack.DTOs.Tracking
         public bool UpdatedCurrent { get; set; }
         public long SessionVersion { get; set; }
         public DateTimeOffset ReceivedAtUtc { get; set; }
+        public string? Code { get; set; }
+    }
+
+    public sealed class OperationalLocationBatchRequest
+    {
+        public IReadOnlyList<OperationalLocationRequest>? Samples { get; set; }
+    }
+
+    public sealed class OperationalLocationBatchAckDto
+    {
+        public IReadOnlyList<OperationalLocationAckDto> Samples { get; set; } = Array.Empty<OperationalLocationAckDto>();
     }
 
     public sealed class SimulatorCandidateDto

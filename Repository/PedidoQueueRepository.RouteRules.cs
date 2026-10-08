@@ -18,8 +18,8 @@ namespace APIBack.Repository
     /// </summary>
     public sealed partial class PedidoQueueRepository
     {
-        private static Task<bool> HasRouteRulesSchemaAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction) =>
-            PedidoColumnTypes.HasRouteRulesSchemaAsync(connection, transaction);
+        private static Task<bool> HasRouteRulesSchemaAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, CancellationToken cancellationToken = default) =>
+            PedidoColumnTypes.HasRouteRulesSchemaAsync(connection, transaction, cancellationToken);
 
         private static DeliveryDomainException MigrationPending() =>
             new(503, "MIGRATION_PENDING", "As regras de rota ainda nao foram habilitadas neste ambiente (migration 20260927_01 pendente).");
@@ -219,12 +219,12 @@ UPDATE delivery_settings
         }
 
         private static async Task<(string State, DateTimeOffset? Since)> ReadRouteStateAsync(
-            NpgsqlConnection connection, NpgsqlTransaction transaction, Guid estabelecimentoId, int motoboyId, bool rules)
+            NpgsqlConnection connection, NpgsqlTransaction transaction, Guid estabelecimentoId, int motoboyId, bool rules, CancellationToken cancellationToken = default)
         {
             if (!rules) return (RouteStates.Idle, null);
-            var row = await connection.QuerySingleOrDefaultAsync<RouteStateRow>(
+            var row = await connection.QuerySingleOrDefaultAsync<RouteStateRow>(new CommandDefinition(
                 "SELECT route_state AS State, returning_since_utc AS Since FROM delivery_motoboy_route WHERE motoboy_id = @MotoboyId AND estabelecimento_id = @EstabelecimentoId;",
-                new { MotoboyId = motoboyId, EstabelecimentoId = estabelecimentoId }, transaction);
+                new { MotoboyId = motoboyId, EstabelecimentoId = estabelecimentoId }, transaction, commandTimeout: 10, cancellationToken: cancellationToken));
             return row == null ? (RouteStates.Idle, null) : (row.State, row.Since);
         }
 

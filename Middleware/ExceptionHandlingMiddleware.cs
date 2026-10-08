@@ -53,6 +53,7 @@ namespace APIBack.Middleware
                 context.Response.Clear();
                 context.Response.StatusCode = status;
                 context.Response.ContentType = "application/json; charset=utf-8";
+                if (status == 503) context.Response.Headers.RetryAfter = "3";
                 var body = ApiResponse<object>.Fail(message, code, ex is PostgresException pg
                     ? new { traceId, sqlState = pg.SqlState, table = pg.TableName, column = pg.ColumnName, constraint = pg.ConstraintName }
                     : new { traceId, sqlState = (string?)null, table = (string?)null, column = (string?)null, constraint = (string?)null });
@@ -74,6 +75,14 @@ namespace APIBack.Middleware
             {
                 var onde = string.IsNullOrEmpty(data.ColumnName) ? data.ConstraintName : data.ColumnName;
                 return (422, "DATA_REJECTED", $"O banco recusou um dos valores enviados{(string.IsNullOrEmpty(onde) ? string.Empty : $" (campo {onde})")}. Confira os dados e tente de novo.");
+            }
+
+            if (ex is TimeoutException ||
+                ex is NpgsqlException and not PostgresException ||
+                ex is PostgresException { IsTransient: true })
+            {
+                return (503, "DATABASE_UNAVAILABLE",
+                    "O servico esta temporariamente indisponivel. Aguarde e tente novamente.");
             }
 
             return (500, "INTERNAL_ERROR", "Erro interno. Informe o codigo de rastreio ao suporte.");

@@ -23,13 +23,16 @@ namespace APIBack.Repository.Interface
             int? motoboyId);
 
         Task<OperationalSessionRecord?> GetSessionAsync(Guid sessionId);
-        Task<OperationalSessionRecord> HeartbeatAsync(Guid sessionId, int motoboyId, long sessionEpoch);
+        Task<OperationalSessionRecord> HeartbeatAsync(Guid sessionId, int motoboyId, long sessionEpoch, CancellationToken cancellationToken = default);
         Task<OperationalSessionRecord> EndSessionAsync(Guid sessionId, int motoboyId, long sessionEpoch, string reason);
         Task<OperationalLocationWriteResult> WriteLocationAsync(
             Guid sessionId,
             int motoboyId,
             long sessionEpoch,
-            OperationalLocationWrite location);
+            OperationalLocationWrite location, CancellationToken cancellationToken = default);
+        Task<IReadOnlyList<OperationalLocationWriteResult>> WriteLocationsAsync(
+            Guid sessionId, int motoboyId, long sessionEpoch,
+            IReadOnlyList<OperationalLocationWrite> locations, CancellationToken cancellationToken = default);
 
         Task<DeliveryTrackingSnapshotDto> GetSnapshotAsync(Guid estabelecimentoId);
         Task<IReadOnlyCollection<SimulatorCandidateDto>> GetSimulatorCandidatesAsync(Guid estabelecimentoId);

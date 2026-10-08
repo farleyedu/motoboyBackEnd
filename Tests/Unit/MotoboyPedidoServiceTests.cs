@@ -21,7 +21,7 @@ namespace APIBack.Tests.Unit
         [Fact]
         public async Task NaoConsultaPedidoForaDaFila()
         {
-            _queue.Setup(q => q.GetQueueAsync(_est, 7)).ReturnsAsync(new MotoboyQueueDto());
+            _queue.Setup(q => q.GetQueueAsync(_est, 7, default)).ReturnsAsync(new MotoboyQueueDto());
             var error = await Assert.ThrowsAsync<DeliveryDomainException>(() => Service.GetAsync(_est, 7, 23));
             Assert.Equal("PEDIDO_NOT_IN_YOUR_QUEUE", error.Code);
             _consulta.Verify(q => q.GetAsync(It.IsAny<Guid>(), It.IsAny<int>()), Times.Never);
@@ -30,7 +30,7 @@ namespace APIBack.Tests.Unit
         [Fact]
         public async Task ReutilizaFotosMasNaoSerializaCodigoSecreto()
         {
-            _queue.Setup(q => q.GetQueueAsync(_est, 7)).ReturnsAsync(new MotoboyQueueDto
+            _queue.Setup(q => q.GetQueueAsync(_est, 7, default)).ReturnsAsync(new MotoboyQueueDto
             { Version = 8, Current = new RouteStopDto { PedidoId = 23, Position = 1 } });
             _consulta.Setup(q => q.GetAsync(_est, 23)).ReturnsAsync(new PedidoDetalheDto
             {
@@ -48,7 +48,7 @@ namespace APIBack.Tests.Unit
         [Fact]
         public async Task RecusaPedidoTransferidoDuranteALeitura()
         {
-            _queue.Setup(q => q.GetQueueAsync(_est, 7)).ReturnsAsync(new MotoboyQueueDto
+            _queue.Setup(q => q.GetQueueAsync(_est, 7, default)).ReturnsAsync(new MotoboyQueueDto
             { Current = new RouteStopDto { PedidoId = 23 } });
             _consulta.Setup(q => q.GetAsync(_est, 23)).ReturnsAsync(new PedidoDetalheDto { Id = 23, MotoboyId = 9 });
             await Assert.ThrowsAsync<DeliveryDomainException>(() => Service.GetAsync(_est, 7, 23));
@@ -57,7 +57,7 @@ namespace APIBack.Tests.Unit
         [Fact]
         public async Task PermitePedidoNaOfertaDoProprioMotoboy()
         {
-            _queue.Setup(q => q.GetQueueAsync(_est, 7)).ReturnsAsync(new MotoboyQueueDto
+            _queue.Setup(q => q.GetQueueAsync(_est, 7, default)).ReturnsAsync(new MotoboyQueueDto
             { Offer = new MotoboyOfferDto { Stops = new List<RouteStopDto> { new() { PedidoId = 23 } } } });
             _consulta.Setup(q => q.GetAsync(_est, 23)).ReturnsAsync(new PedidoDetalheDto { Id = 23, MotoboyId = 7 });
             var result = await Service.GetAsync(_est, 7, 23);
