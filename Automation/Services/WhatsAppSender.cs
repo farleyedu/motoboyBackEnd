@@ -153,7 +153,38 @@ namespace APIBack.Automation.Services
         internal static bool ErroPermanenteDoCanal(int? codigo, int? subcodigo) =>
             codigo is 190 or 10 or 200 || (codigo == 100 && subcodigo == 33);
 
-        private async Task<string?> SendPayloadAsync(Guid idConversa, string phoneNumberId, object payload, string payloadType, Guid? idMensagem)
+        public async Task<string?> SendOperationalAsync(Guid conversationId, string phoneNumberId, string destination, string body, byte[]? media, string? contentType, Guid messageId, string? replyProviderId)
+        {
+            if (await _simulatedGuard.IsSimulatedConversationAsync(conversationId)) return null;
+            var payload = new Dictionary<string, object?> { ["messaging_product"] = "whatsapp", ["to"] = TelefoneHelper.NormalizeBrazilianForWhatsappTo(destination) };
+            var type = media == null ? "text" : contentType!.StartsWith("image/") ? "image" : "audio";
+            payload["type"] = type;
+            if (!string.IsNullOrWhiteSpace(replyProviderId)) payload["context"] = new { message_id = replyProviderId };
+            if (media == null) payload["text"] = new { body };
+            else
+            {
+                var canal = await _canais.ObterAtivoPorPhoneNumberIdAsync(phoneNumberId);
+                var token = _tokenProtector.Revelar(canal?.TokenCifrado);
+                if (string.IsNullOrWhiteSpace(token)) token = _tokenProvider.GetAccessToken();
+                if (string.IsNullOrWhiteSpace(token) || token.StartsWith("__")) throw new HttpRequestException("Token do WhatsApp nao configurado.");
+                using var client = _httpFactory.CreateClient();
+                client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer",token);
+                using var form = new MultipartFormDataContent();
+                form.Add(new StringContent("whatsapp"),"messaging_product");
+                form.Add(new StringContent(contentType!),"type");
+                var bytes = new ByteArrayContent(media); bytes.Headers.ContentType = new MediaTypeHeaderValue(contentType!);
+                form.Add(bytes,"file",type=="image"?"photo.jpg":"audio.m4a");
+                var version = _configuration["WhatsApp:GraphApiVersion"] ?? "v23.0";
+                using var response = await client.PostAsync($"https://graph.facebook.com/{version}/{phoneNumberId}/media",form);
+                response.EnsureSuccessStatusCode();
+                using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+                var id = json.RootElement.GetProperty("id").GetString();
+                payload[type] = type=="image" ? new Dictionary<string,object?>{["id"]=id,["caption"]=body} : new Dictionary<string,object?>{["id"]=id};
+            }
+            return await SendPayloadAsync(conversationId,phoneNumberId,payload,type,messageId,singleAttempt:true);
+        }
+
+        private async Task<string?> SendPayloadAsync(Guid idConversa, string phoneNumberId, object payload, string payloadType, Guid? idMensagem, bool singleAttempt = false)
         {
             // Cliente de teste (simulador): a conversa e gravada normalmente, mas nada sai para o WhatsApp de verdade.
             if (await _simulatedGuard.IsSimulatedConversationAsync(idConversa))
@@ -196,7 +227,7 @@ namespace APIBack.Automation.Services
             var endpoint = $"https://graph.facebook.com/{graphVersion}/{phoneNumberId}/messages";
             var json = JsonSerializer.Serialize(payload);
 
-            var esperas = new[] { TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2) };
+            var esperas = singleAttempt ? Array.Empty<TimeSpan>() : new[] { TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(2) };
             string? ultimoCorpo = null;
             int? ultimoStatus = null;
             int? ultimoCodigo = null;

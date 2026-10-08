@@ -129,6 +129,8 @@ namespace APIBack.DTOs.Atendimento
 
     public class MotoboyClientChatMessageDto
     {
+        public CommunicationAttachmentDto? Attachment { get; set; }
+        public Guid? ReplyTo { get; set; }
         public Guid Id { get; set; }
         public string Body { get; set; } = string.Empty;
         public string Type { get; set; } = "texto";

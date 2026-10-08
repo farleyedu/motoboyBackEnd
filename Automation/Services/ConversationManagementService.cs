@@ -660,6 +660,26 @@ namespace APIBack.Automation.Services
             return mensagem.Id;
         }
 
+        public async Task<Guid> SendOperationalMessageAsync(Guid requestedConversationId,Guid establishmentId,string body,string sender,byte[]? media,string? contentType,string? replyProviderId)
+        {
+            var control=await EnsureControlAsync(requestedConversationId,establishmentId);
+            EnsureNotClosed(control);
+            if(control.SendBlockReasonCode==WhatsAppWindowExpiredCode) throw new ConversationManagementException(409,WhatsAppWindowExpiredMessage,WhatsAppWindowExpiredCode);
+            var conversation=await _conversationRepository.ObterPorIdAsync(control.ConversationId) ?? throw new ConversationManagementException(404,"Conversa nao encontrada.");
+            var destination=await _clienteRepository.ObterTelefoneClienteAsync(conversation.IdCliente,conversation.IdEstabelecimento);
+            if(string.IsNullOrWhiteSpace(destination))throw new ConversationManagementException(422,"Telefone do cliente nao encontrado.");
+            var (display,phoneId)=await ResolverNumeroDeEnvioAsync(conversation);
+            if(string.IsNullOrWhiteSpace(phoneId))throw new ConversationManagementException(422,"WhatsApp da loja nao configurado.");
+            var type=media==null?"text":contentType!.StartsWith("image/")?"image":"audio";
+            var now=DateTime.UtcNow;
+            var message=new Message{Id=Guid.NewGuid(),IdConversa=control.ConversationId,IdMensagemWa=$"courier-{Guid.NewGuid():N}",Direcao=DirecaoMensagem.Saida,Conteudo=string.IsNullOrEmpty(body)?type=="audio"?"[Audio]":"[Foto]":body,
+                DataHora=now,DataCriacao=now,DataEnvio=now,CriadaPor=sender,TipoOriginal=type,Tipo=MessageTypeMapper.MapType(type,DirecaoMensagem.Saida,sender),Status="fila"};
+            if(await _messageService.AdicionarMensagemAsync(message,display,destination)==null)throw new ConversationManagementException(409,"Nao foi possivel persistir o envio.");
+            try { await _whatsAppSender.SendOperationalAsync(message.IdConversa,phoneId,destination,body,media,contentType,message.Id,replyProviderId);await _messageService.AtualizarStatusAsync(message.Id,MessageStatusMapper.Enviada); }
+            catch(Exception ex){await _messageService.AtualizarStatusAsync(message.Id,"falhou","send_uncertain","Envio precisa de conferencia.");_logger.LogWarning(ex,"Envio do motoboy nao confirmado na conversa {ConversationId}",message.IdConversa);throw new ConversationManagementException(409,"Envio nao confirmado. Consulte a loja antes de tentar novamente.","CHAT_SEND_UNCERTAIN");}
+            return message.Id;
+        }
+
         private async Task<ConversationControlDto> EnsureControlAsync(Guid requestedConversationId, Guid idEstabelecimento)
         {
             var controle = await _conversationRepository.ObterControleConversaAsync(requestedConversationId, idEstabelecimento);
