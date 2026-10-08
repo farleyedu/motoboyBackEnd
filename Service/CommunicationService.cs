@@ -44,6 +44,8 @@ public sealed class CommunicationService(CommunicationRepository repository, IAt
         if(channel=="client")throw new DeliveryDomainException(422,"CHAT_CHANNEL_INVALID","Use o canal autorizado do pedido.");
         return AuthorizeAsync(actor,channel,target);
     }
+    public async Task<CommunicationPageDto> ContextAsync(ChatActor actor,string channel,int? target,Guid id,int? pedidoId) =>
+        await repository.ContextAsync(actor,await InternalAsync(actor,channel,target),id,pedidoId);
     internal static void Validate(SendCommunicationRequest request)
     {
         request.Body = request.Body?.Trim() ?? "";

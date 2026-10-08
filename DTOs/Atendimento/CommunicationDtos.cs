@@ -16,6 +16,7 @@ public sealed class SendCommunicationRequest
 }
 public class CommunicationAttachmentDto
 {
+    public int? ClientPedidoId { get; set; }
     public Guid Id { get; set; }
     public string Name { get; set; } = "";
     public string ContentType { get; set; } = "";

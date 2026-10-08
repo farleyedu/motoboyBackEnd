@@ -165,7 +165,7 @@ namespace APIBack.Controllers
         [HttpPost("queue/offer/accept")]
         [RequireOperationalSession]
         public Task<IActionResult> AcceptOffer([FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)] ResolveOfferRequest? request) =>
-            WithOperationalContextAsync((est, motoboyId, _) => request?.ExpectedOfferId is Guid id ? _queueService.AcceptOfferForAsync(est, motoboyId, id) : _queueService.AcceptOfferAsync(est, motoboyId));
+            WithOperationalContextAsync((est, motoboyId, _) => request?.ExpectedOfferId is Guid id ? request.ExpectedVersion is long version ? _queueService.AcceptPricedOfferAsync(est, motoboyId, id, version) : _queueService.AcceptOfferForAsync(est, motoboyId, id) : _queueService.AcceptOfferAsync(est, motoboyId));
 
         [HttpPost("queue/offer/reject")]
         [RequireOperationalSession]

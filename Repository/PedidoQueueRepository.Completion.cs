@@ -116,6 +116,11 @@ SELECT EXISTS(SELECT 1 FROM motoboy_active_sessions s WHERE s.session_id=@Sessio
 INSERT INTO delivery_completions(operation_id,estabelecimento_id,motoboy_id,user_id,session_id,session_epoch,pedido_id,stop_id,payload_hash,receipt)
  VALUES(@Operation,@Store,@Rider,@User,@Session,@Epoch,@Pedido,@Stop,@Hash,CAST(@Receipt AS jsonb))
 """,new { Operation=request.OperationId,Store=store,Rider=rider,User=user,Session=session,Epoch=epoch,Pedido=row.PedidoId,Stop=row.StopId,Hash=hash,Receipt=JsonSerializer.Serialize(receipt) },tx,commandTimeout:10,cancellationToken:ct));
+        if(await MotoboyWorkService.Available(c,tx,ct))
+        {
+            var cash=paid?0:request.Payments.Where(p=>string.Equals(p.Method,"dinheiro",StringComparison.OrdinalIgnoreCase)).Sum(p=>p.Amount);
+            await c.ExecuteAsync(new CommandDefinition("UPDATE delivery_rider_work_entries SET store_cash=@Cash,cash_confirmed=TRUE WHERE stop_id=@Stop AND estabelecimento_id=@Store AND motoboy_id=@Rider",new { Cash=cash,Stop=row.StopId,Store=store,Rider=rider },tx,cancellationToken:ct));
+        }
         await tx.CommitAsync(ct); return new DeliveryCompletionResult { Receipt=receipt,Queue=queue };
     }
     public async Task<DeliveryReceipt?> GetDeliveryReceiptAsync(int user,Guid operation,CancellationToken ct)

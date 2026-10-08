@@ -129,6 +129,7 @@ namespace APIBack.DTOs.Atendimento
 
     public class MotoboyClientChatMessageDto
     {
+        public IReadOnlyList<CommunicationReactionDto> Reactions { get; set; } = Array.Empty<CommunicationReactionDto>();
         public CommunicationAttachmentDto? Attachment { get; set; }
         public Guid? ReplyTo { get; set; }
         public Guid Id { get; set; }

@@ -11,7 +11,7 @@ using APIBack.Service.Interface;
 namespace APIBack.Service;
 
 public sealed class ClientCommunicationService(ClientCommunicationRepository repository,CommunicationService communication,CommunicationRepository files,
-    AtendimentoService atendimento,IAtendimentoRepository channels,IPedidoQueueService queues,IMessageRepository messages,ConversationManagementService management)
+    IAtendimentoRepository channels,IPedidoQueueService queues,IMessageRepository messages,ConversationManagementService management,WhatsAppSender whatsapp)
 {
     private async Task<PedidoCanalDto> ChannelAsync(ChatActor actor,int pedido,bool send)
     {
@@ -22,12 +22,34 @@ public sealed class ClientCommunicationService(ClientCommunicationRepository rep
         if(send&&(!channel.PodeReceber||!channel.ConversaId.HasValue))throw new DeliveryDomainException(422,"CLIENT_CHANNEL_UNAVAILABLE","Este canal nao permite envio. Fale com a loja.");
         return channel;
     }
-    public async Task<MotoboyClientChatDto> ListAsync(ChatActor actor,int pedido,DateTime? before,int limit)
+    internal static (DateTime? Before,Guid BeforeId) Cursor(string? before)
     {
-        var result=await atendimento.ListClientMessagesAsync(actor.EstablishmentId,actor.MotoboyId!.Value,pedido,before,limit);
+        if(string.IsNullOrWhiteSpace(before))return (null,Guid.Empty);
+        var parts=before.Split('|');
+        if(parts.Length>2||!DateTimeOffset.TryParse(parts[0],System.Globalization.CultureInfo.InvariantCulture,System.Globalization.DateTimeStyles.AssumeUniversal,out var date)
+            ||parts.Length==2&&!Guid.TryParse(parts[1],out _))throw new DeliveryDomainException(422,"CHAT_CURSOR_INVALID","Cursor de historico invalido.");
+        return(date.UtcDateTime,parts.Length==2?Guid.Parse(parts[1]):Guid.Empty);
+    }
+    public async Task<MotoboyClientChatDto> ListAsync(ChatActor actor,int pedido,string? before,int limit,string? search=null)
+    {
+        var channel=await ChannelAsync(actor,pedido,false);
+        var result=new MotoboyClientChatDto{Channel=channel};
+        if(!channel.ConversaId.HasValue)return result;
+        var cursor=Cursor(before);
+        var sender=AtendimentoService.BuildCriadaPorLabel(await channels.ObterNomeMotoboyAsync(actor.MotoboyId!.Value));
+        search=string.IsNullOrWhiteSpace(search)?null:search.Trim()[..Math.Min(search.Trim().Length,100)];
+        var page=await repository.HistoryAsync(actor.EstablishmentId,channel.ConversaId.Value,sender,cursor.Before,cursor.BeforeId,search,Math.Clamp(limit,1,100));
+        result.Messages=page.Messages;
+        result.HasMore=page.More;
+        var first=page.Messages.FirstOrDefault();
+        result.Cursor=first==null?null:$"{DateTime.SpecifyKind(first.CreatedAtUtc,DateTimeKind.Utc):O}|{first.Id}";
         var data=await repository.MetadataAsync(actor.EstablishmentId,result.Messages.Select(m=>m.Id).ToArray());
+        var reactions=await repository.ReactionsAsync(actor,result.Messages.Select(m=>m.Id).ToArray());
         foreach(var message in result.Messages)
         {
+            if(reactions.TryGetValue(message.Id,out var reaction))message.Reactions=reaction;
+            var incoming=(ClientCommunicationRepository.MessageRow)message;
+            message.Attachment=IncomingAttachment(incoming,pedido);
             if(!data.TryGetValue(message.Id,out var metadata))continue;
             message.ReplyTo=metadata.ReplyTo;
             if(metadata.AttachmentId.HasValue)
@@ -37,6 +59,42 @@ public sealed class ClientCommunicationService(ClientCommunicationRepository rep
             }
         }
         return result;
+    }
+    internal static CommunicationAttachmentDto? IncomingAttachment(ClientCommunicationRepository.MessageRow message,int pedido)
+    {
+        if(string.IsNullOrWhiteSpace(message.IncomingMedia))return null;
+        try
+        {
+            using var json=JsonDocument.Parse(message.IncomingMedia);
+            var media=json.RootElement;
+            if(media.ValueKind!=JsonValueKind.Object)return null;
+            if(!media.TryGetProperty("id",out var id)||string.IsNullOrWhiteSpace(id.GetString()))return null;
+            var type=media.TryGetProperty("mime_type",out var mime)?mime.GetString():null;
+            if(type==null||!(type.StartsWith("image/")||type.StartsWith("audio/")))return null;
+            if(media.TryGetProperty("caption",out var caption)&&caption.ValueKind==JsonValueKind.String)message.Body=caption.GetString()??"";
+            else message.Body="";
+            return new(){Id=message.Id,ClientPedidoId=pedido,Name=type.StartsWith("image/")?"Foto recebida":"Audio recebido",ContentType=type,Size=0};
+        }
+        catch(JsonException){return null;}
+    }
+    public async Task<(byte[] Content,string Type)> DownloadAsync(ChatActor actor,int pedido,Guid id,CancellationToken ct)
+    {
+        var channel=await ChannelAsync(actor,pedido,false);
+        if(!channel.ConversaId.HasValue)throw new DeliveryDomainException(404,"CHAT_ATTACHMENT_INVALID","Anexo indisponivel.");
+        var message=await repository.MessageAsync(actor.EstablishmentId,channel.ConversaId.Value,"",id);
+        if(message==null||IncomingAttachment(message,pedido)==null||string.IsNullOrWhiteSpace(message.PhoneNumberId))throw new DeliveryDomainException(404,"CHAT_ATTACHMENT_INVALID","Anexo indisponivel nesta conversa.");
+        using var json=JsonDocument.Parse(message.IncomingMedia!);
+        return await whatsapp.DownloadOperationalMediaAsync(actor.EstablishmentId,message.PhoneNumberId,json.RootElement.GetProperty("id").GetString()!,ct);
+    }
+    public async Task ReactAsync(ChatActor actor,int pedido,Guid id,string? reaction)
+    {
+        var emoji=reaction switch{null=>"","like"=>"\U0001F44D","heart"=>"\u2764\uFE0F","thanks"=>"\U0001F64F","alert"=>"\u26A0\uFE0F",_=>throw new DeliveryDomainException(422,"CHAT_REACTION_INVALID","Reacao invalida.")};
+        var channel=await ChannelAsync(actor,pedido,true);
+        var message=await repository.MessageAsync(actor.EstablishmentId,channel.ConversaId!.Value,"",id);
+        if(string.IsNullOrWhiteSpace(message?.ProviderId))throw new DeliveryDomainException(422,"CHAT_REACTION_INVALID","Esta mensagem nao permite reacao.");
+        try{await management.SendOperationalReactionAsync(channel.ConversaId.Value,actor.EstablishmentId,message.ProviderId,emoji);}
+        catch(ConversationManagementException ex){throw new DeliveryDomainException(ex.StatusCode,ex.Code??"CHAT_REACTION_FAILED",ex.Message);}
+        await repository.SetReactionAsync(actor,id,reaction);
     }
     public async Task<CommunicationMessageDto> SendAsync(ChatActor actor,int pedido,SendCommunicationRequest request)
     {

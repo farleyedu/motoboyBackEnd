@@ -184,6 +184,37 @@ namespace APIBack.Automation.Services
             return await SendPayloadAsync(conversationId,phoneNumberId,payload,type,messageId,singleAttempt:true);
         }
 
+        public Task<string?> SendOperationalReactionAsync(Guid conversation,string phone,string destination,string providerId,string emoji) =>
+            SendPayloadAsync(conversation,phone,new{messaging_product="whatsapp",to=TelefoneHelper.NormalizeBrazilianForWhatsappTo(destination),type="reaction",reaction=new{message_id=providerId,emoji}},"reaction",null,singleAttempt:true);
+
+        internal static bool AllowedMediaUrl(Uri uri) => uri.Scheme=="https" && uri.IsDefaultPort && string.IsNullOrEmpty(uri.UserInfo)
+            && (uri.Host=="lookaside.fbsbx.com" || uri.Host.EndsWith(".fbcdn.net",StringComparison.OrdinalIgnoreCase) || uri.Host=="graph.facebook.com");
+        public async Task<(byte[] Content,string Type)> DownloadOperationalMediaAsync(Guid est,string phone,string mediaId,CancellationToken ct)
+        {
+            var canal=await _canais.ObterAtivoPorPhoneNumberIdAsync(phone);
+            if(canal?.IdEstabelecimento!=est||!mediaId.All(char.IsAsciiDigit)||mediaId.Length is <1 or >100)
+                throw new APIBack.Service.DeliveryDomainException(404,"CHAT_ATTACHMENT_INVALID","Anexo indisponivel nesta loja.");
+            var token=_tokenProtector.Revelar(canal.TokenCifrado);
+            if(string.IsNullOrWhiteSpace(token))token=_tokenProvider.GetAccessToken();
+            if(string.IsNullOrWhiteSpace(token)||token.StartsWith("__"))throw new APIBack.Service.DeliveryDomainException(503,"CLIENT_MEDIA_UNAVAILABLE","WhatsApp da loja indisponivel.");
+            using var client=_httpFactory.CreateClient("chat-media");
+            client.DefaultRequestHeaders.Authorization=new AuthenticationHeaderValue("Bearer",token);
+            var version=_configuration["WhatsApp:GraphApiVersion"]??"v23.0";
+            try
+            {
+                using var metadata=await client.GetAsync($"https://graph.facebook.com/{version}/{mediaId}?phone_number_id={Uri.EscapeDataString(phone)}",ct);metadata.EnsureSuccessStatusCode();
+                using var json=JsonDocument.Parse(await metadata.Content.ReadAsStringAsync(ct));
+                if(!Uri.TryCreate(json.RootElement.GetProperty("url").GetString(),UriKind.Absolute,out var url)||!AllowedMediaUrl(url))throw new HttpRequestException("URL de midia nao permitida.");
+                using var response=await client.GetAsync(url,HttpCompletionOption.ResponseHeadersRead,ct);response.EnsureSuccessStatusCode();
+                if(response.Content.Headers.ContentLength>10485760)throw new APIBack.Service.DeliveryDomainException(422,"CHAT_FILE_INVALID","Arquivo deve ter ate 10 MB.");
+                await using var stream=await response.Content.ReadAsStreamAsync(ct);using var buffer=new System.IO.MemoryStream();var chunk=new byte[8192];int count;
+                while((count=await stream.ReadAsync(chunk,ct))>0){if(buffer.Length+count>10485760)throw new APIBack.Service.DeliveryDomainException(422,"CHAT_FILE_INVALID","Arquivo deve ter ate 10 MB.");await buffer.WriteAsync(chunk.AsMemory(0,count),ct);}
+                var bytes=buffer.ToArray();var type=APIBack.Service.CommunicationService.DetectType(bytes);
+                if(type==null)throw new APIBack.Service.DeliveryDomainException(422,"CHAT_FILE_INVALID","Midia recebida em formato nao suportado.");
+                return(bytes,type);
+            }
+            catch(HttpRequestException){throw new APIBack.Service.DeliveryDomainException(502,"CLIENT_MEDIA_UNAVAILABLE","Nao foi possivel abrir a midia no WhatsApp. Tente novamente.");}
+        }
         private async Task<string?> SendPayloadAsync(Guid idConversa, string phoneNumberId, object payload, string payloadType, Guid? idMensagem, bool singleAttempt = false)
         {
             // Cliente de teste (simulador): a conversa e gravada normalmente, mas nada sai para o WhatsApp de verdade.

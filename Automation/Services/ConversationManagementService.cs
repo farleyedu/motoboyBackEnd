@@ -680,6 +680,17 @@ namespace APIBack.Automation.Services
             return message.Id;
         }
 
+        public async Task SendOperationalReactionAsync(Guid id,Guid establishmentId,string providerId,string emoji)
+        {
+            var control=await EnsureControlAsync(id,establishmentId);EnsureNotClosed(control);
+            if(control.SendBlockReasonCode==WhatsAppWindowExpiredCode)throw new ConversationManagementException(409,WhatsAppWindowExpiredMessage,WhatsAppWindowExpiredCode);
+            var conversation=await _conversationRepository.ObterPorIdAsync(control.ConversationId)??throw new ConversationManagementException(404,"Conversa nao encontrada.");
+            var destination=await _clienteRepository.ObterTelefoneClienteAsync(conversation.IdCliente,conversation.IdEstabelecimento);
+            var (_,phone)=await ResolverNumeroDeEnvioAsync(conversation);
+            if(string.IsNullOrWhiteSpace(destination)||string.IsNullOrWhiteSpace(phone))throw new ConversationManagementException(422,"WhatsApp da loja indisponivel.");
+            try{await _whatsAppSender.SendOperationalReactionAsync(control.ConversationId,phone,destination,providerId,emoji);}
+            catch(HttpRequestException){throw new ConversationManagementException(502,"Reacao nao confirmada pelo WhatsApp. Atualize a conversa antes de tentar novamente.","CHAT_REACTION_UNCONFIRMED");}
+        }
         private async Task<ConversationControlDto> EnsureControlAsync(Guid requestedConversationId, Guid idEstabelecimento)
         {
             var controle = await _conversationRepository.ObterControleConversaAsync(requestedConversationId, idEstabelecimento);

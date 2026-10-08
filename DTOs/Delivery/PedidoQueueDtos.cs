@@ -21,7 +21,7 @@ namespace APIBack.DTOs.Delivery
     }
 
     public sealed class PauseTurnRequest { public bool Paused { get; set; } }
-    public sealed class ResolveOfferRequest { public Guid? ExpectedOfferId { get; set; } public string? Motivo { get; set; } }
+    public sealed class ResolveOfferRequest { public Guid? ExpectedOfferId { get; set; } public long? ExpectedVersion { get; set; } public string? Motivo { get; set; } }
 
     public sealed class CancelPedidoRequest
     {
@@ -64,6 +64,7 @@ namespace APIBack.DTOs.Delivery
 
     public sealed class RouteStopDto
     {
+        public RiderPayQuote? Earnings { get; set; }
         public int PedidoId { get; set; }
         public int Position { get; set; }
         /// <summary>'assigned' (na fila) ou 'en_route' (entrega atual).</summary>

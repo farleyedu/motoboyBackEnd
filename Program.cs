@@ -91,6 +91,7 @@ builder.Services.AddControllers(options =>
 });
 builder.Services.AddSignalR();
 builder.Services.AddHttpClient();
+builder.Services.AddHttpClient("chat-media").ConfigurePrimaryHttpMessageHandler(()=>new HttpClientHandler{AllowAutoRedirect=false});
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddMemoryCache();
 builder.Services.AddScoped<IUsuarioRepository, UsuarioRepository>();
@@ -102,6 +103,7 @@ builder.Services.AddScoped<IAdminUsuariosService, AdminUsuariosService>();
 builder.Services.AddScoped<IGestaoRepository, GestaoRepository>();
 builder.Services.AddScoped<IGestaoService, GestaoService>();
 builder.Services.AddScoped<MotoboyContaService>();
+builder.Services.AddScoped<MotoboyWorkService>();
 builder.Services.AddScoped<IEstabelecimentoFaqRepository, EstabelecimentoFaqRepository>();
 builder.Services.AddScoped<ICardapioRepository, CardapioRepository>();
 builder.Services.AddScoped<IPedidoRepository, PedidoRepository>();

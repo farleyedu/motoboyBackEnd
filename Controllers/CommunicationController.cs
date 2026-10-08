@@ -21,6 +21,7 @@ public abstract class CommunicationControllerBase(CommunicationService service) 
         { return StatusCode(503, ApiResponse<object>.Fail("Comunicacao ainda nao habilitada neste ambiente.", "MIGRATION_PENDING")); }
     }
     protected Task<IActionResult> List(string channel, int? target, long? before, string? search, int limit, int? pedidoId) => Run(a => service.ListAsync(a, channel, target, before, search, limit, pedidoId));
+    protected Task<IActionResult> Context(string channel,int? target,Guid id,int? pedidoId) => Run(a=>service.ContextAsync(a,channel,target,id,pedidoId));
     protected Task<IActionResult> Send(string channel, int? target, SendCommunicationRequest request) => Run(a => service.SendAsync(a, channel, target, request));
     protected Task<IActionResult> Read(string channel, int? target, CommunicationReadRequest request) => Run(async a => { await service.ReadAsync(a, channel, target, request.Through); return new { }; });
     protected Task<IActionResult> React(string channel, int? target, Guid id, CommunicationReactionRequest request) => Run(async a => { await service.ReactAsync(a, channel, target, id, request.Reaction); return new { }; });
@@ -46,6 +47,8 @@ public sealed class MobileCommunicationController(CommunicationService service) 
     protected override bool Mobile => true;
     [HttpGet("{channel}/messages")]
     public Task<IActionResult> Messages(string channel, int? target, long? before, string? search, int limit = 50, int? pedidoId = null) => List(channel,target,before,search,limit,pedidoId);
+    [HttpGet("{channel}/messages/{id:guid}/context")]
+    public Task<IActionResult> MessageContext(string channel,int? target,Guid id,int? pedidoId=null)=>Context(channel,target,id,pedidoId);
     [HttpPost("{channel}/messages")]
     public Task<IActionResult> Message(string channel, int? target, SendCommunicationRequest request) => Send(channel,target,request);
     [HttpPost("{channel}/read")]

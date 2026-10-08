@@ -13,9 +13,17 @@ public sealed class ClientCommunicationController(ClientCommunicationService ser
 {
     private ChatActor Actor=>new(HttpContext.GetEstabelecimentoId()??Guid.Empty,HttpContext.GetUserId()??0,HttpContext.GetJwtPayload().MotoboyId);
     [HttpGet]
-    public Task<IActionResult> History(int pedidoId,DateTime? before,int limit=50)=>Run(()=>service.ListAsync(Actor,pedidoId,before,limit));
+    public Task<IActionResult> History(int pedidoId,string? before,int limit=50,string? search=null)=>Run(()=>service.ListAsync(Actor,pedidoId,before,limit,search));
     [HttpPost]
     public Task<IActionResult> Send(int pedidoId,SendCommunicationRequest request)=>Run(()=>service.SendAsync(Actor,pedidoId,request));
+    [HttpPut("messages/{id:guid}/reaction")]
+    public Task<IActionResult> Reaction(int pedidoId,Guid id,CommunicationReactionRequest request)=>Run(async()=>{await service.ReactAsync(Actor,pedidoId,id,request.Reaction);return new{};});
+    [HttpGet("messages/{id:guid}/attachment")]
+    public async Task<IActionResult> Attachment(int pedidoId,Guid id)
+    {
+        try{var file=await service.DownloadAsync(Actor,pedidoId,id,HttpContext.RequestAborted);Response.Headers.CacheControl="private, no-store";Response.Headers.XContentTypeOptions="nosniff";return File(file.Content,file.Type,enableRangeProcessing:true);}
+        catch(DeliveryDomainException ex){return StatusCode(ex.StatusCode,ApiResponse<object>.Fail(ex.Message,ex.Code));}
+    }
     private async Task<IActionResult> Run<T>(Func<Task<T>> work)
     {
         try{return Ok(ApiResponse<T>.Ok(await work()));}

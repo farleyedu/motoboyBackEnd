@@ -1,0 +1,184 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="3549a636-e5b2-4b72-8afa-4cf715c9ee3e" name="farley.silva@LMINOTE-1096 2026-10-08 16:21:10" runUser="LMINOTE-1096\farley.silva" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-10-08T16:21:10.4059893-03:00" queuing="2026-10-08T16:21:10.4059901-03:00" start="2026-10-08T16:20:55.6527702-03:00" finish="2026-10-08T16:21:20.5629234-03:00" />
+  <TestSettings name="default" id="48cfcb24-b8e0-46ae-a6f3-97b84f8f37f6">
+    <Deployment runDeploymentRoot="farley.silva_LMINOTE-1096_2026-10-08_16_21_10" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="b9b8bbe2-761e-4988-8d5e-d9086f09f650" testId="1124d1ae-9e77-7a1b-fadf-6b963648710c" testName="APIBack.Tests.Unit.CommunicationTests.ClientMediaDownloadRestrictsHosts(url: &quot;https://media.fbcdn.net/file&quot;, allowed: True)" computerName="LMINOTE-1096" duration="00:00:00.0000480" startTime="2026-10-08T16:21:10.3377534-03:00" endTime="2026-10-08T16:21:10.3377537-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="b9b8bbe2-761e-4988-8d5e-d9086f09f650" />
+    <UnitTestResult executionId="3fa04aa4-3084-40d8-8f1f-08bb8089b869" testId="bb67c41b-482c-a1ae-46f6-77cdc74732b1" testName="APIBack.Tests.Integration.CommunicationDatabaseTests.CommunicationPushDoesNotFollowTokenToAnotherUserOrTurn" computerName="LMINOTE-1096" duration="00:00:01.3798735" startTime="2026-10-08T16:21:17.5968425-03:00" endTime="2026-10-08T16:21:17.5968431-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="3fa04aa4-3084-40d8-8f1f-08bb8089b869" />
+    <UnitTestResult executionId="dcd536e2-ea52-456b-876d-5b961937a64c" testId="773df51c-87c0-4111-24e3-542fb7985a81" testName="APIBack.Tests.Integration.CommunicationDatabaseTests.ProtectedAttachmentsAndReadCutoffDoNotMarkFutureMessages" computerName="LMINOTE-1096" duration="00:00:01.2639608" startTime="2026-10-08T16:21:16.2166886-03:00" endTime="2026-10-08T16:21:16.2166898-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="dcd536e2-ea52-456b-876d-5b961937a64c" />
+    <UnitTestResult executionId="03a6405f-d9f5-4427-961f-4a460466c4c3" testId="eb73bc07-6f5b-050a-7ab5-b71a49e8d2df" testName="APIBack.Tests.Integration.CommunicationDatabaseTests.MigrationLegacyInteropIdempotencyPagingMentionsReadAndPrivateIsolation" computerName="LMINOTE-1096" duration="00:00:03.7401315" startTime="2026-10-08T16:21:14.0350864-03:00" endTime="2026-10-08T16:21:14.0350870-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="03a6405f-d9f5-4427-961f-4a460466c4c3" />
+    <UnitTestResult executionId="36d27831-3466-445a-a9ce-22d6478f2720" testId="86430c28-d9f3-6e2e-d0d4-e255f540ed30" testName="APIBack.Tests.Unit.CommunicationTests.ClientMediaDownloadRestrictsHosts(url: &quot;https://lookaside.fbsbx.com.evil.test/file&quot;, allowed: False)" computerName="LMINOTE-1096" duration="00:00:00.0000163" startTime="2026-10-08T16:21:10.3646174-03:00" endTime="2026-10-08T16:21:10.3646176-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="36d27831-3466-445a-a9ce-22d6478f2720" />
+    <UnitTestResult executionId="f00f0ee8-0af7-4538-ad29-337a6643b8df" testId="11a4e10c-158d-7e35-6b6f-830b7d3463a7" testName="APIBack.Tests.Unit.CommunicationTests.MobileStoreTargetAlwaysComesFromActor" computerName="LMINOTE-1096" duration="00:00:00.0010521" startTime="2026-10-08T16:21:10.3650520-03:00" endTime="2026-10-08T16:21:10.3650521-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="f00f0ee8-0af7-4538-ad29-337a6643b8df" />
+    <UnitTestResult executionId="c678f431-b24b-43a0-8013-d28d26ad550e" testId="ec4e5c46-e754-c415-fcdc-293ead417db1" testName="APIBack.Tests.Unit.CommunicationTests.PrivateThreadIsSymmetricAndAdminCannotReadIt" computerName="LMINOTE-1096" duration="00:00:00.0007398" startTime="2026-10-08T16:21:10.3651895-03:00" endTime="2026-10-08T16:21:10.3651897-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="c678f431-b24b-43a0-8013-d28d26ad550e" />
+    <UnitTestResult executionId="d4dd093f-9427-4691-b206-2206d38c033c" testId="7aad622e-cbd7-ae5f-4755-0790134b7ffa" testName="APIBack.Tests.Unit.CommunicationMediaTests.CommunicationIncomingMediaUsesScopedBearerAndChecksDownloadedBytes" computerName="LMINOTE-1096" duration="00:00:00.1267355" startTime="2026-10-08T16:21:10.7315488-03:00" endTime="2026-10-08T16:21:10.7315494-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="d4dd093f-9427-4691-b206-2206d38c033c" />
+    <UnitTestResult executionId="76b3cffb-440e-4303-b49b-d535fa5b1505" testId="8cd52192-68d6-d481-fdd3-89d13d00f01b" testName="APIBack.Tests.Integration.CommunicationDatabaseTests.CommunicationMessageContextCannotCrossThreadOrEstablishment" computerName="LMINOTE-1096" duration="00:00:01.9893116" startTime="2026-10-08T16:21:20.3355871-03:00" endTime="2026-10-08T16:21:20.3355877-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="76b3cffb-440e-4303-b49b-d535fa5b1505" />
+    <UnitTestResult executionId="d979c001-be46-4fc1-9523-bfeea2017a41" testId="dce11bb3-01b7-9741-abd6-d78f746b703b" testName="APIBack.Tests.Integration.CommunicationDatabaseTests.ClientDispatchDoesNotSendAgainAfterLostExternalConfirmation" computerName="LMINOTE-1096" duration="00:00:00.9153012" startTime="2026-10-08T16:21:14.9541078-03:00" endTime="2026-10-08T16:21:14.9541087-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="d979c001-be46-4fc1-9523-bfeea2017a41" />
+    <UnitTestResult executionId="b44e5375-c81b-463f-8e2a-52300e60b1c1" testId="3763ed8b-ccee-749b-4628-bb3939525b40" testName="APIBack.Tests.Unit.CommunicationTests.ClientMediaDownloadRestrictsHosts(url: &quot;https://127.0.0.1/file&quot;, allowed: False)" computerName="LMINOTE-1096" duration="00:00:00.0000374" startTime="2026-10-08T16:21:10.3642353-03:00" endTime="2026-10-08T16:21:10.3642356-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="b44e5375-c81b-463f-8e2a-52300e60b1c1" />
+    <UnitTestResult executionId="43bdb7e7-c0a9-42d1-b1c9-b7c949b87952" testId="5a984ebc-cccf-f884-fa77-7e633ab1d5b2" testName="APIBack.Tests.Unit.CommunicationMediaTests.CommunicationClientDownloadAndReactionRejectOrderOutsideOwnQueueBeforeTransport" computerName="LMINOTE-1096" duration="00:00:00.3110336" startTime="2026-10-08T16:21:10.6026447-03:00" endTime="2026-10-08T16:21:10.6026452-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="43bdb7e7-c0a9-42d1-b1c9-b7c949b87952" />
+    <UnitTestResult executionId="3a3d6162-4ca4-4aff-a812-e4bcc9b8dc77" testId="2227f2a0-0b95-bc05-6441-3df220b5543d" testName="APIBack.Tests.Unit.CommunicationTests.ClientMediaDownloadRestrictsHosts(url: &quot;http://lookaside.fbsbx.com/file&quot;, allowed: False)" computerName="LMINOTE-1096" duration="00:00:00.0000098" startTime="2026-10-08T16:21:10.3649279-03:00" endTime="2026-10-08T16:21:10.3649282-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="3a3d6162-4ca4-4aff-a812-e4bcc9b8dc77" />
+    <UnitTestResult executionId="3c91c7b9-b824-46c2-a3bf-77d0c81ffb34" testId="1cf2fef5-22df-5b08-a833-3bf8b760f5e1" testName="APIBack.Tests.Unit.CommunicationTests.AudioFormatComesFromBytesNotFilename(signature: &quot;ID3x&quot;, expected: &quot;audio/mpeg&quot;)" computerName="LMINOTE-1096" duration="00:00:00.0014338" startTime="2026-10-08T16:21:10.3655351-03:00" endTime="2026-10-08T16:21:10.3655352-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="3c91c7b9-b824-46c2-a3bf-77d0c81ffb34" />
+    <UnitTestResult executionId="dde7ccd9-3945-41e3-a206-ce5ce544240a" testId="3ff6faa4-4801-199b-3386-e4d951c145b7" testName="APIBack.Tests.Unit.CommunicationTests.AudioFormatComesFromBytesNotFilename(signature: &quot;OggS&quot;, expected: &quot;audio/ogg&quot;)" computerName="LMINOTE-1096" duration="00:00:00.0006202" startTime="2026-10-08T16:21:10.3654761-03:00" endTime="2026-10-08T16:21:10.3654762-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="dde7ccd9-3945-41e3-a206-ce5ce544240a" />
+    <UnitTestResult executionId="9083e88e-e561-4229-83b0-8a1e02e81ef4" testId="23cbd9eb-a10e-fe4f-428e-4d755b1c0e66" testName="APIBack.Tests.Unit.CommunicationTests.RequestRequiresIdAndTextOrAttachment" computerName="LMINOTE-1096" duration="00:00:00.0008285" startTime="2026-10-08T16:21:10.3705482-03:00" endTime="2026-10-08T16:21:10.3705484-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="9083e88e-e561-4229-83b0-8a1e02e81ef4" />
+    <UnitTestResult executionId="95c2f629-fa1e-4590-9fd9-5728ac632b69" testId="8d572909-242a-da67-003e-2b3ba60eee16" testName="APIBack.Tests.Integration.CommunicationDatabaseTests.CommunicationClientHistorySearchMediaReactionsAndCursorStayInTenant" computerName="LMINOTE-1096" duration="00:00:00.7489839" startTime="2026-10-08T16:21:18.3459835-03:00" endTime="2026-10-08T16:21:18.3459840-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="95c2f629-fa1e-4590-9fd9-5728ac632b69" />
+    <UnitTestResult executionId="446aa250-6972-4f96-afdf-2fe33e7d1709" testId="dda138b4-1aa2-0cf4-59bd-9da9872d2570" testName="APIBack.Tests.Unit.CommunicationTests.ClientMediaDownloadRestrictsHosts(url: &quot;https://user@lookaside.fbsbx.com/file&quot;, allowed: False)" computerName="LMINOTE-1096" duration="00:00:00.0004647" startTime="2026-10-08T16:21:10.3376325-03:00" endTime="2026-10-08T16:21:10.3376327-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="446aa250-6972-4f96-afdf-2fe33e7d1709" />
+    <UnitTestResult executionId="0316fd56-f8b7-4dd5-9781-24e6afe127a6" testId="609f47ff-0fd3-314f-260c-b19d1be88a0a" testName="APIBack.Tests.Unit.CommunicationTests.InvalidTargetsAreRejected(target: -1)" computerName="LMINOTE-1096" duration="00:00:00.0003523" startTime="2026-10-08T16:21:10.3323981-03:00" endTime="2026-10-08T16:21:10.3323984-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="0316fd56-f8b7-4dd5-9781-24e6afe127a6" />
+    <UnitTestResult executionId="50686285-21a1-4da5-8b02-263a0ab9bada" testId="dd0d3657-8f08-fa56-cbb3-c562bb10159d" testName="APIBack.Tests.Unit.CommunicationTests.InvalidTargetsAreRejected(target: 0)" computerName="LMINOTE-1096" duration="00:00:00.0083153" startTime="2026-10-08T16:21:10.3259765-03:00" endTime="2026-10-08T16:21:10.3260324-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="50686285-21a1-4da5-8b02-263a0ab9bada" />
+    <UnitTestResult executionId="4d2ae387-4db0-4c7d-b119-834e5dd3a969" testId="b1774937-d944-8e58-41e7-62a8e5078329" testName="APIBack.Tests.Unit.CommunicationTests.MentionsAreNormalizedAndInvalidIdsAreRejected" computerName="LMINOTE-1096" duration="00:00:00.0126197" startTime="2026-10-08T16:21:10.3702686-03:00" endTime="2026-10-08T16:21:10.3702689-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="4d2ae387-4db0-4c7d-b119-834e5dd3a969" />
+    <UnitTestResult executionId="61027e8b-7f9e-412b-ab09-55e6359ab5a9" testId="db575f6c-dc93-f372-8623-917f1436753a" testName="APIBack.Tests.Unit.CommunicationTests.IncomingAudioAndPhotoExposeProtectedDescriptorNotProviderUrl" computerName="LMINOTE-1096" duration="00:00:00.0180527" startTime="2026-10-08T16:21:10.3328833-03:00" endTime="2026-10-08T16:21:10.3328834-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="61027e8b-7f9e-412b-ab09-55e6359ab5a9" />
+    <UnitTestResult executionId="18bc95de-f21d-4031-bc95-1c430fab757e" testId="802a708b-1120-fbf0-a05e-8ab79143f320" testName="APIBack.Tests.Unit.CommunicationTests.LengthIsValidatedAgainstLegacyDatabaseLimit" computerName="LMINOTE-1096" duration="00:00:00.0107884" startTime="2026-10-08T16:21:10.3654061-03:00" endTime="2026-10-08T16:21:10.3654062-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="18bc95de-f21d-4031-bc95-1c430fab757e" />
+    <UnitTestResult executionId="dd98520b-8daf-4c49-905e-50c5aab79a42" testId="c115bed5-caee-722d-4359-606b61cb7b7a" testName="APIBack.Tests.Unit.CommunicationTests.HtmlAndUnknownBytesAreNotAcceptedAsImages" computerName="LMINOTE-1096" duration="00:00:00.0033755" startTime="2026-10-08T16:21:10.3653174-03:00" endTime="2026-10-08T16:21:10.3653175-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="dd98520b-8daf-4c49-905e-50c5aab79a42" />
+    <UnitTestResult executionId="1cbf53f0-4a0a-4927-bda0-4bfbdf740418" testId="dd296e89-b829-2679-abee-7246cb84440b" testName="APIBack.Tests.Unit.CommunicationTests.ClientMediaDownloadRestrictsHosts(url: &quot;https://lookaside.fbsbx.com/whatsapp_business/atta&quot;..., allowed: True)" computerName="LMINOTE-1096" duration="00:00:00.0046252" startTime="2026-10-08T16:21:10.3370551-03:00" endTime="2026-10-08T16:21:10.3370555-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="1cbf53f0-4a0a-4927-bda0-4bfbdf740418" />
+    <UnitTestResult executionId="3f5b66c8-bc53-4f0b-9aff-c1b1ad4664f1" testId="40dbbdb4-f79a-f525-d843-e45383af4e2f" testName="APIBack.Tests.Unit.CommunicationTests.ClientCursorRoundTripsAndRejectsMalformedInput" computerName="LMINOTE-1096" duration="00:00:00.0094758" startTime="2026-10-08T16:21:10.3329508-03:00" endTime="2026-10-08T16:21:10.3329509-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="3f5b66c8-bc53-4f0b-9aff-c1b1ad4664f1" />
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="APIBack.Tests.Unit.CommunicationTests.InvalidTargetsAreRejected(target: 0)" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="dd0d3657-8f08-fa56-cbb3-c562bb10159d">
+      <Execution id="50686285-21a1-4da5-8b02-263a0ab9bada" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Unit.CommunicationTests" name="InvalidTargetsAreRejected" />
+    </UnitTest>
+    <UnitTest name="APIBack.Tests.Unit.CommunicationTests.ClientCursorRoundTripsAndRejectsMalformedInput" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="40dbbdb4-f79a-f525-d843-e45383af4e2f">
+      <Execution id="3f5b66c8-bc53-4f0b-9aff-c1b1ad4664f1" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Unit.CommunicationTests" name="ClientCursorRoundTripsAndRejectsMalformedInput" />
+    </UnitTest>
+    <UnitTest name="APIBack.Tests.Unit.CommunicationTests.MentionsAreNormalizedAndInvalidIdsAreRejected" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="b1774937-d944-8e58-41e7-62a8e5078329">
+      <Execution id="4d2ae387-4db0-4c7d-b119-834e5dd3a969" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Unit.CommunicationTests" name="MentionsAreNormalizedAndInvalidIdsAreRejected" />
+    </UnitTest>
+    <UnitTest name="APIBack.Tests.Integration.CommunicationDatabaseTests.CommunicationMessageContextCannotCrossThreadOrEstablishment" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="8cd52192-68d6-d481-fdd3-89d13d00f01b">
+      <Execution id="76b3cffb-440e-4303-b49b-d535fa5b1505" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Integration.CommunicationDatabaseTests" name="CommunicationMessageContextCannotCrossThreadOrEstablishment" />
+    </UnitTest>
+    <UnitTest name="APIBack.Tests.Unit.CommunicationTests.ClientMediaDownloadRestrictsHosts(url: &quot;http://lookaside.fbsbx.com/file&quot;, allowed: False)" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="2227f2a0-0b95-bc05-6441-3df220b5543d">
+      <Execution id="3a3d6162-4ca4-4aff-a812-e4bcc9b8dc77" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Unit.CommunicationTests" name="ClientMediaDownloadRestrictsHosts" />
+    </UnitTest>
+    <UnitTest name="APIBack.Tests.Unit.CommunicationTests.ClientMediaDownloadRestrictsHosts(url: &quot;https://127.0.0.1/file&quot;, allowed: False)" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="3763ed8b-ccee-749b-4628-bb3939525b40">
+      <Execution id="b44e5375-c81b-463f-8e2a-52300e60b1c1" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Unit.CommunicationTests" name="ClientMediaDownloadRestrictsHosts" />
+    </UnitTest>
+    <UnitTest name="APIBack.Tests.Unit.CommunicationTests.InvalidTargetsAreRejected(target: -1)" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="609f47ff-0fd3-314f-260c-b19d1be88a0a">
+      <Execution id="0316fd56-f8b7-4dd5-9781-24e6afe127a6" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Unit.CommunicationTests" name="InvalidTargetsAreRejected" />
+    </UnitTest>
+    <UnitTest name="APIBack.Tests.Unit.CommunicationTests.ClientMediaDownloadRestrictsHosts(url: &quot;https://lookaside.fbsbx.com.evil.test/file&quot;, allowed: False)" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="86430c28-d9f3-6e2e-d0d4-e255f540ed30">
+      <Execution id="36d27831-3466-445a-a9ce-22d6478f2720" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Unit.CommunicationTests" name="ClientMediaDownloadRestrictsHosts" />
+    </UnitTest>
+    <UnitTest name="APIBack.Tests.Integration.CommunicationDatabaseTests.CommunicationPushDoesNotFollowTokenToAnotherUserOrTurn" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="bb67c41b-482c-a1ae-46f6-77cdc74732b1">
+      <Execution id="3fa04aa4-3084-40d8-8f1f-08bb8089b869" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Integration.CommunicationDatabaseTests" name="CommunicationPushDoesNotFollowTokenToAnotherUserOrTurn" />
+    </UnitTest>
+    <UnitTest name="APIBack.Tests.Unit.CommunicationTests.MobileStoreTargetAlwaysComesFromActor" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="11a4e10c-158d-7e35-6b6f-830b7d3463a7">
+      <Execution id="f00f0ee8-0af7-4538-ad29-337a6643b8df" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Unit.CommunicationTests" name="MobileStoreTargetAlwaysComesFromActor" />
+    </UnitTest>
+    <UnitTest name="APIBack.Tests.Unit.CommunicationMediaTests.CommunicationIncomingMediaUsesScopedBearerAndChecksDownloadedBytes" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="7aad622e-cbd7-ae5f-4755-0790134b7ffa">
+      <Execution id="d4dd093f-9427-4691-b206-2206d38c033c" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Unit.CommunicationMediaTests" name="CommunicationIncomingMediaUsesScopedBearerAndChecksDownloadedBytes" />
+    </UnitTest>
+    <UnitTest name="APIBack.Tests.Integration.CommunicationDatabaseTests.CommunicationClientHistorySearchMediaReactionsAndCursorStayInTenant" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="8d572909-242a-da67-003e-2b3ba60eee16">
+      <Execution id="95c2f629-fa1e-4590-9fd9-5728ac632b69" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Integration.CommunicationDatabaseTests" name="CommunicationClientHistorySearchMediaReactionsAndCursorStayInTenant" />
+    </UnitTest>
+    <UnitTest name="APIBack.Tests.Unit.CommunicationTests.AudioFormatComesFromBytesNotFilename(signature: &quot;OggS&quot;, expected: &quot;audio/ogg&quot;)" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="3ff6faa4-4801-199b-3386-e4d951c145b7">
+      <Execution id="dde7ccd9-3945-41e3-a206-ce5ce544240a" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Unit.CommunicationTests" name="AudioFormatComesFromBytesNotFilename" />
+    </UnitTest>
+    <UnitTest name="APIBack.Tests.Unit.CommunicationMediaTests.CommunicationClientDownloadAndReactionRejectOrderOutsideOwnQueueBeforeTransport" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="5a984ebc-cccf-f884-fa77-7e633ab1d5b2">
+      <Execution id="43bdb7e7-c0a9-42d1-b1c9-b7c949b87952" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Unit.CommunicationMediaTests" name="CommunicationClientDownloadAndReactionRejectOrderOutsideOwnQueueBeforeTransport" />
+    </UnitTest>
+    <UnitTest name="APIBack.Tests.Unit.CommunicationTests.LengthIsValidatedAgainstLegacyDatabaseLimit" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="802a708b-1120-fbf0-a05e-8ab79143f320">
+      <Execution id="18bc95de-f21d-4031-bc95-1c430fab757e" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Unit.CommunicationTests" name="LengthIsValidatedAgainstLegacyDatabaseLimit" />
+    </UnitTest>
+    <UnitTest name="APIBack.Tests.Unit.CommunicationTests.ClientMediaDownloadRestrictsHosts(url: &quot;https://media.fbcdn.net/file&quot;, allowed: True)" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="1124d1ae-9e77-7a1b-fadf-6b963648710c">
+      <Execution id="b9b8bbe2-761e-4988-8d5e-d9086f09f650" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Unit.CommunicationTests" name="ClientMediaDownloadRestrictsHosts" />
+    </UnitTest>
+    <UnitTest name="APIBack.Tests.Integration.CommunicationDatabaseTests.MigrationLegacyInteropIdempotencyPagingMentionsReadAndPrivateIsolation" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="eb73bc07-6f5b-050a-7ab5-b71a49e8d2df">
+      <Execution id="03a6405f-d9f5-4427-961f-4a460466c4c3" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Integration.CommunicationDatabaseTests" name="MigrationLegacyInteropIdempotencyPagingMentionsReadAndPrivateIsolation" />
+    </UnitTest>
+    <UnitTest name="APIBack.Tests.Unit.CommunicationTests.RequestRequiresIdAndTextOrAttachment" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="23cbd9eb-a10e-fe4f-428e-4d755b1c0e66">
+      <Execution id="9083e88e-e561-4229-83b0-8a1e02e81ef4" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Unit.CommunicationTests" name="RequestRequiresIdAndTextOrAttachment" />
+    </UnitTest>
+    <UnitTest name="APIBack.Tests.Unit.CommunicationTests.HtmlAndUnknownBytesAreNotAcceptedAsImages" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="c115bed5-caee-722d-4359-606b61cb7b7a">
+      <Execution id="dd98520b-8daf-4c49-905e-50c5aab79a42" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Unit.CommunicationTests" name="HtmlAndUnknownBytesAreNotAcceptedAsImages" />
+    </UnitTest>
+    <UnitTest name="APIBack.Tests.Unit.CommunicationTests.ClientMediaDownloadRestrictsHosts(url: &quot;https://lookaside.fbsbx.com/whatsapp_business/atta&quot;..., allowed: True)" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="dd296e89-b829-2679-abee-7246cb84440b">
+      <Execution id="1cbf53f0-4a0a-4927-bda0-4bfbdf740418" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Unit.CommunicationTests" name="ClientMediaDownloadRestrictsHosts" />
+    </UnitTest>
+    <UnitTest name="APIBack.Tests.Integration.CommunicationDatabaseTests.ClientDispatchDoesNotSendAgainAfterLostExternalConfirmation" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="dce11bb3-01b7-9741-abd6-d78f746b703b">
+      <Execution id="d979c001-be46-4fc1-9523-bfeea2017a41" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Integration.CommunicationDatabaseTests" name="ClientDispatchDoesNotSendAgainAfterLostExternalConfirmation" />
+    </UnitTest>
+    <UnitTest name="APIBack.Tests.Unit.CommunicationTests.ClientMediaDownloadRestrictsHosts(url: &quot;https://user@lookaside.fbsbx.com/file&quot;, allowed: False)" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="dda138b4-1aa2-0cf4-59bd-9da9872d2570">
+      <Execution id="446aa250-6972-4f96-afdf-2fe33e7d1709" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Unit.CommunicationTests" name="ClientMediaDownloadRestrictsHosts" />
+    </UnitTest>
+    <UnitTest name="APIBack.Tests.Integration.CommunicationDatabaseTests.ProtectedAttachmentsAndReadCutoffDoNotMarkFutureMessages" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="773df51c-87c0-4111-24e3-542fb7985a81">
+      <Execution id="dcd536e2-ea52-456b-876d-5b961937a64c" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Integration.CommunicationDatabaseTests" name="ProtectedAttachmentsAndReadCutoffDoNotMarkFutureMessages" />
+    </UnitTest>
+    <UnitTest name="APIBack.Tests.Unit.CommunicationTests.AudioFormatComesFromBytesNotFilename(signature: &quot;ID3x&quot;, expected: &quot;audio/mpeg&quot;)" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="1cf2fef5-22df-5b08-a833-3bf8b760f5e1">
+      <Execution id="3c91c7b9-b824-46c2-a3bf-77d0c81ffb34" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Unit.CommunicationTests" name="AudioFormatComesFromBytesNotFilename" />
+    </UnitTest>
+    <UnitTest name="APIBack.Tests.Unit.CommunicationTests.PrivateThreadIsSymmetricAndAdminCannotReadIt" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="ec4e5c46-e754-c415-fcdc-293ead417db1">
+      <Execution id="c678f431-b24b-43a0-8013-d28d26ad550e" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Unit.CommunicationTests" name="PrivateThreadIsSymmetricAndAdminCannotReadIt" />
+    </UnitTest>
+    <UnitTest name="APIBack.Tests.Unit.CommunicationTests.IncomingAudioAndPhotoExposeProtectedDescriptorNotProviderUrl" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="db575f6c-dc93-f372-8623-917f1436753a">
+      <Execution id="61027e8b-7f9e-412b-ab09-55e6359ab5a9" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Unit.CommunicationTests" name="IncomingAudioAndPhotoExposeProtectedDescriptorNotProviderUrl" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="1124d1ae-9e77-7a1b-fadf-6b963648710c" executionId="b9b8bbe2-761e-4988-8d5e-d9086f09f650" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="bb67c41b-482c-a1ae-46f6-77cdc74732b1" executionId="3fa04aa4-3084-40d8-8f1f-08bb8089b869" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="773df51c-87c0-4111-24e3-542fb7985a81" executionId="dcd536e2-ea52-456b-876d-5b961937a64c" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="eb73bc07-6f5b-050a-7ab5-b71a49e8d2df" executionId="03a6405f-d9f5-4427-961f-4a460466c4c3" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="86430c28-d9f3-6e2e-d0d4-e255f540ed30" executionId="36d27831-3466-445a-a9ce-22d6478f2720" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="11a4e10c-158d-7e35-6b6f-830b7d3463a7" executionId="f00f0ee8-0af7-4538-ad29-337a6643b8df" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="ec4e5c46-e754-c415-fcdc-293ead417db1" executionId="c678f431-b24b-43a0-8013-d28d26ad550e" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="7aad622e-cbd7-ae5f-4755-0790134b7ffa" executionId="d4dd093f-9427-4691-b206-2206d38c033c" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="8cd52192-68d6-d481-fdd3-89d13d00f01b" executionId="76b3cffb-440e-4303-b49b-d535fa5b1505" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="dce11bb3-01b7-9741-abd6-d78f746b703b" executionId="d979c001-be46-4fc1-9523-bfeea2017a41" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="3763ed8b-ccee-749b-4628-bb3939525b40" executionId="b44e5375-c81b-463f-8e2a-52300e60b1c1" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="5a984ebc-cccf-f884-fa77-7e633ab1d5b2" executionId="43bdb7e7-c0a9-42d1-b1c9-b7c949b87952" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="2227f2a0-0b95-bc05-6441-3df220b5543d" executionId="3a3d6162-4ca4-4aff-a812-e4bcc9b8dc77" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="1cf2fef5-22df-5b08-a833-3bf8b760f5e1" executionId="3c91c7b9-b824-46c2-a3bf-77d0c81ffb34" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="3ff6faa4-4801-199b-3386-e4d951c145b7" executionId="dde7ccd9-3945-41e3-a206-ce5ce544240a" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="23cbd9eb-a10e-fe4f-428e-4d755b1c0e66" executionId="9083e88e-e561-4229-83b0-8a1e02e81ef4" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="8d572909-242a-da67-003e-2b3ba60eee16" executionId="95c2f629-fa1e-4590-9fd9-5728ac632b69" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="dda138b4-1aa2-0cf4-59bd-9da9872d2570" executionId="446aa250-6972-4f96-afdf-2fe33e7d1709" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="609f47ff-0fd3-314f-260c-b19d1be88a0a" executionId="0316fd56-f8b7-4dd5-9781-24e6afe127a6" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="dd0d3657-8f08-fa56-cbb3-c562bb10159d" executionId="50686285-21a1-4da5-8b02-263a0ab9bada" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="b1774937-d944-8e58-41e7-62a8e5078329" executionId="4d2ae387-4db0-4c7d-b119-834e5dd3a969" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="db575f6c-dc93-f372-8623-917f1436753a" executionId="61027e8b-7f9e-412b-ab09-55e6359ab5a9" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="802a708b-1120-fbf0-a05e-8ab79143f320" executionId="18bc95de-f21d-4031-bc95-1c430fab757e" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="c115bed5-caee-722d-4359-606b61cb7b7a" executionId="dd98520b-8daf-4c49-905e-50c5aab79a42" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="dd296e89-b829-2679-abee-7246cb84440b" executionId="1cbf53f0-4a0a-4927-bda0-4bfbdf740418" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="40dbbdb4-f79a-f525-d843-e45383af4e2f" executionId="3f5b66c8-bc53-4f0b-9aff-c1b1ad4664f1" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Resultados que não estão em uma lista" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="Todos os resultados carregados" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Completed">
+    <Counters total="26" executed="26" passed="26" failed="0" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.00] xUnit.net VSTest Adapter v2.4.5+1caef2f33e (64-bit .NET 8.0.31)&#xD;
+[xUnit.net 00:00:10.53]   Discovering: APIBack&#xD;
+[xUnit.net 00:00:11.57]   Discovered:  APIBack&#xD;
+[xUnit.net 00:00:11.60]   Starting:    APIBack&#xD;
+[xUnit.net 00:00:21.74]   Finished:    APIBack&#xD;
+</StdOut>
+    </Output>
+  </ResultSummary>
+</TestRun>

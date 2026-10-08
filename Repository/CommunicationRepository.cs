@@ -51,6 +51,23 @@ LEFT JOIN delivery_chat_message q ON q.id=c.reply_to";
         await EnrichAsync(db, rows, actor);
         return new(rows, more, rows.FirstOrDefault()?.Sequence);
     }
+    public async Task<CommunicationPageDto> ContextAsync(ChatActor actor, ChatThread thread, Guid id, int? pedidoId)
+    {
+        await using var db=await dataSource.OpenConnectionAsync();
+        var args=new{Est=actor.EstablishmentId,Thread=thread.Key,Id=id,PedidoId=pedidoId,Actor=actor.Key,IsMobile=actor.MotoboyId.HasValue};
+        var anchor=await db.ExecuteScalarAsync<long?>(@"SELECT sequence FROM delivery_chat_message WHERE id=@Id AND estabelecimento_id=@Est AND thread_key=@Thread
+ AND (@PedidoId IS NULL OR pedido_id=@PedidoId);",args);
+        if(!anchor.HasValue)throw new DeliveryDomainException(404,"CHAT_MESSAGE_NOT_FOUND","Mensagem indisponivel nesta conversa.");
+        var rows=(await db.QueryAsync<Row>($@"{Select} WHERE c.estabelecimento_id=@Est AND c.thread_key=@Thread
+ AND (@PedidoId IS NULL OR c.pedido_id=@PedidoId) AND c.id IN (
+ SELECT id FROM (SELECT id FROM delivery_chat_message WHERE estabelecimento_id=@Est AND thread_key=@Thread
+ AND (@PedidoId IS NULL OR pedido_id=@PedidoId) AND sequence<=@Anchor ORDER BY sequence DESC LIMIT 25) older
+ UNION SELECT id FROM (SELECT id FROM delivery_chat_message WHERE estabelecimento_id=@Est AND thread_key=@Thread
+ AND (@PedidoId IS NULL OR pedido_id=@PedidoId) AND sequence>@Anchor ORDER BY sequence LIMIT 25) newer)
+ ORDER BY c.sequence;",new{args.Est,args.Thread,args.PedidoId,args.Actor,args.IsMobile,Anchor=anchor.Value})).ToList();
+        await EnrichAsync(db,rows,actor);
+        return new(rows,false,rows.FirstOrDefault()?.Sequence);
+    }
     private sealed class ReactionRow
     {
         public Guid MessageId { get; set; }
@@ -203,8 +220,8 @@ FROM delivery_chat_reaction WHERE message_id=ANY(@Ids) GROUP BY message_id,react
             new { Est = actor.EstablishmentId, thread.Channel, Ids = new[] { actor.MotoboyId, thread.TargetId }.Where(x => x.HasValue).Select(x => x!.Value).Distinct().ToArray() }, tx);
         targets.AddRange(sessions.Select(DeliveryRealtimeEvents.SessionGroup));
         var payload = JsonSerializer.Serialize(new { schemaVersion = 1, estabelecimentoId = actor.EstablishmentId, channel = thread.Channel, threadKey = thread.Key, action, messageId = id, version });
-        if(action=="message"&&id.HasValue) await db.ExecuteAsync(@"INSERT INTO delivery_chat_push_outbox(message_id,token,mentioned)
- SELECT c.id,p.token,p.motoboy_id=ANY(c.mentions) FROM delivery_chat_message c JOIN delivery_chat_push_subscription p ON p.estabelecimento_id=c.estabelecimento_id
+        if(action=="message"&&id.HasValue) await db.ExecuteAsync(@"INSERT INTO delivery_chat_push_outbox(message_id,token,mentioned,recipient_estabelecimento_id,recipient_motoboy_id,recipient_session_id)
+ SELECT c.id,p.token,p.motoboy_id=ANY(c.mentions),p.estabelecimento_id,p.motoboy_id,p.session_id FROM delivery_chat_message c JOIN delivery_chat_push_subscription p ON p.estabelecimento_id=c.estabelecimento_id
  JOIN motoboy_active_sessions s ON s.session_id=p.session_id AND s.ended_at_utc IS NULL AND s.expires_at_utc>NOW()
  JOIN motoboy_estabelecimento me ON me.motoboy_id=p.motoboy_id AND me.estabelecimento_id=p.estabelecimento_id AND me.ativo=TRUE
  WHERE c.id=@Id AND c.sender_key<>'m:'||p.motoboy_id

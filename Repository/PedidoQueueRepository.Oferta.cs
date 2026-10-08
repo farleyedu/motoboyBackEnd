@@ -150,7 +150,8 @@ SELECT s.id AS Id, s.pedido_id AS PedidoId
         /// <summary>Aceita a rota: as paradas entram na fila e a primeira vira a entrega atual (se ele nao tem outra).</summary>
         public Task<MotoboyQueueDto> AcceptOfferAsync(Guid estabelecimentoId, int motoboyId) => AcceptOfferCoreAsync(estabelecimentoId, motoboyId, null);
         public Task<MotoboyQueueDto> AcceptOfferForAsync(Guid estabelecimentoId, int motoboyId, Guid expectedOfferId) => AcceptOfferCoreAsync(estabelecimentoId, motoboyId, expectedOfferId);
-        private async Task<MotoboyQueueDto> AcceptOfferCoreAsync(Guid estabelecimentoId, int motoboyId, Guid? expectedOfferId)
+        public Task<MotoboyQueueDto> AcceptPricedOfferAsync(Guid estabelecimentoId, int motoboyId, Guid expectedOfferId, long expectedVersion) => AcceptOfferCoreAsync(estabelecimentoId, motoboyId, expectedOfferId, expectedVersion);
+        private async Task<MotoboyQueueDto> AcceptOfferCoreAsync(Guid estabelecimentoId, int motoboyId, Guid? expectedOfferId, long? expectedVersion = null)
         {
             await using var connection = await _dataSource.OpenConnectionAsync();
             if (!await PedidoColumnTypes.HasOfertaSchemaAsync(connection, null)) throw OfertaPending();
@@ -159,6 +160,8 @@ SELECT s.id AS Id, s.pedido_id AS PedidoId
             var currentVersion = await LockQueuesAsync(connection, transaction, estabelecimentoId, motoboyId);
             var stops = await ListOfferedStopsAsync(connection, transaction, estabelecimentoId, motoboyId);
             var before = await BuildSnapshotAsync(connection, transaction, estabelecimentoId, motoboyId, currentVersion);
+            if (before.Offer?.Stops.Any(s => s.Earnings != null) == true && expectedVersion != currentVersion)
+                throw new DeliveryDomainException(409, "OFFER_EARNINGS_CHANGED", "Confira novamente os pedidos e os ganhos da oferta antes de aceitar.");
             if (stops.Count > 0 && expectedOfferId.HasValue && before.Offer?.OfferId != expectedOfferId)
                 throw new DeliveryDomainException(409, "OFFER_CHANGED", "A oferta mudou. Confira a nova rota antes de aceitar.");
             if (before.Offer?.ExpiresAtUtc <= DateTimeOffset.UtcNow)

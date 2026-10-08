@@ -394,6 +394,7 @@ SELECT m.id
             await connection.ExecuteAsync(
                 "UPDATE delivery_route_stops SET stop_status = 'completed', completed_at_utc = NOW(), completed_by = @CompletedBy, updated_at_utc = NOW() WHERE id = @Id;",
                 new { current.Id, CompletedBy = completedBy }, transaction);
+            await MotoboyWorkService.RecordDelivery(connection, transaction, estabelecimentoId, motoboyId, current.Id, current.PedidoId);
             var entregaNow = await PedidoColumnTypes.LocalNowSqlAsync(connection, transaction, "horario_entrega");
             await connection.ExecuteAsync(
                 $"UPDATE pedido SET status_pedido = @Concluido, horario_entrega = {entregaNow} WHERE id = @PedidoId;",
@@ -479,6 +480,7 @@ RETURNING id;",
                     TransferRequestId = transferRequestId
                 }, transaction);
 
+            await MotoboyWorkService.CaptureQuote(connection, transaction, estabelecimentoId, motoboyId, pedidoId, stopId);
             if (offered)
             {
                 await connection.ExecuteAsync(
@@ -790,8 +792,18 @@ SELECT s.id AS Id, s.pedido_id AS PedidoId, s.position AS Position, s.stop_statu
 
             var settings = await GetSettingsInternalAsync(connection, transaction, estabelecimentoId, cancellationToken);
 
+            var quotes = new Dictionary<long, RiderPayQuote>();
+            if (await MotoboyWorkService.Available(connection, transaction, cancellationToken))
+            {
+                var values = await connection.QueryAsync<(long StopId, string Quote)>(new CommandDefinition(
+                    "SELECT q.stop_id AS StopId,q.quote::text AS Quote FROM delivery_rider_quotes q JOIN delivery_route_stops s ON s.id=q.stop_id WHERE s.estabelecimento_id=@Store AND s.motoboy_id=@Rider AND s.stop_status IN ('assigned','en_route')",
+                    new { Store=estabelecimentoId,Rider=motoboyId },transaction,cancellationToken:cancellationToken));
+                foreach(var value in values) quotes[value.StopId]=JsonSerializer.Deserialize<RiderPayQuote>(value.Quote)!;
+            }
+
             RouteStopDto Map(StopDetailRow row) => new()
             {
+                Earnings = quotes.GetValueOrDefault(row.Id),
                 PedidoId = row.PedidoId,
                 Position = row.Position,
                 Status = row.OfferedAtUtc.HasValue ? "offered" : row.StopStatus,
