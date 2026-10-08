@@ -47,6 +47,7 @@ SELECT t.id AS Id,
 
         private sealed class SettingsRow
         {
+            public bool RequireDeliveryProof { get; set; }
             public string? TransferPolicy { get; set; }
             public bool RequireDeliveryCode { get; set; }
             public bool AllowMotoboyReorder { get; set; }
@@ -112,6 +113,8 @@ ON CONFLICT (estabelecimento_id) DO UPDATE SET
                     "UPDATE delivery_settings SET order_window = @OrderWindow::jsonb WHERE estabelecimento_id = @EstabelecimentoId;",
                     new { OrderWindow = OrderWindowRules.Serialize(request.OrderWindow), EstabelecimentoId = estabelecimentoId }, transaction);
             }
+            if (request.RequireDeliveryProof.HasValue)
+                await connection.ExecuteAsync("UPDATE delivery_settings SET require_delivery_proof=@Required WHERE estabelecimento_id=@Store", new { Required=request.RequireDeliveryProof.Value,Store=estabelecimentoId },transaction);
             if (request.DefaultDeliveryMinutes.HasValue)
             {
                 await connection.ExecuteAsync(
@@ -153,6 +156,7 @@ ON CONFLICT (estabelecimento_id) DO UPDATE SET
         {
             var row = await connection.QuerySingleOrDefaultAsync<SettingsRow?>(new CommandDefinition(@"
 SELECT transfer_policy AS TransferPolicy,
+       COALESCE((to_jsonb(delivery_settings)->>'require_delivery_proof')::boolean,false) AS RequireDeliveryProof,
        require_delivery_code AS RequireDeliveryCode,
        allow_motoboy_reorder AS AllowMotoboyReorder,
        allow_motoboy_refuse AS AllowMotoboyRefuse,
@@ -171,6 +175,7 @@ SELECT transfer_policy AS TransferPolicy,
                 EstabelecimentoId = estabelecimentoId,
                 TransferPolicy = TransferPolicies.IsConfigurable(row.TransferPolicy) ? row.TransferPolicy! : TransferPolicies.Direct,
                 RequireDeliveryCode = row.RequireDeliveryCode,
+                RequireDeliveryProof = row.RequireDeliveryProof,
                 AllowMotoboyReorder = row.AllowMotoboyReorder,
                 AllowMotoboyRefuse = row.AllowMotoboyRefuse,
                 UpdatedAtUtc = row.UpdatedAtUtc,
@@ -202,6 +207,7 @@ SELECT s.motoboy_id AS MotoboyId,
    AND s.ended_at_utc IS NULL
    AND s.revoked_at IS NULL
    AND s.expires_at_utc > NOW()
+   AND s.paused_at_utc IS NULL
    AND s.motoboy_id <> @MotoboyId
  ORDER BY m.nome, m.id;",
                 new { EstabelecimentoId = estabelecimentoId, MotoboyId = motoboyId })).ToList();

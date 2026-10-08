@@ -101,6 +101,7 @@ builder.Services.AddScoped<IAdminUsuariosRepository, AdminUsuariosRepository>();
 builder.Services.AddScoped<IAdminUsuariosService, AdminUsuariosService>();
 builder.Services.AddScoped<IGestaoRepository, GestaoRepository>();
 builder.Services.AddScoped<IGestaoService, GestaoService>();
+builder.Services.AddScoped<MotoboyContaService>();
 builder.Services.AddScoped<IEstabelecimentoFaqRepository, EstabelecimentoFaqRepository>();
 builder.Services.AddScoped<ICardapioRepository, CardapioRepository>();
 builder.Services.AddScoped<IPedidoRepository, PedidoRepository>();

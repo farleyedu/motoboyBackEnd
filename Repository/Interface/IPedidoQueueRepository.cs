@@ -7,6 +7,13 @@ namespace APIBack.Repository.Interface
 {
     public interface IPedidoQueueRepository
     {
+        Task<DeliveryCompletionContext> GetCompletionContextAsync(Guid store, int rider, int pedido, CancellationToken ct);
+        Task<bool> ValidateCompletionCodeAsync(Guid store, int rider, int pedido, string code, CancellationToken ct);
+        Task<Guid> SaveCompletionProofAsync(Guid store, int rider, int pedido, string base64, CancellationToken ct);
+        Task<string?> ReadPendingCompletionProofAsync(Guid store, int rider, int pedido, CancellationToken ct);
+        Task<DeliveryCompletionResult> CompleteDeliveryAsync(Guid store, int rider, int user, Guid session, long epoch, DeliveryCompletionRequest request, CancellationToken ct);
+        Task<DeliveryReceipt?> GetDeliveryReceiptAsync(int user, Guid operation, CancellationToken ct);
+        Task<string?> GetDeliveryProofAsync(int user, Guid operation, CancellationToken ct);
         // Atendente
         Task<MotoboyQueueDto> AssignAsync(Guid estabelecimentoId, int actorUserId, int motoboyId, int pedidoId);
         /// <summary>Para autoatribuicao: so devolve um motoboy quando ha EXATAMENTE um disponivel (online,
@@ -27,10 +34,15 @@ namespace APIBack.Repository.Interface
 
         // Motoboy
         Task<MotoboyQueueDto> MarkPickedUpAsync(Guid estabelecimentoId, int motoboyId);
+        Task<MotoboyQueueDto> PickUpStopsAsync(Guid estabelecimentoId, int motoboyId, PickupStopsRequest request);
+        Task<MotoboyQueueDto> AcceptOfferForAsync(Guid estabelecimentoId, int motoboyId, Guid expectedOfferId);
+        Task<MotoboyQueueDto> RejectOfferForAsync(Guid estabelecimentoId, int motoboyId, Guid expectedOfferId, string? motivo);
+        Task<MotoboyQueueDto> PauseTurnAsync(Guid estabelecimentoId, int motoboyId, Guid sessionId, long sessionEpoch, bool paused);
         Task<MotoboyQueueDto> MarkArrivedAsync(Guid estabelecimentoId, int motoboyId);
         Task<MotoboyQueueDto> MarkArrivedForPedidoAsync(Guid estabelecimentoId, int motoboyId, int expectedPedidoId);
         Task<MotoboyQueueDto> DeliverCurrentAsync(Guid estabelecimentoId, int motoboyId, string? codigo);
         Task<MotoboyQueueDto> FailCurrentAsync(Guid estabelecimentoId, int motoboyId, string motivo);
+        Task<MotoboyQueueDto> FailCurrentForPedidoAsync(Guid estabelecimentoId, int motoboyId, int expectedPedidoId, string motivo);
         Task<MotoboyQueueDto> RefuseAsync(Guid estabelecimentoId, int motoboyId, int pedidoId, string? motivo);
         Task<MotoboyQueueDto> RefuseRouteByMotoboyAsync(Guid estabelecimentoId, int motoboyId, IReadOnlyList<int> pedidoIds, string? motivo);
         Task<MotoboyQueueDto> ReorderByMotoboyAsync(Guid estabelecimentoId, int motoboyId, long expectedVersion, IReadOnlyList<int> pedidoIdsOrdenados);

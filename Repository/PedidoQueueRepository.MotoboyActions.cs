@@ -74,7 +74,9 @@ namespace APIBack.Repository
         /// Nao consegui entregar: a parada vira 'failed' com o motivo e o pedido volta a
         /// Pendente (sem motoboy) para o atendente decidir. O proximo da fila assume.
         /// </summary>
-        public async Task<MotoboyQueueDto> FailCurrentAsync(Guid estabelecimentoId, int motoboyId, string motivo)
+        public Task<MotoboyQueueDto> FailCurrentAsync(Guid estabelecimentoId, int motoboyId, string motivo) => FailCurrentCoreAsync(estabelecimentoId,motoboyId,motivo,null);
+        public Task<MotoboyQueueDto> FailCurrentForPedidoAsync(Guid estabelecimentoId,int motoboyId,int expectedPedidoId,string motivo) => FailCurrentCoreAsync(estabelecimentoId,motoboyId,motivo,expectedPedidoId);
+        private async Task<MotoboyQueueDto> FailCurrentCoreAsync(Guid estabelecimentoId, int motoboyId, string motivo,int? expectedPedidoId)
         {
             await using var connection = await _dataSource.OpenConnectionAsync();
             await using var transaction = await connection.BeginTransactionAsync();
@@ -83,6 +85,8 @@ namespace APIBack.Repository
             var current = await GetCurrentStopAsync(connection, transaction, estabelecimentoId, motoboyId, forUpdate: true)
                 ?? throw new DeliveryDomainException(409, "NO_CURRENT_DELIVERY", "Voce nao tem entrega atual em rota.");
 
+            if(expectedPedidoId.HasValue && current.PedidoId!=expectedPedidoId.Value)
+                throw new DeliveryDomainException(409,"CURRENT_DELIVERY_CHANGED","O pedido atual mudou. Confira a rota antes de registrar a ocorrência.");
             await connection.ExecuteAsync(
                 "UPDATE delivery_route_stops SET stop_status = 'failed', failed_at_utc = NOW(), failure_reason = @Motivo, updated_at_utc = NOW() WHERE id = @Id;",
                 new { current.Id, Motivo = motivo }, transaction);

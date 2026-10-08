@@ -58,6 +58,7 @@ namespace APIBack.Repository
         {
             public bool HasLink { get; set; }
             public Guid? SessionId { get; set; }
+            public bool IsPaused { get; set; }
         }
 
         private sealed class StopRow
@@ -85,7 +86,7 @@ SELECT m.id
   FROM motoboy m
   JOIN motoboy_estabelecimento me ON me.motoboy_id = m.id AND me.estabelecimento_id = @Est AND me.ativo = TRUE
  WHERE EXISTS (SELECT 1 FROM motoboy_active_sessions s
-                WHERE s.motoboy_id = m.id AND s.ended_at_utc IS NULL AND s.revoked_at IS NULL AND s.expires_at_utc > NOW())
+                WHERE s.motoboy_id = m.id AND s.ended_at_utc IS NULL AND s.revoked_at IS NULL AND s.expires_at_utc > NOW() AND s.paused_at_utc IS NULL)
    AND NOT EXISTS (SELECT 1 FROM delivery_route_stops rs
                      WHERE rs.motoboy_id = m.id AND rs.stop_status IN ('assigned', 'en_route'))
  LIMIT 2;", new { Est = estabelecimentoId })).ToList();
@@ -422,7 +423,7 @@ SELECT m.id
             NpgsqlConnection connection, NpgsqlTransaction transaction, Guid estabelecimentoId, int motoboyId)
         {
             var currentVersion = await LockQueuesAsync(connection, transaction, estabelecimentoId, motoboyId);
-            var eligibility = await EnsureEligibleAsync(connection, transaction, motoboyId, estabelecimentoId);
+            var eligibility = await EnsureEligibleAsync(connection, transaction, motoboyId, estabelecimentoId, receivingNew: false);
 
             var hasCurrentHere = await GetCurrentStopAsync(connection, transaction, estabelecimentoId, motoboyId, forUpdate: false) != null;
             if (hasCurrentHere)
@@ -662,9 +663,9 @@ UPDATE delivery_route_stops s
         // =====================================================================
 
         private static async Task<EligibilityRow> GetEligibilityAsync(
-            NpgsqlConnection connection, NpgsqlTransaction transaction, int motoboyId, Guid estabelecimentoId)
+            NpgsqlConnection connection, NpgsqlTransaction transaction, int motoboyId, Guid estabelecimentoId, CancellationToken cancellationToken = default)
         {
-            var row = await connection.QuerySingleOrDefaultAsync<EligibilityRow>(@"
+            var row = await connection.QuerySingleOrDefaultAsync<EligibilityRow>(new CommandDefinition(@"
 SELECT
     EXISTS(
         SELECT 1 FROM motoboy alias
@@ -682,15 +683,19 @@ SELECT
            AND s.ended_at_utc IS NULL
            AND s.expires_at_utc > NOW()
          LIMIT 1
-    ) AS SessionId;",
-                new { MotoboyId = motoboyId, EstabelecimentoId = estabelecimentoId }, transaction);
+    ) AS SessionId,
+    EXISTS (SELECT 1 FROM motoboy_active_sessions s JOIN motoboy alias ON s.motoboy_id = alias.canonical_motoboy_id
+             WHERE alias.id = @MotoboyId AND s.id_estabelecimento = @EstabelecimentoId AND s.ended_at_utc IS NULL
+               AND s.revoked_at IS NULL AND s.expires_at_utc > NOW() AND s.paused_at_utc IS NOT NULL) AS IsPaused;",
+                new { MotoboyId = motoboyId, EstabelecimentoId = estabelecimentoId }, transaction, commandTimeout: 10, cancellationToken: cancellationToken));
             return row ?? new EligibilityRow();
         }
 
         private static async Task<EligibilityRow> EnsureEligibleAsync(
-            NpgsqlConnection connection, NpgsqlTransaction transaction, int motoboyId, Guid estabelecimentoId)
+            NpgsqlConnection connection, NpgsqlTransaction transaction, int motoboyId, Guid estabelecimentoId, bool receivingNew = true)
         {
             var eligibility = await GetEligibilityAsync(connection, transaction, motoboyId, estabelecimentoId);
+            if (receivingNew && eligibility.IsPaused) throw new DeliveryDomainException(409, "MOTOBOY_PAUSED", "Este motoboy pausou novos chamados.");
             if (!eligibility.HasLink)
             {
                 throw new DeliveryDomainException(403, "LINK_FORBIDDEN", "Motoboy sem vinculo ativo com o estabelecimento.");
@@ -830,6 +835,7 @@ SELECT s.id AS Id, s.pedido_id AS PedidoId, s.position AS Position, s.stop_statu
             var routeState = await ReadRouteStateAsync(connection, transaction, estabelecimentoId, motoboyId, rules, cancellationToken);
             return new MotoboyQueueDto
             {
+                Paused = (await GetEligibilityAsync(connection, transaction, motoboyId, estabelecimentoId, cancellationToken)).IsPaused,
                 RouteState = routeState.State,
                 ReturningSinceUtc = routeState.Since,
                 MotoboyId = motoboyId,

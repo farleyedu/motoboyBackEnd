@@ -125,8 +125,16 @@ namespace APIBack.Controllers
 
         [HttpPost("stops/current/pickup")]
         [RequireOperationalSession]
-        public Task<IActionResult> PickUp() =>
-            WithOperationalContextAsync((est, motoboyId, _) => _queueService.MarkPickedUpAsync(est, motoboyId));
+        public Task<IActionResult> PickUp([FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)] PickupStopsRequest? request) =>
+            WithOperationalContextAsync((est, motoboyId, _) => request == null
+                ? _queueService.MarkPickedUpAsync(est, motoboyId)
+                : _queueService.PickUpStopsAsync(est, motoboyId, request));
+
+        [HttpPatch("pause")]
+        [RequireOperationalSession]
+        public Task<IActionResult> Pause([FromBody] PauseTurnRequest request) =>
+            WithOperationalContextAsync((est, motoboyId, _) => _queueService.PauseTurnAsync(est, motoboyId,
+                HttpContext.GetJwtPayload().MotoboySessionId!.Value, HttpContext.GetJwtPayload().SessionEpoch!.Value, request.Paused));
 
         [HttpPost("stops/current/arrive")]
         [RequireOperationalSession]
@@ -138,12 +146,16 @@ namespace APIBack.Controllers
         [HttpPost("stops/current/deliver")]
         [RequireOperationalSession]
         public Task<IActionResult> Deliver([FromBody] DeliverStopRequest? request) =>
-            WithOperationalContextAsync((est, motoboyId, _) => _queueService.DeliverCurrentAsync(est, motoboyId, request?.Codigo));
+            HttpContext.GetJwtPayload().ClientType == "mobile"
+                ? Task.FromResult<IActionResult>(UnprocessableEntity(ApiResponse<object>.Fail("Atualize o app para concluir com conferência e recibo.","COMPLETION_CONTRACT_REQUIRED")))
+                : WithOperationalContextAsync((est, motoboyId, _) => _queueService.DeliverCurrentAsync(est, motoboyId, request?.Codigo));
 
         [HttpPost("stops/current/fail")]
         [RequireOperationalSession]
         public Task<IActionResult> Fail([FromBody] FailStopRequest? request) =>
-            WithOperationalContextAsync((est, motoboyId, _) => _queueService.FailCurrentAsync(est, motoboyId, request?.Motivo));
+            WithOperationalContextAsync((est, motoboyId, _) => request?.ExpectedPedidoId is int pedidoId
+                ? _queueService.FailCurrentForPedidoAsync(est,motoboyId,pedidoId,request.Motivo)
+                : _queueService.FailCurrentAsync(est, motoboyId, request?.Motivo));
 
         [HttpPost("stops/{pedidoId:int}/refuse")]
         [RequireOperationalSession]
@@ -152,13 +164,13 @@ namespace APIBack.Controllers
 
         [HttpPost("queue/offer/accept")]
         [RequireOperationalSession]
-        public Task<IActionResult> AcceptOffer() =>
-            WithOperationalContextAsync((est, motoboyId, _) => _queueService.AcceptOfferAsync(est, motoboyId));
+        public Task<IActionResult> AcceptOffer([FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)] ResolveOfferRequest? request) =>
+            WithOperationalContextAsync((est, motoboyId, _) => request?.ExpectedOfferId is Guid id ? _queueService.AcceptOfferForAsync(est, motoboyId, id) : _queueService.AcceptOfferAsync(est, motoboyId));
 
         [HttpPost("queue/offer/reject")]
         [RequireOperationalSession]
-        public Task<IActionResult> RejectOffer([FromBody] RejectOfferRequest? request) =>
-            WithOperationalContextAsync((est, motoboyId, _) => _queueService.RejectOfferAsync(est, motoboyId, request?.Motivo));
+        public Task<IActionResult> RejectOffer([FromBody] ResolveOfferRequest? request) =>
+            WithOperationalContextAsync((est, motoboyId, _) => request?.ExpectedOfferId is Guid id ? _queueService.RejectOfferForAsync(est, motoboyId, id, request.Motivo) : _queueService.RejectOfferAsync(est, motoboyId, request?.Motivo));
 
         [HttpPut("queue/reorder")]
         [RequireOperationalSession]

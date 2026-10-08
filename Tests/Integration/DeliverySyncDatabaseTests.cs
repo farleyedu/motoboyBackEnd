@@ -29,7 +29,7 @@ public sealed class DeliveryDatabaseFactAttribute : FactAttribute
     }
 }
 
-public class DeliverySyncDatabaseTests
+public partial class DeliverySyncDatabaseTests
 {
     [DeliveryDatabaseFact]
     public async Task BatchStoresTwentyPointsAndOneEventAndReplaysWithoutAnotherWrite()
@@ -262,7 +262,7 @@ CREATE TABLE usuario_estabelecimentos(id_usuario int, id_estabelecimento uuid, t
 CREATE TABLE motoboy_active_sessions(session_id uuid PRIMARY KEY, session_epoch bigint, motoboy_id int, id_usuario int,
  id_estabelecimento uuid, origin text, client_instance_id text, started_by_user_id int, idempotency_key uuid,
  started_at_utc timestamptz, last_heartbeat_at_utc timestamptz, expires_at_utc timestamptz,
- ended_at_utc timestamptz, revoked_at timestamptz, end_reason text, revoke_reason text, last_seen_at timestamptz, version bigint);
+ ended_at_utc timestamptz, revoked_at timestamptz, end_reason text, revoke_reason text, last_seen_at timestamptz, version bigint,paused_at_utc timestamptz);
 CREATE TABLE motoboy_location_samples(id bigserial PRIMARY KEY, sample_id uuid, session_id uuid, motoboy_id int, estabelecimento_id uuid,
  sequence bigint, latitude double precision, longitude double precision, accuracy_meters double precision, speed_mps double precision,
  heading_degrees double precision, tracking_mode text, quality text, captured_at_utc timestamptz, received_at_utc timestamptz,

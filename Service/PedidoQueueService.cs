@@ -118,6 +118,14 @@ namespace APIBack.Service
             return _repository.MarkPickedUpAsync(estabelecimentoId, motoboyId);
         }
 
+        public Task<MotoboyQueueDto> PickUpStopsAsync(Guid estabelecimentoId, int motoboyId, PickupStopsRequest request) =>
+            _repository.PickUpStopsAsync(estabelecimentoId, motoboyId, request);
+        public Task<MotoboyQueueDto> AcceptOfferForAsync(Guid estabelecimentoId, int motoboyId, Guid expectedOfferId) => _repository.AcceptOfferForAsync(estabelecimentoId, motoboyId, expectedOfferId);
+        public Task<MotoboyQueueDto> RejectOfferForAsync(Guid estabelecimentoId, int motoboyId, Guid expectedOfferId, string? motivo) => _repository.RejectOfferForAsync(estabelecimentoId, motoboyId, expectedOfferId, DeliveryRules.NormalizeReason(motivo, required: false));
+
+        public Task<MotoboyQueueDto> PauseTurnAsync(Guid estabelecimentoId, int motoboyId, Guid sessionId, long sessionEpoch, bool paused) =>
+            _repository.PauseTurnAsync(estabelecimentoId, motoboyId, sessionId, sessionEpoch, paused);
+
         public Task<MotoboyQueueDto> MarkArrivedAsync(Guid estabelecimentoId, int motoboyId)
         {
             EnsurePositive(motoboyId, "motoboyId");
@@ -142,6 +150,11 @@ namespace APIBack.Service
             return _repository.DeliverCurrentAsync(estabelecimentoId, motoboyId, normalizedCode);
         }
 
+        public Task<MotoboyQueueDto> FailCurrentForPedidoAsync(Guid estabelecimentoId, int motoboyId, int expectedPedidoId, string? motivo)
+        {
+            EnsurePositive(motoboyId, "motoboyId");EnsurePositive(expectedPedidoId,"pedidoId");
+            return _repository.FailCurrentForPedidoAsync(estabelecimentoId,motoboyId,expectedPedidoId,DeliveryRules.NormalizeReason(motivo,required:true)!);
+        }
         public Task<MotoboyQueueDto> FailCurrentAsync(Guid estabelecimentoId, int motoboyId, string? motivo)
         {
             EnsurePositive(motoboyId, "motoboyId");

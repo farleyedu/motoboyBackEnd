@@ -35,6 +35,7 @@ namespace APIBack.DTOs.Delivery
 
     public sealed class DeliverySettingsDto
     {
+        public bool RequireDeliveryProof { get; set; }
         public Guid EstabelecimentoId { get; set; }
         public string TransferPolicy { get; set; } = TransferPolicies.Direct;
         public bool RequireDeliveryCode { get; set; }
@@ -85,6 +86,7 @@ namespace APIBack.DTOs.Delivery
 
     public sealed class UpdateDeliverySettingsRequest
     {
+        public bool? RequireDeliveryProof { get; set; }
         public string? TransferPolicy { get; set; }
         public bool RequireDeliveryCode { get; set; }
         public bool AllowMotoboyReorder { get; set; } = true;
@@ -141,6 +143,7 @@ namespace APIBack.DTOs.Delivery
 
     public sealed class FailStopRequest
     {
+        public int? ExpectedPedidoId { get; set; }
         public string? Motivo { get; set; }
     }
 

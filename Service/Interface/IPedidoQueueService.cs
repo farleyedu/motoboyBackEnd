@@ -21,10 +21,15 @@ namespace APIBack.Service.Interface
 
         // Motoboy
         Task<MotoboyQueueDto> MarkPickedUpAsync(Guid estabelecimentoId, int motoboyId);
+        Task<MotoboyQueueDto> PickUpStopsAsync(Guid estabelecimentoId, int motoboyId, PickupStopsRequest request);
+        Task<MotoboyQueueDto> AcceptOfferForAsync(Guid estabelecimentoId, int motoboyId, Guid expectedOfferId);
+        Task<MotoboyQueueDto> RejectOfferForAsync(Guid estabelecimentoId, int motoboyId, Guid expectedOfferId, string? motivo);
+        Task<MotoboyQueueDto> PauseTurnAsync(Guid estabelecimentoId, int motoboyId, Guid sessionId, long sessionEpoch, bool paused);
         Task<MotoboyQueueDto> MarkArrivedAsync(Guid estabelecimentoId, int motoboyId);
         Task<MotoboyQueueDto> MarkArrivedForPedidoAsync(Guid estabelecimentoId, int motoboyId, int expectedPedidoId);
         Task<MotoboyQueueDto> DeliverCurrentAsync(Guid estabelecimentoId, int motoboyId, string? codigo);
         Task<MotoboyQueueDto> FailCurrentAsync(Guid estabelecimentoId, int motoboyId, string? motivo);
+        Task<MotoboyQueueDto> FailCurrentForPedidoAsync(Guid estabelecimentoId, int motoboyId, int expectedPedidoId, string? motivo);
         Task<MotoboyQueueDto> RefuseAsync(Guid estabelecimentoId, int motoboyId, int pedidoId, string? motivo);
         Task<MotoboyQueueDto> RefuseRouteByMotoboyAsync(Guid estabelecimentoId, int motoboyId, IReadOnlyList<int> pedidoIds, string? motivo);
         Task<MotoboyQueueDto> ReorderByMotoboyAsync(Guid estabelecimentoId, int motoboyId, long expectedVersion, IReadOnlyList<int> pedidoIdsOrdenados);

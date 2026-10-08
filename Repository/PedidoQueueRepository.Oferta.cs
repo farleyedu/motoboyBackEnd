@@ -148,7 +148,9 @@ SELECT s.id AS Id, s.pedido_id AS PedidoId
                 new { MotoboyId = motoboyId, EstabelecimentoId = estabelecimentoId }, transaction)).ToList();
 
         /// <summary>Aceita a rota: as paradas entram na fila e a primeira vira a entrega atual (se ele nao tem outra).</summary>
-        public async Task<MotoboyQueueDto> AcceptOfferAsync(Guid estabelecimentoId, int motoboyId)
+        public Task<MotoboyQueueDto> AcceptOfferAsync(Guid estabelecimentoId, int motoboyId) => AcceptOfferCoreAsync(estabelecimentoId, motoboyId, null);
+        public Task<MotoboyQueueDto> AcceptOfferForAsync(Guid estabelecimentoId, int motoboyId, Guid expectedOfferId) => AcceptOfferCoreAsync(estabelecimentoId, motoboyId, expectedOfferId);
+        private async Task<MotoboyQueueDto> AcceptOfferCoreAsync(Guid estabelecimentoId, int motoboyId, Guid? expectedOfferId)
         {
             await using var connection = await _dataSource.OpenConnectionAsync();
             if (!await PedidoColumnTypes.HasOfertaSchemaAsync(connection, null)) throw OfertaPending();
@@ -156,6 +158,11 @@ SELECT s.id AS Id, s.pedido_id AS PedidoId
 
             var currentVersion = await LockQueuesAsync(connection, transaction, estabelecimentoId, motoboyId);
             var stops = await ListOfferedStopsAsync(connection, transaction, estabelecimentoId, motoboyId);
+            var before = await BuildSnapshotAsync(connection, transaction, estabelecimentoId, motoboyId, currentVersion);
+            if (stops.Count > 0 && expectedOfferId.HasValue && before.Offer?.OfferId != expectedOfferId)
+                throw new DeliveryDomainException(409, "OFFER_CHANGED", "A oferta mudou. Confira a nova rota antes de aceitar.");
+            if (before.Offer?.ExpiresAtUtc <= DateTimeOffset.UtcNow)
+                throw new DeliveryDomainException(410, "OFFER_EXPIRED", "O prazo desta oferta terminou.");
             if (stops.Count == 0)
             {
                 // Idempotente: sem oferta pendente (ja aceita, recusada ou expirada) devolve a fila como esta.
@@ -187,7 +194,9 @@ SELECT s.id AS Id, s.pedido_id AS PedidoId
         }
 
         /// <summary>Recusa a rota inteira: todos os pedidos oferecidos voltam a Pendente, com o motivo.</summary>
-        public async Task<MotoboyQueueDto> RejectOfferAsync(Guid estabelecimentoId, int motoboyId, string? motivo)
+        public Task<MotoboyQueueDto> RejectOfferAsync(Guid estabelecimentoId, int motoboyId, string? motivo) => RejectExpectedOfferCoreAsync(estabelecimentoId, motoboyId, motivo, null);
+        public Task<MotoboyQueueDto> RejectOfferForAsync(Guid estabelecimentoId, int motoboyId, Guid expectedOfferId, string? motivo) => RejectExpectedOfferCoreAsync(estabelecimentoId, motoboyId, motivo, expectedOfferId);
+        private async Task<MotoboyQueueDto> RejectExpectedOfferCoreAsync(Guid estabelecimentoId, int motoboyId, string? motivo, Guid? expectedOfferId)
         {
             await using var connection = await _dataSource.OpenConnectionAsync();
             if (!await PedidoColumnTypes.HasOfertaSchemaAsync(connection, null)) throw OfertaPending();
@@ -197,6 +206,14 @@ SELECT s.id AS Id, s.pedido_id AS PedidoId
             if (!settings.AllowMotoboyRefuse)
             {
                 throw new DeliveryDomainException(403, "REFUSE_NOT_ALLOWED", "Este estabelecimento nao permite recusar pedidos.");
+            }
+
+            if (expectedOfferId.HasValue)
+            {
+                var currentVersion = await LockQueuesAsync(connection, transaction, estabelecimentoId, motoboyId);
+                var before = await BuildSnapshotAsync(connection, transaction, estabelecimentoId, motoboyId, currentVersion);
+                if (before.Offer != null && before.Offer.OfferId != expectedOfferId)
+                    throw new DeliveryDomainException(409, "OFFER_CHANGED", "A oferta mudou. Confira a nova rota antes de recusar.");
             }
 
             var snapshot = await RejectOfferCoreAsync(connection, transaction, estabelecimentoId, motoboyId, motivo, "offer_rejected");

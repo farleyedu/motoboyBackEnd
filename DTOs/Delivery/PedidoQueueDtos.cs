@@ -13,6 +13,16 @@ namespace APIBack.DTOs.Delivery
         public int? ExpectedPedidoId { get; set; }
     }
 
+    public sealed class PickupStopsRequest
+    {
+        public int ExpectedPedidoId { get; set; }
+        public long ExpectedVersion { get; set; }
+        public List<int> PedidoIds { get; set; } = new();
+    }
+
+    public sealed class PauseTurnRequest { public bool Paused { get; set; } }
+    public sealed class ResolveOfferRequest { public Guid? ExpectedOfferId { get; set; } public string? Motivo { get; set; } }
+
     public sealed class CancelPedidoRequest
     {
         public string? Motivo { get; set; }
@@ -113,6 +123,7 @@ namespace APIBack.DTOs.Delivery
 
     public sealed class MotoboyQueueDto
     {
+        public bool Paused { get; set; }
         public int MotoboyId { get; set; }
         public Guid EstabelecimentoId { get; set; }
         public long Version { get; set; }
