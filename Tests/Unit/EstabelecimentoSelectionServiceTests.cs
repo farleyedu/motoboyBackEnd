@@ -17,6 +17,7 @@ namespace APIBack.Tests.Unit
     {
         private readonly Mock<IEstabelecimentoSelectionRepository> _repositoryMock = new();
         private readonly Mock<IJwtService> _jwtServiceMock = new();
+        private readonly Mock<IAuthService> _authServiceMock = new();
         private readonly EstabelecimentoSelectionValidator _validator = new();
         private readonly Mock<ILogger<EstabelecimentoSelectionService>> _loggerMock = new();
         private readonly EstabelecimentoSelectionService _service;
@@ -27,6 +28,7 @@ namespace APIBack.Tests.Unit
                 _repositoryMock.Object,
                 _validator,
                 _jwtServiceMock.Object,
+                _authServiceMock.Object,
                 _loggerMock.Object);
         }
 
@@ -45,20 +47,22 @@ namespace APIBack.Tests.Unit
                 _service.DefinirEstabelecimentoAtivoAsync(usuario.Id, estabelecimento.Id));
         }
 
-        [Fact]
-        public async Task DefinirEstabelecimentoAtivoAsync_UsuarioComVinculoAtivo_DeveRetornarToken()
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public async Task DefinirEstabelecimentoAtivoAsync_UsuarioComVinculoAtivo_DeveRetornarToken(bool motoboyLegado)
         {
             var usuario = CreateUsuario();
             var estabelecimento = CreateEstabelecimentoDetalhe();
             JwtPayload? payloadCapturado = null;
             var vinculo = new UsuarioEstabelecimentoAcesso
             {
-                Id = Guid.NewGuid(),
+                Id = motoboyLegado ? Guid.Empty : Guid.NewGuid(),
                 EstabelecimentoId = estabelecimento.Id,
                 UsuarioId = usuario.Id,
                 Status = "ativo",
                 VinculoAtivo = true,
-                TipoAcesso = "manager"
+                TipoAcesso = motoboyLegado ? "motoboy" : "manager"
             };
 
             _repositoryMock.Setup(r => r.ObterUsuarioAsync(usuario.Id)).ReturnsAsync(usuario);
@@ -70,16 +74,19 @@ namespace APIBack.Tests.Unit
                 .Setup(j => j.GenerateToken(It.IsAny<JwtPayload>()))
                 .Callback<JwtPayload>(payload => payloadCapturado = payload)
                 .Returns("token-value");
-            _jwtServiceMock.Setup(j => j.GenerateRefreshToken()).Returns("refresh-value");
+            _authServiceMock.Setup(a => a.IssueRefreshTokenAsync(usuario.Id)).ReturnsAsync("refresh-value");
 
             var response = await _service.DefinirEstabelecimentoAtivoAsync(usuario.Id, estabelecimento.Id);
 
             Assert.Equal("token-value", response.Token);
             Assert.Equal("refresh-value", response.RefreshToken);
+            _authServiceMock.Verify(a => a.IssueRefreshTokenAsync(usuario.Id), Times.Once);
+            _jwtServiceMock.Verify(j => j.GenerateRefreshToken(), Times.Never);
             Assert.Equal(estabelecimento.Id, response.EstabelecimentoSelecionado.Id);
             Assert.Contains("WhatsApp", response.EstabelecimentoSelecionado.ModulosAtivos);
             Assert.Contains("Leads", response.EstabelecimentoSelecionado.ModulosAtivos);
             Assert.NotNull(payloadCapturado);
+            Assert.Equal(motoboyLegado ? (Guid?)null : vinculo.Id, payloadCapturado!.VinculoId);
             Assert.Contains("WhatsApp", payloadCapturado!.EstabelecimentoModulosAtivos);
             Assert.Contains("Leads", payloadCapturado.EstabelecimentoModulosAtivos);
             _repositoryMock.Verify(r => r.AtualizarUltimoEstabelecimentoAsync(usuario.Id, estabelecimento.Id), Times.Once);
@@ -102,7 +109,7 @@ namespace APIBack.Tests.Unit
                 .Setup(j => j.GenerateToken(It.IsAny<JwtPayload>()))
                 .Callback<JwtPayload>(payload => payloadCapturado = payload)
                 .Returns("admin-token");
-            _jwtServiceMock.Setup(j => j.GenerateRefreshToken()).Returns("admin-refresh");
+            _authServiceMock.Setup(a => a.IssueRefreshTokenAsync(usuario.Id)).ReturnsAsync("admin-refresh");
 
             var response = await _service.DefinirEstabelecimentoAtivoAsync(usuario.Id, estabelecimento.Id);
 

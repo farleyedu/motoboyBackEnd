@@ -13,7 +13,6 @@ public partial class DeliverySyncDatabaseTests
         await db.Execute("""
 ALTER TABLE pedido ADD COLUMN distancia_km numeric;
 UPDATE pedido SET distancia_km=3.334;
-ALTER TABLE motoboy ADD COLUMN id_usuario int;
 UPDATE motoboy SET id_usuario=7;
 CREATE TABLE usuario(id integer PRIMARY KEY,deleted_at timestamptz);
 INSERT INTO usuario VALUES(7,NULL),(8,NULL);

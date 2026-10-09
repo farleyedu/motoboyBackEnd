@@ -280,10 +280,9 @@ WITH updated AS (
              AND LOWER(COALESCE(e.status, 'ativo')) IN ('ativo', 'trial')
              AND ((s.origin = 'simulator' AND me.simulator_enabled = TRUE AND m.is_simulated = TRUE)
                   OR (s.origin = 'mobile' AND EXISTS (
-                      SELECT 1 FROM usuario_estabelecimentos ue
-                       WHERE ue.id_usuario = s.id_usuario AND ue.id_estabelecimento = s.id_estabelecimento
-                         AND LOWER(COALESCE(ue.tipo_acesso, '')) = 'motoboy'
-                         AND COALESCE(ue.ativo, TRUE) = TRUE AND LOWER(COALESCE(ue.status, 'ativo')) = 'ativo'))))
+                      SELECT 1 FROM motoboy owner
+                       WHERE owner.id_usuario = s.id_usuario
+                         AND COALESCE(owner.canonical_motoboy_id, owner.id) = s.motoboy_id))))
     RETURNING s.*
 ) " + SessionSelect.Replace("FROM motoboy_active_sessions s", "FROM updated s");
             var session = await connection.QuerySingleOrDefaultAsync<OperationalSessionRecord>(new CommandDefinition(sql,
@@ -387,10 +386,9 @@ SELECT EXISTS (
       AND LOWER(COALESCE(e.status, 'ativo')) IN ('ativo', 'trial')
       AND ((@Origin = 'simulator' AND me.simulator_enabled = TRUE AND m.is_simulated = TRUE)
            OR (@Origin = 'mobile' AND EXISTS (
-               SELECT 1 FROM usuario_estabelecimentos ue
-                WHERE ue.id_usuario = @UsuarioId AND ue.id_estabelecimento = @EstabelecimentoId
-                  AND LOWER(COALESCE(ue.tipo_acesso, '')) = 'motoboy'
-                  AND COALESCE(ue.ativo, TRUE) = TRUE AND LOWER(COALESCE(ue.status, 'ativo')) = 'ativo'))));",
+               SELECT 1 FROM motoboy owner
+                WHERE owner.id_usuario = @UsuarioId
+                  AND COALESCE(owner.canonical_motoboy_id, owner.id) = @MotoboyId))));",
                 new { MotoboyId = motoboyId, session.EstabelecimentoId, session.Origin, session.UsuarioId },
                 transaction, commandTimeout: 10, cancellationToken: cancellationToken));
             if (!hasActiveLink)

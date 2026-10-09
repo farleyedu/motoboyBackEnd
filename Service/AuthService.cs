@@ -124,6 +124,17 @@ SELECT id,
             return response;
         }
 
+        // A selecao de estabelecimento tambem devolve um refresh token. Reutilizar
+        // a persistencia do login evita entregar uma credencial que nao existe no banco.
+        public async Task<string> IssueRefreshTokenAsync(int userId)
+        {
+            if (userId <= 0) throw new ArgumentOutOfRangeException(nameof(userId));
+            var refreshToken = _jwtService.GenerateRefreshToken();
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await PersistRefreshTokenAsync(connection, userId, refreshToken, null, null);
+            return refreshToken;
+        }
+
         public async Task<TokenResponse> RefreshTokenAsync(
             RefreshTokenRequest request,
             string? ipAddress,
@@ -943,7 +954,7 @@ SELECT ue.id_estabelecimento
                     TipoEstabelecimento = contexto.TipoEstabelecimento,
                     EstabelecimentoModulosAtivos = ResolveUiModules(contexto.EstabelecimentoNome, contexto.ModulosAtivosRaw),
                     TipoAcesso = string.IsNullOrWhiteSpace(contexto.TipoAcesso) ? null : contexto.TipoAcesso,
-                    VinculoId = contexto.VinculoId,
+                    VinculoId = contexto.VinculoId == Guid.Empty ? null : contexto.VinculoId,
                     Permissoes = permissoes
                 };
 
@@ -1074,7 +1085,21 @@ SELECT  e.id                    AS EstabelecimentoId,
 
             if (!isSuperAdmin && contexto.VinculoId == null)
             {
-                throw new UnauthorizedAccessException("Usuário não possui vínculo ativo com este estabelecimento.");
+                // Mesmo contrato da selecao e do inicio do turno: o vinculo aprovado
+                // do motoboy canonico tambem autoriza contas anteriores ao onboarding.
+                var motoboyAllowed = await connection.ExecuteScalarAsync<bool>(@"
+SELECT EXISTS (
+    SELECT 1 FROM motoboy owner
+    JOIN motoboy canonical ON canonical.id = COALESCE(owner.canonical_motoboy_id, owner.id)
+    JOIN motoboy_estabelecimento me ON me.motoboy_id = canonical.id
+    WHERE owner.id_usuario = @UserId AND me.estabelecimento_id = @EstabelecimentoId
+      AND me.ativo = TRUE AND canonical.is_simulated = FALSE
+);", new { UserId = userId, EstabelecimentoId = estabelecimentoId });
+                if (!motoboyAllowed)
+                    throw new UnauthorizedAccessException("Usuário não possui vínculo ativo com este estabelecimento.");
+                contexto.VinculoId = Guid.Empty;
+                contexto.TipoAcesso = "motoboy";
+                contexto.PermissoesCustomizadas = null;
             }
 
             return contexto;

@@ -24,6 +24,7 @@ namespace APIBack.Automation.Services
         private readonly IEstabelecimentoSelectionRepository _repository;
         private readonly EstabelecimentoSelectionValidator _validator;
         private readonly IJwtService _jwtService;
+        private readonly IAuthService _authService;
         private readonly ILogger<EstabelecimentoSelectionService> _logger;
         private readonly int _jwtExpirationSeconds;
         private readonly IAgenteRepository? _agenteRepository;
@@ -32,8 +33,9 @@ namespace APIBack.Automation.Services
             IEstabelecimentoSelectionRepository repository,
             EstabelecimentoSelectionValidator validator,
             IJwtService jwtService,
+            IAuthService authService,
             ILogger<EstabelecimentoSelectionService> logger)
-            : this(repository, validator, jwtService, null, logger, null)
+            : this(repository, validator, jwtService, authService, null, logger, null)
         {
         }
 
@@ -41,6 +43,7 @@ namespace APIBack.Automation.Services
             IEstabelecimentoSelectionRepository repository,
             EstabelecimentoSelectionValidator validator,
             IJwtService jwtService,
+            IAuthService authService,
             IConfiguration? configuration,
             ILogger<EstabelecimentoSelectionService> logger,
             IAgenteRepository? agenteRepository = null)
@@ -48,6 +51,7 @@ namespace APIBack.Automation.Services
             _repository = repository ?? throw new ArgumentNullException(nameof(repository));
             _validator = validator ?? throw new ArgumentNullException(nameof(validator));
             _jwtService = jwtService ?? throw new ArgumentNullException(nameof(jwtService));
+            _authService = authService ?? throw new ArgumentNullException(nameof(authService));
             var expirationMinutes = int.TryParse(configuration?["Jwt:ExpirationMinutes"], out var minutes)
                 ? minutes
                 : 60;
@@ -116,12 +120,12 @@ namespace APIBack.Automation.Services
                 TipoEstabelecimento = estabelecimento.TipoEstabelecimento,
                 EstabelecimentoModulosAtivos = ResolveUiModules(estabelecimento.Nome, estabelecimento.ModulosAtivosRaw),
                 TipoAcesso = tipoAcesso,
-                VinculoId = vinculo?.Id,
+                VinculoId = vinculo?.Id == Guid.Empty ? null : vinculo?.Id,
                 Permissoes = permissoes
             };
 
             var token = _jwtService.GenerateToken(payload);
-            var refreshToken = _jwtService.GenerateRefreshToken();
+            var refreshToken = await _authService.IssueRefreshTokenAsync(usuario.Id);
 
             _logger.LogInformation(
                 "Estabelecimento definido para usuario {UserId}: {EstabelecimentoId}",

@@ -63,10 +63,16 @@ namespace APIBack.Middleware
 
             // Resolve permissions from the current membership on every request: old JWTs
             // must not keep revoked grants or access to a disabled membership.
-            if (!payload.IsSuperAdmin && !payload.MotoboySessionId.HasValue && payload.VinculoId.HasValue)
+            var motoboyIdentity = string.Equals(payload.TipoAcesso, "motoboy", StringComparison.OrdinalIgnoreCase)
+                && payload.UserId.HasValue && payload.EstabelecimentoId.HasValue;
+            if (!payload.IsSuperAdmin && !payload.MotoboySessionId.HasValue && (payload.VinculoId.HasValue || motoboyIdentity))
             {
                 var repository = context.RequestServices.GetRequiredService<APIBack.Automation.Repository.Interface.IEstabelecimentoSelectionRepository>();
-                var membership = await repository.ObterVinculoPorIdAsync(payload.VinculoId.Value);
+                // Vinculos legados de motoboy podem nao ter uma linha em usuario_estabelecimentos.
+                // Validar pelo mesmo usuario/loja usado na selecao, nunca pelo Guid.Empty de compatibilidade.
+                var membership = motoboyIdentity
+                    ? await repository.ObterVinculoAsync(payload.UserId!.Value, payload.EstabelecimentoId!.Value)
+                    : await repository.ObterVinculoPorIdAsync(payload.VinculoId!.Value);
                 var user = payload.UserId.HasValue ? await repository.ObterUsuarioAsync(payload.UserId.Value) : null;
                 if (membership == null || user == null || !user.IsAtivo ||
                     membership.UsuarioId != payload.UserId || membership.EstabelecimentoId != payload.EstabelecimentoId ||
@@ -206,12 +212,9 @@ SELECT TRUE
                       s.origin = 'mobile'
                       AND EXISTS (
                           SELECT 1
-                            FROM usuario_estabelecimentos ue
-                           WHERE ue.id_usuario = s.id_usuario
-                             AND ue.id_estabelecimento = s.id_estabelecimento
-                             AND LOWER(COALESCE(ue.tipo_acesso, '')) = 'motoboy'
-                             AND COALESCE(ue.ativo, TRUE) = TRUE
-                             AND LOWER(COALESCE(ue.status, 'ativo')) = 'ativo'
+                            FROM motoboy owner
+                           WHERE owner.id_usuario = s.id_usuario
+                             AND COALESCE(owner.canonical_motoboy_id, owner.id) = s.motoboy_id
                       )
                   )
               )

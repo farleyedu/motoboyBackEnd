@@ -74,7 +74,7 @@ public partial class DeliverySyncDatabaseTests
         Assert.InRange((session.ExpiresAtUtc - session.LastHeartbeatAtUtc).TotalSeconds, 89, 91);
         Assert.Equal("SESSION_EXPIRED", (await Assert.ThrowsAsync<DeliveryDomainException>(() =>
             db.Repository.HeartbeatAsync(db.SessionId, 1, 99))).Code);
-        await db.Execute("UPDATE usuario_estabelecimentos SET ativo = FALSE");
+        await db.Execute("UPDATE motoboy_estabelecimento SET ativo = FALSE");
         Assert.Equal("SESSION_EXPIRED", (await Assert.ThrowsAsync<DeliveryDomainException>(() =>
             db.Repository.HeartbeatAsync(db.SessionId, 1, 4))).Code);
         Assert.Equal("LINK_FORBIDDEN", (await Assert.ThrowsAsync<DeliveryDomainException>(() =>
@@ -255,7 +255,7 @@ VALUES(1,23,1,@StoreId,1,'en_route',NOW(),FALSE),(2,24,1,@StoreId,2,'assigned',N
             db.Source = NpgsqlDataSource.Create(options.ConnectionString);
             SqlMapper.AddTypeHandler(new DateTimeOffsetTypeHandler());
             await db.Execute(@"
-CREATE TABLE motoboy(id int PRIMARY KEY, nome text, avatar text, status int, canonical_motoboy_id int, is_simulated bool);
+CREATE TABLE motoboy(id int PRIMARY KEY, nome text, avatar text, status int, canonical_motoboy_id int, is_simulated bool, id_usuario int);
 CREATE TABLE estabelecimentos(id uuid PRIMARY KEY, ativo bool, status text);
 CREATE TABLE motoboy_estabelecimento(motoboy_id int, estabelecimento_id uuid, ativo bool, simulator_enabled bool);
 CREATE TABLE usuario_estabelecimentos(id_usuario int, id_estabelecimento uuid, tipo_acesso text, ativo bool, status text);
@@ -274,7 +274,7 @@ CREATE TABLE delivery_realtime_outbox(event_id uuid PRIMARY KEY, event_name text
  motoboy_id int, session_id uuid, session_epoch bigint, aggregate_version bigint, payload jsonb, occurred_at_utc timestamptz DEFAULT NOW(),
  published_at_utc timestamptz, attempts int DEFAULT 0, last_error text, next_attempt_at_utc timestamptz DEFAULT NOW());
 CREATE TABLE delivery_tracking_schema_versions(version text PRIMARY KEY);
-INSERT INTO motoboy VALUES(1,'Teste',NULL,2,NULL,FALSE);
+INSERT INTO motoboy VALUES(1,'Teste',NULL,2,NULL,FALSE,7);
 INSERT INTO estabelecimentos VALUES(@StoreId,TRUE,'ativo');
 INSERT INTO motoboy_estabelecimento VALUES(1,@StoreId,TRUE,TRUE);
 INSERT INTO usuario_estabelecimentos VALUES(7,@StoreId,'motoboy',TRUE,'ativo');

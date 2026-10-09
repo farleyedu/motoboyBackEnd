@@ -51,7 +51,7 @@ INSERT INTO delivery_route_stops(id,pedido_id,motoboy_id,estabelecimento_id,posi
         await db.Execute("""
 CREATE TABLE usuario(id int PRIMARY KEY,nome text,email text,deleted_at timestamptz,updated_at timestamptz);
 INSERT INTO usuario VALUES(7,'Teste','teste@example.com',NULL,NOW()),(8,'Outra pessoa','outra@example.com',NULL,NOW());
-ALTER TABLE motoboy ADD COLUMN id_usuario int,ADD COLUMN telefone text,ADD COLUMN cidade text,ADD COLUMN uf text,ADD COLUMN modelo_moto text,ADD COLUMN placa_moto text,ADD COLUMN tipo_veiculo text,ADD COLUMN status_cadastro text DEFAULT 'pendente';
+ALTER TABLE motoboy ADD COLUMN telefone text,ADD COLUMN cidade text,ADD COLUMN uf text,ADD COLUMN modelo_moto text,ADD COLUMN placa_moto text,ADD COLUMN tipo_veiculo text,ADD COLUMN status_cadastro text DEFAULT 'pendente';
 UPDATE motoboy SET id_usuario=7,canonical_motoboy_id=id;
 INSERT INTO motoboy(id,nome,id_usuario,canonical_motoboy_id,is_simulated)VALUES(2,'Outra pessoa',8,2,false);
 """);
