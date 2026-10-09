@@ -105,6 +105,12 @@ namespace APIBack.Service
         public static bool IsOpen(HorarioAtendimentoDto? horario, DateTime localNow)
         {
             if (horario == null) return true;
+            var especial = horario.Especiais?.FirstOrDefault(e => e.Data == DateOnly.FromDateTime(localNow));
+            if (especial != null)
+                return !especial.Fechado && TimeSpan.TryParse(especial.Abre, CultureInfo.InvariantCulture, out var inicio)
+                    && TimeSpan.TryParse(especial.Fecha, CultureInfo.InvariantCulture, out var fim)
+                    && localNow.TimeOfDay >= inicio && localNow.TimeOfDay < fim;
+            if (horario.SemHorarioSemanal) return true;
             if (horario.Dias == null || horario.Dias.Count == 0) return false;
             var today = (int)localNow.DayOfWeek;
             var yesterday = (today + 6) % 7;
@@ -122,7 +128,7 @@ namespace APIBack.Service
                 {
                     // Vira a noite: abre hoje ate a meia-noite; a madrugada e do dia anterior.
                     if (dia.Dia == today && time >= abre) return true;
-                    if (dia.Dia == yesterday && time < fecha) return true;
+                    if (dia.Dia == yesterday && time < fecha && horario.Especiais?.Any(e => e.Data == DateOnly.FromDateTime(localNow.AddDays(-1))) != true) return true;
                 }
             }
             return false;
@@ -147,16 +153,21 @@ namespace APIBack.Service
         /// <summary>"hoje às 18:00", "amanhã às 11:00" ou "quarta às 11:00": a proxima abertura. Nulo sem horario ou sem dia marcado.</summary>
         public static string? ProximaAbertura(HorarioAtendimentoDto? horario, DateTime localNow)
         {
-            if (horario?.Dias == null || horario.Dias.Count == 0) return null;
+            if (horario == null) return null;
 
             DateTime? melhor = null;
             var melhorOffset = 0;
             for (var offset = 0; offset <= 7; offset++)
             {
                 var data = localNow.Date.AddDays(offset);
-                foreach (var dia in horario.Dias.Where(d => d.Dia == (int)data.DayOfWeek))
+                var especial = horario.Especiais?.FirstOrDefault(e => e.Data == DateOnly.FromDateTime(data));
+                var aberturas = especial != null
+                    ? (!especial.Fechado && TimeSpan.TryParse(especial.Abre, CultureInfo.InvariantCulture, out var abreEspecial) ? new[] { abreEspecial } : Array.Empty<TimeSpan>())
+                    : horario.SemHorarioSemanal ? new[] { TimeSpan.Zero }
+                    : horario.Dias.Where(d => d.Dia == (int)data.DayOfWeek).Select(d => TimeSpan.Parse(d.Abre, CultureInfo.InvariantCulture));
+                foreach (var abre in aberturas)
                 {
-                    var candidato = data + TimeSpan.Parse(dia.Abre, CultureInfo.InvariantCulture);
+                    var candidato = data + abre;
                     if (candidato > localNow && (melhor == null || candidato < melhor))
                     {
                         melhor = candidato;

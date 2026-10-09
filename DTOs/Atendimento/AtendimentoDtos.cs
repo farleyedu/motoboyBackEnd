@@ -14,6 +14,16 @@ namespace APIBack.DTOs.Atendimento
     public class HorarioAtendimentoDto
     {
         public List<HorarioDiaDto> Dias { get; set; } = new();
+        public List<HorarioAtendimentoEspecialDto> Especiais { get; set; } = new();
+        public bool SemHorarioSemanal { get; set; }
+    }
+
+    public class HorarioAtendimentoEspecialDto
+    {
+        public DateOnly Data { get; set; }
+        public bool Fechado { get; set; }
+        public string? Abre { get; set; }
+        public string? Fecha { get; set; }
     }
 
     public class AtendimentoConfigDto

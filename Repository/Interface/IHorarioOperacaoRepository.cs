@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using APIBack.DTOs.Delivery;
+using APIBack.DTOs.Configuracoes;
 
 namespace APIBack.Repository.Interface
 {
@@ -17,5 +18,7 @@ namespace APIBack.Repository.Interface
         Task<IReadOnlyList<HorarioEspecialDto>> ListarEspeciaisAsync(Guid estabelecimentoId);
         Task<HorarioEspecialDto> SalvarEspecialAsync(Guid estabelecimentoId, SalvarHorarioEspecialRequest request);
         Task<bool> ExcluirEspecialAsync(Guid estabelecimentoId, long id);
+        Task<StoreOperationDto> ObterEstadoAsync(Guid estabelecimentoId, CancellationToken cancellationToken = default);
+        Task<StoreOperationDto> AbrirHojeAsync(Guid estabelecimentoId, int actorUserId, OpenStoreTodayRequest request, CancellationToken cancellationToken = default);
     }
 }

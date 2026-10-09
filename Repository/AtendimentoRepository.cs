@@ -20,10 +20,12 @@ namespace APIBack.Repository
     {
         private const string LocalTimeZone = "America/Sao_Paulo";
         private readonly NpgsqlDataSource _dataSource;
+        private readonly TimeProvider _clock;
 
-        public AtendimentoRepository(NpgsqlDataSource dataSource)
+        public AtendimentoRepository(NpgsqlDataSource dataSource, TimeProvider? clock = null)
         {
             _dataSource = dataSource ?? throw new ArgumentNullException(nameof(dataSource));
+            _clock = clock ?? TimeProvider.System;
         }
 
         private static bool IsMissingTable(PostgresException ex) => ex.SqlState == PostgresErrorCodes.UndefinedTable;
@@ -56,7 +58,7 @@ namespace APIBack.Repository
         /// Horario de funcionamento da loja: unica fonte (tela Negocio e identidade, tabela estabelecimento_horario), usada pelo
         /// cardapio web, pelo bot e pela tela de Atendimento. Nulo = loja sem horario cadastrado (sempre aberta); sem nenhum dia aberto = fechada.
         /// </summary>
-        private async Task<HorarioAtendimentoDto?> LerHorarioDeFuncionamentoAsync(Guid estabelecimentoId)
+        private async Task<HorarioAtendimentoDto?> LerHorarioDeFuncionamentoAsync(Guid estabelecimentoId, DateOnly hoje)
         {
             try
             {
@@ -65,11 +67,23 @@ namespace APIBack.Repository
 SELECT dia_semana AS DiaSemana, fechado AS Fechado, abre_as AS AbreAs, fecha_as AS FechaAs
   FROM estabelecimento_horario WHERE estabelecimento_id = @EstabelecimentoId;",
                     new { EstabelecimentoId = estabelecimentoId })).ToList();
-                if (rows.Count == 0) return null;
+                var especiais = new List<HorarioAtendimentoEspecialDto>();
+                try
+                {
+                    especiais = (await connection.QueryAsync<HorarioAtendimentoEspecialDto>(@"
+SELECT data AS Data, fechado AS Fechado, LEFT(abre_as::text, 5) AS Abre, LEFT(fecha_as::text, 5) AS Fecha
+FROM estabelecimento_horario_especial WHERE estabelecimento_id = @EstabelecimentoId
+  AND data BETWEEN @Hoje::date - 1 AND @Hoje::date + 7;",
+                        new { EstabelecimentoId = estabelecimentoId, Hoje = hoje })).ToList();
+                }
+                catch (PostgresException ex) when (IsMissingTable(ex)) { /* Ambiente anterior às exceções: preserva a semana. */ }
+                if (rows.Count == 0 && especiais.Count == 0) return null;
 
                 // Negocio guarda 0 = segunda; a regra de abertura usa 0 = domingo.
                 return new HorarioAtendimentoDto
                 {
+                    SemHorarioSemanal = rows.Count == 0,
+                    Especiais = especiais,
                     Dias = rows
                         .Where(r => !r.Fechado && r.AbreAs.HasValue && r.FechaAs.HasValue)
                         .Select(r => new HorarioDiaDto
@@ -117,10 +131,8 @@ SELECT modo AS Modo, saudacao_humano AS SaudacaoHumano, mensagem_fora_horario AS
                 // sem a migration: valem os padroes (modo humano, sempre aberto)
             }
 
-            config.HorarioAtendimento = await LerHorarioDeFuncionamentoAsync(estabelecimentoId);
-
-            await using var clock = await _dataSource.OpenConnectionAsync();
-            var localNow = await clock.ExecuteScalarAsync<DateTime>($"SELECT (NOW() AT TIME ZONE '{LocalTimeZone}');");
+            var localNow = AtendimentoConfigRules.ParaHorarioLocal(_clock.GetUtcNow().UtcDateTime);
+            config.HorarioAtendimento = await LerHorarioDeFuncionamentoAsync(estabelecimentoId, DateOnly.FromDateTime(localNow));
             config.AbertoAgora = AtendimentoConfigRules.IsOpen(config.HorarioAtendimento, localNow);
             return config;
         }
