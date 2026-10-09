@@ -32,10 +32,12 @@ namespace APIBack.DTOs.Delivery
         public Guid? Id { get; set; }
         public string Nome { get; set; } = string.Empty;
         public decimal Preco { get; set; }
+        public int Quantidade { get; set; } = 1;
     }
 
     public class PedidoItemDto
     {
+        public string? ItemId { get; set; }
         public Guid? ProdutoId { get; set; }
         public string Nome { get; set; } = string.Empty;
         public int Quantidade { get; set; } = 1;

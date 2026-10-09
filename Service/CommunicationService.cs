@@ -8,7 +8,7 @@ using APIBack.Service.Interface;
 
 namespace APIBack.Service;
 
-public sealed class CommunicationService(CommunicationRepository repository, IAtendimentoRepository atendimento, IPedidoQueueService queues)
+public sealed class CommunicationService(CommunicationRepository repository, IAtendimentoRepository atendimento, IPedidoQueueService queues, CommunicationAudioConverter? audio = null)
 {
     internal static ChatThread Resolve(ChatActor actor, string channel, int? target)
     {
@@ -60,6 +60,7 @@ public sealed class CommunicationService(CommunicationRepository repository, IAt
         if (channel != "group" && request.Mentions.Length > 0) throw new DeliveryDomainException(422, "CHAT_MENTION_INVALID", "Mencoes de participantes sao permitidas no grupo.");
         var name = actor.MotoboyId.HasValue ? await atendimento.ObterNomeMotoboyAsync(actor.MotoboyId.Value) ?? "Motoboy" : "Loja";
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { thread.Key, request.Body, request.AttachmentId, request.ReplyTo, request.Mentions, request.PedidoId }))));
+        if (request.Forwarded) hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(hash + ":forwarded")));
         return await repository.SendAsync(actor, thread, request, name, hash);
     }
     public async Task ReadAsync(ChatActor actor, string channel, int? target, long through)
@@ -69,7 +70,7 @@ public sealed class CommunicationService(CommunicationRepository repository, IAt
     }
     public async Task ReactAsync(ChatActor actor, string channel, int? target, Guid id, string? reaction)
     {
-        if (reaction != null && reaction is not ("like" or "heart" or "thanks" or "alert")) throw new DeliveryDomainException(422, "CHAT_REACTION_INVALID", "Reacao invalida.");
+        CommunicationEmojiRules.Validate(reaction);
         await repository.ReactAsync(actor, await InternalAsync(actor, channel, target), id, reaction);
     }
     public async Task<CommunicationAttachmentDto> UploadAsync(ChatActor actor, string channel, int? target, IFormFile file, CancellationToken ct)
@@ -89,6 +90,13 @@ public sealed class CommunicationService(CommunicationRepository repository, IAt
         if (type == null) throw new DeliveryDomainException(422, "CHAT_FILE_INVALID", "Formato de imagem ou audio nao permitido.");
         var name = Path.GetFileName(file.FileName);
         if (name.Length > 120) name = name[^120..];
+        if (CommunicationAudioConverter.NeedsConversion(type))
+        {
+            if (audio == null) throw new DeliveryDomainException(503, "CHAT_AUDIO_PROCESSOR_UNAVAILABLE", "O processamento de áudio está indisponível.");
+            content = await audio.ConvertAsync(content, ct);
+            type = "audio/mp4";
+            name = Path.ChangeExtension(name, ".m4a");
+        }
         return await repository.SaveFileAsync(actor, thread, name, type, content);
     }
     internal static string? DetectType(byte[] data)
@@ -108,7 +116,7 @@ public sealed class CommunicationService(CommunicationRepository repository, IAt
         if (b[..4].SequenceEqual(new byte[] { 26,69,223,163 })) return "audio/webm";
         return null;
     }
-    public async Task<CommunicationRepository.FileRow> FileAsync(ChatActor actor, Guid id)
+    public async Task<CommunicationRepository.FileRow> FileAsync(ChatActor actor, Guid id, CancellationToken ct = default)
     {
         var file = await repository.FileAsync(actor.EstablishmentId, id) ?? throw new DeliveryDomainException(404, "CHAT_FILE_NOT_FOUND", "Anexo nao encontrado.");
         var parts = file.ThreadKey.Split(':');
@@ -123,6 +131,16 @@ public sealed class CommunicationService(CommunicationRepository repository, IAt
         }
         var thread = await AuthorizeAsync(actor, channel, target);
         if (thread.Key != file.ThreadKey || file.OwnerKey != actor.Key && !await repository.FilePublishedAsync(actor.EstablishmentId, id)) throw new DeliveryDomainException(403, "CHAT_FILE_FORBIDDEN", "Anexo indisponivel.");
+        if (CommunicationAudioConverter.NeedsConversion(file.ContentType))
+        {
+            if (audio == null) throw new DeliveryDomainException(503, "CHAT_AUDIO_PROCESSOR_UNAVAILABLE", "O processamento de áudio está indisponível.");
+            var originalType = file.ContentType;
+            file.Content = await audio.ConvertAsync(file.Content, ct);
+            file.ContentType = "audio/mp4";
+            file.Name = Path.ChangeExtension(file.Name, ".m4a");
+            file.Size = file.Content.LongLength;
+            await repository.NormalizeFileAsync(actor.EstablishmentId, file, originalType);
+        }
         return file;
     }
     public async Task<IReadOnlyList<CommunicationMessageDto>> NotificationsAsync(ChatActor actor)

@@ -23,7 +23,7 @@ namespace APIBack.Service.Interface
         Task<MotoboyQueueDto> MarkPickedUpAsync(Guid estabelecimentoId, int motoboyId);
         Task<MotoboyQueueDto> PickUpStopsAsync(Guid estabelecimentoId, int motoboyId, PickupStopsRequest request);
         Task<MotoboyQueueDto> AcceptOfferForAsync(Guid estabelecimentoId, int motoboyId, Guid expectedOfferId);
-        Task<MotoboyQueueDto> AcceptPricedOfferAsync(Guid estabelecimentoId, int motoboyId, Guid expectedOfferId, long expectedVersion) => throw new NotSupportedException();
+        Task<MotoboyQueueDto> AcceptPricedOfferAsync(Guid estabelecimentoId, int motoboyId, Guid expectedOfferId, long expectedVersion, IReadOnlyList<int>? acceptedPedidoIds = null) => throw new NotSupportedException();
         Task<MotoboyQueueDto> RejectOfferForAsync(Guid estabelecimentoId, int motoboyId, Guid expectedOfferId, string? motivo);
         Task<MotoboyQueueDto> PauseTurnAsync(Guid estabelecimentoId, int motoboyId, Guid sessionId, long sessionEpoch, bool paused);
         Task<MotoboyQueueDto> MarkArrivedAsync(Guid estabelecimentoId, int motoboyId);

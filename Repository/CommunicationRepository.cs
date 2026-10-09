@@ -25,7 +25,7 @@ public sealed class CommunicationRepository(NpgsqlDataSource dataSource)
     }
     private const string Select = @"
 SELECT c.id AS Id,c.sequence AS Sequence,c.thread_key AS ThreadKey,c.channel AS Channel,
- c.client_id AS ClientId,c.body AS Body,c.sender_name AS SenderName,c.sender_key AS SenderKey,
+ c.client_id AS ClientId,c.body AS Body,c.sender_name AS SenderName,c.sender_key AS SenderKey,c.forwarded AS Forwarded,
  c.motoboy_id AS MotoboyId,c.recipient_id AS RecipientId,c.pedido_id AS PedidoId,
  c.created_at_utc AS CreatedAtUtc,c.mentions AS Mentions,c.reply_to AS ReplyTo,
  q.body AS ReplyBody,q.sender_name AS ReplySender,c.fingerprint AS Fingerprint,
@@ -135,8 +135,8 @@ FROM delivery_chat_reaction WHERE message_id=ANY(@Ids) GROUP BY message_id,react
  VALUES(@Id,@Est,@Thread,'private',@Actor,@Name,@MotoboyId,@Target,@Body);", new { Id = id, Est = actor.EstablishmentId, Thread = thread.Key, Actor = actor.Key, Name = name, actor.MotoboyId, Target = thread.TargetId, Body = body }, tx);
         }
         await db.ExecuteAsync(@"UPDATE delivery_chat_message SET body=@Body,client_id=@ClientId,fingerprint=@Fingerprint,
- sender_name=@Name,attachment_id=@AttachmentId,reply_to=@ReplyTo,mentions=@Mentions WHERE id=@Id;",
-            new { Id = id, Body = body, request.ClientId, Fingerprint = fingerprint, Name = name, request.AttachmentId, request.ReplyTo, request.Mentions }, tx);
+ sender_name=@Name,attachment_id=@AttachmentId,reply_to=@ReplyTo,mentions=@Mentions,forwarded=@Forwarded WHERE id=@Id;",
+            new { Id = id, Body = body, request.ClientId, Fingerprint = fingerprint, Name = name, request.AttachmentId, request.ReplyTo, request.Mentions, request.Forwarded }, tx);
         var row = await db.QuerySingleAsync<Row>($"{Select} WHERE c.id=@Id;", new { Id = id, Actor = actor.Key, IsMobile = actor.MotoboyId.HasValue }, tx);
         await EnrichAsync(db, new() { row }, actor, tx);
         await EmitAsync(db, tx, actor, thread, row.Sequence, "message", id);
@@ -149,6 +149,13 @@ FROM delivery_chat_reaction WHERE message_id=ANY(@Ids) GROUP BY message_id,react
         return await db.QuerySingleOrDefaultAsync<FileRow>(@"SELECT id AS Id,name AS Name,content_type AS ContentType,
  octet_length(content) AS Size,content AS Content,thread_key AS ThreadKey,owner_key AS OwnerKey
  FROM delivery_chat_attachment WHERE id=@Id AND estabelecimento_id=@Est;", new { Id = id, Est = est });
+    }
+    public async Task NormalizeFileAsync(Guid est, FileRow file, string originalType)
+    {
+        await using var db = await dataSource.OpenConnectionAsync();
+        await db.ExecuteAsync(@"UPDATE delivery_chat_attachment SET content=@Content,content_type=@ContentType,name=@Name
+ WHERE id=@Id AND estabelecimento_id=@Est AND content_type=@OriginalType;",
+            new { file.Id, Est = est, file.Content, file.ContentType, file.Name, OriginalType = originalType });
     }
     public async Task<CommunicationAttachmentDto> SaveFileAsync(ChatActor actor, ChatThread thread, string name, string type, byte[] content)
     {

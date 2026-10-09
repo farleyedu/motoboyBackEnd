@@ -7,6 +7,7 @@ public sealed record ChatActor(Guid EstablishmentId, int UserId, int? MotoboyId)
 public sealed record ChatThread(string Channel, string Key, int? TargetId);
 public sealed class SendCommunicationRequest
 {
+    public bool Forwarded { get; set; }
     public Guid ClientId { get; set; }
     public string? Body { get; set; }
     public Guid? AttachmentId { get; set; }
@@ -24,6 +25,7 @@ public class CommunicationAttachmentDto
 }
 public class CommunicationMessageDto
 {
+    public bool Forwarded { get; set; }
     public Guid Id { get; set; }
     public long Sequence { get; set; }
     public string Channel { get; set; } = "";

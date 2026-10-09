@@ -88,7 +88,8 @@ public sealed class ClientCommunicationService(ClientCommunicationRepository rep
     }
     public async Task ReactAsync(ChatActor actor,int pedido,Guid id,string? reaction)
     {
-        var emoji=reaction switch{null=>"","like"=>"\U0001F44D","heart"=>"\u2764\uFE0F","thanks"=>"\U0001F64F","alert"=>"\u26A0\uFE0F",_=>throw new DeliveryDomainException(422,"CHAT_REACTION_INVALID","Reacao invalida.")};
+        CommunicationEmojiRules.Validate(reaction);
+        var emoji=reaction switch{null=>"","like"=>"\U0001F44D","heart"=>"\u2764\uFE0F","thanks"=>"\U0001F64F","alert"=>"\u26A0\uFE0F",_=>reaction};
         var channel=await ChannelAsync(actor,pedido,true);
         var message=await repository.MessageAsync(actor.EstablishmentId,channel.ConversaId!.Value,"",id);
         if(string.IsNullOrWhiteSpace(message?.ProviderId))throw new DeliveryDomainException(422,"CHAT_REACTION_INVALID","Esta mensagem nao permite reacao.");

@@ -22,6 +22,16 @@ public sealed partial class PedidoQueueRepository
         DeliveryPickupRules.ValidateSnapshot(request, version, acceptedIds, alreadyPickedUp);
         if (!alreadyPickedUp)
         {
+            if (request.Checklists != null && (request.Checklists.Count != request.PedidoIds.Count || request.Checklists.Select(c => c.PedidoId).Distinct().Count() != request.Checklists.Count))
+                throw new DeliveryDomainException(422, "CHECKLIST_INVALID", "Confira os itens de cada pedido da retirada.");
+            foreach (var id in request.PedidoIds)
+            {
+                var manifest = await ReadChecklistAsync(connection, transaction, estabelecimentoId, id);
+                var confirmation = request.Checklists?.SingleOrDefault(c => c.PedidoId == id);
+                DeliveryChecklistRules.Validate(id, manifest, confirmation);
+                if (confirmation != null)
+                    await SaveChecklistAsync(connection, transaction, estabelecimentoId, motoboyId, stops.Single(s => s.PedidoId == id).Id, "pickup", manifest, confirmation);
+            }
             await connection.ExecuteAsync("""
                 UPDATE delivery_route_stops SET picked_up_at_utc = COALESCE(picked_up_at_utc, NOW()), updated_at_utc = NOW()
                  WHERE estabelecimento_id = @Est AND motoboy_id = @Motoboy AND pedido_id = ANY(@Ids)

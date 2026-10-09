@@ -150,8 +150,8 @@ SELECT s.id AS Id, s.pedido_id AS PedidoId
         /// <summary>Aceita a rota: as paradas entram na fila e a primeira vira a entrega atual (se ele nao tem outra).</summary>
         public Task<MotoboyQueueDto> AcceptOfferAsync(Guid estabelecimentoId, int motoboyId) => AcceptOfferCoreAsync(estabelecimentoId, motoboyId, null);
         public Task<MotoboyQueueDto> AcceptOfferForAsync(Guid estabelecimentoId, int motoboyId, Guid expectedOfferId) => AcceptOfferCoreAsync(estabelecimentoId, motoboyId, expectedOfferId);
-        public Task<MotoboyQueueDto> AcceptPricedOfferAsync(Guid estabelecimentoId, int motoboyId, Guid expectedOfferId, long expectedVersion) => AcceptOfferCoreAsync(estabelecimentoId, motoboyId, expectedOfferId, expectedVersion);
-        private async Task<MotoboyQueueDto> AcceptOfferCoreAsync(Guid estabelecimentoId, int motoboyId, Guid? expectedOfferId, long? expectedVersion = null)
+        public Task<MotoboyQueueDto> AcceptPricedOfferAsync(Guid estabelecimentoId, int motoboyId, Guid expectedOfferId, long expectedVersion, IReadOnlyList<int>? acceptedPedidoIds = null) => AcceptOfferCoreAsync(estabelecimentoId, motoboyId, expectedOfferId, expectedVersion, acceptedPedidoIds);
+        private async Task<MotoboyQueueDto> AcceptOfferCoreAsync(Guid estabelecimentoId, int motoboyId, Guid? expectedOfferId, long? expectedVersion = null, IReadOnlyList<int>? acceptedPedidoIds = null)
         {
             await using var connection = await _dataSource.OpenConnectionAsync();
             if (!await PedidoColumnTypes.HasOfertaSchemaAsync(connection, null)) throw OfertaPending();
@@ -175,6 +175,19 @@ SELECT s.id AS Id, s.pedido_id AS PedidoId
             }
 
             var eligibility = await GetEligibilityAsync(connection, transaction, motoboyId, estabelecimentoId);
+            if (acceptedPedidoIds != null)
+            {
+                if (expectedVersion != currentVersion || acceptedPedidoIds.Count is < 1 or > 100 || acceptedPedidoIds.Distinct().Count() != acceptedPedidoIds.Count || acceptedPedidoIds.Any(id => !stops.Any(s => s.PedidoId == id)))
+                    throw new DeliveryDomainException(409, "OFFER_SELECTION_CHANGED", "Confira os pedidos selecionados e os ganhos da oferta novamente.");
+                foreach (var declined in stops.Where(s => !acceptedPedidoIds.Contains(s.PedidoId)))
+                {
+                    await connection.ExecuteAsync("UPDATE delivery_route_stops SET stop_status='refused',refused_at_utc=NOW(),refusal_reason='Não selecionado pelo motoboy no aceite',updated_at_utc=NOW() WHERE id=@Id;", new { declined.Id }, transaction);
+                    await ReturnPedidoToPendingAsync(connection, transaction, declined.PedidoId);
+                    await CancelPendingTransfersForPedidoAsync(connection, transaction, estabelecimentoId, declined.PedidoId, "Pedido recusado no aceite da oferta.");
+                    await PublishOrderEventAsync(connection, transaction, estabelecimentoId, 0, declined.PedidoId, "offer_rejected");
+                }
+                stops = stops.Where(s => acceptedPedidoIds.Contains(s.PedidoId)).ToList();
+            }
             await connection.ExecuteAsync(
                 "UPDATE delivery_route_stops SET offered_at_utc = NULL, updated_at_utc = NOW() WHERE id = ANY(@Ids);",
                 new { Ids = stops.Select(s => s.Id).ToArray() }, transaction);
@@ -205,12 +218,8 @@ SELECT s.id AS Id, s.pedido_id AS PedidoId
             if (!await PedidoColumnTypes.HasOfertaSchemaAsync(connection, null)) throw OfertaPending();
             await using var transaction = await connection.BeginTransactionAsync();
 
-            var settings = await GetSettingsInternalAsync(connection, transaction, estabelecimentoId);
-            if (!settings.AllowMotoboyRefuse)
-            {
-                throw new DeliveryDomainException(403, "REFUSE_NOT_ALLOWED", "Este estabelecimento nao permite recusar pedidos.");
-            }
-
+            // Uma oferta pendente sempre pode ser recusada. A regra da loja continua
+            // aplicável à devolução de pedidos que o motoboy já aceitou.
             if (expectedOfferId.HasValue)
             {
                 var currentVersion = await LockQueuesAsync(connection, transaction, estabelecimentoId, motoboyId);

@@ -30,7 +30,7 @@ public abstract class CommunicationControllerBase(CommunicationService service) 
     {
         try
         {
-            var file = await service.FileAsync(Actor, id);
+            var file = await service.FileAsync(Actor, id, HttpContext.RequestAborted);
             Response.Headers.CacheControl = "private, no-store";
             Response.Headers.XContentTypeOptions = "nosniff";
             return File(file.Content, file.ContentType, enableRangeProcessing: true);

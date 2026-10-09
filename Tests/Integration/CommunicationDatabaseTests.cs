@@ -138,7 +138,9 @@ CREATE TABLE delivery_realtime_outbox(event_id uuid,event_name text,target_group
             await fixture.Execute("INSERT INTO estabelecimentos VALUES(@Est);INSERT INTO motoboy VALUES(1,'Alice'),(2,'Bob');INSERT INTO pedido VALUES(23,@Est);INSERT INTO motoboy_estabelecimento VALUES(1,@Est,TRUE),(2,@Est,TRUE);INSERT INTO motoboy_active_sessions VALUES(gen_random_uuid(),1,@Est,NULL,NOW()+interval '1 hour'),(gen_random_uuid(),2,@Est,NULL,NOW()+interval '1 hour');INSERT INTO delivery_motoboy_message(estabelecimento_id,motoboy_id,direction,body) VALUES(@Est,1,'operator','Historico antigo');",new{fixture.Est});
             await fixture.Migration("20261008_04_comunicacao.sql");await fixture.Migration("20261008_04_comunicacao.sql");
             await fixture.Migration("20261008_06_comunicacao_correcoes.sql");await fixture.Migration("20261008_06_comunicacao_correcoes.sql");
-            await fixture.Migration("20261008_07_verify_comunicacao_correcoes.sql");return fixture;
+            await fixture.Migration("20261008_07_verify_comunicacao_correcoes.sql");
+            await fixture.Migration("20261009_02_chat_emoji_reactions.sql");await fixture.Migration("20261009_02_chat_emoji_reactions.sql");
+            await fixture.Migration("20261009_05_chat_forwarded.sql");await fixture.Migration("20261009_05_chat_forwarded.sql");return fixture;
         }
         public Task Migration(string name)=>Execute(File.ReadAllText(Path.Combine(AppContext.BaseDirectory,"Migrations","Delivery",name)));
         public async Task Execute(string sql,object? args=null){await using var db=await Source.OpenConnectionAsync();await db.ExecuteAsync(sql,args);}

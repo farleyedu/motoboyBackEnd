@@ -169,7 +169,7 @@ SELECT p.id AS Id,
             if (core)
             {
                 var structured = await connection.QueryAsync<ItemRow>(@"
-SELECT i.produto_id AS ProdutoId, i.nome AS Nome, i.quantidade AS Quantidade,
+SELECT i.id::text AS ItemId, i.produto_id AS ProdutoId, i.nome AS Nome, i.quantidade AS Quantidade,
        i.preco_unitario AS PrecoUnitario, i.observacao AS Observacao,
        i.adicionais::text AS Adicionais, cp.imagem_url AS ImagemUrl
   FROM pedido_item i
@@ -282,7 +282,7 @@ SELECT i.produto_id AS ProdutoId, i.nome AS Nome, i.quantidade AS Quantidade,
             dto.CapaImagemUrl = row.CapaImagemUrl;
         }
 
-        private static PedidoItemDto ToItem(ItemRow row)
+        internal static PedidoItemDto ToItem(ItemRow row)
         {
             var addons = new List<PedidoAdicionalDto>();
             if (!string.IsNullOrWhiteSpace(row.Adicionais))
@@ -297,7 +297,8 @@ SELECT i.produto_id AS ProdutoId, i.nome AS Nome, i.quantidade AS Quantidade,
                             : (Guid?)null;
                         var nome = element.TryGetProperty("nome", out var n) ? n.GetString() : null;
                         var preco = element.TryGetProperty("preco", out var p) && p.TryGetDecimal(out var d) ? d : 0m;
-                        if (!string.IsNullOrWhiteSpace(nome)) addons.Add(new PedidoAdicionalDto { Id = id, Nome = nome!, Preco = preco });
+                        var quantidade = element.TryGetProperty("quantidade", out var q) && q.TryGetInt32(out var count) && count is > 0 and <= 1000 ? count : 1;
+                        if (!string.IsNullOrWhiteSpace(nome)) addons.Add(new PedidoAdicionalDto { Id = id, Nome = nome!, Preco = preco, Quantidade = quantidade });
                     }
                 }
                 catch (JsonException)
@@ -307,6 +308,7 @@ SELECT i.produto_id AS ProdutoId, i.nome AS Nome, i.quantidade AS Quantidade,
             }
             return new PedidoItemDto
             {
+                ItemId = row.ItemId,
                 ProdutoId = row.ProdutoId,
                 Nome = row.Nome,
                 Quantidade = row.Quantidade,
@@ -356,8 +358,9 @@ SELECT i.produto_id AS ProdutoId, i.nome AS Nome, i.quantidade AS Quantidade,
             public string? CodigoEntrega { get; set; }
         }
 
-        private sealed class ItemRow
+        internal sealed class ItemRow
         {
+            public string? ItemId { get; set; }
             public Guid? ProdutoId { get; set; }
             public string Nome { get; set; } = string.Empty;
             public int Quantidade { get; set; }

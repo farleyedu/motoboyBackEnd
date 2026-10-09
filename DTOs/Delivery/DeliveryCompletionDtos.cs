@@ -15,6 +15,7 @@ public sealed class DeliveryCompletionRequest
     public string? Codigo { get; set; }
     public Guid? ProofId { get; set; }
     public List<DeliveryPaymentPart> Payments { get; set; } = new();
+    public DeliveryChecklistConfirmation? Checklist { get; set; }
 }
 public sealed class DeliveryCodeRequest { public string Codigo { get; set; } = ""; }
 public sealed class DeliveryProofRequest { public string Base64 { get; set; } = ""; }
@@ -27,6 +28,7 @@ public sealed class DeliveryCompletionContext
     public bool RequiresCode { get; set; }
     public bool RequiresPayment { get; set; }
     public bool RequiresProof { get; set; }
+    public DeliveryChecklist Checklist { get; set; } = new();
 }
 public sealed class DeliveryReceipt
 {
@@ -39,6 +41,7 @@ public sealed class DeliveryReceipt
     public bool PaidBeforeDelivery { get; set; }
     public List<DeliveryPaymentPart> Payments { get; set; } = new();
     public Guid? ProofId { get; set; }
+    public DeliveryChecklistConfirmation? Checklist { get; set; }
 }
 public sealed class DeliveryCompletionResult
 {

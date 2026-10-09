@@ -50,6 +50,7 @@ SELECT s.id AS StopId, p.id AS PedidoId,p.nome_cliente AS NomeCliente,
         var version=await LockQueuesAsync(c,tx,store,rider);
         var row=RequireCompletionOrder(await ReadCompletionOrder(c,tx,store,rider,pedido,ct));
         var result=new DeliveryCompletionContext { PedidoId=pedido,Version=version,NomeCliente=row.NomeCliente,Total=row.Total,RequiresCode=row.RequiresCode && DeliveryRules.HasDeliveryCode(row.Code),RequiresProof=row.RequiresProof,RequiresPayment=!DeliveryCompletionRules.IsPaid(row.PaymentStatus) };
+        result.Checklist = await ReadChecklistAsync(c, tx, store, pedido, ct);
         await tx.CommitAsync(ct); return result;
     }
     public async Task<bool> ValidateCompletionCodeAsync(Guid store,int rider,int pedido,string code,CancellationToken ct)
@@ -105,13 +106,17 @@ SELECT EXISTS(SELECT 1 FROM motoboy_active_sessions s WHERE s.session_id=@Sessio
         if(!valid) throw new DeliveryDomainException(409,"SESSION_CHANGED","Recupere seu turno antes de concluir.");
         CheckCompletionCode(row,request.Codigo);
         var paid=DeliveryCompletionRules.IsPaid(row.PaymentStatus);
+        var manifest = await ReadChecklistAsync(c, tx, store, row.PedidoId, ct);
+        DeliveryChecklistRules.Validate(row.PedidoId, manifest, request.Checklist);
+        if (request.Checklist != null)
+            await SaveChecklistAsync(c, tx, store, rider, row.StopId, "delivery", manifest, request.Checklist, ct);
         DeliveryCompletionRules.Validate(request,row.Total,!paid);
         if(row.RequiresProof && !request.ProofId.HasValue) throw new DeliveryDomainException(422,"PROOF_REQUIRED","Anexe o comprovante solicitado pela loja.");
         if(request.ProofId.HasValue && !await c.ExecuteScalarAsync<bool>(new CommandDefinition("SELECT EXISTS(SELECT 1 FROM delivery_completion_proofs WHERE id=@Id AND estabelecimento_id=@Store AND motoboy_id=@Rider AND stop_id=@Stop)",new { Id=request.ProofId,Store=store,Rider=rider,Stop=row.StopId },tx,commandTimeout:10,cancellationToken:ct)))
             throw new DeliveryDomainException(422,"PROOF_INVALID","Este comprovante não pertence à entrega atual.");
         if(!paid) await c.ExecuteAsync(new CommandDefinition("UPDATE pedido SET status_pagamento='pago',tipo_pagamento=@Method WHERE id=@Pedido",new { Pedido=row.PedidoId,Method=string.Join(" + ",request.Payments.Select(p=>p.Method)) },tx,commandTimeout:10,cancellationToken:ct));
         var queue=await CompleteCurrentInternalAsync(c,tx,store,rider,"motoboy",request.Codigo,true);
-        var receipt=new DeliveryReceipt { OperationId=request.OperationId,PedidoId=row.PedidoId,NomeCliente=row.NomeCliente,CompletedAtUtc=DateTimeOffset.UtcNow,Total=row.Total,CodeChecked=row.RequiresCode&&DeliveryRules.HasDeliveryCode(row.Code),PaidBeforeDelivery=paid,Payments=request.Payments,ProofId=request.ProofId };
+        var receipt=new DeliveryReceipt { OperationId=request.OperationId,PedidoId=row.PedidoId,NomeCliente=row.NomeCliente,CompletedAtUtc=DateTimeOffset.UtcNow,Total=row.Total,CodeChecked=row.RequiresCode&&DeliveryRules.HasDeliveryCode(row.Code),PaidBeforeDelivery=paid,Payments=request.Payments,ProofId=request.ProofId,Checklist=request.Checklist };
         await c.ExecuteAsync(new CommandDefinition("""
 INSERT INTO delivery_completions(operation_id,estabelecimento_id,motoboy_id,user_id,session_id,session_epoch,pedido_id,stop_id,payload_hash,receipt)
  VALUES(@Operation,@Store,@Rider,@User,@Session,@Epoch,@Pedido,@Stop,@Hash,CAST(@Receipt AS jsonb))

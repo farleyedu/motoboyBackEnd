@@ -1,5 +1,6 @@
 # Etapa base com ASP.NET 8.0
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS base
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 EXPOSE 80
 

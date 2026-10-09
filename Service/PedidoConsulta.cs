@@ -193,10 +193,30 @@ namespace APIBack.Service
             var quantity = ToNumber(Pick(element, QuantityKeys));
             var price = ToNumber(Pick(element, PriceKeys));
             var qty = quantity is > 0 ? (int)Math.Min(quantity.Value, 1000m) : 1;
+            var extras = new List<PedidoAdicionalDto>();
+            var additions = Pick(element, new[] { "adicionais", "extras", "options" });
+            if (additions.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var extra in additions.EnumerateArray())
+                {
+                    if (extra.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(extra.GetString()))
+                        extras.Add(new() { Nome = extra.GetString()!.Trim() });
+                    else if (extra.ValueKind == JsonValueKind.Object)
+                    {
+                        var extraName = Pick(extra, NameKeys);
+                        if (extraName.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(extraName.GetString())) continue;
+                        var count = ToNumber(Pick(extra, QuantityKeys));
+                        extras.Add(new() { Nome = extraName.GetString()!.Trim(), Quantidade = count is > 0 ? (int)Math.Min(count.Value, 1000m) : 1, Preco = ToNumber(Pick(extra, PriceKeys)) ?? 0 });
+                    }
+                }
+            }
+            var observation = Pick(element, new[] { "observacao", "observacoes", "note", "notes" });
             return new PedidoItemDto
             {
                 Nome = name.GetString()!.Trim(),
                 Quantidade = qty,
+                Observacao = observation.ValueKind == JsonValueKind.String ? observation.GetString() : null,
+                Adicionais = extras,
                 PrecoUnitario = price,
                 Total = price.HasValue ? decimal.Round(price.Value * qty, 2) : null
             };

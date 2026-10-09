@@ -18,10 +18,11 @@ namespace APIBack.DTOs.Delivery
         public int ExpectedPedidoId { get; set; }
         public long ExpectedVersion { get; set; }
         public List<int> PedidoIds { get; set; } = new();
+        public List<DeliveryChecklistConfirmation>? Checklists { get; set; }
     }
 
     public sealed class PauseTurnRequest { public bool Paused { get; set; } }
-    public sealed class ResolveOfferRequest { public Guid? ExpectedOfferId { get; set; } public long? ExpectedVersion { get; set; } public string? Motivo { get; set; } }
+    public sealed class ResolveOfferRequest { public Guid? ExpectedOfferId { get; set; } public long? ExpectedVersion { get; set; } public string? Motivo { get; set; } public List<int>? AcceptedPedidoIds { get; set; } }
 
     public sealed class CancelPedidoRequest
     {

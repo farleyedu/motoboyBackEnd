@@ -852,7 +852,10 @@ SELECT motoboy_id AS MotoboyId,
         public async Task<int> DeleteOldLocationsAsync(DateTimeOffset receivedBeforeUtc, int limit)
         {
             await using var connection = await _dataSource.OpenConnectionAsync();
-            return await connection.ExecuteAsync(@"
+            var archiveDeleted = 0;
+            if (await connection.ExecuteScalarAsync<bool>("SELECT to_regclass('delivery_route_run_points') IS NOT NULL"))
+                archiveDeleted = await connection.ExecuteAsync("DELETE FROM delivery_route_run_points WHERE id IN (SELECT id FROM delivery_route_run_points WHERE captured_at_utc<NOW()-interval '90 days' ORDER BY captured_at_utc LIMIT @Limit)", new { Limit = Math.Clamp(limit, 1, 10000) });
+            var samplesDeleted = await connection.ExecuteAsync(@"
 DELETE FROM motoboy_location_samples
  WHERE id IN (
      SELECT id
@@ -861,6 +864,7 @@ DELETE FROM motoboy_location_samples
       ORDER BY received_at_utc
       LIMIT @Limit
  );", new { ReceivedBeforeUtc = receivedBeforeUtc, Limit = Math.Clamp(limit, 1, 10000) });
+            return Math.Max(archiveDeleted, samplesDeleted);
         }
 
         private async Task<OperationalMotoboyIdentity?> ResolveMobileIdentityForUpdateAsync(

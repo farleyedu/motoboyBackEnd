@@ -35,5 +35,13 @@ public static class DeliveryCompletionRules
         }
     }
     // Nunca persiste o código do cliente no recibo ou nos logs.
-    public static string Hash(DeliveryCompletionRequest request) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(request))));
+    public static string Hash(DeliveryCompletionRequest request)
+    {
+        // Mantém o hash das conclusões antigas para que um reenviou pós-atualização
+        // encontre o recibo original, sem registrar entrega/recebimento novamente.
+        object payload = request.Checklist == null
+            ? new { request.OperationId, request.ExpectedPedidoId, request.ExpectedVersion, request.Codigo, request.ProofId, request.Payments }
+            : request;
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(payload))));
+    }
 }

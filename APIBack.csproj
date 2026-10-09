@@ -28,6 +28,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="Service\communication-emojis.json" LogicalName="APIBack.communication-emojis.json" />
     <Content Include="Migrations\Delivery\*.sql" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Migrations\Delivery\rollback\*.sql" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Migrations\Negocio\*.sql" CopyToOutputDirectory="PreserveNewest" />

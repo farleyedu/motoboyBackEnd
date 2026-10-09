@@ -165,7 +165,9 @@ namespace APIBack.Controllers
         [HttpPost("queue/offer/accept")]
         [RequireOperationalSession]
         public Task<IActionResult> AcceptOffer([FromBody(EmptyBodyBehavior = Microsoft.AspNetCore.Mvc.ModelBinding.EmptyBodyBehavior.Allow)] ResolveOfferRequest? request) =>
-            WithOperationalContextAsync((est, motoboyId, _) => request?.ExpectedOfferId is Guid id ? request.ExpectedVersion is long version ? _queueService.AcceptPricedOfferAsync(est, motoboyId, id, version) : _queueService.AcceptOfferForAsync(est, motoboyId, id) : _queueService.AcceptOfferAsync(est, motoboyId));
+            WithOperationalContextAsync((est, motoboyId, _) => request?.AcceptedPedidoIds != null && (request.ExpectedOfferId == null || request.ExpectedVersion == null)
+                ? throw new DeliveryDomainException(422, "OFFER_ID_REQUIRED", "Confira a versão da oferta antes de selecionar pedidos.")
+                : request?.ExpectedOfferId is Guid id ? request.ExpectedVersion is long version ? _queueService.AcceptPricedOfferAsync(est, motoboyId, id, version, request.AcceptedPedidoIds) : _queueService.AcceptOfferForAsync(est, motoboyId, id) : _queueService.AcceptOfferAsync(est, motoboyId));
 
         [HttpPost("queue/offer/reject")]
         [RequireOperationalSession]

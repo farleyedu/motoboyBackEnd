@@ -6,6 +6,7 @@ namespace APIBack.DTOs.Delivery
     /// <summary>Leitura do pedido para seu entregador. Não expõe o código secreto nem permissões administrativas.</summary>
     public sealed class MotoboyPedidoDetalheDto
     {
+        public DeliveryChecklist Checklist { get; set; } = new();
         public int Id { get; set; }
         public long QueueVersion { get; set; }
         public int Position { get; set; }

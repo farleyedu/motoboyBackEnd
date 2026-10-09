@@ -34,6 +34,7 @@ namespace APIBack.Service
             if (pedido == null || pedido.MotoboyId != motoboyId) throw NotInQueue();
             return new MotoboyPedidoDetalheDto
             {
+                Checklist = DeliveryChecklistRules.Build(pedido.Itens),
                 Id = pedido.Id, QueueVersion = queue.Version, Position = stop.Position,
                 StopStatus = stop.Status, IsCurrent = queue.Current?.PedidoId == pedidoId,
                 IsOffer = queue.Offer?.Stops.Any(item => item.PedidoId == pedidoId) == true,
