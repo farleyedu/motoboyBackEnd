@@ -87,6 +87,12 @@ UPDATE motoboy SET canonical_motoboy_id=id;
             return context.GetUserId();
         }
         Assert.Equal(7,await AuthenticatedUser(selected.AccessToken));
+        if (legacyLink)
+        {
+            var oldPayload = jwt.ValidateToken(selected.AccessToken);
+            oldPayload.VinculoId = Guid.Empty;
+            Assert.Equal(7,await AuthenticatedUser(jwt.GenerateToken(oldPayload)));
+        }
         var renewed = await auth.RefreshTokenAsync(new RefreshTokenRequest { RefreshToken=selected.RefreshToken },null,null);
         Assert.Equal(db.StoreId,jwt.ValidateToken(renewed.AccessToken).EstabelecimentoId);
         Assert.Equal(7,await AuthenticatedUser(renewed.AccessToken));
@@ -110,9 +116,11 @@ UPDATE motoboy SET canonical_motoboy_id=id;
         Assert.Equal(7,await AuthenticatedUser(operational));
         await db.Execute("UPDATE motoboy SET id_usuario=8");
         Assert.Null(await AuthenticatedUser(operational));
+        if (legacyLink) Assert.Null(await AuthenticatedUser(renewed.AccessToken));
         await Assert.ThrowsAsync<DeliveryDomainException>(() => db.Repository.HeartbeatAsync(started.SessionId,1,started.SessionEpoch));
         await db.Execute("UPDATE motoboy SET id_usuario=7;UPDATE motoboy_estabelecimento SET ativo=FALSE");
         Assert.Null(await AuthenticatedUser(operational));
+        if (legacyLink) Assert.Null(await AuthenticatedUser(renewed.AccessToken));
         await Assert.ThrowsAsync<DeliveryDomainException>(() => db.Repository.WriteLocationAsync(started.SessionId,1,started.SessionEpoch,Database.Point(2)));
         Assert.Equal(1,await db.Scalar<int>("SELECT COUNT(*)::int FROM motoboy_location_samples"));
     }
