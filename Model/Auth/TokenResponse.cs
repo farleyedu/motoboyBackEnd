@@ -6,6 +6,7 @@ namespace APIBack.Model.Auth
 {
     public class TokenResponse
     {
+        public Guid? MotoboyLoginSessionId { get; set; }
         [JsonPropertyName("accessToken")]
         public string AccessToken { get; set; } = string.Empty;
 

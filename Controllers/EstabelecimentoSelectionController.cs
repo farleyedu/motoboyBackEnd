@@ -80,7 +80,10 @@ namespace APIBack.Controllers
 
             try
             {
-                var response = await _selectionService.DefinirEstabelecimentoAtivoAsync(userId.Value, request.EstabelecimentoId);
+                var loginSessionId = HttpContext.GetJwtPayload().MotoboyLoginSessionId;
+                var response = loginSessionId.HasValue
+                    ? await _selectionService.DefinirEstabelecimentoAtivoAsync(userId.Value, request.EstabelecimentoId, loginSessionId)
+                    : await _selectionService.DefinirEstabelecimentoAtivoAsync(userId.Value, request.EstabelecimentoId);
                 return Ok(ApiResponse<DefinirEstabelecimentoAtivoResponse>.Ok(response));
             }
             catch (KeyNotFoundException ex)

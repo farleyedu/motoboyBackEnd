@@ -6,6 +6,7 @@ namespace APIBack.Model.Auth
     public class JwtPayload
     {
         public int? UserId { get; set; }
+        public Guid? MotoboyLoginSessionId { get; set; }
         public string Nome { get; set; } = string.Empty;
         public string Email { get; set; } = string.Empty;
         public bool IsSuperAdmin { get; set; }

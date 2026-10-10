@@ -165,6 +165,9 @@ namespace APIBack.Service
                 claims.Add(new Claim("empresa_id", payload.EmpresaId.Value.ToString()));
             }
 
+            if (payload.MotoboyLoginSessionId.HasValue)
+                claims.Add(new Claim("motoboy_login_session_id", payload.MotoboyLoginSessionId.Value.ToString("D")));
+
             if (!string.IsNullOrWhiteSpace(payload.EmpresaNome))
             {
                 claims.Add(new Claim("empresa_nome", payload.EmpresaNome));
@@ -329,6 +332,9 @@ namespace APIBack.Service
                         break;
                     case "permissoes":
                         permissionsJson = claim.Value;
+                        break;
+                    case "motoboy_login_session_id":
+                        if (Guid.TryParse(claim.Value, out var loginSessionId)) payload.MotoboyLoginSessionId = loginSessionId;
                         break;
                     case "motoboy_session_id":
                         if (Guid.TryParse(claim.Value, out var motoboySessionId))

@@ -10,6 +10,7 @@ namespace APIBack.Service.Interface
     {
         Task<TokenResponse> LoginAsync(LoginRequest request);
         Task<string> IssueRefreshTokenAsync(int userId);
+        Task<string> IssueRefreshTokenAsync(int userId, Guid? loginSessionId);
         Task<TokenResponse> RefreshTokenAsync(RefreshTokenRequest request, string? ipAddress, string? userAgent);
         Task LogoutAsync(int userId, LogoutRequest request, string? ipAddress, string? userAgent);
         Task<OAuthAuthorizationResponse> IniciarLoginGoogleAsync(string? redirectUri);

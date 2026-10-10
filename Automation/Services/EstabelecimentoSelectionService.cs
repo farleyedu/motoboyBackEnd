@@ -78,7 +78,10 @@ namespace APIBack.Automation.Services
                 .ToArray();
         }
 
-        public async Task<DefinirEstabelecimentoAtivoResponse> DefinirEstabelecimentoAtivoAsync(int userId, Guid estabelecimentoId)
+        public Task<DefinirEstabelecimentoAtivoResponse> DefinirEstabelecimentoAtivoAsync(int userId, Guid estabelecimentoId) =>
+            DefinirEstabelecimentoAtivoAsync(userId, estabelecimentoId, null);
+
+        public async Task<DefinirEstabelecimentoAtivoResponse> DefinirEstabelecimentoAtivoAsync(int userId, Guid estabelecimentoId, Guid? loginSessionId)
         {
             var usuario = _validator.EnsureUsuarioValido(await _repository.ObterUsuarioAsync(userId));
             var estabelecimento = _validator.EnsureEstabelecimentoSelecionavel(
@@ -107,6 +110,7 @@ namespace APIBack.Automation.Services
 
             var payload = new JwtPayload
             {
+                MotoboyLoginSessionId = loginSessionId,
                 UserId = usuario.Id,
                 Nome = usuario.Nome,
                 Email = usuario.Email,
@@ -125,7 +129,9 @@ namespace APIBack.Automation.Services
             };
 
             var token = _jwtService.GenerateToken(payload);
-            var refreshToken = await _authService.IssueRefreshTokenAsync(usuario.Id);
+            var refreshToken = loginSessionId.HasValue
+                ? await _authService.IssueRefreshTokenAsync(usuario.Id, loginSessionId)
+                : await _authService.IssueRefreshTokenAsync(usuario.Id);
 
             _logger.LogInformation(
                 "Estabelecimento definido para usuario {UserId}: {EstabelecimentoId}",

@@ -119,19 +119,27 @@ SELECT id,
 
             // Super admin sem estabelecimento: token básico sem contexto de estabelecimento
             var estabelecimentoId = await ResolverEstabelecimentoParaTokenAsync(connection, usuario);
-            var response = await BuildTokenResponseAsync(connection, usuario, estabelecimentoId);
-            await PersistRefreshTokenAsync(connection, usuario.Id, response.RefreshToken, null, null);
+            Guid? loginSessionId = null;
+            if (string.Equals(request.ClientApp, "motoboy", StringComparison.Ordinal))
+                loginSessionId = await MotoboyLoginSessions.BeginAsync(connection, usuario.Id, request,
+                    GetRefreshTokenExpirationUtc(), _operationalSessionRepository);
+            var response = await BuildTokenResponseAsync(connection, usuario, estabelecimentoId, loginSessionId);
+            await PersistRefreshTokenAsync(connection, usuario.Id, response.RefreshToken, null, null, loginSessionId);
             return response;
         }
 
         // A selecao de estabelecimento tambem devolve um refresh token. Reutilizar
         // a persistencia do login evita entregar uma credencial que nao existe no banco.
-        public async Task<string> IssueRefreshTokenAsync(int userId)
+        public Task<string> IssueRefreshTokenAsync(int userId) => IssueRefreshTokenAsync(userId, null);
+
+        public async Task<string> IssueRefreshTokenAsync(int userId, Guid? loginSessionId)
         {
             if (userId <= 0) throw new ArgumentOutOfRangeException(nameof(userId));
             var refreshToken = _jwtService.GenerateRefreshToken();
             await using var connection = new NpgsqlConnection(_connectionString);
-            await PersistRefreshTokenAsync(connection, userId, refreshToken, null, null);
+            if (loginSessionId.HasValue && !await MotoboyLoginSessions.IsActiveAsync(connection, userId, loginSessionId.Value))
+                throw new UnauthorizedAccessException("Esta sessão foi encerrada em outro aparelho.");
+            await PersistRefreshTokenAsync(connection, userId, refreshToken, null, null, loginSessionId);
             return refreshToken;
         }
 
@@ -155,6 +163,10 @@ SELECT id,
             {
                 throw new UnauthorizedAccessException("Refresh token inválido.");
             }
+
+            if (tokenAtual.MotoboyLoginSessionId.HasValue &&
+                !await MotoboyLoginSessions.IsActiveAsync(connection, tokenAtual.UserId, tokenAtual.MotoboyLoginSessionId.Value))
+                throw new UnauthorizedAccessException("Esta sessão foi encerrada em outro aparelho.");
 
             // Tolerancia de rotacao: duas abas (ou uma repeticao apos timeout, comum quando a API acorda
             // do repouso) apresentam o mesmo token quase junto. Um token trocado ha instantes ainda vale
@@ -182,9 +194,9 @@ SELECT id,
 
             var estabelecimentoId = await ResolverEstabelecimentoParaTokenAsync(connection, usuario);
 
-            var response = await BuildTokenResponseAsync(connection, usuario, estabelecimentoId);
+            var response = await BuildTokenResponseAsync(connection, usuario, estabelecimentoId, tokenAtual.MotoboyLoginSessionId);
             var newRefreshTokenHash = HashRefreshToken(response.RefreshToken);
-            var novoRefreshTokenId = await PersistRefreshTokenAsync(connection, usuario.Id, response.RefreshToken, ipAddress, userAgent);
+            var novoRefreshTokenId = await PersistRefreshTokenAsync(connection, usuario.Id, response.RefreshToken, ipAddress, userAgent, tokenAtual.MotoboyLoginSessionId);
 
             // Na janela de tolerancia o token antigo ja esta revogado: a sessao nova segue independente.
             var rotacaoConcluida = rotatedRecently || await RevokeRefreshTokenAsync(
@@ -218,6 +230,7 @@ SELECT id,
 
             if (request.LogoutFromAllDevices || string.IsNullOrWhiteSpace(request.RefreshToken))
             {
+                await connection.ExecuteAsync("UPDATE motoboy_login_sessions SET revoked_at_utc=NOW(),revoke_reason='logout' WHERE id_usuario=@UserId AND revoked_at_utc IS NULL", new { UserId = userId });
                 await RevokeAllRefreshTokensAsync(connection, userId, ipAddress, "logout");
                 if (_deliveryTrackingEnabled)
                 {
@@ -235,6 +248,8 @@ SELECT id,
             }
 
             await RevokeRefreshTokenAsync(connection, token.Id, ipAddress, null, "logout");
+            if (token.MotoboyLoginSessionId.HasValue)
+                await connection.ExecuteAsync("UPDATE motoboy_login_sessions SET revoked_at_utc=NOW(),revoke_reason='logout' WHERE session_id=@SessionId AND id_usuario=@UserId AND revoked_at_utc IS NULL", new { SessionId = token.MotoboyLoginSessionId, UserId = userId });
             if (_deliveryTrackingEnabled)
             {
                 await _operationalSessionRepository.EndActiveMobileSessionsForUserAsync(userId, "logout");
@@ -712,7 +727,8 @@ RETURNING id";
             int userId,
             string rawRefreshToken,
             string? ipAddress,
-            string? userAgent)
+            string? userAgent,
+            Guid? loginSessionId = null)
         {
             var tokenHash = HashRefreshToken(rawRefreshToken);
             var expiresAt = GetRefreshTokenExpirationUtc();
@@ -723,13 +739,15 @@ INSERT INTO usuario_refresh_tokens (id_usuario,
                                     expires_at,
                                     created_at,
                                     created_by_ip,
-                                    user_agent)
+                                    user_agent,
+                                    motoboy_login_session_id)
 VALUES (@UserId,
         @TokenHash,
         @ExpiresAt,
         NOW(),
         @CreatedByIp,
-        @UserAgent)
+        @UserAgent,
+        @LoginSessionId)
 RETURNING id";
 
             return await connection.ExecuteScalarAsync<long>(sql, new
@@ -738,7 +756,8 @@ RETURNING id";
                 TokenHash = tokenHash,
                 ExpiresAt = expiresAt,
                 CreatedByIp = ipAddress,
-                UserAgent = userAgent
+                UserAgent = userAgent,
+                LoginSessionId = loginSessionId
             });
         }
 
@@ -753,7 +772,8 @@ SELECT id,
        revoked_at              AS RevokedAt,
        revoked_by_ip           AS RevokedByIp,
        replaced_by_token_hash  AS ReplacedByTokenHash,
-       reason_revoked          AS ReasonRevoked
+       reason_revoked          AS ReasonRevoked,
+       motoboy_login_session_id AS MotoboyLoginSessionId
   FROM usuario_refresh_tokens
  WHERE token_hash = @TokenHash
  LIMIT 1";
@@ -914,7 +934,8 @@ SELECT ue.id_estabelecimento
         private async Task<TokenResponse> BuildTokenResponseAsync(
             NpgsqlConnection connection,
             UsuarioDb usuario,
-            Guid? estabelecimentoId)
+            Guid? estabelecimentoId,
+            Guid? loginSessionId = null)
         {
             JwtPayload payload;
             EstabelecimentoInfo? estabelecimentoInfo = null;
@@ -989,11 +1010,13 @@ SELECT ue.id_estabelecimento
                 ? minutes
                 : 60;
 
+            payload.MotoboyLoginSessionId = loginSessionId;
             var accessToken = _jwtService.GenerateToken(payload);
             var refreshToken = _jwtService.GenerateRefreshToken();
 
             return new TokenResponse
             {
+                MotoboyLoginSessionId = loginSessionId,
                 AccessToken = accessToken,
                 RefreshToken = refreshToken,
                 ExpiresIn = expirationMinutes * 60,
@@ -1561,6 +1584,7 @@ UPDATE usuario
 
         private sealed class RefreshTokenDb
         {
+            public Guid? MotoboyLoginSessionId { get; set; }
             public long Id { get; set; }
             public int UserId { get; set; }
             public string TokenHash { get; set; } = string.Empty;

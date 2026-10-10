@@ -9,5 +9,6 @@ namespace APIBack.Automation.Services.Interface
     {
         Task<IReadOnlyCollection<UsuarioEstabelecimentoDto>> ListarEstabelecimentosAsync(int userId);
         Task<DefinirEstabelecimentoAtivoResponse> DefinirEstabelecimentoAtivoAsync(int userId, Guid estabelecimentoId);
+        Task<DefinirEstabelecimentoAtivoResponse> DefinirEstabelecimentoAtivoAsync(int userId, Guid estabelecimentoId, Guid? loginSessionId);
     }
 }

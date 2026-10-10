@@ -9,6 +9,7 @@ using APIBack.DTOs.Common;
 using APIBack.Extensions;
 using APIBack.Model.Auth;
 using APIBack.Service.Interface;
+using APIBack.Service;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.WebUtilities;
@@ -47,6 +48,10 @@ namespace APIBack.Controllers
                 var response = await _authService.LoginAsync(request);
                 return Ok(ApiResponse<TokenResponse>.Ok(response));
             }
+            catch (DeliveryDomainException ex)
+            {
+                return StatusCode(ex.StatusCode, ApiResponse<object>.Fail(ex.Message, ex.Code, ex.Details));
+            }
             catch (UnauthorizedAccessException ex)
             {
                 return Unauthorized(ApiResponse<object>.Fail(ex.Message));
@@ -57,6 +62,10 @@ namespace APIBack.Controllers
                 return StatusCode(500, ApiResponse<object>.Fail("Erro ao processar login."));
             }
         }
+
+        [HttpGet("session")]
+        [APIBack.Attributes.Authorize]
+        public IActionResult Session() => Ok(ApiResponse<object>.Ok(new { active = true }));
 
         [HttpPost("refresh")]
         [Microsoft.AspNetCore.Authorization.AllowAnonymous]

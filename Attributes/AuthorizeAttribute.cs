@@ -33,7 +33,9 @@ namespace APIBack.Attributes
                 context.Result = new JsonResult(new
                 {
                     success = false,
-                    error = "N\u00e3o autorizado."
+                    error = context.HttpContext.Items["AuthenticationFailureCode"] as string == "SESSION_REPLACED"
+                        ? "Esta conta foi acessada em outro aparelho. Entre novamente para continuar." : "N\u00e3o autorizado.",
+                    code = context.HttpContext.Items["AuthenticationFailureCode"] as string
                 })
                 {
                     StatusCode = StatusCodes.Status401Unauthorized

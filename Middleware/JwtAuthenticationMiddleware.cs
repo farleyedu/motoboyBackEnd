@@ -3,6 +3,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using APIBack.Model.Auth;
 using APIBack.Service.Interface;
+using APIBack.Service;
 using Dapper;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
@@ -59,6 +60,18 @@ namespace APIBack.Middleware
             {
                 // Apenas a validacao criptografica pode tratar a falha como token invalido.
                 return;
+            }
+
+            if (payload.MotoboyLoginSessionId.HasValue)
+            {
+                var dataSource = context.RequestServices.GetRequiredService<NpgsqlDataSource>();
+                await using var connection = await dataSource.OpenConnectionAsync(context.RequestAborted);
+                if (!payload.UserId.HasValue || !await MotoboyLoginSessions.IsActiveAsync(connection,
+                    payload.UserId.Value, payload.MotoboyLoginSessionId.Value, context.RequestAborted))
+                {
+                    context.Items["AuthenticationFailureCode"] = "SESSION_REPLACED";
+                    return;
+                }
             }
 
             // Resolve permissions from the current membership on every request: old JWTs
