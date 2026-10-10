@@ -122,6 +122,7 @@ builder.Services.AddScoped<IPedidoQueueRepository, PedidoQueueRepository>();
 builder.Services.AddScoped<IPedidoQueueService, PedidoQueueService>();
 builder.Services.AddScoped<IPedidoCoreService, PedidoCoreService>();
 builder.Services.AddScoped<IProdutoAtendimentoRepository, ProdutoAtendimentoRepository>();
+builder.Services.AddScoped<CardapioMotoboyAttentionRepository>();
 builder.Services.AddScoped<IPedidoConsultaRepository, PedidoConsultaRepository>();
 builder.Services.AddScoped<IAtendimentoRepository, AtendimentoRepository>();
 builder.Services.AddScoped<IRastreioRepository, RastreioRepository>();
@@ -151,6 +152,8 @@ builder.Services.AddScoped<IRestaurantSettingsRepository, RestaurantSettingsRepo
 builder.Services.AddScoped<IDeliveryZonaRepository, DeliveryZonaRepository>();
 builder.Services.AddScoped<IHorarioOperacaoRepository, HorarioOperacaoRepository>();
 builder.Services.AddScoped<IClienteCadastroRepository, ClienteCadastroRepository>();
+builder.Services.AddScoped<IClienteEnderecoRepository, ClienteEnderecoRepository>();
+builder.Services.AddScoped<IClienteAcessoService, ClienteAcessoService>();
 builder.Services.AddScoped<ISimulatedCustomerGuard, SimulatedCustomerGuard>();
 builder.Services.AddScoped<IClienteSimulatorService, ClienteSimulatorService>();
 builder.Services.AddScoped<IReservaRepository, ReservaRepository>();

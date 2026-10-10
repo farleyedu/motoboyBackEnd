@@ -123,6 +123,7 @@ VALUES (@Id, @EstabelecimentoId, @Nome, @Telefone, @Email, @Observacoes, @Cep, @
 RETURNING{Columns};", Parameters(estabelecimentoId, Guid.NewGuid(), input, actorUserId), transaction);
                 }
 
+                await ClienteEnderecoRepository.SyncCadastroAsync(connection, transaction, saved);
                 await transaction.CommitAsync();
 
                 if (existing == null)
@@ -167,6 +168,7 @@ UPDATE clientes
  WHERE id = @Id AND id_estabelecimento = @EstabelecimentoId
 RETURNING{Columns};", Parameters(estabelecimentoId, clienteId, input, 0), transaction);
 
+                if (saved != null) await ClienteEnderecoRepository.SyncCadastroAsync(connection, transaction, saved);
                 await transaction.CommitAsync();
                 return saved;
             }

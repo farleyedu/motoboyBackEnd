@@ -302,6 +302,9 @@ namespace APIBack.DTOs.Cardapio
 
     public class CriarCardapioPedidoPublicoRequest : CalcularCardapioPedidoPublicoRequest
     {
+        public string? SessaoCliente { get; set; }
+        public bool EnderecoPrincipal { get; set; }
+        public string? ApelidoEndereco { get; set; }
         public CriarCardapioPedidoPublicoClienteRequest Cliente { get; set; } = new();
         public CriarCardapioPedidoPublicoEnderecoRequest? EnderecoEntrega { get; set; }
         public string? FormaPagamento { get; set; }

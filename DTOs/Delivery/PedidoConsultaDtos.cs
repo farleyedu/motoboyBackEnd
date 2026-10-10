@@ -29,6 +29,8 @@ namespace APIBack.DTOs.Delivery
 
     public class PedidoAdicionalDto
     {
+        [System.Text.Json.Serialization.JsonIgnore]
+        public bool AtencaoMotoboy { get; set; }
         public Guid? Id { get; set; }
         public string Nome { get; set; } = string.Empty;
         public decimal Preco { get; set; }
@@ -37,6 +39,8 @@ namespace APIBack.DTOs.Delivery
 
     public class PedidoItemDto
     {
+        [System.Text.Json.Serialization.JsonIgnore]
+        public bool AtencaoMotoboy { get; set; }
         public string? ItemId { get; set; }
         public Guid? ProdutoId { get; set; }
         public string Nome { get; set; } = string.Empty;

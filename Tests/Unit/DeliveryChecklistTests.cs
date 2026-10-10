@@ -14,12 +14,41 @@ public sealed class DeliveryChecklistTests
     }
     [Fact] public void CheckingProductsWithoutRecheckingExtrasCannotComplete()
     {
-        var manifest=DeliveryChecklistRules.Build(new[] { new PedidoItemDto { Nome="Refrigerante",Quantidade=2 } });
+        var manifest=DeliveryChecklistRules.Build(new[] { new PedidoItemDto { Nome="Refrigerante",Quantidade=2,AtencaoMotoboy=true } });
         var confirmation=new DeliveryChecklistConfirmation { PedidoId=87,Version=manifest.Version,ConfirmedKeys=manifest.Items.Select(i=>i.Key).ToList() };
         Assert.Throws<DeliveryDomainException>(()=>DeliveryChecklistRules.Validate(87,manifest,confirmation));
         confirmation.RecheckedExtraKeys=confirmation.ConfirmedKeys.ToList();
         DeliveryChecklistRules.Validate(87,manifest,confirmation);
         Assert.Throws<DeliveryDomainException>(()=>DeliveryChecklistRules.Validate(88,manifest,confirmation));
+    }
+    [Fact] public void NamesAndIngredientsDoNotAutomaticallyRequireAttention()
+    {
+        var manifest = DeliveryChecklistRules.Build(new[] { new PedidoItemDto { Nome="Refrigerante", Adicionais=new() { new() { Nome="Bacon" }, new() { Nome="Sacola separada", AtencaoMotoboy=true } } } });
+        Assert.False(manifest.Items[0].Extra);
+        Assert.False(manifest.Items[1].Extra);
+        Assert.True(manifest.Items[2].Extra);
+    }
+    [Fact] public void LegacyJsonRetainsCatalogIdsForExplicitAttention()
+    {
+        var product = Guid.NewGuid(); var extra = Guid.NewGuid();
+        var items = LegacyItemsParser.Parse($"[{{\"produtoId\":\"{product}\",\"nome\":\"Combo\",\"adicionais\":[{{\"id\":\"{extra}\",\"nome\":\"Bebida\"}}]}}]");
+        Assert.Equal(product,items[0].ProdutoId); Assert.Equal(extra,items[0].Adicionais[0].Id);
+    }
+    [Fact] public void NoAttentionNeedsNoSecondConfirmationAndFlagChangesInvalidatePreviousManifest()
+    {
+        var item = new PedidoItemDto { Nome="Produto", Quantidade=1 };
+        var manifest = DeliveryChecklistRules.Build(new[] { item });
+        var confirmation = new DeliveryChecklistConfirmation { PedidoId=23, Version=manifest.Version, ConfirmedKeys=manifest.Items.Select(i=>i.Key).ToList() };
+        DeliveryChecklistRules.Validate(23,manifest,confirmation);
+        item.AtencaoMotoboy=true;
+        var changed = DeliveryChecklistRules.Build(new[] { item });
+        Assert.NotEqual(manifest.Version,changed.Version);
+        Assert.Throws<DeliveryDomainException>(()=>DeliveryChecklistRules.Validate(23,changed,confirmation));
+    }
+    [Fact] public void UnknownContentsUseOneManualConfirmationWithoutInventingExtras()
+    {
+        var manifest = DeliveryChecklistRules.Build(Array.Empty<PedidoItemDto>());
+        DeliveryChecklistRules.Validate(23,manifest,new() { PedidoId=23,Version=manifest.Version,ConfirmedKeys=new(){"manual"} });
     }
     [Fact] public void ChangedQuantityInvalidatesConfirmationButCatalogPhotoDoesNot()
     {

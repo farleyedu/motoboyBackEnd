@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using APIBack.Automation.Interfaces;
 using APIBack.DTOs.Cardapio;
+using APIBack.DTOs.Clientes;
 using Microsoft.Extensions.Logging;
 using APIBack.Model.Cardapio;
 using APIBack.Repository.Interface;
@@ -22,6 +23,8 @@ namespace APIBack.Service
         private readonly ICardapioPedidoWebService _confirmacao;
         private readonly IPedidosAbertosService _pedidosAbertos;
         private readonly ILogger<CardapioPublicService> _logger;
+        private readonly IClienteAcessoService _acesso;
+        private readonly IClienteEnderecoRepository _enderecos;
 
         public CardapioPublicService(
             ICardapioRepository repository,
@@ -29,7 +32,9 @@ namespace APIBack.Service
             IWabaPhoneRepository waba,
             ICardapioPedidoWebService confirmacao,
             IPedidosAbertosService pedidosAbertos,
-            ILogger<CardapioPublicService> logger)
+            ILogger<CardapioPublicService> logger,
+            IClienteAcessoService acesso,
+            IClienteEnderecoRepository enderecos)
         {
             _repository = repository;
             _localizacao = localizacao;
@@ -37,6 +42,8 @@ namespace APIBack.Service
             _confirmacao = confirmacao;
             _pedidosAbertos = pedidosAbertos;
             _logger = logger;
+            _acesso = acesso;
+            _enderecos = enderecos;
         }
 
         public async Task<CardapioPublicoCatalogoDto> ObterCatalogoAsync(Guid? idEstabelecimento, string? estabelecimentoSlug, string? busca)
@@ -333,6 +340,7 @@ namespace APIBack.Service
 
             // Sem um numero de WhatsApp que atenda o cardapio web nao ha como confirmar o pedido: melhor recusar aqui do que
             // deixar o cliente esperando.
+            var sessao = await _acesso.RequireAsync(estabelecimento.Id, request.SessaoCliente, telefoneE164);
             if (string.IsNullOrWhiteSpace(await _waba.ObterDisplayPhoneParaServicoAsync(estabelecimento.Id, "cardapio_web")))
             {
                 throw new InvalidOperationException("Este restaurante ainda nao recebe pedidos pelo WhatsApp.");
@@ -341,6 +349,18 @@ namespace APIBack.Service
             var enderecoArmazenado = cotacao.TipoEntrega == "entrega"
                 ? await LocalizarEnderecoDoPedidoAsync(request.EnderecoEntrega!, estabelecimento)
                 : null;
+
+            if (enderecoArmazenado != null)
+            {
+                await _enderecos.SaveAsync(estabelecimento.Id, sessao.ClienteId, null, new ClienteEnderecoRequest
+                {
+                    Logradouro = enderecoArmazenado.Logradouro, Numero = enderecoArmazenado.Numero,
+                    Complemento = enderecoArmazenado.Complemento, Bairro = enderecoArmazenado.Bairro,
+                    Cidade = enderecoArmazenado.Cidade, Uf = enderecoArmazenado.Uf, Cep = enderecoArmazenado.Cep,
+                    Referencia = enderecoArmazenado.Referencia, Latitude = enderecoArmazenado.Latitude, Longitude = enderecoArmazenado.Longitude,
+                    Principal = request.EnderecoPrincipal, Apelido = request.ApelidoEndereco
+                });
+            }
 
             var codigo = GerarCodigoPedido();
             var entity = new CardapioPedidoPublico

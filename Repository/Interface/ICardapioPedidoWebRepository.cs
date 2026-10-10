@@ -10,8 +10,8 @@ namespace APIBack.Repository.Interface
     {
         public bool JanelaAberta => JanelaFim.HasValue && JanelaFim.Value > DateTimeOffset.UtcNow;
 
-        /// <summary>Mandou mensagem a loja dentro da janela dada (ex.: 2h) -- prova minima de que e o dono do numero (Fase 3c).</summary>
-        public bool FalouRecentemente(TimeSpan janela) => UltimaEntrada.HasValue && UltimaEntrada.Value > DateTimeOffset.UtcNow - janela;
+        /// <summary>Mensagem recebida dentro da janela dada (1h no acesso do cliente); datas futuras não autenticam.</summary>
+        public bool FalouRecentemente(TimeSpan janela) => UltimaEntrada.HasValue && UltimaEntrada.Value <= DateTimeOffset.UtcNow && UltimaEntrada.Value > DateTimeOffset.UtcNow - janela;
     }
 
     /// <summary>

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using APIBack.DTOs.Delivery;
+using APIBack.DTOs.Clientes;
 using APIBack.Model.Cardapio;
 using APIBack.Model.Delivery;
 using APIBack.Model.Enum;
@@ -390,7 +391,7 @@ namespace APIBack.Tests.Unit
         private static readonly Guid ClienteResolvido = Guid.NewGuid();
 
         private static (PedidoCoreService Service, Mock<IPedidoQueueRepository> Queue, Mock<ICardapioRepository> Menu, Mock<IClienteCadastroRepository> Clientes) Create(
-            RestaurantSettingsDto? restaurant = null, CardapioProduto? product = null)
+            RestaurantSettingsDto? restaurant = null, CardapioProduto? product = null, Mock<IClienteEnderecoRepository>? enderecos = null)
         {
             var queue = new Mock<IPedidoQueueRepository>();
             queue.Setup(q => q.GetSettingsAsync(It.IsAny<Guid>())).ReturnsAsync(new DeliverySettingsDto { DefaultDeliveryMinutes = 45 });
@@ -416,7 +417,20 @@ namespace APIBack.Tests.Unit
             clientes.Setup(c => c.ResolverOuCriarAsync(It.IsAny<Guid>(), It.IsAny<string?>(), It.IsAny<string?>()))
                 .ReturnsAsync(ClienteResolvido);
 
-            return (new PedidoCoreService(queue.Object, restaurantRepo.Object, menu.Object, zonas.Object, horarios.Object, confirmacaoAtendente.Object, clientes.Object), queue, menu, clientes);
+            return (new PedidoCoreService(queue.Object, restaurantRepo.Object, menu.Object, zonas.Object, horarios.Object, confirmacaoAtendente.Object, clientes.Object, enderecos?.Object ?? Mock.Of<IClienteEnderecoRepository>()), queue, menu, clientes);
+        }
+
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public async Task Pedido_e_rascunho_do_atendente_salvam_endereco_e_principal(bool draft)
+        {
+            var addresses = new Mock<IClienteEnderecoRepository>(); var f = Create(enderecos: addresses);
+            var request = CoreFixtures.Request(); request.Rascunho = draft; request.Complemento = "Sala 8";
+            request.ApelidoEndereco = "Trabalho"; request.EnderecoPrincipal = true;
+            await f.Service.CreateAsync(CoreFixtures.Est, 1, request, null, autoAtribuir: false);
+            addresses.Verify(a => a.SaveAsync(CoreFixtures.Est, ClienteResolvido, null,
+                It.Is<ClienteEnderecoRequest>(e => e.Principal && e.Apelido == "Trabalho" && e.Complemento == "Sala 8" && e.Numero == "10")), Times.Once);
         }
 
         private static ManualOrder Captured(Mock<IPedidoQueueRepository> queue) =>
@@ -552,7 +566,7 @@ namespace APIBack.Tests.Unit
             horarios.Setup(h => h.EstaAbertoAgoraAsync(It.IsAny<Guid>(), It.IsAny<DateTimeOffset>(), It.IsAny<string>())).ReturnsAsync(true);
             var clientes = new Mock<IClienteCadastroRepository>();
             clientes.Setup(c => c.ResolverOuCriarAsync(It.IsAny<Guid>(), It.IsAny<string?>(), It.IsAny<string?>())).ReturnsAsync(ClienteResolvido);
-            var service = new PedidoCoreService(queue.Object, restaurantRepo.Object, menu.Object, zonas.Object, horarios.Object, confirmacaoAtendente.Object, clientes.Object);
+            var service = new PedidoCoreService(queue.Object, restaurantRepo.Object, menu.Object, zonas.Object, horarios.Object, confirmacaoAtendente.Object, clientes.Object, Mock.Of<IClienteEnderecoRepository>());
 
             await service.CreateAsync(CoreFixtures.Est, 1, CoreFixtures.Request(), null, autoAtribuir: false);
 
@@ -576,7 +590,7 @@ namespace APIBack.Tests.Unit
             horarios.Setup(h => h.EstaAbertoAgoraAsync(It.IsAny<Guid>(), It.IsAny<DateTimeOffset>(), It.IsAny<string>())).ReturnsAsync(true);
             var clientes = new Mock<IClienteCadastroRepository>();
             clientes.Setup(c => c.ResolverOuCriarAsync(It.IsAny<Guid>(), It.IsAny<string?>(), It.IsAny<string?>())).ReturnsAsync(ClienteResolvido);
-            var service = new PedidoCoreService(queue.Object, restaurantRepo.Object, menu.Object, zonas.Object, horarios.Object, confirmacaoAtendente.Object, clientes.Object);
+            var service = new PedidoCoreService(queue.Object, restaurantRepo.Object, menu.Object, zonas.Object, horarios.Object, confirmacaoAtendente.Object, clientes.Object, Mock.Of<IClienteEnderecoRepository>());
             var request = CoreFixtures.Request();
             request.Rascunho = true;
 
@@ -603,7 +617,7 @@ namespace APIBack.Tests.Unit
             // Telefone invalido/ausente: o repositorio devolve null (nenhum cliente achado/criado).
             var clientes = new Mock<IClienteCadastroRepository>();
             clientes.Setup(c => c.ResolverOuCriarAsync(It.IsAny<Guid>(), It.IsAny<string?>(), It.IsAny<string?>())).ReturnsAsync((Guid?)null);
-            var service = new PedidoCoreService(queue.Object, restaurantRepo.Object, menu.Object, zonas.Object, horarios.Object, confirmacaoAtendente.Object, clientes.Object);
+            var service = new PedidoCoreService(queue.Object, restaurantRepo.Object, menu.Object, zonas.Object, horarios.Object, confirmacaoAtendente.Object, clientes.Object, Mock.Of<IClienteEnderecoRepository>());
             var request = CoreFixtures.Request();
             request.TelefoneCliente = null;
 

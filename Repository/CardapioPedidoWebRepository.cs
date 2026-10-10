@@ -180,7 +180,7 @@ SELECT c.id AS ConversaId, c.janela_24h_fim AS JanelaFim, c.data_ultima_entrada 
   JOIN clientes cl ON cl.id = c.id_cliente
  WHERE c.id_estabelecimento = @EstabelecimentoId
    AND regexp_replace(cl.telefone_e164, '\D', '', 'g') = ANY(@Variantes)
- ORDER BY c.janela_24h_fim DESC NULLS LAST, c.data_ultima_entrada DESC NULLS LAST, c.data_ultima_mensagem DESC NULLS LAST
+ ORDER BY c.data_ultima_entrada DESC NULLS LAST, c.janela_24h_fim DESC NULLS LAST, c.data_ultima_mensagem DESC NULLS LAST
  LIMIT 1;", new { EstabelecimentoId = estabelecimentoId, Variantes = variantes.ToArray() });
                 return row == null ? null : new ConversaPorTelefone(row.ConversaId, row.JanelaFim, row.UltimaEntrada);
             });

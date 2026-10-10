@@ -22,7 +22,7 @@ namespace APIBack.Service
         private const string TipoEntrega = "entrega";
         private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
 
-        private static readonly TimeSpan JanelaIdentificacao = TimeSpan.FromHours(2);
+        private static readonly TimeSpan JanelaIdentificacao = ClienteAcessoService.JanelaWhatsapp;
 
         private readonly ICardapioPedidoWebRepository _repository;
         private readonly ICardapioRepository _cardapio;

@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using APIBack.Automation.Interfaces;
 using APIBack.DTOs.Atendimento;
 using APIBack.DTOs.Cardapio;
+using APIBack.DTOs.Clientes;
 using Microsoft.Extensions.Logging.Abstractions;
 using APIBack.Model.Cardapio;
 using APIBack.Repository.Interface;
@@ -41,6 +42,8 @@ namespace APIBack.Tests.Unit
             public Mock<ILocalizacaoService> Localizacao { get; } = new();
             public Mock<IWabaPhoneRepository> Waba { get; } = new();
             public Mock<ICardapioPedidoWebService> Confirmacao { get; } = new();
+            public Mock<IClienteAcessoService> Acesso { get; } = new();
+            public Mock<IClienteEnderecoRepository> Enderecos { get; } = new();
             public Mock<IAtendimentoRepository> Atendimento { get; } = new();
             /// <summary>Quarta-feira, 15h no Brasil (18h UTC): ajustavel por teste.</summary>
             public DateTimeOffset Agora { get; set; } = new(2026, 10, 7, 18, 0, 0, TimeSpan.Zero);
@@ -50,6 +53,8 @@ namespace APIBack.Tests.Unit
 
             public Fixture()
             {
+                Acesso.Setup(a => a.RequireAsync(Estabelecimento, It.IsAny<string?>(), It.IsAny<string?>()))
+                    .ReturnsAsync(new ClienteSessao(Guid.NewGuid(), Estabelecimento, "+5534991230001", "Maria", DateTimeOffset.UtcNow.AddDays(30)));
                 Cardapio.Setup(c => c.ObterEstabelecimentoPublicoAsync(It.IsAny<Guid?>(), It.IsAny<string?>()))
                     .ReturnsAsync(new CardapioEstabelecimentoPublico
                     {
@@ -89,7 +94,7 @@ namespace APIBack.Tests.Unit
 
                 return new(Cardapio.Object, Localizacao.Object, Waba.Object, Confirmacao.Object,
                     new PedidosAbertosService(Atendimento.Object, NullLogger<PedidosAbertosService>.Instance, new RelogioFixo(Agora)),
-                    NullLogger<CardapioPublicService>.Instance);
+                    NullLogger<CardapioPublicService>.Instance, Acesso.Object, Enderecos.Object);
             }
         }
 
@@ -139,6 +144,27 @@ namespace APIBack.Tests.Unit
         // =====================================================================
         // Adicionais: o cardapio web manda o id do adicional (o grupo)
         // =====================================================================
+
+        [Fact]
+        public async Task Pedido_sem_sessao_nao_grava_nem_geocodifica_endereco()
+        {
+            var f = new Fixture();
+            f.Acesso.Setup(a => a.RequireAsync(Estabelecimento, It.IsAny<string?>(), It.IsAny<string?>()))
+                .ThrowsAsync(new DeliveryDomainException(403, "CLIENT_UNAUTHENTICATED", "Confirme seu WhatsApp."));
+            Assert.Equal("CLIENT_UNAUTHENTICATED", (await Assert.ThrowsAsync<DeliveryDomainException>(() => f.Build().CriarPedidoAsync(Pedido()))).Code);
+            Assert.Null(f.Gravado);
+            f.Localizacao.Verify(l => l.GeocodificarAsync(It.IsAny<string>(), It.IsAny<string?>()), Times.Never);
+            f.Enderecos.Verify(e => e.SaveAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<Guid?>(), It.IsAny<ClienteEnderecoRequest>()), Times.Never);
+        }
+
+        [Fact]
+        public async Task Pedido_autenticado_salva_endereco_com_apelido_e_opcao_principal()
+        {
+            var f = new Fixture(); var request = Pedido(); request.EnderecoPrincipal = true; request.ApelidoEndereco = "Casa";
+            await f.Build().CriarPedidoAsync(request);
+            f.Enderecos.Verify(e => e.SaveAsync(Estabelecimento, It.IsAny<Guid>(), null,
+                It.Is<ClienteEnderecoRequest>(a => a.Principal && a.Apelido == "Casa" && a.Numero == request.EnderecoEntrega!.Numero)), Times.Once);
+        }
 
         [Fact]
         public async Task The_quote_accepts_the_extras_id_and_prices_it_with_its_item()

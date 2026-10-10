@@ -24,7 +24,7 @@ namespace APIBack.Controllers
         private const int MaximoDeBuscasPorJanela = 40;
         private static readonly TimeSpan JanelaDeBuscas = TimeSpan.FromMinutes(10);
 
-        // Nao revela dado de ninguem sem a janela de 2h (Fase 3c), mas o teto evita que um script varra numeros ao acaso.
+        // Só permite o prefill na janela de 1h; o teto evita varreduras de números.
         private const int MaximoDeIdentificacoesPorJanela = 30;
         private static readonly TimeSpan JanelaDeIdentificacoes = TimeSpan.FromMinutes(10);
 

@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using APIBack.DTOs.Delivery;
+using APIBack.DTOs.Clientes;
 using APIBack.Model.Cardapio;
 using APIBack.Model.Delivery;
 using APIBack.Repository.Interface;
@@ -27,6 +28,7 @@ namespace APIBack.Service
         private readonly IHorarioOperacaoRepository _horarios;
         private readonly IAtendenteConfirmacaoSender _confirmacaoAtendente;
         private readonly IClienteCadastroRepository _clientes;
+        private readonly IClienteEnderecoRepository _enderecos;
 
         public PedidoCoreService(
             IPedidoQueueRepository queue,
@@ -35,7 +37,8 @@ namespace APIBack.Service
             IDeliveryZonaRepository zonas,
             IHorarioOperacaoRepository horarios,
             IAtendenteConfirmacaoSender confirmacaoAtendente,
-            IClienteCadastroRepository clientes)
+            IClienteCadastroRepository clientes,
+            IClienteEnderecoRepository enderecos)
         {
             _queue = queue;
             _restaurant = restaurant;
@@ -44,12 +47,16 @@ namespace APIBack.Service
             _horarios = horarios;
             _confirmacaoAtendente = confirmacaoAtendente;
             _clientes = clientes;
+            _enderecos = enderecos;
         }
 
         public async Task<CreatedPedidoDto> CreateAsync(Guid estabelecimentoId, int actorUserId, CreatePedidoRequest request, string? idempotencyKey, bool autoAtribuir = true)
         {
             var order = await BuildAsync(estabelecimentoId, request, idempotencyKey);
+            // Valida o endereço antes de criar o pedido: metadados inválidos não podem deixar um pedido criado com resposta de erro.
+            if (order.ClienteId.HasValue && !string.IsNullOrWhiteSpace(order.Estado)) ClienteEnderecoRules.Validate(AddressInput(order, request));
             var created = await _queue.CreatePedidoAsync(estabelecimentoId, actorUserId, order);
+            if (!created.JaExistia) await SaveAddressAsync(estabelecimentoId, order, request);
             var isPending = string.Equals(created.Status, "pendente", StringComparison.OrdinalIgnoreCase);
             if (autoAtribuir && !created.JaExistia && isPending)
             {
@@ -100,8 +107,24 @@ namespace APIBack.Service
             }
             // Editar nao cria: a chave de idempotencia nao se aplica.
             var order = (await BuildAsync(estabelecimentoId, request, idempotencyKey: null)) with { OrigemRef = null };
-            return await _queue.UpdatePedidoAsync(estabelecimentoId, actorUserId, pedidoId, order);
+            var updated = await _queue.UpdatePedidoAsync(estabelecimentoId, actorUserId, pedidoId, order);
+            await SaveAddressAsync(estabelecimentoId, order, request);
+            return updated;
         }
+
+        private async Task SaveAddressAsync(Guid est, ManualOrder order, CreatePedidoRequest request)
+        {
+            if (!order.ClienteId.HasValue || string.IsNullOrWhiteSpace(order.Estado)) return;
+            await _enderecos.SaveAsync(est, order.ClienteId.Value, null, AddressInput(order, request));
+        }
+
+        private static ClienteEnderecoRequest AddressInput(ManualOrder order, CreatePedidoRequest request) => new()
+        {
+            Logradouro = order.Rua, Numero = order.Numero, Complemento = request.Complemento,
+            Bairro = order.Bairro, Cidade = order.Cidade, Uf = order.Estado, Cep = order.Cep,
+            Latitude = order.Latitude, Longitude = order.Longitude, Principal = request.EnderecoPrincipal,
+            Apelido = request.ApelidoEndereco
+        };
 
         public async Task<CreatedPedidoDto> ConfirmAsync(Guid estabelecimentoId, int actorUserId, int pedidoId)
         {

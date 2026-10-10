@@ -206,13 +206,16 @@ namespace APIBack.Service
                         var extraName = Pick(extra, NameKeys);
                         if (extraName.ValueKind != JsonValueKind.String || string.IsNullOrWhiteSpace(extraName.GetString())) continue;
                         var count = ToNumber(Pick(extra, QuantityKeys));
-                        extras.Add(new() { Nome = extraName.GetString()!.Trim(), Quantidade = count is > 0 ? (int)Math.Min(count.Value, 1000m) : 1, Preco = ToNumber(Pick(extra, PriceKeys)) ?? 0 });
+                        var extraId = Pick(extra, new[] { "id", "adicionalId", "adicional_id", "itemId" });
+                        extras.Add(new() { Id = extraId.ValueKind == JsonValueKind.String && Guid.TryParse(extraId.GetString(), out var parsedExtra) ? parsedExtra : null, Nome = extraName.GetString()!.Trim(), Quantidade = count is > 0 ? (int)Math.Min(count.Value, 1000m) : 1, Preco = ToNumber(Pick(extra, PriceKeys)) ?? 0 });
                     }
                 }
             }
             var observation = Pick(element, new[] { "observacao", "observacoes", "note", "notes" });
+            var productId = Pick(element, new[] { "produtoId", "produto_id", "productId" });
             return new PedidoItemDto
             {
+                ProdutoId = productId.ValueKind == JsonValueKind.String && Guid.TryParse(productId.GetString(), out var parsedProduct) ? parsedProduct : null,
                 Nome = name.GetString()!.Trim(),
                 Quantidade = qty,
                 Observacao = observation.ValueKind == JsonValueKind.String ? observation.GetString() : null,

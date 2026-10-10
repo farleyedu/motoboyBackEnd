@@ -36,6 +36,7 @@ SELECT i.id::text AS ItemId, i.produto_id AS ProdutoId, i.nome AS Nome,
             var raw = await connection.ExecuteScalarAsync<string?>(new CommandDefinition("SELECT items::text FROM pedido WHERE id=@Pedido AND id_estabelecimento=@Store", new { Pedido = pedido, Store = store }, transaction, cancellationToken: ct));
             items = LegacyItemsParser.Parse(raw);
         }
+        await CardapioMotoboyAttentionRepository.ApplyAsync(connection, transaction, store, items, ct);
         return DeliveryChecklistRules.Build(items);
     }
 }

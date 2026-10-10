@@ -179,6 +179,7 @@ SELECT i.id::text AS ItemId, i.produto_id AS ProdutoId, i.nome AS Nome, i.quanti
                 itens = structured.Select(ToItem).ToList();
             }
             if (itens.Count == 0) itens = LegacyItemsParser.Parse(row.Items);
+            await CardapioMotoboyAttentionRepository.ApplyAsync(connection, null, estabelecimentoId, itens);
 
             var anchor = DeliveryRules.ParseStoredDateTime(row.DataPedidoRaw);
             var detail = new PedidoDetalheDto

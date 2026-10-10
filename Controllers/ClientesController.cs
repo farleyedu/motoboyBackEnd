@@ -19,10 +19,12 @@ namespace APIBack.Controllers
     public sealed class ClientesController : ControllerBase
     {
         private readonly IClienteCadastroRepository _clientes;
+        private readonly IClienteEnderecoRepository _enderecos;
 
-        public ClientesController(IClienteCadastroRepository clientes)
+        public ClientesController(IClienteCadastroRepository clientes, IClienteEnderecoRepository enderecos)
         {
             _clientes = clientes;
+            _enderecos = enderecos;
         }
 
         [HttpGet]
@@ -34,6 +36,25 @@ namespace APIBack.Controllers
         [RequirePermission("Delivery", "visualizar")]
         public Task<IActionResult> Get(Guid clienteId) =>
             ExecuteAsync(async (est, _) => await _clientes.GetAsync(est, clienteId) ?? throw NotFound_());
+
+        [HttpGet("{clienteId:guid}/enderecos")]
+        [RequirePermission("Delivery", "visualizar")]
+        public Task<IActionResult> Enderecos(Guid clienteId) => ExecuteAsync((est, _) => _enderecos.ListAsync(est, clienteId));
+
+        [HttpPost("{clienteId:guid}/enderecos")]
+        [RequirePermission("Delivery", "criar_pedido")]
+        public Task<IActionResult> AddEndereco(Guid clienteId, ClienteEnderecoRequest body) =>
+            ExecuteAsync((est, _) => _enderecos.SaveAsync(est, clienteId, null, body), created: true);
+
+        [HttpPut("{clienteId:guid}/enderecos/{id:guid}")]
+        [RequirePermission("Delivery", "editar_pedido")]
+        public Task<IActionResult> EditEndereco(Guid clienteId, Guid id, ClienteEnderecoRequest body) =>
+            ExecuteAsync((est, _) => _enderecos.SaveAsync(est, clienteId, id, body));
+
+        [HttpDelete("{clienteId:guid}/enderecos/{id:guid}")]
+        [RequirePermission("Delivery", "editar_pedido")]
+        public Task<IActionResult> DeleteEndereco(Guid clienteId, Guid id) => ExecuteAsync(async (est, _) =>
+        { await _enderecos.DeleteAsync(est, clienteId, id); return new { id }; });
 
         [HttpPost]
         [RequirePermission("Delivery", "criar_pedido")]

@@ -14,14 +14,22 @@ namespace APIBack.Tests.Integration;
 public partial class DeliverySyncDatabaseTests
 {
     private static Task ApplyCorrection(Database db,string name)=>db.Execute(File.ReadAllText(Path.Combine(AppContext.BaseDirectory,"Migrations","Delivery",name)));
-    private const string Bag="""[{"nome":"Combo","quantidade":2,"adicionais":[{"nome":"Suco","quantidade":1},{"nome":"Brownie","quantidade":2}]}]""";
-    private static DeliveryChecklistConfirmation Checked(int id,DeliveryChecklist checklist)=>new(){PedidoId=id,Version=checklist.Version,ConfirmedKeys=checklist.DetailsUnavailable?new(){"manual"}:checklist.Items.Select(i=>i.Key).ToList(),RecheckedExtraKeys=checklist.DetailsUnavailable?new(){"manual"}:checklist.Items.Where(i=>i.Extra).Select(i=>i.Key).ToList()};
+    private const string Bag="""[{"nome":"Combo","quantidade":2,"adicionais":[{"id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","nome":"Suco","quantidade":1},{"nome":"Brownie","quantidade":2}]}]""";
+    private static DeliveryChecklistConfirmation Checked(int id,DeliveryChecklist checklist)=>new(){PedidoId=id,Version=checklist.Version,ConfirmedKeys=checklist.DetailsUnavailable?new(){"manual"}:checklist.Items.Select(i=>i.Key).ToList(),RecheckedExtraKeys=checklist.Items.Where(i=>i.Extra).Select(i=>i.Key).ToList()};
     [DeliveryDatabaseFact] public async Task ChecklistChangesRollBackPickupAndCompletionDoesNotChargeBeforeFinalConfirmation()
     {
         await using var db=await WorkDatabase();await WorkPlan(db);await CaptureWork(db);
         await ApplyCorrection(db,"20261009_01_delivery_order_checklists.sql");await ApplyCorrection(db,"20261009_01_delivery_order_checklists.sql");
+        await db.Execute("""
+CREATE TABLE cardapio_produto(id uuid,id_estabelecimento uuid,deleted_at timestamptz);
+CREATE TABLE cardapio_grupo_adicional(id uuid,id_estabelecimento uuid,deleted_at timestamptz);
+CREATE TABLE cardapio_grupo_adicional_item(id uuid,id_grupo uuid);
+""");
+        await ApplyCorrection(db,"20261010_02_cardapio_atencao_motoboy.sql");
+        await db.Execute("INSERT INTO cardapio_grupo_adicional(id,id_estabelecimento,atencao_motoboy) VALUES('bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',@StoreId,TRUE)",new{db.StoreId});
         await db.Execute("UPDATE delivery_route_stops SET picked_up_at_utc=NULL; UPDATE pedido SET items=@Bag WHERE id=23",new{Bag});
-        var manifest=DeliveryChecklistRules.Build(LegacyItemsParser.Parse(Bag));var manual=DeliveryChecklistRules.Build(Array.Empty<PedidoItemDto>());
+        var items=LegacyItemsParser.Parse(Bag);items[0].Adicionais[0].AtencaoMotoboy=true;
+        var manifest=DeliveryChecklistRules.Build(items);var manual=DeliveryChecklistRules.Build(Array.Empty<PedidoItemDto>());
         var request=new PickupStopsRequest{ExpectedPedidoId=23,ExpectedVersion=3,PedidoIds=new(){23,24},Checklists=new(){Checked(23,manifest),Checked(24,manual)}};
         var repo=new PedidoQueueRepository(db.Source);request.Checklists[0].RecheckedExtraKeys.Clear();
         await Assert.ThrowsAsync<DeliveryDomainException>(()=>repo.PickUpStopsAsync(db.StoreId,1,request));
