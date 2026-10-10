@@ -10,6 +10,7 @@ namespace APIBack.DTOs.Tracking
         public Guid AttemptId { get; set; }
         public string? ClientInstanceId { get; set; }
         public string? ClientPlatform { get; set; }
+        public Guid? ResumeSessionId { get; set; }
     }
 
     public sealed class SwitchOperationalSessionRequest : StartOperationalSessionRequest

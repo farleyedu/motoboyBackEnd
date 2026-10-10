@@ -59,7 +59,7 @@ SELECT s.session_id AS SessionId,
 
         public async Task<OperationalSessionRecord> StartAuthenticatedMobileSessionAsync(
             int userId, Guid estabelecimentoId, Guid attemptId, string clientInstanceId, Guid loginSessionId,
-            Guid? expectedSessionId, bool explicitSwitch, string clientPlatform)
+            Guid? expectedSessionId, bool explicitSwitch, string clientPlatform, Guid? resumeSessionId = null)
         {
             // A substituição do login e um início já autenticado usam o mesmo bloqueio.
             // Isso evita que uma chamada antiga crie um turno depois do encerramento.
@@ -69,7 +69,7 @@ SELECT s.session_id AS SessionId,
             if (!await MotoboyLoginSessions.IsActiveAsync(connection, userId, loginSessionId))
                 throw new DeliveryDomainException(401, "SESSION_REPLACED", "Esta conta foi acessada em outro aparelho.");
             var result = await StartMobileSessionAsync(userId, estabelecimentoId, attemptId, clientInstanceId,
-                expectedSessionId, explicitSwitch, clientPlatform);
+                expectedSessionId, explicitSwitch, clientPlatform, resumeSessionId);
             await transaction.CommitAsync();
             return result;
         }
@@ -81,7 +81,7 @@ SELECT s.session_id AS SessionId,
             string clientInstanceId,
             Guid? expectedSessionId = null,
             bool explicitSwitch = false,
-            string clientPlatform = "native")
+            string clientPlatform = "native", Guid? resumeSessionId = null)
         {
             await using var connection = await _dataSource.OpenConnectionAsync();
             await using var transaction = await connection.BeginTransactionAsync();
@@ -90,6 +90,17 @@ SELECT s.session_id AS SessionId,
 
             var identity = await ResolveMobileIdentityForUpdateAsync(connection, transaction, userId, estabelecimentoId)
                 ?? throw new DeliveryDomainException(403, "LINK_FORBIDDEN", "Motoboy sem vinculo ativo com o estabelecimento.");
+
+            if (resumeSessionId.HasValue)
+            {
+                var previous = await connection.QuerySingleOrDefaultAsync<OperationalSessionRecord>(
+                    SessionSelect + " WHERE s.session_id = @SessionId FOR UPDATE OF s;",
+                    new { SessionId = resumeSessionId.Value }, transaction);
+                if (previous == null || previous.MotoboyId != identity.MotoboyId ||
+                    previous.EstabelecimentoId != estabelecimentoId || previous.StartedByUserId != userId ||
+                    previous.Origin != "mobile" || previous.EndReason != "heartbeat_timeout")
+                    throw new DeliveryDomainException(409, "SESSION_CHANGED", "Este turno foi encerrado ou substituído. A retomada automática não está disponível.");
+            }
 
             var repeated = await GetByAttemptAsync(connection, transaction, userId, "mobile", attemptId);
             if (repeated != null)

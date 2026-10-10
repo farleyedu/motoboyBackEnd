@@ -49,9 +49,9 @@ namespace APIBack.Service
             var platform = RequireClientPlatform(request.ClientPlatform);
             var session = request.LoginSessionId.HasValue
                 ? await _repository.StartAuthenticatedMobileSessionAsync(userId, estabelecimentoId, request.AttemptId,
-                    clientInstanceId, request.LoginSessionId.Value, null, false, platform)
+                    clientInstanceId, request.LoginSessionId.Value, null, false, platform, request.ResumeSessionId)
                 : await _repository.StartMobileSessionAsync(userId, estabelecimentoId, request.AttemptId,
-                    clientInstanceId, clientPlatform: platform);
+                    clientInstanceId, clientPlatform: platform, resumeSessionId: request.ResumeSessionId);
             return CreateTokenResponse<OperationalSessionTokenResponse>(session, request.LoginSessionId);
         }
 

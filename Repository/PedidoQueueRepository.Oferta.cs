@@ -24,7 +24,7 @@ namespace APIBack.Repository
 
         private sealed class OfferSettingsRow
         {
-            public bool Required { get; set; }
+            public bool Required { get; set; } = true;
             public int Minutes { get; set; } = OfertaRotaRules.PrazoPadraoMinutos;
         }
 
@@ -47,18 +47,18 @@ SELECT require_motoboy_acceptance AS Required, offer_timeout_minutes AS Minutes
             return row ?? new OfferSettingsRow();
         }
 
-        /// <summary>Id novo de oferta quando o estabelecimento exige o aceite; null = atribuicao direta (como sempre).</summary>
+        /// <summary>Toda atribuição precisa de aceite explícito do motoboy.</summary>
         private static async Task<Guid?> NewOfferIdIfRequiredAsync(
             NpgsqlConnection connection, NpgsqlTransaction transaction, Guid estabelecimentoId)
         {
-            var settings = await ReadOfferSettingsAsync(connection, transaction, estabelecimentoId);
-            return settings.Required ? Guid.NewGuid() : null;
+            if (!await PedidoColumnTypes.HasOfertaSchemaAsync(connection, transaction)) throw OfertaPending();
+            return Guid.NewGuid();
         }
 
         private static async Task ApplyOfferSettingsAsync(DeliverySettingsDto settings, NpgsqlConnection connection, Guid estabelecimentoId)
         {
             var row = await ReadOfferSettingsAsync(connection, null, estabelecimentoId);
-            settings.RequireMotoboyAcceptance = row.Required;
+            settings.RequireMotoboyAcceptance = true;
             settings.OfferTimeoutMinutes = row.Minutes;
         }
 
@@ -74,7 +74,7 @@ SELECT require_motoboy_acceptance AS Required, offer_timeout_minutes AS Minutes
             }
             await connection.ExecuteAsync(@"
 UPDATE delivery_settings
-   SET require_motoboy_acceptance = COALESCE(@Required, require_motoboy_acceptance),
+   SET require_motoboy_acceptance = TRUE,
        offer_timeout_minutes = COALESCE(@Minutes, offer_timeout_minutes)
  WHERE estabelecimento_id = @EstabelecimentoId;",
                 new { Required = request.RequireMotoboyAcceptance, Minutes = request.OfferTimeoutMinutes, EstabelecimentoId = estabelecimentoId },

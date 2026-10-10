@@ -10,7 +10,7 @@ namespace APIBack.Repository.Interface
     {
         Task<OperationalSessionRecord> StartAuthenticatedMobileSessionAsync(
             int userId, Guid estabelecimentoId, Guid attemptId, string clientInstanceId, Guid loginSessionId,
-            Guid? expectedSessionId, bool explicitSwitch, string clientPlatform);
+            Guid? expectedSessionId, bool explicitSwitch, string clientPlatform, Guid? resumeSessionId = null);
         Task<OperationalSessionRecord> StartMobileSessionAsync(
             int userId,
             Guid estabelecimentoId,
@@ -18,7 +18,7 @@ namespace APIBack.Repository.Interface
             string clientInstanceId,
             Guid? expectedSessionId = null,
             bool explicitSwitch = false,
-            string clientPlatform = "native");
+            string clientPlatform = "native", Guid? resumeSessionId = null);
 
         Task<OperationalSessionRecord> StartSimulatorSessionAsync(
             int actorUserId,
