@@ -198,6 +198,36 @@ namespace APIBack.Tests.Unit
             _repository.Verify(r => r.CanUserManageEstablishmentAsync(It.IsAny<int>(), It.IsAny<bool>(), It.IsAny<Guid>()), Times.Never);
         }
 
+        [Theory]
+        [InlineData("web", 43200)]
+        [InlineData("native", 3600)]
+        public async Task Start_UsesClientPlatformForSessionAndTokenLifetime(string platform, int expectedSeconds)
+        {
+            var session = CreateSession("mobile");
+            session.DeviceType = platform == "web" ? "web" : "mobile";
+            var attempt = Guid.NewGuid();
+            _repository.Setup(r => r.StartMobileSessionAsync(7, session.EstabelecimentoId, attempt, "qa", null, false, platform))
+                .ReturnsAsync(session);
+            TimeSpan lifetime = default;
+            _jwtService.Setup(j => j.GenerateToken(It.IsAny<JwtPayload>(), It.IsAny<TimeSpan>()))
+                .Callback<JwtPayload, TimeSpan>((_, duration) => lifetime = duration).Returns("token-qa");
+            var result = await CreateService().StartMobileSessionAsync(7, session.EstabelecimentoId,
+                new StartOperationalSessionRequest { AttemptId = attempt, ClientInstanceId = "qa", ClientPlatform = platform });
+            Assert.Equal(expectedSeconds, result.ExpiresIn);
+            Assert.Equal(TimeSpan.FromSeconds(expectedSeconds), lifetime);
+            Assert.Equal(platform, result.Session.ClientPlatform);
+            Assert.Equal("mobile", result.Session.Origin);
+        }
+
+        [Fact]
+        public async Task Start_RejectsUnknownPlatformBeforeCreatingSession()
+        {
+            var error = await Assert.ThrowsAsync<DeliveryDomainException>(() => CreateService().StartMobileSessionAsync(7, Guid.NewGuid(),
+                new StartOperationalSessionRequest { AttemptId = Guid.NewGuid(), ClientPlatform = "simulator" }));
+            Assert.Equal("INVALID_CLIENT_PLATFORM", error.Code);
+            _repository.VerifyNoOtherCalls();
+        }
+
         private OperationalSessionService CreateService() => new(
             _repository.Object,
             _jwtService.Object,

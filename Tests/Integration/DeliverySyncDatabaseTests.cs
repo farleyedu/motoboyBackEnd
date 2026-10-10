@@ -260,7 +260,7 @@ CREATE TABLE estabelecimentos(id uuid PRIMARY KEY, ativo bool, status text);
 CREATE TABLE motoboy_estabelecimento(motoboy_id int, estabelecimento_id uuid, ativo bool, simulator_enabled bool);
 CREATE TABLE usuario_estabelecimentos(id_usuario int, id_estabelecimento uuid, tipo_acesso text, ativo bool, status text);
 CREATE TABLE motoboy_active_sessions(session_id uuid PRIMARY KEY, session_epoch bigint, motoboy_id int, id_usuario int,
- id_estabelecimento uuid, origin text, client_instance_id text, started_by_user_id int, idempotency_key uuid,
+ id_estabelecimento uuid, origin text, device_type text DEFAULT 'mobile', client_instance_id text, started_by_user_id int, idempotency_key uuid,
  started_at_utc timestamptz, last_heartbeat_at_utc timestamptz, expires_at_utc timestamptz,
  ended_at_utc timestamptz, revoked_at timestamptz, end_reason text, revoke_reason text, last_seen_at timestamptz, version bigint,paused_at_utc timestamptz);
 CREATE TABLE motoboy_location_samples(id bigserial PRIMARY KEY, sample_id uuid, session_id uuid, motoboy_id int, estabelecimento_id uuid,

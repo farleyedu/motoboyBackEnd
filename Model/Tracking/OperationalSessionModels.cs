@@ -22,6 +22,7 @@ namespace APIBack.Model.Tracking
         public int? UsuarioId { get; set; }
         public Guid EstabelecimentoId { get; set; }
         public string Origin { get; set; } = "mobile";
+        public string DeviceType { get; set; } = "mobile";
         public string? ClientInstanceId { get; set; }
         public int? StartedByUserId { get; set; }
         public Guid? IdempotencyKey { get; set; }

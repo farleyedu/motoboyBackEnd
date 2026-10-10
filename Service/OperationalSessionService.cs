@@ -49,7 +49,8 @@ namespace APIBack.Service
                 userId,
                 estabelecimentoId,
                 request.AttemptId,
-                request.ClientInstanceId ?? request.AttemptId.ToString("D"));
+                request.ClientInstanceId ?? request.AttemptId.ToString("D"),
+                clientPlatform: RequireClientPlatform(request.ClientPlatform));
             return CreateTokenResponse<OperationalSessionTokenResponse>(session);
         }
 
@@ -78,7 +79,8 @@ namespace APIBack.Service
                 request.AttemptId,
                 request.ClientInstanceId ?? request.AttemptId.ToString("D"),
                 request.ExpectedSessionId,
-                explicitSwitch: true);
+                explicitSwitch: true,
+                clientPlatform: RequireClientPlatform(request.ClientPlatform));
             return CreateTokenResponse<OperationalSessionTokenResponse>(session);
         }
 
@@ -120,7 +122,7 @@ namespace APIBack.Service
             return new OperationalHeartbeatResponse
             {
                 AccessToken = token,
-                ExpiresIn = OperationalTokenExpiresInSeconds,
+                ExpiresIn = OperationalTokenExpiresInSeconds(session),
                 ServerTimeUtc = DateTimeOffset.UtcNow,
                 Session = MapSession(session)
             };
@@ -364,7 +366,7 @@ namespace APIBack.Service
             {
                 EstablishmentId = session.EstabelecimentoId,
                 AccessToken = GenerateOperationalToken(session),
-                ExpiresIn = OperationalTokenExpiresInSeconds,
+                ExpiresIn = OperationalTokenExpiresInSeconds(session),
                 Motoboy = new MotoboyMapDto
                 {
                     Id = session.MotoboyId,
@@ -400,7 +402,7 @@ namespace APIBack.Service
                 SessionEpoch = session.SessionEpoch,
                 Scope = "delivery:tracking"
             };
-            return _jwtService.GenerateToken(payload, TimeSpan.FromMinutes(_options.OperationalTokenExpirationMinutes));
+            return _jwtService.GenerateToken(payload, TimeSpan.FromSeconds(OperationalTokenExpiresInSeconds(session)));
         }
 
         private OperationalSessionDto MapSession(OperationalSessionRecord session) => new()
@@ -408,6 +410,7 @@ namespace APIBack.Service
             SessionId = session.SessionId,
             Epoch = session.SessionEpoch,
             Origin = session.Origin,
+            ClientPlatform = session.DeviceType == "web" ? "web" : "native",
             StartedAtUtc = session.StartedAtUtc,
             PresenceExpiresAtUtc = session.ExpiresAtUtc,
             HeartbeatIntervalSeconds = _options.HeartbeatIntervalSeconds,
@@ -447,7 +450,15 @@ namespace APIBack.Service
             return (payload.MotoboySessionId.Value, payload.MotoboyId.Value, payload.SessionEpoch.Value);
         }
 
-        private int OperationalTokenExpiresInSeconds =>
-            checked(Math.Max(1, _options.OperationalTokenExpirationMinutes) * 60);
+        private static string RequireClientPlatform(string? platform) => platform switch
+        {
+            null or "native" => "native",
+            "web" => "web",
+            _ => throw new DeliveryDomainException(422, "INVALID_CLIENT_PLATFORM", "clientPlatform deve ser native ou web.")
+        };
+
+        private int OperationalTokenExpiresInSeconds(OperationalSessionRecord session) => session.DeviceType == "web"
+            ? Math.Max(_options.PresenceTtlSeconds, _options.WebPresenceTtlSeconds)
+            : checked(Math.Max(1, _options.OperationalTokenExpirationMinutes) * 60);
     }
 }

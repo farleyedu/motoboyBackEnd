@@ -26,6 +26,7 @@ SELECT s.session_id AS SessionId,
        s.id_usuario AS UsuarioId,
        s.id_estabelecimento AS EstabelecimentoId,
        s.origin AS Origin,
+       s.device_type AS DeviceType,
        s.client_instance_id AS ClientInstanceId,
        s.started_by_user_id AS StartedByUserId,
        s.idempotency_key AS IdempotencyKey,
@@ -62,7 +63,8 @@ SELECT s.session_id AS SessionId,
             Guid attemptId,
             string clientInstanceId,
             Guid? expectedSessionId = null,
-            bool explicitSwitch = false)
+            bool explicitSwitch = false,
+            string clientPlatform = "native")
         {
             await using var connection = await _dataSource.OpenConnectionAsync();
             await using var transaction = await connection.BeginTransactionAsync();
@@ -110,7 +112,7 @@ SELECT s.session_id AS SessionId,
                 userId,
                 attemptId,
                 string.IsNullOrWhiteSpace(clientInstanceId) ? attemptId.ToString("D") : clientInstanceId.Trim(),
-                "mobile");
+                "mobile", clientPlatform == "web" ? "web" : "mobile");
             await transaction.CommitAsync();
             return created;
         }
@@ -267,7 +269,7 @@ SELECT latitude AS Latitude, longitude AS Longitude
 WITH updated AS (
     UPDATE motoboy_active_sessions s
        SET last_heartbeat_at_utc = NOW(), last_seen_at = NOW(),
-           expires_at_utc = NOW() + (CASE WHEN s.origin = 'simulator' THEN @SimulatorTtl ELSE @Ttl END * INTERVAL '1 second'),
+           expires_at_utc = NOW() + (CASE WHEN s.origin = 'simulator' THEN @SimulatorTtl WHEN s.device_type = 'web' THEN @WebTtl ELSE @Ttl END * INTERVAL '1 second'),
            version = s.version + 1
      WHERE s.session_id = @SessionId AND s.motoboy_id = @MotoboyId AND s.session_epoch = @SessionEpoch
        AND s.ended_at_utc IS NULL AND s.revoked_at IS NULL AND s.expires_at_utc > NOW()
@@ -287,7 +289,7 @@ WITH updated AS (
 ) " + SessionSelect.Replace("FROM motoboy_active_sessions s", "FROM updated s");
             var session = await connection.QuerySingleOrDefaultAsync<OperationalSessionRecord>(new CommandDefinition(sql,
                 new { SessionId = sessionId, MotoboyId = motoboyId, SessionEpoch = sessionEpoch,
-                    Ttl = _options.PresenceTtlSeconds, SimulatorTtl = PresenceTtlSecondsFor("simulator") },
+                    Ttl = _options.PresenceTtlSeconds, SimulatorTtl = PresenceTtlSecondsFor("simulator"), WebTtl = PresenceTtlSecondsFor("mobile", "web") },
                 transaction, commandTimeout: 10, cancellationToken: cancellationToken))
                 ?? throw new DeliveryDomainException(401, "SESSION_EXPIRED", "Sessao operacional encerrada ou expirada.");
             await InsertRealtimeEventAsync(connection, transaction, DeliveryRealtimeEvents.MotoboyStatusChanged,
@@ -548,10 +550,11 @@ SELECT s.motoboy_id AS MotoboyId,
             {
                 // O motoboy simulado fica onde o operador o deixou: a posicao nao "envelhece".
                 // No app real ela vem do GPS do aparelho, entao a janela de frescor continua valendo.
-                var fresh = row.ReceivedAtUtc.HasValue &&
+                var locationAt = row.CapturedAtUtc ?? row.ReceivedAtUtc;
+                var fresh = locationAt.HasValue &&
                             (string.Equals(row.Origin, "simulator", StringComparison.Ordinal) ||
                              DeliveryTrackingPolicy.IsLocationFresh(
-                                 row.ReceivedAtUtc.Value,
+                                 locationAt.Value,
                                  serverNow,
                                  _options.LocationFreshnessSeconds));
                 return new OnlineMotoboyDto
@@ -573,7 +576,8 @@ SELECT s.motoboy_id AS MotoboyId,
                     Origin = row.Origin,
                     PresenceExpiresAtUtc = row.PresenceExpiresAtUtc,
                     HasRecentLocation = fresh,
-                    Location = fresh && row.Latitude.HasValue && row.Longitude.HasValue
+                    // Uma pausa do GPS não apaga o último ponto. Frescor e turno são independentes.
+                    Location = row.ReceivedAtUtc.HasValue && row.Latitude.HasValue && row.Longitude.HasValue
                         ? new OperationalLocationDto
                         {
                             Latitude = row.Latitude.Value,
@@ -584,7 +588,7 @@ SELECT s.motoboy_id AS MotoboyId,
                             TrackingMode = row.TrackingMode ?? "online_idle",
                             Quality = row.Quality ?? "unknown",
                             Sequence = row.Sequence ?? 0,
-                            CapturedAtUtc = row.CapturedAtUtc ?? serverNow,
+                            CapturedAtUtc = row.CapturedAtUtc ?? row.ReceivedAtUtc!.Value,
                             ReceivedAtUtc = row.ReceivedAtUtc!.Value
                         }
                         : null
@@ -811,10 +815,10 @@ SELECT motoboy_id AS MotoboyId,
                 })).ToArray();
         }
 
-        private int PresenceTtlSecondsFor(string origin) =>
+        private int PresenceTtlSecondsFor(string origin, string? deviceType = null) =>
             origin == "simulator"
                 ? Math.Max(_options.PresenceTtlSeconds, _options.SimulatorPresenceTtlSeconds)
-                : _options.PresenceTtlSeconds;
+                : deviceType == "web" ? Math.Max(_options.PresenceTtlSeconds, _options.WebPresenceTtlSeconds) : _options.PresenceTtlSeconds;
 
         public async Task<int> ExpireDueSessionsAsync(int limit)
         {
@@ -953,7 +957,8 @@ SELECT canonical.id AS MotoboyId,
             int actorUserId,
             Guid attemptId,
             string clientInstanceId,
-            string origin)
+            string origin,
+            string? deviceType = null)
         {
             var serverNow = await GetServerNowAsync(connection, transaction);
             var sessionId = Guid.NewGuid();
@@ -968,12 +973,13 @@ SELECT canonical.id AS MotoboyId,
                 UsuarioId = identity.UsuarioId,
                 EstabelecimentoId = identity.EstabelecimentoId,
                 Origin = origin,
+                DeviceType = deviceType ?? origin,
                 ClientInstanceId = clientInstanceId,
                 StartedByUserId = actorUserId,
                 IdempotencyKey = attemptId,
                 StartedAtUtc = serverNow,
                 LastHeartbeatAtUtc = serverNow,
-                ExpiresAtUtc = serverNow.AddSeconds(PresenceTtlSecondsFor(origin)),
+                ExpiresAtUtc = serverNow.AddSeconds(PresenceTtlSecondsFor(origin, deviceType)),
                 Version = 1,
                 Nome = identity.Nome,
                 Avatar = identity.Avatar,
@@ -987,7 +993,7 @@ INSERT INTO motoboy_active_sessions (
     created_at, started_at_utc, last_seen_at, last_heartbeat_at_utc, expires_at_utc, version)
 VALUES (
     @SessionId, @SessionEpoch, 2, @MotoboyId, @UsuarioId, @EstabelecimentoId,
-    @Origin, @Origin, @ClientInstanceId, @StartedByUserId, @IdempotencyKey,
+    @DeviceType, @Origin, @ClientInstanceId, @StartedByUserId, @IdempotencyKey,
     @StartedAtUtc, @StartedAtUtc, @LastHeartbeatAtUtc, @LastHeartbeatAtUtc, @ExpiresAtUtc, @Version);",
                 session,
                 transaction);

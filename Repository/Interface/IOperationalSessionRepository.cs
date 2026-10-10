@@ -14,7 +14,8 @@ namespace APIBack.Repository.Interface
             Guid attemptId,
             string clientInstanceId,
             Guid? expectedSessionId = null,
-            bool explicitSwitch = false);
+            bool explicitSwitch = false,
+            string clientPlatform = "native");
 
         Task<OperationalSessionRecord> StartSimulatorSessionAsync(
             int actorUserId,

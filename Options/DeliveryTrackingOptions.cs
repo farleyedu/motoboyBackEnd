@@ -8,6 +8,9 @@ namespace APIBack.Options
         public bool SimulatorEnabled { get; set; }
         public bool ApplyMigrationsOnStartup { get; set; }
         public int PresenceTtlSeconds { get; set; } = 90;
+        // A web pausa GPS e heartbeat ao abrir Maps/Waze ou bloquear a tela.
+        // Mantém o turno por até 12 h sem retorno; não renova a idade da localização.
+        public int WebPresenceTtlSeconds { get; set; } = 12 * 60 * 60;
         /// <summary>
         /// Validade da presenca de uma sessao do simulador. O motoboy simulado so fica offline
         /// quando o operador aperta o botao: aba em segundo plano ou congelada perde o

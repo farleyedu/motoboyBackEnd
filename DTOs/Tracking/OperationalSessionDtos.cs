@@ -7,6 +7,7 @@ namespace APIBack.DTOs.Tracking
     {
         public Guid AttemptId { get; set; }
         public string? ClientInstanceId { get; set; }
+        public string? ClientPlatform { get; set; }
     }
 
     public sealed class SwitchOperationalSessionRequest : StartOperationalSessionRequest
@@ -28,6 +29,7 @@ namespace APIBack.DTOs.Tracking
         public Guid SessionId { get; set; }
         public long Epoch { get; set; }
         public string Origin { get; set; } = "mobile";
+        public string ClientPlatform { get; set; } = "native";
         public DateTimeOffset StartedAtUtc { get; set; }
         public DateTimeOffset PresenceExpiresAtUtc { get; set; }
         public int HeartbeatIntervalSeconds { get; set; }

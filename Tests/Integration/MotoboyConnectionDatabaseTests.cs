@@ -29,7 +29,10 @@ public partial class DeliverySyncDatabaseTests
     [DeliveryDatabaseFact]
     public Task LegacyMotoboyLinkConnectsRenewsTracksAndRejectsWrongOwnerOrRevokedLink() => CheckRestaurantConnection(true);
 
-    private static async Task CheckRestaurantConnection(bool legacyLink)
+    [DeliveryDatabaseFact]
+    public Task WebSessionSurvivesMapsPauseWithoutRefreshingLocationAndStillChecksOwner() => CheckRestaurantConnection(true, true);
+
+    private static async Task CheckRestaurantConnection(bool legacyLink, bool web = false)
     {
         await using var db = await Database.Create();
         DefaultTypeMap.MatchNamesWithUnderscores = true;
@@ -46,7 +49,7 @@ CREATE SEQUENCE motoboy_session_epoch_seq;
 CREATE TABLE motoboy_operational_session_events(event_id uuid,session_id uuid,motoboy_id int,
  estabelecimento_id uuid,event_type text,actor_user_id int,reason text,details jsonb,occurred_at_utc timestamptz);
 ALTER TABLE motoboy_active_sessions ADD COLUMN contract_version int,
- ADD COLUMN device_type text,ADD COLUMN created_at timestamptz;
+ ADD COLUMN created_at timestamptz;
 ALTER TABLE estabelecimentos ADD COLUMN id_empresa uuid,ADD COLUMN nome_fantasia text,
  ADD COLUMN id_tipo_estabelecimento int,ADD COLUMN modulos_ativos text[];
 ALTER TABLE usuario_estabelecimentos ADD COLUMN id uuid DEFAULT gen_random_uuid(),
@@ -103,11 +106,25 @@ UPDATE motoboy SET canonical_motoboy_id=id;
         // O inicio real, a repeticao e a telemetria usam o mesmo vinculo aprovado.
         await db.Execute("UPDATE motoboy_active_sessions SET ended_at_utc=NOW(),revoked_at=NOW()");
         var attempt = Guid.NewGuid();
-        var started = await db.Repository.StartMobileSessionAsync(7,db.StoreId,attempt,"aparelho-qa");
+        var started = await db.Repository.StartMobileSessionAsync(7,db.StoreId,attempt,"aparelho-qa",clientPlatform: web ? "web" : "native");
         Assert.Equal(started.SessionId,(await db.Repository.StartMobileSessionAsync(7,db.StoreId,attempt,"aparelho-qa")).SessionId);
         var heartbeat = await db.Repository.HeartbeatAsync(started.SessionId,1,started.SessionEpoch);
         Assert.Equal(7,heartbeat.UsuarioId);
         await db.Repository.WriteLocationAsync(started.SessionId,1,started.SessionEpoch,Database.Point(1));
+        if (web)
+        {
+            Assert.Equal("web", started.DeviceType);
+            Assert.True((heartbeat.ExpiresAtUtc - heartbeat.LastHeartbeatAtUtc).TotalHours >= 11.9);
+            // Simula três minutos no navegador externo, sem GPS ou heartbeat.
+            await db.Execute("UPDATE motoboy_active_sessions SET last_heartbeat_at_utc=NOW()-INTERVAL '3 minutes' WHERE session_id=@SessionId", new { started.SessionId });
+            var captured = await db.Scalar<DateTimeOffset>("SELECT captured_at_utc FROM motoboy_location_current");
+            var received = await db.Scalar<DateTimeOffset>("SELECT received_at_utc FROM motoboy_location_current");
+            await db.Repository.ExpireDueSessionsAsync(100);
+            Assert.Null((await db.Repository.GetSessionAsync(started.SessionId))!.EndedAtUtc);
+            await db.Repository.HeartbeatAsync(started.SessionId,1,started.SessionEpoch);
+            Assert.Equal(captured,await db.Scalar<DateTimeOffset>("SELECT captured_at_utc FROM motoboy_location_current"));
+            Assert.Equal(received,await db.Scalar<DateTimeOffset>("SELECT received_at_utc FROM motoboy_location_current"));
+        }
         var operational = jwt.GenerateToken(new APIBack.Model.Auth.JwtPayload
         {
             UserId=7,EstabelecimentoId=db.StoreId,MotoboyId=1,MotoboySessionId=started.SessionId,SessionEpoch=started.SessionEpoch,
