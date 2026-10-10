@@ -45,13 +45,14 @@ namespace APIBack.Service
             }
 
             EnsureAttempt(request.AttemptId);
-            var session = await _repository.StartMobileSessionAsync(
-                userId,
-                estabelecimentoId,
-                request.AttemptId,
-                request.ClientInstanceId ?? request.AttemptId.ToString("D"),
-                clientPlatform: RequireClientPlatform(request.ClientPlatform));
-            return CreateTokenResponse<OperationalSessionTokenResponse>(session);
+            var clientInstanceId = request.ClientInstanceId ?? request.AttemptId.ToString("D");
+            var platform = RequireClientPlatform(request.ClientPlatform);
+            var session = request.LoginSessionId.HasValue
+                ? await _repository.StartAuthenticatedMobileSessionAsync(userId, estabelecimentoId, request.AttemptId,
+                    clientInstanceId, request.LoginSessionId.Value, null, false, platform)
+                : await _repository.StartMobileSessionAsync(userId, estabelecimentoId, request.AttemptId,
+                    clientInstanceId, clientPlatform: platform);
+            return CreateTokenResponse<OperationalSessionTokenResponse>(session, request.LoginSessionId);
         }
 
         public async Task<OperationalSessionTokenResponse> SwitchMobileSessionAsync(
@@ -73,15 +74,14 @@ namespace APIBack.Service
                     "Troca de estabelecimento exige sessao esperada, destino e confirmacao explicita.");
             }
 
-            var session = await _repository.StartMobileSessionAsync(
-                userId,
-                request.TargetEstablishmentId,
-                request.AttemptId,
-                request.ClientInstanceId ?? request.AttemptId.ToString("D"),
-                request.ExpectedSessionId,
-                explicitSwitch: true,
-                clientPlatform: RequireClientPlatform(request.ClientPlatform));
-            return CreateTokenResponse<OperationalSessionTokenResponse>(session);
+            var clientInstanceId = request.ClientInstanceId ?? request.AttemptId.ToString("D");
+            var platform = RequireClientPlatform(request.ClientPlatform);
+            var session = request.LoginSessionId.HasValue
+                ? await _repository.StartAuthenticatedMobileSessionAsync(userId, request.TargetEstablishmentId, request.AttemptId,
+                    clientInstanceId, request.LoginSessionId.Value, request.ExpectedSessionId, true, platform)
+                : await _repository.StartMobileSessionAsync(userId, request.TargetEstablishmentId, request.AttemptId,
+                    clientInstanceId, request.ExpectedSessionId, explicitSwitch: true, clientPlatform: platform);
+            return CreateTokenResponse<OperationalSessionTokenResponse>(session, request.LoginSessionId);
         }
 
         public async Task<SimulatorAutoStartResponse> AutoStartSimulatorSessionAsync(
@@ -118,7 +118,7 @@ namespace APIBack.Service
             EnsureEnabled();
             var context = RequireOperationalContext(payload);
             var session = await _repository.HeartbeatAsync(context.SessionId, context.MotoboyId, context.SessionEpoch, cancellationToken);
-            var token = GenerateOperationalToken(session);
+            var token = GenerateOperationalToken(session, payload.MotoboyLoginSessionId);
             return new OperationalHeartbeatResponse
             {
                 AccessToken = token,
@@ -359,13 +359,13 @@ namespace APIBack.Service
 
         private const int TrajectoryPointLimit = 5000;
 
-        private T CreateTokenResponse<T>(OperationalSessionRecord session)
+        private T CreateTokenResponse<T>(OperationalSessionRecord session, Guid? loginSessionId = null)
             where T : OperationalSessionTokenResponse, new()
         {
             return new T
             {
                 EstablishmentId = session.EstabelecimentoId,
-                AccessToken = GenerateOperationalToken(session),
+                AccessToken = GenerateOperationalToken(session, loginSessionId),
                 ExpiresIn = OperationalTokenExpiresInSeconds(session),
                 Motoboy = new MotoboyMapDto
                 {
@@ -380,12 +380,13 @@ namespace APIBack.Service
             };
         }
 
-        private string GenerateOperationalToken(OperationalSessionRecord session)
+        private string GenerateOperationalToken(OperationalSessionRecord session, Guid? loginSessionId = null)
         {
             var actorUserId = session.StartedByUserId ?? session.UsuarioId
                 ?? throw new DeliveryDomainException(500, "SESSION_ACTOR_MISSING", "Sessao sem autor autenticavel.");
             var payload = new JwtPayload
             {
+                MotoboyLoginSessionId = loginSessionId,
                 UserId = actorUserId,
                 Nome = session.Nome,
                 Email = session.Origin == "simulator"

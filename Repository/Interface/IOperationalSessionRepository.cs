@@ -8,6 +8,9 @@ namespace APIBack.Repository.Interface
 {
     public interface IOperationalSessionRepository
     {
+        Task<OperationalSessionRecord> StartAuthenticatedMobileSessionAsync(
+            int userId, Guid estabelecimentoId, Guid attemptId, string clientInstanceId, Guid loginSessionId,
+            Guid? expectedSessionId, bool explicitSwitch, string clientPlatform);
         Task<OperationalSessionRecord> StartMobileSessionAsync(
             int userId,
             Guid estabelecimentoId,

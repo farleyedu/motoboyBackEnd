@@ -32,7 +32,10 @@ public partial class DeliverySyncDatabaseTests
     [DeliveryDatabaseFact]
     public Task WebSessionSurvivesMapsPauseWithoutRefreshingLocationAndStillChecksOwner() => CheckRestaurantConnection(true, true);
 
-    private static async Task CheckRestaurantConnection(bool legacyLink, bool web = false)
+    [DeliveryDatabaseFact]
+    public Task MobileLoginWarnsBeforeReplacementAndRejectsOldIdentityRefreshAndLateLogout() => CheckRestaurantConnection(false, mobileLogin: true);
+
+    private static async Task CheckRestaurantConnection(bool legacyLink, bool web = false, bool mobileLogin = false)
     {
         await using var db = await Database.Create();
         DefaultTypeMap.MatchNamesWithUnderscores = true;
@@ -42,7 +45,7 @@ CREATE TABLE usuario(id int PRIMARY KEY,nome text,email text,senha text,is_super
 CREATE TABLE empresas(id uuid PRIMARY KEY,nome_fantasia text,ativo bool DEFAULT TRUE,pausada bool DEFAULT FALSE);
 CREATE TABLE tipo_estabelecimento(id int PRIMARY KEY,nome text);
 CREATE TABLE usuario_empresas(id uuid,id_usuario int,id_empresa uuid,tipo_acesso text,status text,ativo bool,created_at timestamptz);
-CREATE TABLE usuario_refresh_tokens(id bigserial PRIMARY KEY,id_usuario int,token_hash text UNIQUE,
+CREATE TABLE usuario_refresh_tokens(id bigserial PRIMARY KEY,id_usuario int,token_hash text UNIQUE,motoboy_login_session_id uuid,
  expires_at timestamptz,created_at timestamptz,created_by_ip text,user_agent text,revoked_at timestamptz,
  revoked_by_ip text,replaced_by_token_hash text,reason_revoked text);
 CREATE SEQUENCE motoboy_session_epoch_seq;
@@ -71,7 +74,7 @@ UPDATE motoboy SET canonical_motoboy_id=id;
         using var cache = new MemoryCache(new MemoryCacheOptions());
         var auth = new AuthService(configuration,jwt,new Mock<IHttpClientFactory>().Object,cache,
             Microsoft.Extensions.Options.Options.Create(new GoogleOAuthOptions()),
-            Microsoft.Extensions.Options.Options.Create(new DeliveryTrackingOptions()),
+            Microsoft.Extensions.Options.Options.Create(new DeliveryTrackingOptions { Enabled = mobileLogin }),
             NullLogger<AuthService>.Instance,db.Repository);
         var links = new EstabelecimentoSelectionRepository(configuration);
         var selection = new EstabelecimentoSelectionService(links,new EstabelecimentoSelectionValidator(),jwt,auth,
@@ -88,6 +91,57 @@ UPDATE motoboy SET canonical_motoboy_id=id;
             context.Request.Headers.Authorization = "Bearer " + token;
             await new JwtAuthenticationMiddleware(_ => Task.CompletedTask).InvokeAsync(context,jwt,configuration);
             return context.GetUserId();
+        }
+
+        if (mobileLogin)
+        {
+            await db.Execute(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory,"Migrations","Delivery","20261010_03_motoboy_login_sessions.sql")));
+            await db.Execute("UPDATE usuario SET senha=@Senha", new { Senha = APIBack.Security.PasswordSecurity.Hash("qa-password-2026") });
+            // Turno inicial encerrado para isolar os dois logins reais.
+            await db.Execute("UPDATE motoboy_active_sessions SET ended_at_utc=NOW(),revoked_at=NOW()");
+            var clientA=Guid.NewGuid().ToString("D"); var clientB=Guid.NewGuid().ToString("D");
+            LoginRequest Login(string client, Guid? expected=null) => new() { Email="qa@exemplo.invalid",Senha="qa-password-2026",ClientApp="motoboy",ClientInstanceId=client,ConfirmSessionReplacement=expected.HasValue,ExpectedSessionId=expected };
+            var first=await auth.LoginAsync(Login(clientA));
+            Assert.NotNull(first.MotoboyLoginSessionId);
+            Assert.Equal(first.MotoboyLoginSessionId,(await auth.LoginAsync(Login(clientA))).MotoboyLoginSessionId);
+            Assert.Equal(7,await AuthenticatedUser(first.AccessToken));
+            var blocked=await Assert.ThrowsAsync<DeliveryDomainException>(()=>auth.LoginAsync(Login(clientB)));
+            Assert.Equal("LOGIN_SESSION_ACTIVE",blocked.Code);
+            Assert.Equal(7,await AuthenticatedUser(first.AccessToken)); // Cancelar não revoga nada.
+            await Assert.ThrowsAsync<DeliveryDomainException>(()=>auth.LoginAsync(Login(clientB,Guid.NewGuid())));
+            var selectedMobile=await selection.DefinirEstabelecimentoAtivoAsync(7,db.StoreId,first.MotoboyLoginSessionId);
+            Assert.Equal(first.MotoboyLoginSessionId,jwt.ValidateToken(selectedMobile.AccessToken).MotoboyLoginSessionId);
+            var renewedMobile=await auth.RefreshTokenAsync(new RefreshTokenRequest { RefreshToken=selectedMobile.RefreshToken },null,null);
+            Assert.Equal(first.MotoboyLoginSessionId,renewedMobile.MotoboyLoginSessionId);
+            var turn=await db.Repository.StartAuthenticatedMobileSessionAsync(7,db.StoreId,Guid.NewGuid(),clientA,first.MotoboyLoginSessionId!.Value,null,false,"native");
+            var second=await auth.LoginAsync(Login(clientB,first.MotoboyLoginSessionId));
+            Assert.NotEqual(first.MotoboyLoginSessionId,second.MotoboyLoginSessionId);
+            Assert.Null(await AuthenticatedUser(first.AccessToken));
+            Assert.Null(await AuthenticatedUser(selectedMobile.AccessToken));
+            Assert.Null(await AuthenticatedUser(renewedMobile.AccessToken));
+            Assert.Equal(7,await AuthenticatedUser(second.AccessToken));
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(()=>auth.RefreshTokenAsync(new RefreshTokenRequest { RefreshToken=first.RefreshToken },null,null));
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(()=>auth.RefreshTokenAsync(new RefreshTokenRequest { RefreshToken=renewedMobile.RefreshToken },null,null));
+            Assert.Equal("login_replaced",(await db.Repository.GetSessionAsync(turn.SessionId))!.EndReason);
+            await Assert.ThrowsAsync<DeliveryDomainException>(()=>db.Repository.StartAuthenticatedMobileSessionAsync(7,db.StoreId,Guid.NewGuid(),clientA,first.MotoboyLoginSessionId.Value,null,false,"native"));
+            var newTurn=await db.Repository.StartAuthenticatedMobileSessionAsync(7,db.StoreId,Guid.NewGuid(),clientB,second.MotoboyLoginSessionId!.Value,null,false,"native");
+            await auth.LogoutAsync(7,new LogoutRequest { RefreshToken=first.RefreshToken },null,null);
+            Assert.Null((await db.Repository.GetSessionAsync(newTurn.SessionId))!.EndedAtUtc);
+            Assert.Equal(7,await AuthenticatedUser(second.AccessToken));
+            async Task<(APIBack.Model.Auth.TokenResponse? Token, DeliveryDomainException? Conflict)> CompetingLogin()
+            {
+                try { return (await auth.LoginAsync(Login(Guid.NewGuid().ToString("D"),second.MotoboyLoginSessionId)),null); }
+                catch (DeliveryDomainException error) { return (null,error); }
+            }
+            var competing=await Task.WhenAll(CompetingLogin(),CompetingLogin());
+            var winner=Assert.Single(competing.Where(result=>result.Token!=null)).Token!;
+            Assert.Equal("LOGIN_SESSION_ACTIVE",Assert.Single(competing.Where(result=>result.Conflict!=null)).Conflict!.Code);
+            Assert.Equal(1,await db.Scalar<int>("SELECT COUNT(*)::int FROM motoboy_login_sessions WHERE revoked_at_utc IS NULL"));
+            Assert.Null(await AuthenticatedUser(second.AccessToken));
+            Assert.Equal(7,await AuthenticatedUser(winner.AccessToken));
+            await auth.LogoutAsync(7,new LogoutRequest { RefreshToken=winner.RefreshToken },null,null);
+            Assert.Null(await AuthenticatedUser(winner.AccessToken));
+            return;
         }
         Assert.Equal(7,await AuthenticatedUser(selected.AccessToken));
         if (legacyLink)

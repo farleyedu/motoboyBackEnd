@@ -247,6 +247,12 @@ SELECT id,
                 return;
             }
 
+            // Um logout atrasado do aparelho substituído não pode encerrar o turno novo.
+            await connection.OpenAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            await connection.ExecuteAsync("SELECT id FROM usuario WHERE id=@UserId FOR UPDATE", new { UserId = userId }, transaction);
+            if (token.MotoboyLoginSessionId.HasValue && !await MotoboyLoginSessions.IsActiveAsync(connection, userId, token.MotoboyLoginSessionId.Value)) return;
+
             await RevokeRefreshTokenAsync(connection, token.Id, ipAddress, null, "logout");
             if (token.MotoboyLoginSessionId.HasValue)
                 await connection.ExecuteAsync("UPDATE motoboy_login_sessions SET revoked_at_utc=NOW(),revoke_reason='logout' WHERE session_id=@SessionId AND id_usuario=@UserId AND revoked_at_utc IS NULL", new { SessionId = token.MotoboyLoginSessionId, UserId = userId });
@@ -254,6 +260,7 @@ SELECT id,
             {
                 await _operationalSessionRepository.EndActiveMobileSessionsForUserAsync(userId, "logout");
             }
+            await transaction.CommitAsync();
         }
 
         public Task<OAuthAuthorizationResponse> IniciarLoginGoogleAsync(string? redirectUri)

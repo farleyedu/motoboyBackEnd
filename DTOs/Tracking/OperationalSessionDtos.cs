@@ -5,6 +5,8 @@ namespace APIBack.DTOs.Tracking
 {
     public class StartOperationalSessionRequest
     {
+        [System.Text.Json.Serialization.JsonIgnore]
+        public Guid? LoginSessionId { get; set; }
         public Guid AttemptId { get; set; }
         public string? ClientInstanceId { get; set; }
         public string? ClientPlatform { get; set; }

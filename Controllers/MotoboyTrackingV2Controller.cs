@@ -37,6 +37,7 @@ namespace APIBack.Controllers
         [HttpPost("start")]
         public async Task<IActionResult> Start([FromBody] StartOperationalSessionRequest request)
         {
+            request.LoginSessionId = HttpContext.GetJwtPayload().MotoboyLoginSessionId;
             var userId = HttpContext.GetUserId() ?? 0;
             var estabelecimentoId = HttpContext.GetEstabelecimentoId() ?? Guid.Empty;
             if (userId <= 0 || estabelecimentoId == Guid.Empty)
@@ -52,6 +53,7 @@ namespace APIBack.Controllers
         [HttpPost("switch")]
         public async Task<IActionResult> Switch([FromBody] SwitchOperationalSessionRequest request)
         {
+            request.LoginSessionId = HttpContext.GetJwtPayload().MotoboyLoginSessionId;
             var userId = HttpContext.GetUserId() ?? 0;
             if (userId <= 0)
             {

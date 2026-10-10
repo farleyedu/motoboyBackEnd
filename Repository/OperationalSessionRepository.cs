@@ -57,6 +57,23 @@ SELECT s.session_id AS SessionId,
             _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
         }
 
+        public async Task<OperationalSessionRecord> StartAuthenticatedMobileSessionAsync(
+            int userId, Guid estabelecimentoId, Guid attemptId, string clientInstanceId, Guid loginSessionId,
+            Guid? expectedSessionId, bool explicitSwitch, string clientPlatform)
+        {
+            // A substituição do login e um início já autenticado usam o mesmo bloqueio.
+            // Isso evita que uma chamada antiga crie um turno depois do encerramento.
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            await connection.ExecuteAsync("SELECT id FROM usuario WHERE id=@UserId FOR UPDATE", new { UserId = userId }, transaction);
+            if (!await MotoboyLoginSessions.IsActiveAsync(connection, userId, loginSessionId))
+                throw new DeliveryDomainException(401, "SESSION_REPLACED", "Esta conta foi acessada em outro aparelho.");
+            var result = await StartMobileSessionAsync(userId, estabelecimentoId, attemptId, clientInstanceId,
+                expectedSessionId, explicitSwitch, clientPlatform);
+            await transaction.CommitAsync();
+            return result;
+        }
+
         public async Task<OperationalSessionRecord> StartMobileSessionAsync(
             int userId,
             Guid estabelecimentoId,

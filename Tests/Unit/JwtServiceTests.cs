@@ -57,6 +57,15 @@ namespace APIBack.Tests.Unit
         }
 
         [Fact]
+        public void MotoboyLoginSession_DevePreservarIdentidadeDaSessao()
+        {
+            var sessionId = Guid.NewGuid();
+            var token = _service.GenerateToken(new JwtPayload { UserId = 7, MotoboyLoginSessionId = sessionId });
+            Assert.Equal(sessionId, _service.ValidateToken(token).MotoboyLoginSessionId);
+            Assert.Null(_service.ValidateToken(_service.GenerateToken(new JwtPayload { UserId = 7 })).MotoboyLoginSessionId);
+        }
+
+        [Fact]
         public void OperationalToken_DevePreservarSessaoEpocaETipo()
         {
             var sessionId = Guid.NewGuid();

@@ -249,6 +249,8 @@ VALUES(1,23,1,@StoreId,1,'en_route',NOW(),FALSE),(2,24,1,@StoreId,2,'assigned',N
         {
             var options = new NpgsqlConnectionStringBuilder(Environment.GetEnvironmentVariable("TEST_DELIVERY_DATABASE"));
             if (options.Host != "127.0.0.1" && options.Host != "localhost") throw new InvalidOperationException("Use apenas PostgreSQL local para estes testes.");
+            // Outros services da fixture criam conexões com Source.ConnectionString.
+            options.PersistSecurityInfo = true;
             var db = new Database { _baseConnection = options.ConnectionString };
             await using (var admin = new NpgsqlConnection(db._baseConnection)) { await admin.OpenAsync(); await admin.ExecuteAsync($"CREATE SCHEMA {db._schema}"); }
             options.SearchPath = db._schema; options.MaxPoolSize = maxPoolSize;
