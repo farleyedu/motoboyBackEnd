@@ -764,6 +764,8 @@ namespace APIBack.Service
                 ImageUrl = entity.ImagemUrl,
                 EcoFriendly = entity.EcoFriendly,
                 Ativo = entity.Ativo,
+                Destaque = entity.Destaque,
+                QuantidadePedida30Dias = entity.QuantidadePedida30Dias,
                 Ordem = entity.Ordem,
                 Adicionais = MapAdicionaisPublicos(entity),
                 ExtrasConfig = new CardapioExtrasConfigDto

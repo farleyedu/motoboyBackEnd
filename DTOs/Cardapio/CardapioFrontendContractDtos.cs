@@ -187,6 +187,8 @@ namespace APIBack.DTOs.Cardapio
         public string? ImageUrl { get; set; }
         public bool EcoFriendly { get; set; }
         public bool Ativo { get; set; }
+        public bool Destaque { get; set; }
+        public long QuantidadePedida30Dias { get; set; }
         public int Ordem { get; set; }
         public List<CardapioPublicoAdicionalDto> Adicionais { get; set; } = new();
         public CardapioExtrasConfigDto ExtrasConfig { get; set; } = new();

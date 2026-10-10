@@ -71,6 +71,7 @@ namespace APIBack.Model.Cardapio
         public int Ordem { get; set; }
         public bool Ativo { get; set; } = true;
         public bool Destaque { get; set; }
+        public long QuantidadePedida30Dias { get; set; }
         public bool Disponivel { get; set; } = true;
         public bool PublicoWeb { get; set; } = true;
         public DateTime CreatedAt { get; set; }

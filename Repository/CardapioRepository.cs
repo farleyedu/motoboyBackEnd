@@ -886,6 +886,25 @@ SELECT p.id,
             })).ToList();
 
             await PreencherGruposPublicosDeProdutosAsync(connection, itens);
+            // Conta somente vendas aceitas desta loja, uma vez por catálogo, sem dados de clientes.
+            const string vendasSql = @"
+SELECT item->>'produtoId' AS ProdutoId,
+       SUM((item->>'quantidade')::bigint) AS Quantidade
+  FROM cardapio_pedido_publico pedido
+ CROSS JOIN LATERAL jsonb_array_elements(
+       CASE WHEN jsonb_typeof(pedido.itens_json->'solicitado') = 'array'
+            THEN pedido.itens_json->'solicitado' ELSE '[]'::jsonb END) item
+ WHERE pedido.id_estabelecimento = @IdEstabelecimento
+   AND pedido.status = 'aceito'
+   AND pedido.aceito_em >= NOW() - INTERVAL '30 days'
+   AND item->>'quantidade' ~ '^[0-9]{1,3}$'
+ GROUP BY item->>'produtoId';";
+            var vendas = await connection.QueryAsync<VendaPublicaRow>(vendasSql, new { IdEstabelecimento = idEstabelecimento });
+            var porProduto = vendas.Where(v => Guid.TryParse(v.ProdutoId, out _))
+                .GroupBy(v => Guid.Parse(v.ProdutoId))
+                .ToDictionary(g => g.Key, g => g.Sum(v => v.Quantidade));
+            foreach (var produto in itens)
+                produto.QuantidadePedida30Dias = porProduto.TryGetValue(produto.Id, out var quantidade) ? quantidade : 0;
             return itens.ToArray();
         }
 
@@ -1792,6 +1811,12 @@ SELECT slug
         {
             public Guid ProdutoId { get; set; }
             public Guid GrupoId { get; set; }
+        }
+
+        private sealed class VendaPublicaRow
+        {
+            public string ProdutoId { get; set; } = string.Empty;
+            public long Quantidade { get; set; }
         }
 
         private sealed class ProdutoGrupoPublicoRow
