@@ -405,6 +405,8 @@ UPDATE delivery_transfer_requests
             NpgsqlConnection connection, NpgsqlTransaction transaction, Guid estabelecimentoId, StopRow stop,
             int fromMotoboyId, int toMotoboyId, long requestId)
         {
+            var offerId = await NewOfferIdIfRequiredAsync(connection, transaction, estabelecimentoId);
+            await EnsureNoOtherPendingOfferAsync(connection, transaction, estabelecimentoId, toMotoboyId, offerId);
             await connection.ExecuteAsync(@"
 UPDATE delivery_route_stops
    SET stop_status = 'transferred', transferred_at_utc = NOW(), transfer_request_id = @RequestId, updated_at_utc = NOW()
@@ -414,9 +416,9 @@ UPDATE delivery_route_stops
                 stop.PedidoId, "transferred_out", promoteNext: stop.StopStatus == "en_route");
 
             var toVersion = await AppendStopAsync(connection, transaction, estabelecimentoId, toMotoboyId, stop.PedidoId,
-                actorUserId: null, pickedUpAtUtc: stop.PickedUpAtUtc, transferRequestId: requestId);
+                actorUserId: null, pickedUpAtUtc: stop.PickedUpAtUtc, transferRequestId: requestId, offerId: offerId);
             var toSession = await GetSessionIdAsync(connection, transaction, toMotoboyId, estabelecimentoId);
-            await EmitQueueEventAsync(connection, transaction, estabelecimentoId, toMotoboyId, stop.PedidoId, "transferred_in", toVersion, toSession);
+            await EmitQueueEventAsync(connection, transaction, estabelecimentoId, toMotoboyId, stop.PedidoId, "offered", toVersion, toSession);
             var targetQueue = await BuildSnapshotAsync(connection, transaction, estabelecimentoId, toMotoboyId, toVersion);
 
             await EmitTransferEventAsync(connection, transaction, estabelecimentoId, new TransferEventRow

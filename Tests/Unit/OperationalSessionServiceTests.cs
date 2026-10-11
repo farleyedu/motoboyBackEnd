@@ -206,7 +206,7 @@ namespace APIBack.Tests.Unit
             var session = CreateSession("mobile");
             session.DeviceType = platform == "web" ? "web" : "mobile";
             var attempt = Guid.NewGuid();
-            _repository.Setup(r => r.StartMobileSessionAsync(7, session.EstabelecimentoId, attempt, "qa", null, false, platform))
+            _repository.Setup(r => r.StartMobileSessionAsync(7, session.EstabelecimentoId, attempt, "qa", null, false, platform, null))
                 .ReturnsAsync(session);
             TimeSpan lifetime = default;
             _jwtService.Setup(j => j.GenerateToken(It.IsAny<JwtPayload>(), It.IsAny<TimeSpan>()))
