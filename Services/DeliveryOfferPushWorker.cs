@@ -15,7 +15,7 @@ public sealed class DeliveryOfferPushWorker(NpgsqlDataSource source, IHttpClient
         public bool Sound { get; set; } public bool Vibration { get; set; } public DateTimeOffset ExpiresAtUtc { get; set; }
         public string? TicketId { get; set; }
     }
-    private const string Valid = @"p.expires_at_utc>NOW() AND EXISTS(SELECT 1 FROM delivery_chat_push_subscription sub
+    internal const string Valid = @"p.expires_at_utc>NOW() AND EXISTS(SELECT 1 FROM delivery_chat_push_subscription sub
  JOIN motoboy_active_sessions a ON a.session_id=sub.session_id AND a.motoboy_id=sub.motoboy_id AND a.id_estabelecimento=sub.estabelecimento_id
  JOIN motoboy_estabelecimento me ON me.motoboy_id=sub.motoboy_id AND me.estabelecimento_id=sub.estabelecimento_id
  WHERE sub.token=p.token AND sub.session_id=p.session_id AND sub.motoboy_id=p.motoboy_id AND sub.estabelecimento_id=p.estabelecimento_id
@@ -58,7 +58,7 @@ public sealed class DeliveryOfferPushWorker(NpgsqlDataSource source, IHttpClient
  WHERE state IN ('queued','sending') AND NOT ({Valid});", cancellationToken: ct));
         var rows = (await db.QueryAsync<Pending>(new CommandDefinition($@"WITH picked AS (
  SELECT p.id FROM delivery_offer_push_outbox p WHERE ((p.state='queued' AND p.available_at_utc<=NOW())
- OR (p.state='sending' AND p.lease_until_utc<NOW())) AND p.attempts<5 AND {Valid}
+ OR (p.state='sending' AND p.lease_until_utc<NOW())) AND p.attempts<5 AND p.token NOT LIKE 'web:%' AND {Valid}
  ORDER BY p.id LIMIT 20 FOR UPDATE SKIP LOCKED
  ), claimed AS (UPDATE delivery_offer_push_outbox p SET state='sending',attempts=attempts+1,lease_id=@Lease,lease_until_utc=NOW()+interval '30 seconds'
  FROM picked WHERE p.id=picked.id RETURNING p.*)

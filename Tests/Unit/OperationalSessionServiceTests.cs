@@ -199,7 +199,7 @@ namespace APIBack.Tests.Unit
         }
 
         [Theory]
-        [InlineData("web", 43200)]
+        [InlineData("web", 3600)]
         [InlineData("native", 3600)]
         public async Task Start_UsesClientPlatformForSessionAndTokenLifetime(string platform, int expectedSeconds)
         {

@@ -122,7 +122,7 @@ SELECT id,
             Guid? loginSessionId = null;
             if (string.Equals(request.ClientApp, "motoboy", StringComparison.Ordinal))
                 loginSessionId = await MotoboyLoginSessions.BeginAsync(connection, usuario.Id, request,
-                    GetRefreshTokenExpirationUtc(), _operationalSessionRepository);
+                    OperationalAvailability.UntilExplicitEnd.UtcDateTime, _operationalSessionRepository);
             var response = await BuildTokenResponseAsync(connection, usuario, estabelecimentoId, loginSessionId);
             await PersistRefreshTokenAsync(connection, usuario.Id, response.RefreshToken, null, null, loginSessionId);
             return response;
@@ -738,7 +738,7 @@ RETURNING id";
             Guid? loginSessionId = null)
         {
             var tokenHash = HashRefreshToken(rawRefreshToken);
-            var expiresAt = GetRefreshTokenExpirationUtc();
+            var expiresAt = loginSessionId.HasValue ? OperationalAvailability.UntilExplicitEnd.UtcDateTime : GetRefreshTokenExpirationUtc();
 
             const string sql = @"
 INSERT INTO usuario_refresh_tokens (id_usuario,

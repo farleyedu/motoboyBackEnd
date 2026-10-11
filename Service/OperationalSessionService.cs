@@ -458,8 +458,7 @@ namespace APIBack.Service
             _ => throw new DeliveryDomainException(422, "INVALID_CLIENT_PLATFORM", "clientPlatform deve ser native ou web.")
         };
 
-        private int OperationalTokenExpiresInSeconds(OperationalSessionRecord session) => session.DeviceType == "web"
-            ? Math.Max(_options.PresenceTtlSeconds, _options.WebPresenceTtlSeconds)
-            : checked(Math.Max(1, _options.OperationalTokenExpirationMinutes) * 60);
+        private int OperationalTokenExpiresInSeconds(OperationalSessionRecord session) =>
+            checked(Math.Max(1, _options.OperationalTokenExpirationMinutes) * 60);
     }
 }

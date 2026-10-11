@@ -26,7 +26,7 @@ CREATE TABLE motoboy_operational_session_events (
     public async Task AutomaticResumeOnlyRecoversHeartbeatTimeoutAndDoesNotReplaceAnotherDevice()
     {
         await using var db = await ResumeDatabase();
-        await db.Execute("UPDATE motoboy_active_sessions SET expires_at_utc=NOW()-INTERVAL '1 second';");
+        await db.Execute("UPDATE motoboy_active_sessions SET ended_at_utc=NOW(),end_reason='heartbeat_timeout',expires_at_utc=NOW()-INTERVAL '1 second';");
         var attempt = Guid.NewGuid();
         var recovered = await db.Repository.StartMobileSessionAsync(7, db.StoreId, attempt, "mesmo-aparelho", resumeSessionId: db.SessionId);
         Assert.NotEqual(db.SessionId, recovered.SessionId);

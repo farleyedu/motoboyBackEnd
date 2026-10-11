@@ -57,7 +57,7 @@ public sealed class ChatPushWorker(NpgsqlDataSource source,IHttpClientFactory ht
  FROM delivery_chat_push_outbox p JOIN delivery_chat_message c ON c.id=p.message_id JOIN delivery_chat_push_subscription s ON s.token=p.token
  JOIN motoboy_active_sessions a ON a.session_id=s.session_id AND a.motoboy_id=s.motoboy_id AND a.id_estabelecimento=s.estabelecimento_id AND a.ended_at_utc IS NULL AND a.expires_at_utc>NOW()
  JOIN motoboy_estabelecimento me ON me.motoboy_id=s.motoboy_id AND me.estabelecimento_id=s.estabelecimento_id AND me.ativo=TRUE
- WHERE p.state='queued' AND p.created_at_utc>NOW()-interval '5 minutes' AND c.estabelecimento_id=s.estabelecimento_id
+ WHERE p.state='queued' AND p.token NOT LIKE 'web:%' AND p.created_at_utc>NOW()-interval '5 minutes' AND c.estabelecimento_id=s.estabelecimento_id
  AND p.recipient_estabelecimento_id=s.estabelecimento_id AND p.recipient_motoboy_id=s.motoboy_id AND p.recipient_session_id=s.session_id
  AND c.sender_key<>'m:'||s.motoboy_id
  AND (c.channel='group' OR c.channel='store' AND c.thread_key='store:'||s.motoboy_id

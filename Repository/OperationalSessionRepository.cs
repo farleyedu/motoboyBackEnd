@@ -98,8 +98,25 @@ SELECT s.session_id AS SessionId,
                     new { SessionId = resumeSessionId.Value }, transaction);
                 if (previous == null || previous.MotoboyId != identity.MotoboyId ||
                     previous.EstabelecimentoId != estabelecimentoId || previous.StartedByUserId != userId ||
-                    previous.Origin != "mobile" || previous.EndReason != "heartbeat_timeout")
+                    previous.Origin != "mobile" || (previous.EndedAtUtc.HasValue && previous.EndReason != "heartbeat_timeout"))
                     throw new DeliveryDomainException(409, "SESSION_CHANGED", "Este turno foi encerrado ou substituído. A retomada automática não está disponível.");
+                if (!previous.EndedAtUtc.HasValue)
+                {
+                    if (!string.IsNullOrEmpty(previous.ClientInstanceId) &&
+                        !string.Equals(previous.ClientInstanceId, clientInstanceId, StringComparison.OrdinalIgnoreCase))
+                        throw SessionConflict(previous);
+                    // Renovar o JWT mantém a identidade do turno, a fila e a sequência do GPS.
+                    await connection.ExecuteAsync(@"
+UPDATE motoboy_active_sessions SET expires_at_utc=@UntilExplicitEnd,
+ last_heartbeat_at_utc=NOW(), last_seen_at=NOW(), version=version+1,
+ client_instance_id=COALESCE(client_instance_id,@ClientInstanceId)
+ WHERE session_id=@SessionId AND ended_at_utc IS NULL AND revoked_at IS NULL;",
+                        new { previous.SessionId, OperationalAvailability.UntilExplicitEnd, ClientInstanceId = clientInstanceId }, transaction);
+                    var resumed = await connection.QuerySingleAsync<OperationalSessionRecord>(
+                        SessionSelect + " WHERE s.session_id=@SessionId;", new { previous.SessionId }, transaction);
+                    await transaction.CommitAsync();
+                    return resumed;
+                }
             }
 
             var repeated = await GetByAttemptAsync(connection, transaction, userId, "mobile", attemptId);
@@ -112,7 +129,7 @@ SELECT s.session_id AS SessionId,
             }
 
             var active = await GetOpenSessionForUpdateAsync(connection, transaction, identity.MotoboyId);
-            if (active != null && active.ExpiresAtUtc <= await GetServerNowAsync(connection, transaction))
+            if (active != null && active.Origin != "mobile" && active.ExpiresAtUtc <= await GetServerNowAsync(connection, transaction))
             {
                 await EndLockedSessionAsync(connection, transaction, active, "heartbeat_timeout", null);
                 active = null;
@@ -297,10 +314,10 @@ SELECT latitude AS Latitude, longitude AS Longitude
 WITH updated AS (
     UPDATE motoboy_active_sessions s
        SET last_heartbeat_at_utc = NOW(), last_seen_at = NOW(),
-           expires_at_utc = NOW() + (CASE WHEN s.origin = 'simulator' THEN @SimulatorTtl WHEN s.device_type = 'web' THEN @WebTtl ELSE @Ttl END * INTERVAL '1 second'),
+           expires_at_utc = CASE WHEN s.origin = 'mobile' THEN @UntilExplicitEnd ELSE NOW() + (@SimulatorTtl * INTERVAL '1 second') END,
            version = s.version + 1
      WHERE s.session_id = @SessionId AND s.motoboy_id = @MotoboyId AND s.session_epoch = @SessionEpoch
-       AND s.ended_at_utc IS NULL AND s.revoked_at IS NULL AND s.expires_at_utc > NOW()
+       AND s.ended_at_utc IS NULL AND s.revoked_at IS NULL AND (s.origin = 'mobile' OR s.expires_at_utc > NOW())
        AND EXISTS (
            SELECT 1 FROM motoboy_estabelecimento me
            JOIN estabelecimentos e ON e.id = me.estabelecimento_id
@@ -317,7 +334,7 @@ WITH updated AS (
 ) " + SessionSelect.Replace("FROM motoboy_active_sessions s", "FROM updated s");
             var session = await connection.QuerySingleOrDefaultAsync<OperationalSessionRecord>(new CommandDefinition(sql,
                 new { SessionId = sessionId, MotoboyId = motoboyId, SessionEpoch = sessionEpoch,
-                    Ttl = _options.PresenceTtlSeconds, SimulatorTtl = PresenceTtlSecondsFor("simulator"), WebTtl = PresenceTtlSecondsFor("mobile", "web") },
+                    OperationalAvailability.UntilExplicitEnd, SimulatorTtl = PresenceTtlSecondsFor("simulator") },
                 transaction, commandTimeout: 10, cancellationToken: cancellationToken))
                 ?? throw new DeliveryDomainException(401, "SESSION_EXPIRED", "Sessao operacional encerrada ou expirada.");
             await InsertRealtimeEventAsync(connection, transaction, DeliveryRealtimeEvents.MotoboyStatusChanged,
@@ -404,7 +421,7 @@ SELECT
             var session = await GetSessionForUpdateAsync(connection, transaction, sessionId, cancellationToken)
                 ?? throw new DeliveryDomainException(401, "SESSION_EXPIRED", "Sessao operacional nao encontrada.");
             if (session.MotoboyId != motoboyId || session.SessionEpoch != sessionEpoch ||
-                session.EndedAtUtc.HasValue || session.ExpiresAtUtc <= serverNow)
+                session.EndedAtUtc.HasValue || (session.Origin != "mobile" && session.ExpiresAtUtc <= serverNow))
                 throw new DeliveryDomainException(401, "SESSION_EXPIRED", "Sessao operacional encerrada ou expirada.");
             var hasActiveLink = await connection.ExecuteScalarAsync<bool>(new CommandDefinition(@"
 SELECT EXISTS (
@@ -1007,7 +1024,7 @@ SELECT canonical.id AS MotoboyId,
                 IdempotencyKey = attemptId,
                 StartedAtUtc = serverNow,
                 LastHeartbeatAtUtc = serverNow,
-                ExpiresAtUtc = serverNow.AddSeconds(PresenceTtlSecondsFor(origin, deviceType)),
+                ExpiresAtUtc = origin == "mobile" ? OperationalAvailability.UntilExplicitEnd : serverNow.AddSeconds(PresenceTtlSecondsFor(origin, deviceType)),
                 Version = 1,
                 Nome = identity.Nome,
                 Avatar = identity.Avatar,
@@ -1133,6 +1150,7 @@ UPDATE motoboy_active_sessions
        FROM motoboy_active_sessions
       WHERE ended_at_utc IS NULL
         AND revoked_at IS NULL
+        AND origin <> 'mobile'
         AND expires_at_utc <= @ServerNow
       ORDER BY expires_at_utc
       FOR UPDATE SKIP LOCKED
@@ -1150,7 +1168,7 @@ UPDATE motoboy_active_sessions
 
         private static void EnsureAttemptCanBeReturned(OperationalSessionRecord session)
         {
-            if (session.EndedAtUtc.HasValue || session.ExpiresAtUtc <= DateTimeOffset.UtcNow)
+            if (session.EndedAtUtc.HasValue || (session.Origin != "mobile" && session.ExpiresAtUtc <= DateTimeOffset.UtcNow))
             {
                 throw new DeliveryDomainException(409, "ATTEMPT_CLOSED", "O attemptId pertence a uma sessao ja encerrada.");
             }

@@ -143,6 +143,10 @@ builder.Services.AddScoped<CommunicationService>();
 builder.Services.AddScoped<APIBack.Repository.ClientCommunicationRepository>();
 builder.Services.AddScoped<ClientCommunicationService>();
 builder.Services.AddScoped<ChatPushService>();
+builder.Services.AddScoped<WebOfferPushService>();
+builder.Services.AddHttpClient("web-offer-push", client => client.Timeout = TimeSpan.FromSeconds(15))
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+builder.Services.AddHostedService<APIBack.Services.WebOfferPushWorker>();
 builder.Services.AddHostedService<ChatPushWorker>();
 builder.Services.AddHostedService<APIBack.Services.DeliveryOfferPushWorker>();
 builder.Services.AddScoped<MotoboyPedidoService>();

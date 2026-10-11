@@ -71,7 +71,7 @@ public partial class DeliverySyncDatabaseTests
         await using var db = await Database.Create();
         var session = await db.Repository.HeartbeatAsync(db.SessionId, 1, 4);
         Assert.Equal(2, session.Version); Assert.Equal("Teste", session.Nome); Assert.Equal(7, session.UsuarioId);
-        Assert.InRange((session.ExpiresAtUtc - session.LastHeartbeatAtUtc).TotalSeconds, 89, 91);
+        Assert.Equal(OperationalAvailability.UntilExplicitEnd, session.ExpiresAtUtc);
         Assert.Equal("SESSION_EXPIRED", (await Assert.ThrowsAsync<DeliveryDomainException>(() =>
             db.Repository.HeartbeatAsync(db.SessionId, 1, 99))).Code);
         await db.Execute("UPDATE motoboy_estabelecimento SET ativo = FALSE");
@@ -193,10 +193,10 @@ VALUES(1,23,1,@StoreId,1,'en_route',NOW(),FALSE),(2,24,1,@StoreId,2,'assigned',N
     }
 
     [DeliveryDatabaseFact]
-    public async Task ExpiredSessionDoesNotAcceptHeartbeatOrBatch()
+    public async Task ExplicitlyEndedSessionDoesNotAcceptHeartbeatOrBatch()
     {
         await using var db = await Database.Create();
-        await db.Execute("UPDATE motoboy_active_sessions SET expires_at_utc = NOW() - INTERVAL '1 second'");
+        await db.Execute("UPDATE motoboy_active_sessions SET ended_at_utc=NOW(),end_reason='motoboy_offline',expires_at_utc=NOW()-INTERVAL '1 second'");
         Assert.Equal("SESSION_EXPIRED", (await Assert.ThrowsAsync<DeliveryDomainException>(() =>
             db.Repository.HeartbeatAsync(db.SessionId, 1, 4))).Code);
         Assert.Equal("SESSION_EXPIRED", (await Assert.ThrowsAsync<DeliveryDomainException>(() =>
