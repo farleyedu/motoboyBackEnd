@@ -41,7 +41,7 @@ public sealed class ChatPushWorker(NpgsqlDataSource source,IHttpClientFactory ht
     {
         while(!stoppingToken.IsCancellationRequested)
         {
-            try{if(config.GetValue<bool>("Communication:PushEnabled"))await PublishAsync(stoppingToken);}
+            try{await PublishAsync(stoppingToken);}
             catch(OperationCanceledException)when(stoppingToken.IsCancellationRequested){break;}
             catch(PostgresException ex)when(ex.SqlState is PostgresErrorCodes.UndefinedTable or PostgresErrorCodes.UndefinedColumn){/* Habilitacao somente depois da migration. */}
             catch(Exception ex){logger.LogWarning(ex,"Publicacao de avisos de chat indisponivel.");}
@@ -92,7 +92,7 @@ public sealed class ChatPushWorker(NpgsqlDataSource source,IHttpClientFactory ht
                 var payload=new{to=row.Token,title=row.Mentioned?"Voce foi mencionado":"Nova mensagem da equipe",body=row.Mentioned?"Uma mensagem precisa da sua atencao. Toque para abrir.":"Toque para abrir a conversa.",
                     sound=audible?(row.Mentioned?"chat_mention.wav":"chat_message.wav"):null,
                     channelId=$"chat-{(row.Mentioned?"mentions":"messages")}-{(audible?"sound":"silent")}-{(row.Vibration&&row.Audible?"vibrate":"quiet")}-v2",
-                    priority=row.Mentioned?"high":"normal",data=new{chatMessageId=row.MessageId,channel=row.Channel,threadKey=row.ThreadKey,recipientSessionId=row.SessionId}};
+                    priority="high",data=new{chatMessageId=row.MessageId,channel=row.Channel,threadKey=row.ThreadKey,recipientSessionId=row.SessionId}};
                 using var client=http.CreateClient();
                 var access=config["Communication:ExpoAccessToken"];if(!string.IsNullOrWhiteSpace(access))client.DefaultRequestHeaders.Authorization=new AuthenticationHeaderValue("Bearer",access);
                 using var response=await client.PostAsJsonAsync("https://exp.host/--/api/v2/push/send",payload,ct);response.EnsureSuccessStatusCode();

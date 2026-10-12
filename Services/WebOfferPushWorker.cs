@@ -29,7 +29,7 @@ public sealed class WebOfferPushWorker(NpgsqlDataSource source, IHttpClientFacto
         {
             try
             {
-                if ((config.GetValue<bool?>("Delivery:OfferPushEnabled") ?? true) && new WebOfferPushService(source, config).Configured) await PublishAsync(ct);
+                if (new WebOfferPushService(source, config).Configured) await PublishAsync(ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
             catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.UndefinedTable or PostgresErrorCodes.UndefinedColumn) { }

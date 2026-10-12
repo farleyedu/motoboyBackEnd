@@ -30,11 +30,8 @@ public sealed class DeliveryOfferPushWorker(NpgsqlDataSource source, IHttpClient
         {
             try
             {
-                if (config.GetValue<bool?>("Delivery:OfferPushEnabled") ?? true)
-                {
-                    await PublishAsync(ct);
-                    if (DateTimeOffset.UtcNow >= receiptAt) { await ReceiptsAsync(ct); receiptAt = DateTimeOffset.UtcNow.AddMinutes(1); }
-                }
+                await PublishAsync(ct);
+                if (DateTimeOffset.UtcNow >= receiptAt) { await ReceiptsAsync(ct); receiptAt = DateTimeOffset.UtcNow.AddMinutes(1); }
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
             catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.UndefinedTable or PostgresErrorCodes.UndefinedColumn) { /* Migration deve anteceder habilitação do recurso. */ }
