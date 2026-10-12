@@ -9,7 +9,8 @@ namespace APIBack.Service;
 internal static class MotoboyLoginSessions
 {
     public static async Task<Guid> BeginAsync(NpgsqlConnection connection, int userId,
-        LoginRequest request, DateTime expiresAtUtc, IOperationalSessionRepository operational)
+        LoginRequest request, DateTime expiresAtUtc, IOperationalSessionRepository operational,
+        APIBack.Service.Interface.IAuthDecisionCache? authCache = null)
     {
         if (!Guid.TryParse(request.ClientInstanceId, out var clientId) || clientId == Guid.Empty)
             throw new DeliveryDomainException(422, "INVALID_CLIENT_INSTANCE", "Identificação do aparelho inválida.");
@@ -61,6 +62,7 @@ INSERT INTO motoboy_login_sessions(session_id,id_usuario,client_instance_id,expi
  ON CONFLICT(session_id) DO UPDATE SET expires_at_utc=EXCLUDED.expires_at_utc
 """, new { SessionId = sessionId, UserId = userId, ClientId = clientId, ExpiresAt = expiresAtUtc }, transaction);
         await transaction.CommitAsync();
+        authCache?.InvalidateUser(userId);
         return sessionId;
     }
 

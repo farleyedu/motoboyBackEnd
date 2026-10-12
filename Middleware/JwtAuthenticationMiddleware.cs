@@ -64,10 +64,15 @@ namespace APIBack.Middleware
 
             if (payload.MotoboyLoginSessionId.HasValue)
             {
-                var dataSource = context.RequestServices.GetRequiredService<NpgsqlDataSource>();
-                await using var connection = await dataSource.OpenConnectionAsync(context.RequestAborted);
-                if (!payload.UserId.HasValue || !await MotoboyLoginSessions.IsActiveAsync(connection,
-                    payload.UserId.Value, payload.MotoboyLoginSessionId.Value, context.RequestAborted))
+                async Task<bool> ActiveLogin()
+                {
+                    if (!payload.UserId.HasValue) return false;
+                    var dataSource = context.RequestServices.GetRequiredService<NpgsqlDataSource>();
+                    await using var connection = await dataSource.OpenConnectionAsync(context.RequestAborted);
+                    return await MotoboyLoginSessions.IsActiveAsync(connection,
+                        payload.UserId.Value, payload.MotoboyLoginSessionId.Value, context.RequestAborted);
+                }
+                if (!await CachedAllowed(context, payload, "login", ActiveLogin))
                 {
                     context.Items["AuthenticationFailureCode"] = "SESSION_REPLACED";
                     return;
@@ -107,7 +112,12 @@ namespace APIBack.Middleware
                     StringComparison.OrdinalIgnoreCase);
 
             context.RequestAborted.ThrowIfCancellationRequested();
-            if (!await IsPayloadStillAllowedAsync(payload, context, allowEndedOperationalSession))
+            // A permissão de renovar presença/encerrar é diferente da permissão de operar a fila.
+            var renewal = (HttpMethods.IsGet(context.Request.Method) && context.Request.Path == "/api/v2/motoboys/me/session") ||
+                (HttpMethods.IsPost(context.Request.Method) && context.Request.Path == "/api/v2/motoboys/me/session/heartbeat");
+            var decision = $"context:{allowEndedOperationalSession}:{renewal}";
+            if (!await CachedAllowed(context, payload, decision,
+                () => IsPayloadStillAllowedAsync(payload, context, allowEndedOperationalSession)))
             {
                 context.Items["AuthenticationFailureCode"] = "TOKEN_CONTEXT_REJECTED";
                 return;
@@ -131,6 +141,11 @@ namespace APIBack.Middleware
             context.Items["Permissoes"] = payload.Permissoes;
 
         }
+
+        private static Task<bool> CachedAllowed(HttpContext context, JwtPayload payload,
+            string check, Func<Task<bool>> evaluate) =>
+            context.RequestServices.GetService<IAuthDecisionCache>()?.IsAllowedAsync(AuthDecisionKey.From(payload, check), evaluate)
+            ?? evaluate();
 
         private static async Task<bool> IsPayloadStillAllowedAsync(
             JwtPayload payload,
@@ -219,6 +234,9 @@ SELECT TRUE
               AND me.ativo = TRUE
               AND COALESCE(e.ativo, TRUE) = TRUE
               AND LOWER(COALESCE(e.status, 'ativo')) IN ('ativo', 'trial')
+              AND (e.id_empresa IS NULL OR EXISTS (
+                  SELECT 1 FROM empresas emp WHERE emp.id = e.id_empresa
+                    AND COALESCE(emp.ativo, TRUE) AND NOT COALESCE(emp.pausada, FALSE)))
               AND (
                   (s.origin = 'simulator' AND me.simulator_enabled = TRUE AND m.is_simulated = TRUE)
                   OR (

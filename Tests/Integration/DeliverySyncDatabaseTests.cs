@@ -223,6 +223,7 @@ VALUES(1,23,1,@StoreId,1,'en_route',NOW(),FALSE),(2,24,1,@StoreId,2,'assigned',N
     public async Task MiddlewareRechecksTenantAndRevocationAgainstLiveDatabase()
     {
         await using var db = await Database.Create();
+        await db.Execute("ALTER TABLE estabelecimentos ADD COLUMN id_empresa uuid; CREATE TABLE empresas(id uuid PRIMARY KEY,ativo bool,pausada bool)");
         using var services = new ServiceCollection().AddSingleton(db.Source).BuildServiceProvider();
         var payload = new JwtPayload { MotoboySessionId = db.SessionId, MotoboyId = 1, SessionEpoch = 4, EstabelecimentoId = db.StoreId };
         var jwt = new Mock<IJwtService>(); jwt.Setup(j => j.ValidateToken("a.b.c")).Returns(payload);

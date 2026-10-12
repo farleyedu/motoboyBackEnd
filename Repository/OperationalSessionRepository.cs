@@ -47,11 +47,15 @@ SELECT s.session_id AS SessionId,
         private readonly NpgsqlDataSource _dataSource;
         private readonly DeliveryTrackingOptions _options;
         private readonly DeliverySyncMetrics? _metrics;
+        private readonly APIBack.Service.Interface.IAuthDecisionCache? _authCache;
+        private readonly HashSet<Guid> _endedSessions = new();
 
         public OperationalSessionRepository(
             NpgsqlDataSource dataSource,
-            IOptions<DeliveryTrackingOptions> options, DeliverySyncMetrics? metrics = null)
+            IOptions<DeliveryTrackingOptions> options, DeliverySyncMetrics? metrics = null,
+            APIBack.Service.Interface.IAuthDecisionCache? authCache = null)
         {
+            _authCache = authCache;
             _metrics = metrics;
             _dataSource = dataSource ?? throw new ArgumentNullException(nameof(dataSource));
             _options = options?.Value ?? throw new ArgumentNullException(nameof(options));
@@ -70,7 +74,7 @@ SELECT s.session_id AS SessionId,
                 throw new DeliveryDomainException(401, "SESSION_REPLACED", "Esta conta foi acessada em outro aparelho.");
             var result = await StartMobileSessionAsync(userId, estabelecimentoId, attemptId, clientInstanceId,
                 expectedSessionId, explicitSwitch, clientPlatform, resumeSessionId);
-            await transaction.CommitAsync();
+            await CommitSessionTransactionAsync(transaction);
             return result;
         }
 
@@ -114,7 +118,7 @@ UPDATE motoboy_active_sessions SET expires_at_utc=NOW()+(@PresenceTtl * INTERVAL
                         new { previous.SessionId, PresenceTtl = _options.PresenceTtlSeconds, ClientInstanceId = clientInstanceId }, transaction);
                     var resumed = await connection.QuerySingleAsync<OperationalSessionRecord>(
                         SessionSelect + " WHERE s.session_id=@SessionId;", new { previous.SessionId }, transaction);
-                    await transaction.CommitAsync();
+                    await CommitSessionTransactionAsync(transaction);
                     return resumed;
                 }
             }
@@ -124,7 +128,7 @@ UPDATE motoboy_active_sessions SET expires_at_utc=NOW()+(@PresenceTtl * INTERVAL
             {
                 EnsureAttemptScope(repeated, estabelecimentoId);
                 EnsureAttemptCanBeReturned(repeated);
-                await transaction.CommitAsync();
+                await CommitSessionTransactionAsync(transaction);
                 return repeated;
             }
 
@@ -158,7 +162,7 @@ UPDATE motoboy_active_sessions SET expires_at_utc=NOW()+(@PresenceTtl * INTERVAL
                 attemptId,
                 string.IsNullOrWhiteSpace(clientInstanceId) ? attemptId.ToString("D") : clientInstanceId.Trim(),
                 "mobile", clientPlatform == "web" ? "web" : "mobile");
-            await transaction.CommitAsync();
+            await CommitSessionTransactionAsync(transaction);
             return created;
         }
 
@@ -179,7 +183,7 @@ UPDATE motoboy_active_sessions SET expires_at_utc=NOW()+(@PresenceTtl * INTERVAL
                 EnsureAttemptScope(repeated, estabelecimentoId);
                 EnsureAttemptCanBeReturned(repeated);
                 await AttachLastKnownLocationAsync(connection, transaction, repeated);
-                await transaction.CommitAsync();
+                await CommitSessionTransactionAsync(transaction);
                 return repeated;
             }
 
@@ -264,7 +268,7 @@ SELECT m.id AS MotoboyId,
                 attemptId.ToString("D"),
                 "simulator");
             await AttachLastKnownLocationAsync(connection, transaction, created);
-            await transaction.CommitAsync();
+            await CommitSessionTransactionAsync(transaction);
             return created;
         }
 
@@ -339,7 +343,7 @@ WITH updated AS (
                 ?? throw new DeliveryDomainException(401, "SESSION_EXPIRED", "Sessao operacional encerrada ou expirada.");
             await InsertRealtimeEventAsync(connection, transaction, DeliveryRealtimeEvents.MotoboyStatusChanged,
                 "presence.heartbeat", session, new { status = "online", presenceExpiresAtUtc = session.ExpiresAtUtc }, cancellationToken);
-            await transaction.CommitAsync(cancellationToken);
+            await CommitSessionTransactionAsync(transaction, cancellationToken);
             measurement?.Complete();
             return session;
         }
@@ -393,7 +397,7 @@ SELECT
                     session.StartedByUserId);
             }
 
-            await transaction.CommitAsync();
+            await CommitSessionTransactionAsync(transaction);
             return session;
         }
 
@@ -513,7 +517,7 @@ SELECT version FROM changed_session;",
                         quality = latest.Quality, capturedAtUtc = latest.CapturedAtUtc, receivedAtUtc = serverNow }, cancellationToken);
             }
             foreach (var result in results) result.SessionVersion = session.Version;
-            await transaction.CommitAsync(cancellationToken);
+            await CommitSessionTransactionAsync(transaction, cancellationToken);
             measurement?.Complete();
             foreach (var group in results.GroupBy(r => r.Outcome)) _metrics?.RecordLocations(group.Key, group.Count());
             return results;
@@ -736,7 +740,7 @@ INSERT INTO motoboy_estabelecimento (
 VALUES (@MotoboyId, @EstabelecimentoId, TRUE, TRUE, NOW(), NOW());",
                 new { MotoboyId = motoboyId, EstabelecimentoId = estabelecimentoId },
                 transaction);
-            await transaction.CommitAsync();
+            await CommitSessionTransactionAsync(transaction);
 
             return new OperationalMotoboyIdentity
             {
@@ -801,7 +805,8 @@ UPDATE motoboy_estabelecimento
    SET ativo = FALSE, simulator_enabled = FALSE, updated_at_utc = NOW()
  WHERE motoboy_id = @MotoboyId AND estabelecimento_id = @EstabelecimentoId;",
                 new { MotoboyId = motoboyId, EstabelecimentoId = estabelecimentoId }, transaction);
-            await transaction.CommitAsync();
+            await CommitSessionTransactionAsync(transaction);
+            _authCache?.InvalidateMotoboy(motoboyId);
             return SimulatorMotoboyRemoval.Removed;
         }
 
@@ -872,7 +877,7 @@ SELECT motoboy_id AS MotoboyId,
             await using var connection = await _dataSource.OpenConnectionAsync();
             await using var transaction = await connection.BeginTransactionAsync();
             var count = await ExpireDueSessionsInternalAsync(connection, transaction, limit);
-            await transaction.CommitAsync();
+            await CommitSessionTransactionAsync(transaction);
             return count;
         }
 
@@ -894,7 +899,7 @@ SELECT motoboy_id AS MotoboyId,
                 await EndLockedSessionAsync(connection, transaction, session, reason, userId);
             }
 
-            await transaction.CommitAsync();
+            await CommitSessionTransactionAsync(transaction);
             return sessions.Count;
         }
 
@@ -1085,6 +1090,7 @@ UPDATE motoboy_active_sessions
                 new { session.SessionId, ServerNow = serverNow, Reason = reason },
                 transaction);
             session.EndedAtUtc = serverNow;
+            _endedSessions.Add(session.SessionId);
             session.EndReason = reason;
             session.Version++;
             await InsertAuditEventAsync(connection, transaction, session, "session.ended", actorUserId, reason);
@@ -1185,6 +1191,13 @@ UPDATE motoboy_active_sessions
                     "ATTEMPT_SCOPE_MISMATCH",
                     "O attemptId ja foi usado em outro estabelecimento.");
             }
+        }
+
+        private async Task CommitSessionTransactionAsync(NpgsqlTransaction transaction, CancellationToken ct = default)
+        {
+            await transaction.CommitAsync(ct);
+            foreach (var sessionId in _endedSessions) _authCache?.InvalidateSession(sessionId);
+            _endedSessions.Clear();
         }
 
         private static Task AcquireAttemptLockAsync(

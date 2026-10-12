@@ -37,6 +37,7 @@ namespace APIBack.Service
         private readonly TimeSpan _oauthStateLifetime;
         private readonly ILogger<AuthService> _logger;
         private readonly IOperationalSessionRepository _operationalSessionRepository;
+        private readonly IAuthDecisionCache? _authDecisionCache;
         private readonly bool _deliveryTrackingEnabled;
         private readonly JsonSerializerOptions _jsonOptions = new(JsonSerializerDefaults.Web);
         private const string GoogleProvider = "google";
@@ -55,8 +56,9 @@ namespace APIBack.Service
             IOptions<GoogleOAuthOptions> googleOAuthOptions,
             IOptions<DeliveryTrackingOptions> deliveryTrackingOptions,
             ILogger<AuthService> logger,
-            IOperationalSessionRepository operationalSessionRepository)
+            IOperationalSessionRepository operationalSessionRepository, IAuthDecisionCache? authDecisionCache = null)
         {
+            _authDecisionCache = authDecisionCache;
             _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
             _jwtService = jwtService ?? throw new ArgumentNullException(nameof(jwtService));
             _httpClientFactory = httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
@@ -124,7 +126,7 @@ SELECT id,
             Guid? loginSessionId = null;
             if (isMotoboyApp)
                 loginSessionId = await MotoboyLoginSessions.BeginAsync(connection, usuario.Id, request,
-                    OperationalAvailability.UntilExplicitEnd.UtcDateTime, _operationalSessionRepository);
+                    OperationalAvailability.UntilExplicitEnd.UtcDateTime, _operationalSessionRepository, _authDecisionCache);
             var response = await BuildTokenResponseAsync(connection, usuario, estabelecimentoId, loginSessionId);
             await PersistRefreshTokenAsync(connection, usuario.Id, response.RefreshToken, null, null, loginSessionId);
             return response;
@@ -234,6 +236,7 @@ SELECT id,
             if (request.LogoutFromAllDevices || string.IsNullOrWhiteSpace(request.RefreshToken))
             {
                 await connection.ExecuteAsync("UPDATE motoboy_login_sessions SET revoked_at_utc=NOW(),revoke_reason='logout' WHERE id_usuario=@UserId AND revoked_at_utc IS NULL", new { UserId = userId });
+                _authDecisionCache?.InvalidateUser(userId);
                 await RevokeAllRefreshTokensAsync(connection, userId, ipAddress, "logout");
                 if (_deliveryTrackingEnabled)
                 {
@@ -264,6 +267,7 @@ SELECT id,
                 await _operationalSessionRepository.EndActiveMobileSessionsForUserAsync(userId, "logout");
             }
             await transaction.CommitAsync();
+            _authDecisionCache?.InvalidateUser(userId);
         }
 
         public Task<OAuthAuthorizationResponse> IniciarLoginGoogleAsync(string? redirectUri)

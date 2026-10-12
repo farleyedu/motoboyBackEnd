@@ -94,6 +94,10 @@ builder.Services.AddHttpClient();
 builder.Services.AddHttpClient("chat-media").ConfigurePrimaryHttpMessageHandler(()=>new HttpClientHandler{AllowAutoRedirect=false});
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddMemoryCache();
+builder.Services.AddSingleton<IAuthDecisionCache, AuthDecisionCache>();
+builder.Services.AddOptions<AuthCacheOptions>().Bind(builder.Configuration.GetSection("AuthCache"))
+    .Validate(o => o.TtlSeconds is >= 0 and <= 300, "AuthCache:TtlSeconds deve estar entre 0 e 300.")
+    .ValidateOnStart();
 builder.Services.AddScoped<IUsuarioRepository, UsuarioRepository>();
 builder.Services.AddScoped<IUsuarioService, UsuarioService>();
 builder.Services.AddScoped<ICrmRepository, CrmRepository>();

@@ -19,9 +19,11 @@ namespace APIBack.Repository
         private static readonly Regex SlugRegex = new("[^a-z0-9]+", RegexOptions.Compiled | RegexOptions.CultureInvariant);
         private static bool _empresaOperacionalSchemaEnsured;
         private readonly string _connectionString;
+        private readonly APIBack.Service.Interface.IAuthDecisionCache? _authCache;
 
-        public GestaoRepository(IConfiguration configuration)
+        public GestaoRepository(IConfiguration configuration, APIBack.Service.Interface.IAuthDecisionCache? authCache = null)
         {
+            _authCache = authCache;
             _connectionString = configuration.GetConnectionString("DefaultConnection")
                 ?? configuration["ConnectionStrings:DefaultConnection"]
                 ?? throw new InvalidOperationException("Connection string 'DefaultConnection' nao configurada.");
@@ -206,6 +208,7 @@ UPDATE estabelecimentos
             }
 
             await transaction.CommitAsync();
+            _authCache?.InvalidateCompany(empresaId);
         }
 
         public async Task AtualizarPausaEmpresaAsync(Guid empresaId, bool pausada)
@@ -219,6 +222,7 @@ UPDATE empresas
 
             await using var connection = new NpgsqlConnection(_connectionString);
             await connection.ExecuteAsync(sql, new { EmpresaId = empresaId, Pausada = pausada });
+            _authCache?.InvalidateCompany(empresaId);
         }
 
         public async Task<IReadOnlyCollection<GestaoContatoPausadoRow>> ListarContatosPausadosAsync(Guid empresaId)
@@ -464,6 +468,7 @@ UPDATE estabelecimentos
             }, transaction);
 
             await transaction.CommitAsync();
+            _authCache?.InvalidateEstablishment(estabelecimentoId);
         }
 
         public async Task AtualizarStatusEstabelecimentoAsync(Guid estabelecimentoId, bool ativa)
@@ -520,6 +525,8 @@ UPDATE usuario_estabelecimentos
 
             await SincronizarVinculosEmpresaPorEstabelecimentosAsync(connection, transaction, empresaId.Value);
             await transaction.CommitAsync();
+            _authCache?.InvalidateEstablishment(estabelecimentoId);
+            _authCache?.InvalidateCompany(empresaId.Value);
         }
 
         public async Task<IReadOnlyCollection<GestaoUsuarioResumoRow>> ListarUsuariosResumoAsync(
@@ -909,6 +916,7 @@ SET tipo_acesso              = EXCLUDED.tipo_acesso,
             }
 
             await transaction.CommitAsync();
+            _authCache?.InvalidateUser(userId);
             return userId;
         }
 
@@ -991,6 +999,7 @@ UPDATE motoboy_estabelecimento me
 
             await using var connection = new NpgsqlConnection(_connectionString);
             await connection.ExecuteAsync(sql, new { UserId = userId, Ativo = ativo });
+            _authCache?.InvalidateUser(userId);
         }
 
         public async Task RemoverUsuarioAsync(int userId)
@@ -1034,6 +1043,7 @@ UPDATE motoboy_estabelecimento me
    AND me.ativo = TRUE;", new { UserId = userId }, transaction);
 
             await transaction.CommitAsync();
+            _authCache?.InvalidateUser(userId);
         }
 
         public async Task<MotoboyPerfilRow?> ObterPerfilMotoboyAsync(int motoboyId)
