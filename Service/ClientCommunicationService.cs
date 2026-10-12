@@ -11,14 +11,13 @@ using APIBack.Service.Interface;
 namespace APIBack.Service;
 
 public sealed class ClientCommunicationService(ClientCommunicationRepository repository,CommunicationService communication,CommunicationRepository files,
-    IAtendimentoRepository channels,IPedidoQueueService queues,IMessageRepository messages,ConversationManagementService management,WhatsAppSender whatsapp,
+    IAtendimentoRepository channels,IMessageRepository messages,ConversationManagementService management,WhatsAppSender whatsapp,
     CommunicationAudioConverter? audio = null)
 {
     private async Task<PedidoCanalDto> ChannelAsync(ChatActor actor,int pedido,bool send)
     {
         if(!actor.MotoboyId.HasValue)throw new DeliveryDomainException(403,"OPERATIONAL_TOKEN_REQUIRED","Use o acesso do motoboy.");
-        var queue=await queues.GetQueueAsync(actor.EstablishmentId,actor.MotoboyId.Value);
-        if(!AtendimentoService.PedidoEstaNaFila(queue,pedido))throw new DeliveryDomainException(403,"PEDIDO_NOT_IN_YOUR_QUEUE","Este pedido nao esta na sua fila.");
+        if(!await channels.PedidoEstaNaFilaAsync(actor.EstablishmentId,actor.MotoboyId.Value,pedido))throw new DeliveryDomainException(403,"PEDIDO_NOT_IN_YOUR_QUEUE","Este pedido nao esta na sua fila.");
         var channel=await channels.GetCanalDoPedidoAsync(actor.EstablishmentId,pedido);
         if(send&&(!channel.PodeReceber||!channel.ConversaId.HasValue))throw new DeliveryDomainException(422,"CLIENT_CHANNEL_UNAVAILABLE","Este canal nao permite envio. Fale com a loja.");
         return channel;
@@ -37,26 +36,32 @@ public sealed class ClientCommunicationService(ClientCommunicationRepository rep
         var result=new MotoboyClientChatDto{Channel=channel};
         if(!channel.ConversaId.HasValue)return result;
         var cursor=Cursor(before);
-        var sender=AtendimentoService.BuildCriadaPorLabel(await channels.ObterNomeMotoboyAsync(actor.MotoboyId!.Value));
+        var nameTask=channels.ObterNomeMotoboyAsync(actor.MotoboyId!.Value);
         search=string.IsNullOrWhiteSpace(search)?null:search.Trim()[..Math.Min(search.Trim().Length,100)];
-        var page=await repository.HistoryAsync(actor.EstablishmentId,channel.ConversaId.Value,sender,cursor.Before,cursor.BeforeId,search,Math.Clamp(limit,1,100));
+        var historyTask=repository.HistoryAsync(actor.EstablishmentId,channel.ConversaId.Value,"",cursor.Before,cursor.BeforeId,search,Math.Clamp(limit,1,100));
+        await Task.WhenAll(nameTask,historyTask);var page=await historyTask;
         result.Messages=page.Messages;
         result.HasMore=page.More;
         var first=page.Messages.FirstOrDefault();
         result.Cursor=first==null?null:$"{DateTime.SpecifyKind(first.CreatedAtUtc,DateTimeKind.Utc):O}|{first.Id}";
-        var data=await repository.MetadataAsync(actor.EstablishmentId,result.Messages.Select(m=>m.Id).ToArray());
-        var reactions=await repository.ReactionsAsync(actor,result.Messages.Select(m=>m.Id).ToArray());
+        var ids=result.Messages.Select(m=>m.Id).ToArray();
+        var metadataTask=repository.MetadataAsync(actor.EstablishmentId,ids);
+        var reactionsTask=repository.ReactionsAsync(actor,ids);
+        await Task.WhenAll(nameTask,metadataTask,reactionsTask);
+        var sender=AtendimentoService.BuildCriadaPorLabel(await nameTask);
+        var data=await metadataTask;var reactions=await reactionsTask;
+        var attachments=await files.FileMetadataAsync(actor.EstablishmentId,data.Values.Where(m=>m.AttachmentId.HasValue).Select(m=>m.AttachmentId!.Value).Distinct().ToArray());
         foreach(var message in result.Messages)
         {
             if(reactions.TryGetValue(message.Id,out var reaction))message.Reactions=reaction;
             var incoming=(ClientCommunicationRepository.MessageRow)message;
+            message.Mine=string.Equals(incoming.CreatedBy,sender,StringComparison.Ordinal);
             message.Attachment=IncomingAttachment(incoming,pedido);
             if(!data.TryGetValue(message.Id,out var metadata))continue;
             message.ReplyTo=metadata.ReplyTo;
             if(metadata.AttachmentId.HasValue)
             {
-                var file=await files.FileAsync(actor.EstablishmentId,metadata.AttachmentId.Value);
-                if(file!=null)message.Attachment=new(){Id=file.Id,Name=file.Name,ContentType=file.ContentType,Size=file.Size};
+                if(attachments.TryGetValue(metadata.AttachmentId.Value,out var file))message.Attachment=file;
             }
         }
         return result;

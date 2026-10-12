@@ -143,6 +143,14 @@ FROM delivery_chat_reaction WHERE message_id=ANY(@Ids) GROUP BY message_id,react
         await tx.CommitAsync();
         return row;
     }
+    public async Task<IReadOnlyDictionary<Guid,CommunicationAttachmentDto>> FileMetadataAsync(Guid est, Guid[] ids)
+    {
+        if(ids.Length==0)return new Dictionary<Guid,CommunicationAttachmentDto>();
+        await using var db=await dataSource.OpenConnectionAsync();
+        var rows=await db.QueryAsync<CommunicationAttachmentDto>(@"SELECT id AS Id,name AS Name,content_type AS ContentType,octet_length(content) AS Size
+ FROM delivery_chat_attachment WHERE estabelecimento_id=@Est AND id=ANY(@Ids);",new{Est=est,Ids=ids});
+        return rows.ToDictionary(r=>r.Id);
+    }
     public async Task<FileRow?> FileAsync(Guid est, Guid id)
     {
         await using var db = await dataSource.OpenConnectionAsync();

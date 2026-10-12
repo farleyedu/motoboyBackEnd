@@ -22,6 +22,7 @@ namespace APIBack.Repository.Interface
 
         /// <summary>Origem do pedido e a conversa do cliente (sem criar nada): diz se a loja consegue falar com ele.</summary>
         Task<PedidoCanalDto> GetCanalDoPedidoAsync(Guid estabelecimentoId, int pedidoId);
+        Task<bool> PedidoEstaNaFilaAsync(Guid estabelecimentoId, int motoboyId, int pedidoId);
 
         /// <summary>
         /// Pedidos entregues cuja conversa ainda esta aberta: candidatos ao fechamento automatico do atendimento.

@@ -20,9 +20,9 @@ public sealed class CommunicationMediaTests
     [Fact]
     public async Task CommunicationClientDownloadAndReactionRejectOrderOutsideOwnQueueBeforeTransport()
     {
-        var est=Guid.NewGuid();var queues=new Mock<IPedidoQueueService>();
-        queues.Setup(q=>q.GetQueueAsync(est,1,It.IsAny<CancellationToken>())).ReturnsAsync(new MotoboyQueueDto());
-        var service=new ClientCommunicationService(null!,null!,null!,Mock.Of<IAtendimentoRepository>(),queues.Object,null!,null!,null!);
+        var est=Guid.NewGuid();var channels=new Mock<IAtendimentoRepository>();
+        channels.Setup(q=>q.PedidoEstaNaFilaAsync(est,1,23)).ReturnsAsync(false);
+        var service=new ClientCommunicationService(null!,null!,null!,channels.Object,null!,null!,null!);
         var actor=new ChatActor(est,7,1);
         Assert.Equal(403,(await Assert.ThrowsAsync<DeliveryDomainException>(()=>service.DownloadAsync(actor,23,Guid.NewGuid(),default))).StatusCode);
         Assert.Equal(403,(await Assert.ThrowsAsync<DeliveryDomainException>(()=>service.ReactAsync(actor,23,Guid.NewGuid(),"like"))).StatusCode);

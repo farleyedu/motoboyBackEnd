@@ -19,6 +19,15 @@ namespace APIBack.Repository
     public sealed class AtendimentoRepository : IAtendimentoRepository
     {
         private const string LocalTimeZone = "America/Sao_Paulo";
+        public async Task<bool> PedidoEstaNaFilaAsync(Guid estabelecimentoId, int motoboyId, int pedidoId)
+        {
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            return await connection.ExecuteScalarAsync<bool>(@"
+SELECT EXISTS(SELECT 1 FROM delivery_route_stops s JOIN pedido p ON p.id=s.pedido_id
+ WHERE s.estabelecimento_id=@Est AND p.id_estabelecimento=@Est AND s.motoboy_id=@Motoboy
+   AND s.pedido_id=@Pedido AND s.stop_status IN ('assigned','en_route') AND s.offered_at_utc IS NULL);",
+                new { Est = estabelecimentoId, Motoboy = motoboyId, Pedido = pedidoId });
+        }
         private readonly NpgsqlDataSource _dataSource;
         private readonly TimeProvider _clock;
 

@@ -11,7 +11,7 @@ using Moq;
 
 namespace APIBack.Tests.Integration;
 
-public sealed class CommunicationDatabaseTests
+public sealed partial class CommunicationDatabaseTests
 {
     [DeliveryDatabaseFact]
     public async Task MigrationLegacyInteropIdempotencyPagingMentionsReadAndPrivateIsolation()

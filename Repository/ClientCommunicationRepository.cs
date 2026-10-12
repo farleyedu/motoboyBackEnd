@@ -10,11 +10,12 @@ public sealed class ClientCommunicationRepository(NpgsqlDataSource source)
     public sealed class MessageRow : MotoboyClientChatMessageDto
     {
         public string? ProviderId { get; set; }
+        public string? CreatedBy { get; set; }
         public string? IncomingMedia { get; set; }
         public string? PhoneNumberId { get; set; }
     }
     private const string HistorySelect=@"SELECT m.id AS Id,m.conteudo AS Body,m.tipo::text AS Type,m.status::text AS Status,
- m.data_criacao AS CreatedAtUtc,m.criada_por=@Sender AS Mine,m.id_provedor AS ProviderId,
+ m.data_criacao AS CreatedAtUtc,m.criada_por=@Sender AS Mine,m.criada_por AS CreatedBy,m.id_provedor AS ProviderId,
  (e.payload->'message'->(e.payload->'message'->>'type'))::text AS IncomingMedia,e.phone_number_id AS PhoneNumberId
  FROM mensagens m JOIN conversas c ON c.id=m.id_conversa
  JOIN conversas selected ON selected.id=@Conversation AND selected.id_estabelecimento=@Est
