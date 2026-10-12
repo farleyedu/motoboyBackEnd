@@ -170,6 +170,9 @@ namespace APIBack.Service
         public Task<IReadOnlyList<MotoboyRosterEntryDto>> ListMotoboysAsync(Guid estabelecimentoId) =>
             _repository.ListMotoboysVinculadosAsync(estabelecimentoId);
 
+        public Task<MotoboyContactsPageDto> ListMotoboysPageAsync(Guid estabelecimentoId, string? cursor, string? search) =>
+            _repository.ListMotoboysPageAsync(estabelecimentoId, cursor, search);
+
         public Task<IReadOnlyList<MotoboyGroupMessageDto>> ListGroupMessagesAsync(Guid estabelecimentoId, int limit) =>
             _repository.ListGroupMessagesAsync(estabelecimentoId, limit <= 0 ? 50 : limit);
 

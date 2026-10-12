@@ -252,8 +252,10 @@ namespace APIBack.Controllers
 
         [HttpGet("contacts")]
         [RequireOperationalSession]
-        public Task<IActionResult> GetContacts() =>
-            WithOperationalContextAsync((est, _, __) => _atendimento.ListMotoboysAsync(est));
+        public Task<IActionResult> GetContacts(bool paged = false, string? cursor = null, string? search = null) =>
+            paged || cursor != null || search != null
+                ? WithOperationalContextAsync((est, _, __) => _atendimento.ListMotoboysPageAsync(est, cursor, search))
+                : WithOperationalContextAsync((est, _, __) => _atendimento.ListMotoboysAsync(est));
 
         [HttpPost("orders/{pedidoId:int}/client-messages")]
         [RequireOperationalSession]

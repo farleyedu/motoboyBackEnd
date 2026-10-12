@@ -555,21 +555,52 @@ SELECT nome FROM motoboy
         // Lista de motoboys vinculados (contatos) e grupo da loja (Fase D/E)
         // =====================================================================
 
-        public async Task<IReadOnlyList<MotoboyRosterEntryDto>> ListMotoboysVinculadosAsync(Guid estabelecimentoId)
+        private sealed record RosterCursor(Guid Store, bool Online, string Name, int Id);
+
+        public async Task<IReadOnlyList<MotoboyRosterEntryDto>> ListMotoboysVinculadosAsync(Guid estabelecimentoId) =>
+            (await ListRosterAsync(estabelecimentoId, null, 200, null)).Take(200).ToList();
+
+        public async Task<MotoboyContactsPageDto> ListMotoboysPageAsync(Guid estabelecimentoId, string? cursor, string? search = null)
+        {
+            RosterCursor? after = null;
+            if (!string.IsNullOrWhiteSpace(cursor))
+            {
+                try
+                {
+                    if (cursor.Length > 2048) throw new FormatException();
+                    after = JsonSerializer.Deserialize<RosterCursor>(Microsoft.AspNetCore.WebUtilities.WebEncoders.Base64UrlDecode(cursor));
+                    if (after == null || after.Store != estabelecimentoId || after.Id <= 0 || after.Name == null) throw new FormatException();
+                }
+                catch (Exception ex) when (ex is FormatException or JsonException or ArgumentException)
+                { throw new DeliveryDomainException(422, "CONTACT_CURSOR_INVALID", "Cursor de contatos inv?lido."); }
+            }
+            var limit = after == null ? 15 : 10;
+            var rows = await ListRosterAsync(estabelecimentoId, after, limit, search);
+            var contacts = rows.Take(limit).ToList(); var last = contacts.LastOrDefault();
+            return new MotoboyContactsPageDto { Contacts = contacts, HasMore = rows.Count > limit,
+                Cursor = rows.Count > limit && last != null ? Microsoft.AspNetCore.WebUtilities.WebEncoders.Base64UrlEncode(
+                    JsonSerializer.SerializeToUtf8Bytes(new RosterCursor(estabelecimentoId, last.Online, last.Nome, last.MotoboyId))) : null };
+        }
+
+        private async Task<List<MotoboyRosterEntryDto>> ListRosterAsync(Guid estabelecimentoId, RosterCursor? after, int limit, string? search)
         {
             await using var connection = await _dataSource.OpenConnectionAsync();
             var rows = await connection.QueryAsync<MotoboyRosterEntryDto>(@"
-SELECT m.id AS MotoboyId, m.nome AS Nome, m.avatar AS Avatar,
-       EXISTS (
-           SELECT 1 FROM motoboy_active_sessions s
-            WHERE s.motoboy_id = m.id AND s.id_estabelecimento = @EstabelecimentoId
-              AND s.ended_at_utc IS NULL AND s.expires_at_utc > NOW()
-       ) AS Online
-  FROM motoboy_estabelecimento me
-  JOIN motoboy m ON m.id = me.motoboy_id
- WHERE me.estabelecimento_id = @EstabelecimentoId AND me.ativo = TRUE
- ORDER BY Online DESC, m.nome;",
-                new { EstabelecimentoId = estabelecimentoId });
+WITH roster AS (
+ SELECT m.id AS MotoboyId, COALESCE(m.nome,'') AS Nome, m.avatar AS Avatar,
+        EXISTS (SELECT 1 FROM motoboy_active_sessions s
+                 WHERE s.motoboy_id=m.id AND s.id_estabelecimento=@EstabelecimentoId
+                   AND s.ended_at_utc IS NULL AND s.revoked_at IS NULL AND s.expires_at_utc>NOW()) AS Online
+   FROM motoboy_estabelecimento me JOIN motoboy m ON m.id=me.motoboy_id
+  WHERE me.estabelecimento_id=@EstabelecimentoId AND me.ativo=TRUE
+    AND (CAST(@Search AS text) IS NULL OR strpos(lower(COALESCE(m.nome,'')),lower(@Search))>0)
+)
+SELECT * FROM roster
+ WHERE NOT @HasCursor OR (CASE WHEN Online THEN 0 ELSE 1 END,Nome,MotoboyId) > (@Rank,@Name,@Id)
+ ORDER BY Online DESC,Nome,MotoboyId LIMIT @Limit;",
+                new { EstabelecimentoId = estabelecimentoId, HasCursor = after != null,
+                    Rank = after?.Online == true ? 0 : 1, Name = after?.Name ?? "", Id = after?.Id ?? 0,
+                    Search = string.IsNullOrWhiteSpace(search) ? null : search.Trim()[..Math.Min(search.Trim().Length, 100)], Limit = limit + 1 });
             return rows.ToList();
         }
 

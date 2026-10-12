@@ -198,6 +198,13 @@ namespace APIBack.DTOs.Atendimento
     }
 
     /// <summary>Um motoboy da lista de contatos do atendimento (Fase D/E): vinculo ativo com esta loja, online ou nao.</summary>
+    public sealed class MotoboyContactsPageDto
+    {
+        public IReadOnlyList<MotoboyRosterEntryDto> Contacts { get; set; } = Array.Empty<MotoboyRosterEntryDto>();
+        public bool HasMore { get; set; }
+        public string? Cursor { get; set; }
+    }
+
     public class MotoboyRosterEntryDto
     {
         public int MotoboyId { get; set; }
