@@ -38,7 +38,13 @@ public partial class DeliverySyncDatabaseTests
     [DeliveryDatabaseFact]
     public Task MobileAccountWithoutLinksLogsInRenewsAndRequiresApprovalToWork() => CheckRestaurantConnection(false, mobileLogin: true, withoutLinks: true);
 
-    private static async Task CheckRestaurantConnection(bool legacyLink, bool web = false, bool mobileLogin = false, bool withoutLinks = false)
+    [DeliveryDatabaseFact]
+    public Task CachedMobileLoginReplacementAndLogoutRejectPreviousAccessImmediately() => CheckRestaurantConnection(false, mobileLogin: true, cachedAuth: true);
+
+    [DeliveryDatabaseFact]
+    public Task CachedMobileAccountWithoutLinksStillLogsInAndRequiresApprovalToWork() => CheckRestaurantConnection(false, mobileLogin: true, withoutLinks: true, cachedAuth: true);
+
+    private static async Task CheckRestaurantConnection(bool legacyLink, bool web = false, bool mobileLogin = false, bool withoutLinks = false, bool cachedAuth = false)
     {
         await using var db = await Database.Create();
         DefaultTypeMap.MatchNamesWithUnderscores = true;
@@ -75,10 +81,11 @@ UPDATE motoboy SET canonical_motoboy_id=id;
         }).Build();
         var jwt = new JwtService(configuration);
         using var cache = new MemoryCache(new MemoryCacheOptions());
+        var decisions = cachedAuth ? new AuthDecisionCache(cache, Microsoft.Extensions.Options.Options.Create(new AuthCacheOptions())) : null;
         var auth = new AuthService(configuration,jwt,new Mock<IHttpClientFactory>().Object,cache,
             Microsoft.Extensions.Options.Options.Create(new GoogleOAuthOptions()),
             Microsoft.Extensions.Options.Options.Create(new DeliveryTrackingOptions { Enabled = mobileLogin }),
-            NullLogger<AuthService>.Instance,db.Repository);
+            NullLogger<AuthService>.Instance,db.Repository,decisions);
         var links = new EstabelecimentoSelectionRepository(configuration);
         var selection = new EstabelecimentoSelectionService(links,new EstabelecimentoSelectionValidator(),jwt,auth,
             NullLogger<EstabelecimentoSelectionService>.Instance);
@@ -86,8 +93,9 @@ UPDATE motoboy SET canonical_motoboy_id=id;
         var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(selected.RefreshToken)));
         Assert.Equal(hash,await db.Scalar<string>("SELECT token_hash FROM usuario_refresh_tokens"));
         Assert.NotEqual(selected.RefreshToken,hash);
-        using var services = new ServiceCollection().AddSingleton(db.Source)
-            .AddSingleton<IEstabelecimentoSelectionRepository>(links).BuildServiceProvider();
+        var registrations = new ServiceCollection().AddSingleton(db.Source).AddSingleton<IEstabelecimentoSelectionRepository>(links);
+        if (decisions != null) registrations.AddSingleton<IAuthDecisionCache>(decisions);
+        using var services = registrations.BuildServiceProvider();
         async Task<int?> AuthenticatedUser(string token)
         {
             var context = new DefaultHttpContext { RequestServices = services };
@@ -156,6 +164,8 @@ UPDATE motoboy SET canonical_motoboy_id=id;
             Assert.Equal(first.MotoboyLoginSessionId,jwt.ValidateToken(selectedMobile.AccessToken).MotoboyLoginSessionId);
             var renewedMobile=await auth.RefreshTokenAsync(new RefreshTokenRequest { RefreshToken=selectedMobile.RefreshToken },null,null);
             Assert.Equal(first.MotoboyLoginSessionId,renewedMobile.MotoboyLoginSessionId);
+            Assert.Equal(7,await AuthenticatedUser(selectedMobile.AccessToken));
+            Assert.Equal(7,await AuthenticatedUser(renewedMobile.AccessToken));
             var turn=await db.Repository.StartAuthenticatedMobileSessionAsync(7,db.StoreId,Guid.NewGuid(),clientA,first.MotoboyLoginSessionId!.Value,null,false,"native");
             var second=await auth.LoginAsync(Login(clientB,first.MotoboyLoginSessionId));
             Assert.NotEqual(first.MotoboyLoginSessionId,second.MotoboyLoginSessionId);
