@@ -11,7 +11,8 @@ using APIBack.Service.Interface;
 namespace APIBack.Service;
 
 public sealed class ClientCommunicationService(ClientCommunicationRepository repository,CommunicationService communication,CommunicationRepository files,
-    IAtendimentoRepository channels,IPedidoQueueService queues,IMessageRepository messages,ConversationManagementService management,WhatsAppSender whatsapp)
+    IAtendimentoRepository channels,IPedidoQueueService queues,IMessageRepository messages,ConversationManagementService management,WhatsAppSender whatsapp,
+    CommunicationAudioConverter? audio = null)
 {
     private async Task<PedidoCanalDto> ChannelAsync(ChatActor actor,int pedido,bool send)
     {
@@ -84,7 +85,13 @@ public sealed class ClientCommunicationService(ClientCommunicationRepository rep
         var message=await repository.MessageAsync(actor.EstablishmentId,channel.ConversaId.Value,"",id);
         if(message==null||IncomingAttachment(message,pedido)==null||string.IsNullOrWhiteSpace(message.PhoneNumberId))throw new DeliveryDomainException(404,"CHAT_ATTACHMENT_INVALID","Anexo indisponivel nesta conversa.");
         using var json=JsonDocument.Parse(message.IncomingMedia!);
-        return await whatsapp.DownloadOperationalMediaAsync(actor.EstablishmentId,message.PhoneNumberId,json.RootElement.GetProperty("id").GetString()!,ct);
+        var file = await whatsapp.DownloadOperationalMediaAsync(actor.EstablishmentId,message.PhoneNumberId,json.RootElement.GetProperty("id").GetString()!,ct);
+        if (CommunicationAudioConverter.NeedsConversion(file.Type))
+        {
+            if (audio == null) throw new DeliveryDomainException(503,"CHAT_AUDIO_PROCESSOR_UNAVAILABLE","O processamento de áudio está indisponível.");
+            return (await audio.ConvertAsync(file.Content,ct), "audio/mp4");
+        }
+        return file;
     }
     public async Task ReactAsync(ChatActor actor,int pedido,Guid id,string? reaction)
     {

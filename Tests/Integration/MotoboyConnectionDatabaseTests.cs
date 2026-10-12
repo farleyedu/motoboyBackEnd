@@ -35,7 +35,10 @@ public partial class DeliverySyncDatabaseTests
     [DeliveryDatabaseFact]
     public Task MobileLoginWarnsBeforeReplacementAndRejectsOldIdentityRefreshAndLateLogout() => CheckRestaurantConnection(false, mobileLogin: true);
 
-    private static async Task CheckRestaurantConnection(bool legacyLink, bool web = false, bool mobileLogin = false)
+    [DeliveryDatabaseFact]
+    public Task MobileAccountWithoutLinksLogsInRenewsAndRequiresApprovalToWork() => CheckRestaurantConnection(false, mobileLogin: true, withoutLinks: true);
+
+    private static async Task CheckRestaurantConnection(bool legacyLink, bool web = false, bool mobileLogin = false, bool withoutLinks = false)
     {
         await using var db = await Database.Create();
         DefaultTypeMap.MatchNamesWithUnderscores = true;
@@ -101,6 +104,46 @@ UPDATE motoboy SET canonical_motoboy_id=id;
             await db.Execute("UPDATE motoboy_active_sessions SET ended_at_utc=NOW(),revoked_at=NOW()");
             var clientA=Guid.NewGuid().ToString("D"); var clientB=Guid.NewGuid().ToString("D");
             LoginRequest Login(string client, Guid? expected=null) => new() { Email="qa@exemplo.invalid",Senha="qa-password-2026",ClientApp="motoboy",ClientInstanceId=client,ConfirmSessionReplacement=expected.HasValue,ExpectedSessionId=expected };
+            if (withoutLinks)
+            {
+                await db.Execute("DELETE FROM usuario_estabelecimentos;DELETE FROM motoboy_estabelecimento;UPDATE usuario SET ultimo_estabelecimento_acessado=NULL");
+                var invalid = Login(clientA); invalid.Senha = "senha-incorreta";
+                await Assert.ThrowsAsync<UnauthorizedAccessException>(() => auth.LoginAsync(invalid));
+                await Assert.ThrowsAsync<UnauthorizedAccessException>(() => auth.LoginAsync(new LoginRequest { Email="qa@exemplo.invalid",Senha="qa-password-2026" }));
+                Assert.Equal(0, await db.Scalar<int>("SELECT COUNT(*)::int FROM motoboy_login_sessions"));
+
+                var account = await auth.LoginAsync(Login(clientA));
+                Assert.NotNull(account.MotoboyLoginSessionId);
+                Assert.Null(account.User.EstabelecimentoAtual);
+                Assert.Null(jwt.ValidateToken(account.AccessToken).EstabelecimentoId);
+                Assert.Empty(jwt.ValidateToken(account.AccessToken).Permissoes);
+                Assert.Equal(7, await AuthenticatedUser(account.AccessToken));
+                var refreshed = await auth.RefreshTokenAsync(new RefreshTokenRequest { RefreshToken=account.RefreshToken },null,null);
+                Assert.Null(jwt.ValidateToken(refreshed.AccessToken).EstabelecimentoId);
+                Assert.Equal(account.MotoboyLoginSessionId, refreshed.MotoboyLoginSessionId);
+                Assert.Equal(7, await AuthenticatedUser(refreshed.AccessToken));
+                await Assert.ThrowsAsync<UnauthorizedAccessException>(() => selection.DefinirEstabelecimentoAtivoAsync(7,db.StoreId,account.MotoboyLoginSessionId));
+                await Assert.ThrowsAsync<DeliveryDomainException>(() => db.Repository.StartAuthenticatedMobileSessionAsync(7,db.StoreId,Guid.NewGuid(),clientA,account.MotoboyLoginSessionId!.Value,null,false,"native"));
+
+                // Uma seleção antiga salva não pode voltar a exigir vínculo no refresh.
+                await db.Execute("UPDATE usuario SET ultimo_estabelecimento_acessado=@StoreId", new { db.StoreId });
+                var stale = await auth.RefreshTokenAsync(new RefreshTokenRequest { RefreshToken=refreshed.RefreshToken },null,null);
+                Assert.Null(jwt.ValidateToken(stale.AccessToken).EstabelecimentoId);
+                Assert.Equal(7, await AuthenticatedUser(stale.AccessToken));
+
+                // Após a aprovação, o mesmo login seleciona a loja e renova seu contexto.
+                await db.Execute("INSERT INTO motoboy_estabelecimento VALUES(1,@StoreId,TRUE,FALSE)", new { db.StoreId });
+                var approved = await selection.DefinirEstabelecimentoAtivoAsync(7,db.StoreId,account.MotoboyLoginSessionId);
+                var approvedRefresh = await auth.RefreshTokenAsync(new RefreshTokenRequest { RefreshToken=approved.RefreshToken },null,null);
+                Assert.Equal(db.StoreId, jwt.ValidateToken(approvedRefresh.AccessToken).EstabelecimentoId);
+                Assert.Equal(7, await AuthenticatedUser(approvedRefresh.AccessToken));
+
+                await db.Execute("UPDATE motoboy_estabelecimento SET ativo=FALSE");
+                var revoked = await auth.RefreshTokenAsync(new RefreshTokenRequest { RefreshToken=approvedRefresh.RefreshToken },null,null);
+                Assert.Null(jwt.ValidateToken(revoked.AccessToken).EstabelecimentoId);
+                Assert.Equal(7, await AuthenticatedUser(revoked.AccessToken));
+                return;
+            }
             var first=await auth.LoginAsync(Login(clientA));
             Assert.NotNull(first.MotoboyLoginSessionId);
             Assert.Equal(first.MotoboyLoginSessionId,(await auth.LoginAsync(Login(clientA))).MotoboyLoginSessionId);

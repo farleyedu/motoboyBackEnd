@@ -208,7 +208,7 @@ SELECT TRUE
    OR (
        s.ended_at_utc IS NULL
        AND s.revoked_at IS NULL
-       AND s.expires_at_utc > NOW()
+       AND (s.expires_at_utc > NOW() OR (s.origin = 'mobile' AND @AllowPresenceRenewal))
        AND EXISTS (
            SELECT 1
              FROM motoboy_estabelecimento me
@@ -241,7 +241,11 @@ SELECT TRUE
                     MotoboyId = payload.MotoboyId,
                     SessionEpoch = payload.SessionEpoch,
                     EstabelecimentoId = payload.EstabelecimentoId,
-                    AllowEndedOperationalSession = allowEndedOperationalSession
+                    AllowEndedOperationalSession = allowEndedOperationalSession,
+                    // Retomar presença não reabre um turno encerrado ou revogado.
+                    AllowPresenceRenewal =
+                        (HttpMethods.IsGet(context.Request.Method) && context.Request.Path == "/api/v2/motoboys/me/session") ||
+                        (HttpMethods.IsPost(context.Request.Method) && context.Request.Path == "/api/v2/motoboys/me/session/heartbeat")
                 }, commandTimeout: 10, cancellationToken: context.RequestAborted));
 
             return active == true;

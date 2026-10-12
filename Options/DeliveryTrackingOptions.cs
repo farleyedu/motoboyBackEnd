@@ -7,7 +7,7 @@ namespace APIBack.Options
         public bool Enabled { get; set; }
         public bool SimulatorEnabled { get; set; }
         public bool ApplyMigrationsOnStartup { get; set; }
-        public int PresenceTtlSeconds { get; set; } = 90;
+        public int PresenceTtlSeconds { get; set; } = 720;
         // A web pausa GPS e heartbeat ao abrir Maps/Waze ou bloquear a tela.
         // Mantém o turno por até 12 h sem retorno; não renova a idade da localização.
         public int WebPresenceTtlSeconds { get; set; } = 12 * 60 * 60;
@@ -17,7 +17,7 @@ namespace APIBack.Options
         /// heartbeat e nao pode derrubar a sessao. O padrao (30 dias) e "nunca" na pratica.
         /// </summary>
         public int SimulatorPresenceTtlSeconds { get; set; } = 30 * 24 * 60 * 60;
-        public int HeartbeatIntervalSeconds { get; set; } = 25;
+        public int HeartbeatIntervalSeconds { get; set; } = 240;
         public int LocationFreshnessSeconds { get; set; } = 120;
         public int OperationalTokenExpirationMinutes { get; set; } = 60;
         public int MaxCapturedAtFutureSeconds { get; set; } = 120;

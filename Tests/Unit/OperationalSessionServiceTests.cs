@@ -21,8 +21,8 @@ namespace APIBack.Tests.Unit
         {
             Enabled = true,
             SimulatorEnabled = true,
-            PresenceTtlSeconds = 90,
-            HeartbeatIntervalSeconds = 25,
+            PresenceTtlSeconds = 720,
+            HeartbeatIntervalSeconds = 240,
             LocationFreshnessSeconds = 120,
             OperationalTokenExpirationMinutes = 60
         };
@@ -47,7 +47,7 @@ namespace APIBack.Tests.Unit
             Assert.Equal("operational-token", result.AccessToken);
             Assert.Equal(3600, result.ExpiresIn);
             Assert.Equal(session.ExpiresAtUtc, result.Session.PresenceExpiresAtUtc);
-            Assert.Equal(25, result.Session.HeartbeatIntervalSeconds);
+            Assert.Equal(240, result.Session.HeartbeatIntervalSeconds);
             Assert.NotNull(capturedPayload);
             Assert.Equal("delivery_operational", capturedPayload!.TokenUse);
             Assert.Equal(session.SessionEpoch, capturedPayload.SessionEpoch);
@@ -102,6 +102,8 @@ namespace APIBack.Tests.Unit
 
             Assert.Equal("renewed-token", response.AccessToken);
             Assert.Equal(session.SessionId, response.Session.SessionId);
+            Assert.Equal(3600, response.ExpiresIn);
+            Assert.Equal(240, response.Session.HeartbeatIntervalSeconds);
             _repository.Verify(r => r.HeartbeatAsync(session.SessionId, session.MotoboyId, session.SessionEpoch, default), Times.Once);
         }
 
@@ -248,7 +250,7 @@ namespace APIBack.Tests.Unit
                 StartedByUserId = 7,
                 StartedAtUtc = now,
                 LastHeartbeatAtUtc = now,
-                ExpiresAtUtc = now.AddSeconds(90),
+                ExpiresAtUtc = now.AddSeconds(720),
                 Version = 1,
                 Nome = "Motoboy Teste",
                 Status = 2,

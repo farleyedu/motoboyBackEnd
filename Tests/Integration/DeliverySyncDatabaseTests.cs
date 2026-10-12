@@ -71,7 +71,7 @@ public partial class DeliverySyncDatabaseTests
         await using var db = await Database.Create();
         var session = await db.Repository.HeartbeatAsync(db.SessionId, 1, 4);
         Assert.Equal(2, session.Version); Assert.Equal("Teste", session.Nome); Assert.Equal(7, session.UsuarioId);
-        Assert.Equal(OperationalAvailability.UntilExplicitEnd, session.ExpiresAtUtc);
+        Assert.Equal(720, (session.ExpiresAtUtc - session.LastHeartbeatAtUtc).TotalSeconds);
         Assert.Equal("SESSION_EXPIRED", (await Assert.ThrowsAsync<DeliveryDomainException>(() =>
             db.Repository.HeartbeatAsync(db.SessionId, 1, 99))).Code);
         await db.Execute("UPDATE motoboy_estabelecimento SET ativo = FALSE");

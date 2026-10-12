@@ -11,8 +11,8 @@ namespace APIBack.Tests.Unit
     {
         private readonly DeliveryTrackingOptions _options = new()
         {
-            PresenceTtlSeconds = 90,
-            HeartbeatIntervalSeconds = 25,
+            PresenceTtlSeconds = 720,
+            HeartbeatIntervalSeconds = 240,
             LocationFreshnessSeconds = 120,
             MaxCapturedAtFutureSeconds = 120,
             MaxCapturedAtPastSeconds = 86400,

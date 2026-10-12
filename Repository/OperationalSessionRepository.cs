@@ -107,11 +107,11 @@ SELECT s.session_id AS SessionId,
                         throw SessionConflict(previous);
                     // Renovar o JWT mantém a identidade do turno, a fila e a sequência do GPS.
                     await connection.ExecuteAsync(@"
-UPDATE motoboy_active_sessions SET expires_at_utc=@UntilExplicitEnd,
+UPDATE motoboy_active_sessions SET expires_at_utc=NOW()+(@PresenceTtl * INTERVAL '1 second'),
  last_heartbeat_at_utc=NOW(), last_seen_at=NOW(), version=version+1,
  client_instance_id=COALESCE(client_instance_id,@ClientInstanceId)
  WHERE session_id=@SessionId AND ended_at_utc IS NULL AND revoked_at IS NULL;",
-                        new { previous.SessionId, OperationalAvailability.UntilExplicitEnd, ClientInstanceId = clientInstanceId }, transaction);
+                        new { previous.SessionId, PresenceTtl = _options.PresenceTtlSeconds, ClientInstanceId = clientInstanceId }, transaction);
                     var resumed = await connection.QuerySingleAsync<OperationalSessionRecord>(
                         SessionSelect + " WHERE s.session_id=@SessionId;", new { previous.SessionId }, transaction);
                     await transaction.CommitAsync();
@@ -314,7 +314,7 @@ SELECT latitude AS Latitude, longitude AS Longitude
 WITH updated AS (
     UPDATE motoboy_active_sessions s
        SET last_heartbeat_at_utc = NOW(), last_seen_at = NOW(),
-           expires_at_utc = CASE WHEN s.origin = 'mobile' THEN @UntilExplicitEnd ELSE NOW() + (@SimulatorTtl * INTERVAL '1 second') END,
+           expires_at_utc = NOW() + ((CASE WHEN s.origin = 'mobile' THEN @PresenceTtl ELSE @SimulatorTtl END) * INTERVAL '1 second'),
            version = s.version + 1
      WHERE s.session_id = @SessionId AND s.motoboy_id = @MotoboyId AND s.session_epoch = @SessionEpoch
        AND s.ended_at_utc IS NULL AND s.revoked_at IS NULL AND (s.origin = 'mobile' OR s.expires_at_utc > NOW())
@@ -334,7 +334,7 @@ WITH updated AS (
 ) " + SessionSelect.Replace("FROM motoboy_active_sessions s", "FROM updated s");
             var session = await connection.QuerySingleOrDefaultAsync<OperationalSessionRecord>(new CommandDefinition(sql,
                 new { SessionId = sessionId, MotoboyId = motoboyId, SessionEpoch = sessionEpoch,
-                    OperationalAvailability.UntilExplicitEnd, SimulatorTtl = PresenceTtlSecondsFor("simulator") },
+                    PresenceTtl = _options.PresenceTtlSeconds, SimulatorTtl = PresenceTtlSecondsFor("simulator") },
                 transaction, commandTimeout: 10, cancellationToken: cancellationToken))
                 ?? throw new DeliveryDomainException(401, "SESSION_EXPIRED", "Sessao operacional encerrada ou expirada.");
             await InsertRealtimeEventAsync(connection, transaction, DeliveryRealtimeEvents.MotoboyStatusChanged,
@@ -462,7 +462,8 @@ SELECT sequence FROM motoboy_location_current WHERE session_id = @SessionId FOR 
                 // ficam no historico; somente o ultimo substitui a localizacao corrente.
                 session.Version = await connection.QuerySingleAsync<long>(new CommandDefinition(@"
 WITH changed_session AS (
-    UPDATE motoboy_active_sessions SET last_seen_at = @ReceivedAtUtc, version = version + 1
+    UPDATE motoboy_active_sessions SET last_seen_at = @ReceivedAtUtc,
+       expires_at_utc = @ReceivedAtUtc + (@PresenceTtl * INTERVAL '1 second'), version = version + 1
      WHERE session_id = @SessionId RETURNING version
 ), inserted_samples AS (
     INSERT INTO motoboy_location_samples (
@@ -495,6 +496,7 @@ WITH changed_session AS (
 )
 SELECT version FROM changed_session;",
                     new { SessionId = sessionId, MotoboyId = motoboyId, session.EstabelecimentoId, ReceivedAtUtc = serverNow,
+                        PresenceTtl = PresenceTtlSecondsFor(session.Origin, session.DeviceType),
                         SampleIds = accepted.Select(l => l.SampleId).ToArray(), Sequences = accepted.Select(l => l.Sequence).ToArray(),
                         Latitudes = accepted.Select(l => l.Latitude).ToArray(), Longitudes = accepted.Select(l => l.Longitude).ToArray(),
                         Accuracies = accepted.Select(l => l.AccuracyMeters).ToArray(), Speeds = accepted.Select(l => l.SpeedMps).ToArray(),
@@ -863,7 +865,7 @@ SELECT motoboy_id AS MotoboyId,
         private int PresenceTtlSecondsFor(string origin, string? deviceType = null) =>
             origin == "simulator"
                 ? Math.Max(_options.PresenceTtlSeconds, _options.SimulatorPresenceTtlSeconds)
-                : deviceType == "web" ? Math.Max(_options.PresenceTtlSeconds, _options.WebPresenceTtlSeconds) : _options.PresenceTtlSeconds;
+                : _options.PresenceTtlSeconds;
 
         public async Task<int> ExpireDueSessionsAsync(int limit)
         {
@@ -1024,7 +1026,7 @@ SELECT canonical.id AS MotoboyId,
                 IdempotencyKey = attemptId,
                 StartedAtUtc = serverNow,
                 LastHeartbeatAtUtc = serverNow,
-                ExpiresAtUtc = origin == "mobile" ? OperationalAvailability.UntilExplicitEnd : serverNow.AddSeconds(PresenceTtlSecondsFor(origin, deviceType)),
+                ExpiresAtUtc = serverNow.AddSeconds(PresenceTtlSecondsFor(origin, deviceType)),
                 Version = 1,
                 Nome = identity.Nome,
                 Avatar = identity.Avatar,

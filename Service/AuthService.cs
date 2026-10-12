@@ -117,10 +117,12 @@ SELECT id,
                 await AtualizarSenhaUsuarioAsync(connection, usuario.Id, usuario.Senha);
             }
 
-            // Super admin sem estabelecimento: token básico sem contexto de estabelecimento
-            var estabelecimentoId = await ResolverEstabelecimentoParaTokenAsync(connection, usuario);
+            // O acesso à conta do app não depende de vínculo. A loja é selecionada
+            // depois do login, somente entre os vínculos aprovados do motoboy.
+            var isMotoboyApp = string.Equals(request.ClientApp, "motoboy", StringComparison.Ordinal);
+            var estabelecimentoId = isMotoboyApp ? null : await ResolverEstabelecimentoParaTokenAsync(connection, usuario);
             Guid? loginSessionId = null;
-            if (string.Equals(request.ClientApp, "motoboy", StringComparison.Ordinal))
+            if (isMotoboyApp)
                 loginSessionId = await MotoboyLoginSessions.BeginAsync(connection, usuario.Id, request,
                     OperationalAvailability.UntilExplicitEnd.UtcDateTime, _operationalSessionRepository);
             var response = await BuildTokenResponseAsync(connection, usuario, estabelecimentoId, loginSessionId);
@@ -192,7 +194,8 @@ SELECT id,
                 throw new UnauthorizedAccessException("Usuário não encontrado para refresh token.");
             }
 
-            var estabelecimentoId = await ResolverEstabelecimentoParaTokenAsync(connection, usuario);
+            var estabelecimentoId = await ResolverEstabelecimentoParaTokenAsync(
+                connection, usuario, tokenAtual.MotoboyLoginSessionId.HasValue);
 
             var response = await BuildTokenResponseAsync(connection, usuario, estabelecimentoId, tokenAtual.MotoboyLoginSessionId);
             var newRefreshTokenHash = HashRefreshToken(response.RefreshToken);
@@ -888,8 +891,29 @@ SELECT id,
             return estabelecimentoId.Value;
         }
 
-        private async Task<Guid?> ResolverEstabelecimentoParaTokenAsync(NpgsqlConnection connection, UsuarioDb usuario)
+        private async Task<Guid?> ResolverEstabelecimentoParaTokenAsync(
+            NpgsqlConnection connection, UsuarioDb usuario, bool isMotoboyApp = false)
         {
+            if (isMotoboyApp)
+            {
+                // Renovar a conta sem vínculo também deve funcionar. Um vínculo
+                // revogado ou uma loja indisponível não impede procurar outra equipe.
+                return await connection.ExecuteScalarAsync<Guid?>(@"
+SELECT e.id
+  FROM motoboy owner
+  JOIN motoboy_estabelecimento me ON me.motoboy_id = COALESCE(owner.canonical_motoboy_id, owner.id)
+  JOIN estabelecimentos e ON e.id = me.estabelecimento_id
+  JOIN empresas emp ON emp.id = e.id_empresa
+ WHERE owner.id_usuario = @UserId
+   AND me.ativo = TRUE
+   AND e.id = @EstabelecimentoId
+   AND COALESCE(e.ativo, TRUE) = TRUE
+   AND COALESCE(e.status, 'ativo') IN ('ativo', 'trial')
+   AND COALESCE(emp.ativo, TRUE) = TRUE
+   AND COALESCE(emp.pausada, FALSE) = FALSE
+ LIMIT 1;", new { UserId = usuario.Id, EstabelecimentoId = usuario.UltimoEstabelecimentoAcessado });
+            }
+
             if (usuario.IsSuperAdmin)
             {
                 return usuario.UltimoEstabelecimentoAcessado;

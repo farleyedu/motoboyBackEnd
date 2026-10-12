@@ -225,6 +225,42 @@ ON CONFLICT (id) DO UPDATE SET
             }, transaction: tx);
 
             await tx.CommitAsync();
+            await NotifyMotoboysAsync(mensagem.IdConversa, idMsg, quandoUtc);
+        }
+
+        /// <summary>
+        /// Avisa por tempo real (SignalR, via delivery_realtime_outbox) os motoboys com turno aberto que tem pedido ativo
+        /// ligado a esta conversa/cliente, para o app buscar so a mensagem nova em vez de consultar a cada poucos segundos.
+        /// Melhor esforco: roda depois do commit, em conexao propria; uma falha aqui nunca afeta o recebimento da mensagem.
+        /// </summary>
+        private async Task NotifyMotoboysAsync(Guid conversaId, Guid mensagemId, DateTime quandoUtc)
+        {
+            const string sql = @"
+INSERT INTO delivery_realtime_outbox (event_id, event_name, target_group, estabelecimento_id, motoboy_id, aggregate_version, payload, occurred_at_utc)
+SELECT gen_random_uuid(), 'delivery.chat.updated', 'delivery-session:' || replace(s.session_id::text, '-', ''),
+       c.id_estabelecimento, st.motoboy_id, (EXTRACT(EPOCH FROM @Quando) * 1000)::bigint,
+       jsonb_build_object('schemaVersion', 1, 'estabelecimentoId', c.id_estabelecimento, 'channel', 'client',
+                          'threadKey', 'client:' || p.id, 'action', 'message', 'messageId', @MensagemId,
+                          'version', (EXTRACT(EPOCH FROM @Quando) * 1000)::bigint),
+       NOW()
+  FROM conversas c
+  JOIN pedido p ON p.id_estabelecimento = c.id_estabelecimento
+               AND (p.conversa_id = c.id OR (c.id_cliente IS NOT NULL AND p.cliente_id = c.id_cliente))
+  JOIN delivery_route_stops st ON st.pedido_id = p.id AND st.estabelecimento_id = c.id_estabelecimento
+               AND st.stop_status IN ('assigned', 'en_route')
+  JOIN motoboy_active_sessions s ON s.motoboy_id = st.motoboy_id AND s.id_estabelecimento = c.id_estabelecimento
+               AND s.ended_at_utc IS NULL AND s.revoked_at IS NULL AND s.expires_at_utc > NOW()
+ WHERE c.id = @ConversaId;";
+            try
+            {
+                await using var cx = new NpgsqlConnection(_connectionString);
+                await cx.OpenAsync();
+                await cx.ExecuteAsync(sql, new { ConversaId = conversaId, MensagemId = mensagemId, Quando = quandoUtc });
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Aviso em tempo real ao motoboy nao enfileirado (conversa {Conversa}).", conversaId);
+            }
         }
 
         public async Task<IReadOnlyList<Message>> GetByConversationAsync(Guid idConversa, int limit = 200)
