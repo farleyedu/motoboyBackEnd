@@ -39,18 +39,23 @@ public sealed class ClientCommunicationService(ClientCommunicationRepository rep
         var nameTask=channels.ObterNomeMotoboyAsync(actor.MotoboyId!.Value);
         search=string.IsNullOrWhiteSpace(search)?null:search.Trim()[..Math.Min(search.Trim().Length,100)];
         var historyTask=repository.HistoryAsync(actor.EstablishmentId,channel.ConversaId.Value,"",cursor.Before,cursor.BeforeId,search,Math.Clamp(limit,1,100));
-        await Task.WhenAll(nameTask,historyTask);var page=await historyTask;
+        async Task<IReadOnlyDictionary<Guid,ClientCommunicationRepository.Dispatch>> Metadata() =>
+            await repository.MetadataAsync(actor.EstablishmentId,(await historyTask).Messages.Select(m=>m.Id).ToArray());
+        async Task<IReadOnlyDictionary<Guid,CommunicationReactionDto[]>> Reactions() =>
+            await repository.ReactionsAsync(actor,(await historyTask).Messages.Select(m=>m.Id).ToArray());
+        var metadataTask=Metadata();var reactionsTask=Reactions();
+        async Task<IReadOnlyDictionary<Guid,CommunicationAttachmentDto>> Attachments() =>
+            await files.FileMetadataAsync(actor.EstablishmentId,(await metadataTask).Values.Where(m=>m.AttachmentId.HasValue).Select(m=>m.AttachmentId!.Value).Distinct().ToArray());
+        var attachmentsTask=Attachments();
+        await Task.WhenAll(nameTask,historyTask,metadataTask,reactionsTask,attachmentsTask);
+        var page=await historyTask;
         result.Messages=page.Messages;
         result.HasMore=page.More;
         var first=page.Messages.FirstOrDefault();
         result.Cursor=first==null?null:$"{DateTime.SpecifyKind(first.CreatedAtUtc,DateTimeKind.Utc):O}|{first.Id}";
-        var ids=result.Messages.Select(m=>m.Id).ToArray();
-        var metadataTask=repository.MetadataAsync(actor.EstablishmentId,ids);
-        var reactionsTask=repository.ReactionsAsync(actor,ids);
-        await Task.WhenAll(nameTask,metadataTask,reactionsTask);
         var sender=AtendimentoService.BuildCriadaPorLabel(await nameTask);
         var data=await metadataTask;var reactions=await reactionsTask;
-        var attachments=await files.FileMetadataAsync(actor.EstablishmentId,data.Values.Where(m=>m.AttachmentId.HasValue).Select(m=>m.AttachmentId!.Value).Distinct().ToArray());
+        var attachments=await attachmentsTask;
         foreach(var message in result.Messages)
         {
             if(reactions.TryGetValue(message.Id,out var reaction))message.Reactions=reaction;
