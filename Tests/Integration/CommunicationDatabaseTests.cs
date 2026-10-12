@@ -114,6 +114,11 @@ public sealed class CommunicationDatabaseTests
         var found=Assert.Single((await repo.HistoryAsync(db.Est,conversation,"Motoboy",null,Guid.Empty,"alvo",50)).Messages);Assert.Equal(first,found.Id);
         Assert.Equal(23,ClientCommunicationService.IncomingAttachment(found,23)!.ClientPedidoId);
         Assert.Null(await repo.MessageAsync(Guid.NewGuid(),conversation,"",first));
+        var olderConversation=Guid.NewGuid();
+        await db.Execute("INSERT INTO conversas VALUES(@Conversation,@Client,@Est); INSERT INTO mensagens VALUES(gen_random_uuid(),@Conversation,'alvo de outro pedido','texto','entregue','cliente','wamid.old',NOW())",
+            new{Conversation=olderConversation,Client=client,db.Est});
+        Assert.Equal(2,(await repo.HistoryAsync(db.Est,conversation,"Motoboy",null,Guid.Empty,null,50)).Messages.Count);
+        Assert.Null(await repo.MessageAsync(db.Est,olderConversation,"",first));
         var actor=new ChatActor(db.Est,7,1);await repo.SetReactionAsync(actor,first,"like");Assert.True(Assert.Single((await repo.ReactionsAsync(actor,new[]{first}))[first]).Mine);
         Assert.Empty(await repo.ReactionsAsync(new(Guid.NewGuid(),7,1),new[]{first}));await repo.SetReactionAsync(actor,first,null);Assert.Empty(await repo.ReactionsAsync(actor,new[]{first}));
     }

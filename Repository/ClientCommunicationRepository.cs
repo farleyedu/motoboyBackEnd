@@ -19,7 +19,7 @@ public sealed class ClientCommunicationRepository(NpgsqlDataSource source)
  FROM mensagens m JOIN conversas c ON c.id=m.id_conversa
  JOIN conversas selected ON selected.id=@Conversation AND selected.id_estabelecimento=@Est
  LEFT JOIN wa_evento e ON e.tipo='mensagem' AND e.chave=m.id_provedor
- WHERE c.id_estabelecimento=@Est AND c.id_cliente=selected.id_cliente
+ WHERE c.id_estabelecimento=@Est AND c.id=selected.id
  AND COALESCE(e.payload->'message'->>'type','')<>'reaction'";
     public async Task<(List<MessageRow> Messages,bool More)> HistoryAsync(Guid est,Guid conversation,string sender,DateTime? before,Guid beforeId,string? search,int limit)
     {

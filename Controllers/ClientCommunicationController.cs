@@ -13,7 +13,7 @@ public sealed class ClientCommunicationController(ClientCommunicationService ser
 {
     private ChatActor Actor=>new(HttpContext.GetEstabelecimentoId()??Guid.Empty,HttpContext.GetUserId()??0,HttpContext.GetJwtPayload().MotoboyId);
     [HttpGet]
-    public Task<IActionResult> History(int pedidoId,string? before,int limit=50,string? search=null)=>Run(()=>service.ListAsync(Actor,pedidoId,before,limit,search));
+    public Task<IActionResult> History(int pedidoId,string? before,int limit=20,string? search=null)=>Run(()=>service.ListAsync(Actor,pedidoId,before,limit,search));
     [HttpPost]
     public Task<IActionResult> Send(int pedidoId,SendCommunicationRequest request)=>Run(()=>service.SendAsync(Actor,pedidoId,request));
     [HttpPut("messages/{id:guid}/reaction")]
