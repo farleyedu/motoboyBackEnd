@@ -18,7 +18,7 @@ public partial class DeliverySyncDatabaseTests
             var renewed = await db.Repository.StartMobileSessionAsync(7, db.StoreId, Guid.NewGuid(), "aparelho", clientPlatform: platform, resumeSessionId: db.SessionId);
             Assert.Equal(db.SessionId, renewed.SessionId);
             Assert.Equal(4, renewed.SessionEpoch);
-            Assert.Equal(OperationalAvailability.UntilExplicitEnd, renewed.ExpiresAtUtc);
+            Assert.Equal(720, (renewed.ExpiresAtUtc - renewed.LastHeartbeatAtUtc).TotalSeconds);
             Assert.Equal("en_route", await db.Scalar<string>("SELECT stop_status FROM delivery_route_stops WHERE pedido_id=23"));
             Assert.Equal(0, await db.Scalar<int>("SELECT COUNT(*)::int FROM motoboy_location_current"));
             var conflict = await Assert.ThrowsAsync<DeliveryDomainException>(() => db.Repository.StartMobileSessionAsync(7, db.StoreId, Guid.NewGuid(), "outro-aparelho", resumeSessionId: db.SessionId));

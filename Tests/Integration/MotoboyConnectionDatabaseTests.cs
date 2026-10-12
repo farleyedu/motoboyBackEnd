@@ -211,7 +211,7 @@ UPDATE motoboy SET canonical_motoboy_id=id;
         if (web)
         {
             Assert.Equal("web", started.DeviceType);
-            Assert.True((heartbeat.ExpiresAtUtc - heartbeat.LastHeartbeatAtUtc).TotalHours >= 11.9);
+            Assert.Equal(720, (heartbeat.ExpiresAtUtc - heartbeat.LastHeartbeatAtUtc).TotalSeconds);
             // Simula três minutos no navegador externo, sem GPS ou heartbeat.
             await db.Execute("UPDATE motoboy_active_sessions SET last_heartbeat_at_utc=NOW()-INTERVAL '3 minutes' WHERE session_id=@SessionId", new { started.SessionId });
             var captured = await db.Scalar<DateTimeOffset>("SELECT captured_at_utc FROM motoboy_location_current");
