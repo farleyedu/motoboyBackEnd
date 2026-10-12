@@ -42,6 +42,7 @@ namespace APIBack.Repository
                 ?? throw new DeliveryDomainException(409, "NO_CURRENT_DELIVERY", "Voce nao tem entrega atual em rota.");
 
             DeliveryArrivalRules.EnsureExpectedPedido(expectedPedidoId, current.PedidoId);
+            if (column == "arrived_at_utc") DeliveryArrivalRules.EnsurePickedUp(current.PickedUpAtUtc);
 
             var alreadyMarked = column == "picked_up_at_utc" ? current.PickedUpAtUtc.HasValue : current.ArrivedAtUtc.HasValue;
             if (!alreadyMarked)

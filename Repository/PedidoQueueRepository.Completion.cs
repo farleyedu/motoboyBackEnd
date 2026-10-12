@@ -32,7 +32,12 @@ SELECT s.id AS StopId, p.id AS PedidoId,p.nome_cliente AS NomeCliente,
  WHERE s.estabelecimento_id=@Store AND s.motoboy_id=@Rider AND s.pedido_id=@Pedido AND s.stop_status='en_route'
  FOR UPDATE OF s,p
 """, new { Store=store,Rider=rider,Pedido=pedido }, tx, commandTimeout:10,cancellationToken:ct));
-    private static CompletionOrder RequireCompletionOrder(CompletionOrder? row) => row ?? throw new DeliveryDomainException(409,"CURRENT_DELIVERY_CHANGED","Este pedido não é mais sua entrega atual. Confira a rota.");
+    private static CompletionOrder RequireCompletionOrder(CompletionOrder? row, bool requireMilestones = true)
+    {
+        if (row == null) throw new DeliveryDomainException(409,"CURRENT_DELIVERY_CHANGED","Este pedido não é mais sua entrega atual. Confira a rota.");
+        if (requireMilestones) DeliveryArrivalRules.EnsureCompletionStage(row.PickedUp, row.Arrived);
+        return row;
+    }
     private static void CheckCompletionCode(CompletionOrder order,string? code)
     {
         if (order.RequiresCode && DeliveryRules.HasDeliveryCode(order.Code) && !DeliveryRules.DeliveryCodeMatches(order.Code,code))
@@ -96,7 +101,7 @@ INSERT INTO delivery_completion_proofs(id,estabelecimento_id,motoboy_id,pedido_i
             await tx.CommitAsync(ct); return replay;
         }
         if(version!=request.ExpectedVersion) throw new DeliveryDomainException(409,"QUEUE_VERSION_CONFLICT","A rota mudou. Recarregue e confira a entrega antes de concluir.");
-        var row=RequireCompletionOrder(await ReadCompletionOrder(c,tx,store,rider,request.ExpectedPedidoId,ct));
+        var row=RequireCompletionOrder(await ReadCompletionOrder(c,tx,store,rider,request.ExpectedPedidoId,ct), requireMilestones: false);
         if(row.PickedUp==null || row.Arrived==null) throw new DeliveryDomainException(422,"DELIVERY_MILESTONES_REQUIRED","Confirme a retirada e a chegada antes de concluir.");
         // Sessão e usuário revalidados sob a mesma transação que grava o recibo.
         var valid=await c.ExecuteScalarAsync<bool>(new CommandDefinition("""
