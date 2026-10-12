@@ -565,9 +565,15 @@ SELECT nome FROM motoboy
         // =====================================================================
 
         private sealed record RosterCursor(Guid Store, bool Online, string Name, int Id);
+        private sealed class RosterRow : MotoboyRosterEntryDto
+        {
+            public int TotalContacts { get; set; }
+            public int OnlineContacts { get; set; }
+            public MotoboyRosterEntryDto Contact() => new() { MotoboyId=MotoboyId,Nome=Nome,Avatar=Avatar,Online=Online };
+        }
 
         public async Task<IReadOnlyList<MotoboyRosterEntryDto>> ListMotoboysVinculadosAsync(Guid estabelecimentoId) =>
-            (await ListRosterAsync(estabelecimentoId, null, 200, null)).Take(200).ToList();
+            (await ListRosterAsync(estabelecimentoId, null, 200, null)).Take(200).Select(r=>r.Contact()).ToList();
 
         public async Task<MotoboyContactsPageDto> ListMotoboysPageAsync(Guid estabelecimentoId, string? cursor, string? search = null)
         {
@@ -585,16 +591,17 @@ SELECT nome FROM motoboy
             }
             var limit = after == null ? 15 : 10;
             var rows = await ListRosterAsync(estabelecimentoId, after, limit, search);
-            var contacts = rows.Take(limit).ToList(); var last = contacts.LastOrDefault();
+            var contacts = rows.Take(limit).Select(r=>r.Contact()).ToList(); var last = contacts.LastOrDefault();
             return new MotoboyContactsPageDto { Contacts = contacts, HasMore = rows.Count > limit,
+                TotalContacts=rows.FirstOrDefault()?.TotalContacts ?? 0, OnlineContacts=rows.FirstOrDefault()?.OnlineContacts ?? 0,
                 Cursor = rows.Count > limit && last != null ? Microsoft.AspNetCore.WebUtilities.WebEncoders.Base64UrlEncode(
                     JsonSerializer.SerializeToUtf8Bytes(new RosterCursor(estabelecimentoId, last.Online, last.Nome, last.MotoboyId))) : null };
         }
 
-        private async Task<List<MotoboyRosterEntryDto>> ListRosterAsync(Guid estabelecimentoId, RosterCursor? after, int limit, string? search)
+        private async Task<List<RosterRow>> ListRosterAsync(Guid estabelecimentoId, RosterCursor? after, int limit, string? search)
         {
             await using var connection = await _dataSource.OpenConnectionAsync();
-            var rows = await connection.QueryAsync<MotoboyRosterEntryDto>(@"
+            var rows = await connection.QueryAsync<RosterRow>(@"
 WITH roster AS (
  SELECT m.id AS MotoboyId, COALESCE(m.nome,'') AS Nome, m.avatar AS Avatar,
         EXISTS (SELECT 1 FROM motoboy_active_sessions s
@@ -604,7 +611,8 @@ WITH roster AS (
   WHERE me.estabelecimento_id=@EstabelecimentoId AND me.ativo=TRUE
     AND (CAST(@Search AS text) IS NULL OR strpos(lower(COALESCE(m.nome,'')),lower(@Search))>0)
 )
-SELECT * FROM roster
+SELECT *, (SELECT COUNT(*)::int FROM roster) AS TotalContacts,
+          (SELECT COUNT(*)::int FROM roster WHERE Online) AS OnlineContacts FROM roster
  WHERE NOT @HasCursor OR (CASE WHEN Online THEN 0 ELSE 1 END,Nome,MotoboyId) > (@Rank,@Name,@Id)
  ORDER BY Online DESC,Nome,MotoboyId LIMIT @Limit;",
                 new { EstabelecimentoId = estabelecimentoId, HasCursor = after != null,

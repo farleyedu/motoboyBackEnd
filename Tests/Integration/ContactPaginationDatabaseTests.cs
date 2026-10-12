@@ -17,6 +17,7 @@ INSERT INTO motoboy_estabelecimento(motoboy_id,estabelecimento_id,ativo) SELECT 
         var repository = new AtendimentoRepository(db.Source);
         var page = await repository.ListMotoboysPageAsync(db.StoreId, null);
         Assert.Equal(15, page.Contacts.Count); Assert.True(page.HasMore);
+        Assert.Equal(250,page.TotalContacts); Assert.Equal(1,page.OnlineContacts);
         Assert.True(page.Contacts[0].Online); Assert.Equal(1, page.Contacts[0].MotoboyId);
         var ids = page.Contacts.Select(c => c.MotoboyId).ToList();
         while (page.HasMore)

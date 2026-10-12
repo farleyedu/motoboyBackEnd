@@ -203,6 +203,8 @@ namespace APIBack.DTOs.Atendimento
         public IReadOnlyList<MotoboyRosterEntryDto> Contacts { get; set; } = Array.Empty<MotoboyRosterEntryDto>();
         public bool HasMore { get; set; }
         public string? Cursor { get; set; }
+        public int TotalContacts { get; set; }
+        public int OnlineContacts { get; set; }
     }
 
     public class MotoboyRosterEntryDto
