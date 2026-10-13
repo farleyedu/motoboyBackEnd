@@ -6,9 +6,9 @@ Data de referência: 13/10/2026. Idioma: pt-BR.
 
 Entregar o backend, o painel administrativo e o app do motoboy com os fluxos completos da integração oficial Food Order/Events, mantendo pedidos iFood diferenciados dos canais próprios. O resultado esperado é uma aplicação pronta para submissão à homologação, validada no ambiente de testes oficial. Aprovação no processo automático e validação final do iFood são marcos externos e não podem ser declarados por inferência.
 
-O usuário aprovou a criação deste plano, IF-02/IF-03 e o lote IF-04 de contratos C#, tabelas aditivas e testes em banco isolado, após apresentação do escopo. A autorização não inclui commit, push, publicação ou ativação de lojas. Antes de cada novo lote de implementação, apresentar objetivo, alterações, riscos, arquivos e validações e aguardar aprovação explícita. Após aprovação do lote, implementar e validar autonomamente dentro do escopo. Não solicitar novamente autorização para repetir trabalho já coberto pelo mesmo lote.
+O usuário aprovou a criação deste plano, IF-02/IF-03, o lote IF-04 de contratos C#, tabelas aditivas e testes em banco isolado e a parte local da IF-05 de autenticação, segredos e autorização por loja, após apresentação do escopo. A autorização não inclui commit, push, publicação ou ativação de lojas. Antes de cada novo lote de implementação, apresentar objetivo, alterações, riscos, arquivos e validações e aguardar aprovação explícita. Após aprovação do lote, implementar e validar autonomamente dentro do escopo. Não solicitar novamente autorização para repetir trabalho já coberto pelo mesmo lote.
 
-Este arquivo será o registro de continuidade do trabalho. O DOCX `Zippy_iFood_Plano_Integracao_Segunda_Opiniao.docx` permanece preservado como referência anterior. A infraestrutura passiva IF-04 foi implementada e validada localmente; a integração operacional e homologação ainda não foram realizadas.
+Este arquivo será o registro de continuidade do trabalho. O DOCX `Zippy_iFood_Plano_Integracao_Segunda_Opiniao.docx` permanece preservado como referência anterior. A infraestrutura passiva IF-04 e a parte local da IF-05 foram implementadas e validadas localmente; autenticação real, integração operacional e homologação ainda não foram realizadas.
 
 ## 2. Escopo e limites
 
@@ -215,7 +215,7 @@ Materiais auxiliares ficam em `docs/`. Não editar todos os arquivos preventivam
 
 Estados permitidos: `Pendente`, `Em andamento`, `Bloqueada`, `Implementada`, `Validada localmente`, `Validada no sandbox`, `Homologada`, `Não aplicável com justificativa`.
 
-Implementada não equivale a validada. Marcar bloqueio com causa, próxima ação e responsável. Credenciais pendentes não impedem tarefas locais independentes, mas impedem declarar validação oficial. IF-02/IF-03 tiveram seus artefatos documentais produzidos e IF-04 passou nos testes locais; os registros distinguem essas entregas de fluxo oficial, validação visual e testes de sandbox.
+Implementada não equivale a validada. Marcar bloqueio com causa, próxima ação e responsável. Credenciais pendentes não impedem tarefas locais independentes, mas impedem declarar validação oficial. IF-02/IF-03 tiveram seus artefatos documentais produzidos e IF-04/IF-05 passaram nos testes locais; os registros distinguem essas entregas de fluxo oficial, validação visual e testes de sandbox.
 
 | ID | Entrega e aceite | Dependências | Estado inicial |
 |---|---|---|---|
@@ -224,7 +224,7 @@ Implementada não equivale a validada. Marcar bloqueio com causa, próxima açã
 | IF-02 | Inventariar queries/DTOs/telas/legado; fechar identidade, modalidades, estados, valores, privacidade e casos de uso | Inspeção local; contratos oficiais pendentes em IF-01 | Implementada |
 | IF-03 | Definir desenho funcional e sequência do código/arraste, cancelamento, retirada e erros nas aplicações; validar dependências oficiais antes de telas | IF-02; contrato IF-01 para confirmação remota | Implementada |
 | IF-04 | Implementar contratos e schema passivo, constraints e rollback; preservar legado sem backfill presumido/ativação e testar duas lojas | IF-02 | Validada localmente |
-| IF-05 | Autenticação centralizada, segredos, expiração e revogação; nenhum segredo no painel/app/log | IF-01, IF-04 | Pendente |
+| IF-05 | Autenticação centralizada, segredos, expiração e revogação; nenhum segredo no painel/app/log; prova autenticada e confirmação de permissões pendentes | IF-01, IF-04 | Validada localmente |
 | IF-06 | Inbox, polling ou webhook completo, ACK correto, reservas e recuperação; evento repetido não duplica efeito | IF-04, IF-05 | Pendente |
 | IF-07 | Importação externa completa sem recalcular preços; modalidades sem endereço/cadastro próprio obrigatório | IF-02, IF-04, IF-06 | Pendente |
 | IF-08 | Projeção e atualização por eventos; cancelamento/patch/disputa/estado desconhecido e ordem variável | IF-06, IF-07 | Pendente |
@@ -418,6 +418,20 @@ Status: aprovado pelo usuário, implementado e validado localmente. A lista abai
 - Limites: sem API real, interfaces ou suíte integral; 35 avisos do build em arquivos existentes. Payloads/tabelas não substituem implementação futura de criptografia, autorização de requests, workers, idempotência de efeitos e conciliação.
 - Pendências: IF-00/IF-01 e lotes IF-05 em diante. Regra/formato de código oficial não foi fixada por suposição.
 - Próximo passo: preparar IF-05 (autenticação centralizada/segredos e testes locais) e confirmar API Reference; apresentar arquivos/riscos/validações antes de editar. Validação autenticada depende de CNPJ/credenciais.
+
+### 13/10/2026 — Lote IF-05 (parte local)
+
+- Estado: Validada localmente. Autorização: usuário respondeu `pode fzer` ao escopo de autenticação centralizada, proteção de credenciais, autorização por loja e testes locais. IF-00/IF-01 não foram encerradas por inferência.
+- Referências públicas oficiais reconsultadas: autenticação centralizada, introdução à autenticação e solicitação de acesso. O acesso direto ao portal havia retornado 403; os textos indexados permitem preparar o contrato local, mas não comprovam perfil/módulos da conta ou chamadas reais. `grantType=client_credentials`, `clientId` e `clientSecret` são enviados em formulário HTTPS; o fluxo centralizado não usa refresh token. As páginas citam prazos padrão divergentes; o código usa exclusivamente `expiresIn` da resposta.
+- Arquivos: sete serviços/contratos internos em `Integrations/Ifood/`, registro em `Program.cs`, testes em `Tests/Unit/IfoodAuthenticationTests.cs`, `IfoodSecurityTests.cs` e `Tests/Integration/IfoodMerchantAccessDatabaseTests.cs`. A fixture de schema IF-04 foi compartilhada por classe parcial sem alterar seus cenários.
+- Resultado: token em memória, renovação sob demanda com exclusão concorrente por processo, margem proporcional e invalidação que não remove uma renovação por causa de 401 antigo. Falhas impedem fallback para token anterior; pausa progressiva respeita `Retry-After`. Cancelamento do chamador não cria pausa de falha.
+- Segurança: endpoint HTTPS fixo, redirects/cookies desabilitados, resposta limitada, validação de token e erros sem corpo/segredo/exceção original. Logging HTTP automático removido apenas do cliente de autenticação. Opções e token ocultam segredos em serialização JSON/ToString; não são DTOs públicos.
+- Criptografia: AES-GCM com nonce aleatório, envelope versionado, ID de chave e propósito autenticado; chave Base64 de 32 bytes, sem derivar frases fracas. Rotação permite decifrar com chaves anteriores mantidas no servidor. Não há credencial/token novo persistido; o protetor prepara futuras necessidades de persistência.
+- Loja: leitura de `ifood_connections` exige merchant/estabelecimento exatos, status autorizado, evidência temporal de autorização e ausência de revogação. Rechecagem após obter token impede liberação quando a loja foi revogada durante a renovação. Nenhuma autorização foi criada ou atualizada em banco real.
+- Validação: compilação aprovada e 108 testes aprovados, sem falhas/skips: 34 casos novos e os 74 casos da regressão anterior. PostgreSQL 16.10 portátil já disponível, instância exclusiva `127.0.0.1:55474` com diretório de dados novo em `obj/ifood-validation/pgdata`; schemas temporários por teste. HTTP somente simulado. Evidência: [relatório IF-05](validacao-ifood/IF-05.md) e [TRX final](validacao-ifood/if05-regression.trx).
+- Configuração: `Ifood:Enabled=false` por padrão; sem worker, endpoint público ou chamada no boot. Configuração habilitada exige credenciais e chave válidas. Variáveis e rotação em [variaveis-ambiente-obrigatorias.md](variaveis-ambiente-obrigatorias.md).
+- Limites: reserva/cache de token por processo, sem coordenação entre réplicas; sincronização de permissões/revogação oficial e consumidores dos tokens ficam nos lotes seguintes. Nenhum replay automático de comando de pedido foi criado. Sem chamada autenticada real, API/banco de produção, migração nova, painel/app, commit/push/deploy ou habilitação de loja nesta rodada.
+- Próximo passo: obter acesso/credenciais e fechar IF-00/IF-01 para prova de autenticação/permissões; apresentar lote IF-06 de inbox e transporte oficial antes de editar. Parte local da IF-06 pode ser planejada com o contrato confirmado, sem declarar recebimento real de eventos.
 
 ### Procedimento para retomar o trabalho
 

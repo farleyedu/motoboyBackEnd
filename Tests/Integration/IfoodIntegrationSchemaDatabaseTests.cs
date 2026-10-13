@@ -4,7 +4,7 @@ using Xunit;
 
 namespace APIBack.Tests.Integration;
 
-public sealed class IfoodIntegrationSchemaDatabaseTests
+public sealed partial class IfoodIntegrationSchemaDatabaseTests
 {
     private const string SchemaFile = "20261013_01_ifood_integration_schema.sql";
     private const string VerifyFile = "20261013_02_ifood_integration_verify.sql";
@@ -130,6 +130,7 @@ END $$;
         private readonly string _schema = "ifood_schema_" + Guid.NewGuid().ToString("N");
         private string _baseConnection = "";
         private NpgsqlDataSource _source = null!;
+        public APIBack.Integrations.Ifood.IIfoodConnectionRepository Connections => new APIBack.Integrations.Ifood.IfoodConnectionRepository(_source);
         public Guid StoreA { get; } = Guid.NewGuid();
         public Guid StoreB { get; } = Guid.NewGuid();
         public Guid MerchantA { get; } = Guid.NewGuid();

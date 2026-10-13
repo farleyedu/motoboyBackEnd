@@ -59,6 +59,27 @@ DELIVERY_TRACKING_DISABLED`, o `DeliveryOutboxPublisher` nao publica eventos no 
 > `delivery_realtime_outbox`. Ligar a flag com o schema desatualizado troca os 503
 > por erros de SQL.
 
+## iFood — autenticação centralizada (IF-05)
+
+O módulo novo permanece desabilitado por padrão e não executa chamadas no boot. Estas variáveis são exclusivas do backend; não usar prefixos públicos do Next.js/Expo nem guardar valores reais em arquivos versionados. Credencial da aplicação e autorização de cada loja são controles diferentes.
+
+| Variável | Descrição |
+| --- | --- |
+| `Ifood__Enabled` | `false` por padrão. Quando `true`, valida credenciais e chave no início; não habilita loja, eventos ou importação por si só. |
+| `Ifood__ClientId` | ID da aplicação centralizada, obtido no portal. |
+| `Ifood__ClientSecret` | Segredo da aplicação centralizada, fornecido por variável/secret store do servidor. |
+| `Ifood__ActiveEncryptionKeyId` | Identificador da chave de escrita, por exemplo `key1`. Aceita letras ASCII, números, `_` e `-`, até 64 caracteres. |
+| `Ifood__EncryptionKeys__key1` | Chave aleatória de exatamente 32 bytes, codificada em Base64. O identificador deve corresponder à chave ativa. Não aceita frase convertida em hash. |
+| `Ifood__HttpTimeoutSeconds` | Timeout de autenticação, padrão 15, de 1 a 120 segundos. |
+| `Ifood__RenewalSkewSeconds` | Margem máxima, padrão 60, de 0 a 300 segundos. Limitada a 10% da validade recebida para suportar tokens curtos. |
+| `Ifood__FailureCooldownSeconds` | Pausa inicial após falha, padrão 10, de 1 a 300 segundos. Cresce até 300 segundos; `Retry-After` maior prevalece. |
+
+O endereço de autenticação é fixo em HTTPS no cliente oficial; não existe opção de redirecionar segredos para outro host. Tokens são mantidos somente na memória do processo e a renovação usa `expiresIn`; não há refresh token no fluxo centralizado. Logging HTTP automático desse cliente está desabilitado para impedir exposição de exceções/corpos de transporte.
+
+Para rotacionar a chave de criptografia, adicionar uma chave aleatória nova em `EncryptionKeys`, apontar `ActiveEncryptionKeyId` para ela e reiniciar o processo. Manter as chaves anteriores enquanto existirem envelopes cifrados por elas; remover uma chave antiga torna esses envelopes indecifráveis. O envelope autentica o ID da chave e o propósito, impedindo troca de segredo entre usos. Nesta fase não há token/credencial novo persistido no banco.
+
+Trocar `ClientSecret` também exige reiniciar o processo para descartar opções/cache anteriores. Nenhum consumidor novo é executado automaticamente nesta fase; a primeira prova autenticada requer perfil, módulos e loja de teste confirmados em IF-00/IF-01. [Contrato de autenticação centralizada](https://developer.ifood.com.br/en-US/docs/food/guides/modules/authentication/centralized), [validade e permissões](https://developer.ifood.com.br/en-US/docs/food/guides/modules/authentication/intro).
+
 ## Integracoes de IA / geocodificacao
 
 | Variavel | Descricao |
