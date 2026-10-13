@@ -80,6 +80,24 @@ Para rotacionar a chave de criptografia, adicionar uma chave aleatória nova em 
 
 Trocar `ClientSecret` também exige reiniciar o processo para descartar opções/cache anteriores. Nenhum consumidor novo é executado automaticamente nesta fase; a primeira prova autenticada requer perfil, módulos e loja de teste confirmados em IF-00/IF-01. [Contrato de autenticação centralizada](https://developer.ifood.com.br/en-US/docs/food/guides/modules/authentication/centralized), [validade e permissões](https://developer.ifood.com.br/en-US/docs/food/guides/modules/authentication/intro).
 
+## iFood — ingresso por polling (IF-06)
+
+O worker fica inativo até habilitação **das duas flags**, confirmação de IF-00/IF-01 e configuração explícita das lojas. Não habilitar enquanto a API Reference/permissões do ambiente não estiverem conferidas. Polling PDV sinaliza presença da loja no iFood; não é apenas uma leitura sem efeito operacional.
+
+| Variável | Descrição |
+| --- | --- |
+| `Ifood__PollingEnabled` | `false` por padrão. Com `Ifood__Enabled=true`, ativa o worker de ingresso; não importa pedidos nem executa comandos de aceite/despacho. |
+| `Ifood__PollingMerchants__0__MerchantId` | UUID oficial da primeira loja de teste/autorizada. Índices `1`, `2` etc. acrescentam lojas, até 100 merchants únicos. |
+| `Ifood__PollingMerchants__0__EstabelecimentoId` | UUID Zippy vinculado a esse merchant em `ifood_connections`, já autorizado e sem revogação. Não há autorização automática ao configurar. |
+| `Ifood__PollingLeaseSeconds` | Reserva de captura no banco, padrão 90 segundos; deve superar `HttpTimeoutSeconds` em pelo menos 10 e ser no máximo 600. |
+| `Ifood__AckBatchSize` | Quantidade máxima por ACK, padrão 2000, de 1 a 2000. Há no máximo cinco lotes de ACK por rodada; backlog fica durável para a próxima. |
+
+Aplicar `20261013_01_ifood_integration_schema.sql` e `20261013_04_ifood_event_ingress.sql` no ambiente autorizado antes de habilitar. A segunda migration acrescenta reserva de aplicação, quarentena e estado de ACK; não altera autorização de lojas. O rollback IF-06 recusa dados em uso e deve preceder IF-04. Não usar `dotnet run` apontando para banco real como teste de migração.
+
+O intervalo de polling é controlado no banco por aplicação e não tem opção de redução abaixo de 30 segundos. A reserva é renovada após obter token, antes do envio; erros/`Retry-After` prolongam o prazo. Reiniciar uma instância não contorna esse controle. Segredos/corpos e exceções HTTP originais não são registrados.
+
+A lista atende uma aplicação configurada com até 100 merchants. Não executar duas credenciais diferentes sobre a mesma inbox como estratégia de escala: apenas uma procedência de ACK fica ativa por evento. O hash do client ID identifica a reserva/procedência, mas não é segredo nem credencial. Autorização/revogação oficial continua dependendo de sua sincronização com o portal nos lotes seguintes.
+
 ## Integracoes de IA / geocodificacao
 
 | Variavel | Descricao |

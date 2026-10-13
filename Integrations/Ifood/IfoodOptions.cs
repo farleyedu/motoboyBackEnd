@@ -12,6 +12,10 @@ public sealed class IfoodOptions
     public int HttpTimeoutSeconds { get; set; } = 15;
     public int RenewalSkewSeconds { get; set; } = 60;
     public int FailureCooldownSeconds { get; set; } = 10;
+    public bool PollingEnabled { get; set; }
+    public int PollingLeaseSeconds { get; set; } = 90;
+    public int AckBatchSize { get; set; } = 2000;
+    public List<Events.IfoodPollingMerchant> PollingMerchants { get; set; } = new();
     public string ActiveEncryptionKeyId { get; set; } = "";
     [JsonIgnore] public Dictionary<string, string> EncryptionKeys { get; set; } = new();
     public override string ToString() => $"iFood (enabled={Enabled}; credenciais omitidas)";
@@ -36,6 +40,12 @@ public sealed class IfoodOptionsValidator : IValidateOptions<IfoodOptions>
             if (!ValidKeyId(key.Key) || !ValidEncryptionKey(key.Value))
                 errors.Add("As chaves iFood devem ter identificador válido e 32 bytes em Base64.");
         }
+        if (options.PollingEnabled && (options.PollingMerchants.Count is < 1 or > 100 ||
+            options.PollingMerchants.Any(m => m.MerchantId == Guid.Empty || m.EstabelecimentoId == Guid.Empty) ||
+            options.PollingMerchants.Select(m => m.MerchantId).Distinct().Count() != options.PollingMerchants.Count ||
+            options.PollingLeaseSeconds < options.HttpTimeoutSeconds + 10 || options.PollingLeaseSeconds > 600 ||
+            options.AckBatchSize is < 1 or > 2000))
+            errors.Add("Polling iFood requer 1 a 100 merchants únicos, lojas válidas, reserva maior que timeout e ACK de até 2000 eventos.");
         return errors.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(errors);
     }
 

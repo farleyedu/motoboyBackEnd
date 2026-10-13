@@ -22,6 +22,16 @@ public static class IfoodServiceCollectionExtensions
         services.AddSingleton<IfoodSecretProtector>();
         services.AddSingleton<IIfoodConnectionRepository, IfoodConnectionRepository>();
         services.AddSingleton<IfoodMerchantAccess>();
+        services.AddHttpClient(Events.IfoodEventsClient.ClientName, (provider, client) =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(provider.GetRequiredService<IOptions<IfoodOptions>>().Value.HttpTimeoutSeconds);
+            client.MaxResponseContentBufferSize = 4 * 1024 * 1024;
+        }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false })
+            .RedactLoggedHeaders(_ => true).RemoveAllLoggers();
+        services.AddSingleton<Events.IIfoodEventsClient, Events.IfoodEventsClient>();
+        services.AddSingleton<Events.IIfoodInboxRepository, Events.IfoodInboxRepository>();
+        services.AddSingleton<Events.IfoodPollingService>();
+        services.AddHostedService<Events.IfoodPollingWorker>();
         return services;
     }
 }

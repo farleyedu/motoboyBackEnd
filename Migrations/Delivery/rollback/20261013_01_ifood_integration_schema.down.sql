@@ -1,4 +1,9 @@
 BEGIN;
+DO $$ BEGIN
+    IF to_regclass('ifood_polling_state') IS NOT NULL THEN
+        RAISE EXCEPTION 'Execute rollback IF-06 antes de remover schema IF-04';
+    END IF;
+END $$;
 
 -- Rollback somente da infraestrutura passiva IF-04. Não descartar obrigações reais da integração.
 -- Recusa qualquer dado iFood; rollback com integração em uso precisa de plano de preservação próprio.

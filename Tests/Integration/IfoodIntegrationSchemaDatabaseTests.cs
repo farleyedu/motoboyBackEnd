@@ -131,6 +131,7 @@ END $$;
         private string _baseConnection = "";
         private NpgsqlDataSource _source = null!;
         public APIBack.Integrations.Ifood.IIfoodConnectionRepository Connections => new APIBack.Integrations.Ifood.IfoodConnectionRepository(_source);
+        public APIBack.Integrations.Ifood.Events.IfoodInboxRepository Inbox => new(_source);
         public Guid StoreA { get; } = Guid.NewGuid();
         public Guid StoreB { get; } = Guid.NewGuid();
         public Guid MerchantA { get; } = Guid.NewGuid();
@@ -140,6 +141,7 @@ END $$;
 
         public static async Task<Database> Create(bool apply = true)
         {
+            APIBack.Infrastructure.DapperConfiguration.Configure();
             var options = new NpgsqlConnectionStringBuilder(Environment.GetEnvironmentVariable("TEST_DELIVERY_DATABASE"));
             if (options.Host is not ("127.0.0.1" or "localhost")) throw new InvalidOperationException("Testes iFood exigem PostgreSQL local isolado.");
             var db = new Database { _baseConnection = options.ConnectionString };
