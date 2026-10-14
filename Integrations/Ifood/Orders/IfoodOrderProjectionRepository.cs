@@ -152,8 +152,13 @@ VALUES(@Id,@MerchantId,@EstabelecimentoId,@ExternalOrderId,@EventId,@Code,@At,@O
                         new { snapshot.PedidoId, Store = item.EstabelecimentoId }, tx, cancellationToken: ct));
                 if (outcome == "applied" && ev?.Code == "CONCLUDED" &&
                     await connection.ExecuteScalarAsync<bool>("SELECT to_regprocedure('ifood_delivery_blocked_code(uuid,integer,boolean)') IS NOT NULL", transaction: tx))
-                    await connection.ExecuteAsync(new CommandDefinition("UPDATE pedido SET status_pedido=6 WHERE id=@PedidoId AND id_estabelecimento=@Store",
-                        new { snapshot.PedidoId, Store = item.EstabelecimentoId }, tx, cancellationToken: ct));
+                {
+                    var locallyCompleted = await APIBack.Repository.PedidoQueueRepository.HasIfoodCompletionAsync(connection, tx) &&
+                        await connection.ExecuteScalarAsync<bool>("SELECT EXISTS(SELECT 1 FROM ifood_delivery_completions WHERE estabelecimento_id=@Store AND pedido_id=@PedidoId AND state='succeeded')", new { Store = item.EstabelecimentoId, snapshot.PedidoId }, tx);
+                    if (!locallyCompleted)
+                        await connection.ExecuteAsync(new CommandDefinition("UPDATE pedido SET status_pedido=6 WHERE id=@PedidoId AND id_estabelecimento=@Store",
+                            new { snapshot.PedidoId, Store = item.EstabelecimentoId }, tx, cancellationToken: ct));
+                }
                 await APIBack.Repository.PedidoQueueRepository.ReconcileIfoodQueueAsync(connection, tx, item.EstabelecimentoId, snapshot.PedidoId,
                     outcome == "applied" ? snapshot.RemoteStatus ?? "" : "");
                 var payload = JsonSerializer.Serialize(new { schemaVersion = 2, pedidoId = snapshot.PedidoId, estabelecimentoId = item.EstabelecimentoId,

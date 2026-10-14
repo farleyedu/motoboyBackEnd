@@ -66,6 +66,15 @@ public static class IfoodServiceCollectionExtensions
         services.AddSingleton<Exceptions.IIfoodCancellationReasonsClient,Exceptions.IfoodCancellationReasonsClient>();
         services.AddSingleton<Exceptions.IfoodExceptionService>();
         services.AddHostedService<Exceptions.IfoodExceptionWorker>();
+        services.AddHttpClient(Completion.IfoodDeliveryCodeClient.ClientName, (provider, client) =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(provider.GetRequiredService<IOptionsMonitor<IfoodOptions>>().CurrentValue.HttpTimeoutSeconds);
+            client.MaxResponseContentBufferSize = 32768;
+        }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false })
+            .RedactLoggedHeaders(_ => true).RemoveAllLoggers();
+        services.AddSingleton<Completion.IIfoodDeliveryCodeClient, Completion.IfoodDeliveryCodeClient>();
+        services.AddSingleton<Completion.IfoodCompletionService>();
+        services.AddHostedService<Completion.IfoodCompletionWorker>();
         return services;
     }
 }

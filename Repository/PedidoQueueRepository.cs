@@ -41,10 +41,12 @@ namespace APIBack.Repository
        s.arrived_at_utc AS ArrivedAtUtc";
 
         private readonly NpgsqlDataSource _dataSource;
+        private readonly Microsoft.Extensions.Options.IOptionsMonitor<APIBack.Integrations.Ifood.IfoodOptions>? _ifoodCompletionOptions;
 
-        public PedidoQueueRepository(NpgsqlDataSource dataSource)
+        public PedidoQueueRepository(NpgsqlDataSource dataSource, Microsoft.Extensions.Options.IOptionsMonitor<APIBack.Integrations.Ifood.IfoodOptions>? ifoodCompletionOptions = null)
         {
             _dataSource = dataSource ?? throw new ArgumentNullException(nameof(dataSource));
+            _ifoodCompletionOptions = ifoodCompletionOptions;
         }
 
         private sealed class PedidoRow
@@ -368,15 +370,18 @@ SELECT m.id
             return await BuildSnapshotAsync(connection, transaction, estabelecimentoId, motoboyId, version);
         }
 
-        private async Task<MotoboyQueueDto> CompleteCurrentInternalAsync(
+        private static async Task<MotoboyQueueDto> CompleteCurrentInternalAsync(
             NpgsqlConnection connection, NpgsqlTransaction transaction,
-            Guid estabelecimentoId, int motoboyId, string completedBy, string? providedCode, bool enforceCode)
+            Guid estabelecimentoId, int motoboyId, string completedBy, string? providedCode, bool enforceCode, bool officialCompletion = false)
         {
             await LockQueuesAsync(connection, transaction, estabelecimentoId, motoboyId);
             var current = await GetCurrentStopAsync(connection, transaction, estabelecimentoId, motoboyId, forUpdate: true)
                 ?? throw new DeliveryDomainException(409, "NO_CURRENT_DELIVERY", "Este motoboy nao possui entrega atual em rota.");
 
-            await GetPedidoAsync(connection, transaction, estabelecimentoId, current.PedidoId, forUpdate: true);
+            if (officialCompletion)
+                await connection.ExecuteScalarAsync<int>("SELECT id FROM pedido WHERE id=@Pedido AND id_estabelecimento=@Store FOR UPDATE", new { Pedido = current.PedidoId, Store = estabelecimentoId }, transaction);
+            else
+                await GetPedidoAsync(connection, transaction, estabelecimentoId, current.PedidoId, forUpdate: true);
 
             if (enforceCode)
             {

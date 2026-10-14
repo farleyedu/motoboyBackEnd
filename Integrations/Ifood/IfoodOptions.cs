@@ -21,6 +21,8 @@ public sealed class IfoodOptions
     public int ProjectionBatchSize { get; set; } = 20;
     public int ProjectionMaxAttempts { get; set; } = 8;
     public bool CommandsEnabled { get; set; }
+    // IF-14: habilitação explícita; reutiliza a allowlist merchant/loja dos comandos.
+    public bool CompletionEnabled { get; set; }
     public int CommandLeaseSeconds { get; set; } = 90;
     public int CommandBatchSize { get; set; } = 5;
     public int CommandMaxAttempts { get; set; } = 8;

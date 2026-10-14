@@ -42,6 +42,7 @@ WHERE l.estabelecimento_id=@Store AND l.merchant_id=@Merchant AND l.external_ord
     internal static async Task ReconcileIfoodQueueAsync(NpgsqlConnection c, NpgsqlTransaction tx, Guid store, int pedido, string remote)
     {
         if (!await HasIfoodRoutingAsync(c, tx)) return;
+        if (await ReconcileOfficialCompletion(c, tx, store, pedido, remote)) return;
         var stop = await GetActiveStopForPedidoAsync(c, tx, store, pedido, true);
         if (stop == null) return;
         if (remote is "CANCELLED" or "CONCLUDED")

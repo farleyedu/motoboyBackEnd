@@ -21,9 +21,9 @@ public sealed partial class PedidoQueueRepository
         public DateTimeOffset? PickedUp { get; set; }
         public DateTimeOffset? Arrived { get; set; }
     }
-    private static async Task<CompletionOrder?> ReadCompletionOrder(NpgsqlConnection c, NpgsqlTransaction tx, Guid store, int rider, int pedido, CancellationToken ct)
+    private static async Task<CompletionOrder?> ReadCompletionOrder(NpgsqlConnection c, NpgsqlTransaction tx, Guid store, int rider, int pedido, CancellationToken ct, bool allowIfood = false)
     {
-        await GetPedidoAsync(c, tx, store, pedido, forUpdate: true);
+        await GetPedidoAsync(c, tx, store, pedido, forUpdate: true, allowIfoodRouting: allowIfood);
         return await c.QuerySingleOrDefaultAsync<CompletionOrder>(new CommandDefinition($"""
 SELECT s.id AS StopId, p.id AS PedidoId,p.nome_cliente AS NomeCliente,
  CASE WHEN p.value::text ~ {NumericPattern} THEN p.value::text::numeric END AS Total,
@@ -57,9 +57,26 @@ SELECT s.id AS StopId, p.id AS PedidoId,p.nome_cliente AS NomeCliente,
     {
         var opened=await OpenCompletionTransaction(ct); await using var c=opened.Connection; await using var tx=opened.Transaction;
         var version=await LockQueuesAsync(c,tx,store,rider);
-        var row=RequireCompletionOrder(await ReadCompletionOrder(c,tx,store,rider,pedido,ct));
+        var row=RequireCompletionOrder(await ReadCompletionOrder(c,tx,store,rider,pedido,ct,true));
         var result=new DeliveryCompletionContext { PedidoId=pedido,Version=version,NomeCliente=row.NomeCliente,Total=row.Total,RequiresCode=row.RequiresCode && DeliveryRules.HasDeliveryCode(row.Code),RequiresProof=row.RequiresProof,RequiresPayment=!DeliveryCompletionRules.IsPaid(row.PaymentStatus) };
         result.Checklist = await ReadChecklistAsync(c, tx, store, pedido, ct);
+        if (await IsOfficialOrderAsync(c, tx, store, pedido))
+        {
+            result.Origin = "ifood"; result.RequiresOfficialConfirmation = true; result.RequiresCode = true;
+            result.IdentidadeExterna = (await APIBack.Integrations.Ifood.Orders.IfoodOrderReadModel.IdentitiesAsync(c, store, new[] { pedido }, tx)).GetValueOrDefault(pedido);
+            result.Total = result.IdentidadeExterna?.PendingAmount;
+            result.RequiresPayment = result.Total > 0;
+            result.CompletionBlockedCode = IfoodCompletionCapability(_ifoodCompletionOptions?.CurrentValue, store, result.IdentidadeExterna!.MerchantId);
+            if (await HasIfoodCompletionAsync(c, tx))
+            {
+                var active = await c.QuerySingleOrDefaultAsync<(Guid Operation, int User)>("SELECT operation_id AS Operation,user_id AS User FROM ifood_delivery_completions WHERE estabelecimento_id=@Store AND pedido_id=@Pedido AND motoboy_id=@Rider AND state<>'rejected'", new { Store = store, Pedido = pedido, Rider = rider }, tx);
+                if (active.Operation != Guid.Empty)
+                {
+                    result.ExternalOperation = await ReadOfficialOperation(c, tx, active.User, active.Operation, ct);
+                    result.CompletionBlockedCode = "IFOOD_COMPLETION_ACTIVE_OPERATION";
+                }
+            }
+        }
         await tx.CommitAsync(ct); return result;
     }
     public async Task<bool> ValidateCompletionCodeAsync(Guid store,int rider,int pedido,string code,CancellationToken ct)
@@ -73,7 +90,9 @@ SELECT s.id AS StopId, p.id AS PedidoId,p.nome_cliente AS NomeCliente,
     {
         var image=MotoboyContaService.SanitizeImage(base64,false);
         var opened=await OpenCompletionTransaction(ct); await using var c=opened.Connection; await using var tx=opened.Transaction;
-        await LockQueuesAsync(c,tx,store,rider); var row=RequireCompletionOrder(await ReadCompletionOrder(c,tx,store,rider,pedido,ct));
+        await LockQueuesAsync(c,tx,store,rider); var row=RequireCompletionOrder(await ReadCompletionOrder(c,tx,store,rider,pedido,ct,true));
+        if (await HasIfoodCompletionAsync(c, tx) && await c.ExecuteScalarAsync<bool>("SELECT EXISTS(SELECT 1 FROM ifood_delivery_completions WHERE estabelecimento_id=@Store AND pedido_id=@Pedido AND state<>'rejected')", new { Store = store, Pedido = pedido }, tx))
+            throw new DeliveryDomainException(409, "IFOOD_COMPLETION_ACTIVE_OPERATION", "O comprovante está vinculado à confirmação pendente.");
         var id=await c.ExecuteScalarAsync<Guid>(new CommandDefinition("""
 INSERT INTO delivery_completion_proofs(id,estabelecimento_id,motoboy_id,pedido_id,stop_id,conteudo)
  VALUES(@Id,@Store,@Rider,@Pedido,@Stop,@Image)
@@ -86,7 +105,7 @@ INSERT INTO delivery_completion_proofs(id,estabelecimento_id,motoboy_id,pedido_i
     {
         var opened=await OpenCompletionTransaction(ct); await using var c=opened.Connection; await using var tx=opened.Transaction;
         await LockQueuesAsync(c,tx,store,rider);
-        var row=RequireCompletionOrder(await ReadCompletionOrder(c,tx,store,rider,pedido,ct));
+        var row=RequireCompletionOrder(await ReadCompletionOrder(c,tx,store,rider,pedido,ct,true));
         var bytes=await c.ExecuteScalarAsync<byte[]?>(new CommandDefinition("SELECT conteudo FROM delivery_completion_proofs WHERE estabelecimento_id=@Store AND motoboy_id=@Rider AND stop_id=@Stop",new {Store=store,Rider=rider,Stop=row.StopId},tx,commandTimeout:10,cancellationToken:ct));
         await tx.CommitAsync(ct);
         return bytes==null?null:"data:image/jpeg;base64,"+Convert.ToBase64String(bytes);

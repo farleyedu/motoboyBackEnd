@@ -61,6 +61,16 @@ AND o.command_type IN('confirm','start_preparation','ready_to_pickup','dispatch'
             }
         }
         else foreach (var identity in identities.Values) identity.DeliveryBlockedCode = identity.DepartureBlockedCode = "IFOOD_DELIVERY_DISABLED";
+        if (await connection.ExecuteScalarAsync<bool>("SELECT to_regclass('ifood_delivery_completions') IS NOT NULL", transaction: transaction))
+        {
+            var completing = await connection.QueryAsync<int>("SELECT pedido_id FROM ifood_delivery_completions WHERE estabelecimento_id=@Store AND pedido_id=ANY(@Orders) AND state<>'rejected'", new { Store = store, Orders = orders }, transaction);
+            foreach (var pedido in completing)
+                if (identities.TryGetValue(pedido, out var identity))
+                {
+                    identity.CanAssignDelivery = identity.CanDepartDelivery = false;
+                    identity.DeliveryBlockedCode = identity.DepartureBlockedCode = "IFOOD_COMPLETION_ACTIVE_OPERATION";
+                }
+        }
         return identities;
     }
     public static async Task<IfoodImportedOrder?> DetailsAsync(NpgsqlConnection connection, Guid store, int pedido, bool collectionAllowed=true, NpgsqlTransaction? transaction = null)

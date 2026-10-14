@@ -1,0 +1,216 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TestRun id="e2b9a1c2-a159-4125-a1de-87a29603ae31" name="farley.silva@LMINOTE-1096 2026-10-14 16:17:07" runUser="LMINOTE-1096\farley.silva" xmlns="http://microsoft.com/schemas/VisualStudio/TeamTest/2010">
+  <Times creation="2026-10-14T16:17:07.4623982-03:00" queuing="2026-10-14T16:17:07.4623995-03:00" start="2026-10-14T16:16:55.9369886-03:00" finish="2026-10-14T16:17:51.4297745-03:00" />
+  <TestSettings name="default" id="8f580859-e1e8-4b84-a4ff-3a0e0a8c3943">
+    <Deployment runDeploymentRoot="farley.silva_LMINOTE-1096_2026-10-14_16_17_07" />
+  </TestSettings>
+  <Results>
+    <UnitTestResult executionId="80513458-b643-4744-a944-5cc8cb15789f" testId="cbe0bb54-4cf6-4269-a762-d298858e5f13" testName="APIBack.Tests.Integration.DeliverySyncDatabaseTests.WorkIdentityAndMutationsAreRestrictedToTenantAndRider" computerName="LMINOTE-1096" duration="00:00:03.0898973" startTime="2026-10-14T16:17:22.8999981-03:00" endTime="2026-10-14T16:17:22.8999988-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="80513458-b643-4744-a944-5cc8cb15789f" />
+    <UnitTestResult executionId="47c98e4a-3803-470b-bf78-22c390051401" testId="f2768885-9ffb-9e6c-98c0-ef8342e73ee2" testName="APIBack.Tests.Integration.DeliverySyncDatabaseTests.PrivateProofIsReviewedAndOnlyReceiptOwnerCanReadAfterCompletion" computerName="LMINOTE-1096" duration="00:00:04.1036958" startTime="2026-10-14T16:17:49.2506579-03:00" endTime="2026-10-14T16:17:49.2506594-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="47c98e4a-3803-470b-bf78-22c390051401" />
+    <UnitTestResult executionId="f4e116b0-e2d8-43fe-b544-1db11fa592ed" testId="ba6278cf-3abf-55b2-4573-06af4cf88aed" testName="APIBack.Tests.Integration.DeliverySyncDatabaseTests.CodeCheckDoesNotCompleteOrChargeAndProofIsBoundToStop" computerName="LMINOTE-1096" duration="00:00:02.3542831" startTime="2026-10-14T16:17:36.9254995-03:00" endTime="2026-10-14T16:17:36.9255000-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="f4e116b0-e2d8-43fe-b544-1db11fa592ed" />
+    <UnitTestResult executionId="5893a450-24f9-45e3-8480-9c9905c6e9c2" testId="8914c722-bf17-e942-afff-cd6918d6aa5c" testName="APIBack.Tests.Integration.DeliverySyncDatabaseTests.WorkOfferRequiresSameFinancialVersionAndRefusalCreatesNoEarning" computerName="LMINOTE-1096" duration="00:00:04.5569187" startTime="2026-10-14T16:17:11.9140433-03:00" endTime="2026-10-14T16:17:11.9140439-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="5893a450-24f9-45e3-8480-9c9905c6e9c2" />
+    <UnitTestResult executionId="1f094b70-ef16-41e1-88a0-114cfdba6482" testId="72b6e9c6-7b45-8f06-ee46-c7bc9b7b1af5" testName="APIBack.Tests.Integration.DeliverySyncDatabaseTests.MilestonesVersionTenantAndSessionAreEnforced" computerName="LMINOTE-1096" duration="00:00:01.9051921" startTime="2026-10-14T16:17:51.1564067-03:00" endTime="2026-10-14T16:17:51.1564076-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="1f094b70-ef16-41e1-88a0-114cfdba6482" />
+    <UnitTestResult executionId="fe3a429d-4429-41e0-b9c2-2d3b60ea50d7" testId="71abe8f5-3b71-9730-6535-bf395d26a11b" testName="APIBack.Tests.Integration.DeliverySyncDatabaseTests.WorkMigrationVerifiesAndRollbackOnlyAllowsEmptyTables" computerName="LMINOTE-1096" duration="00:00:03.5270931" startTime="2026-10-14T16:17:07.3667418-03:00" endTime="2026-10-14T16:17:07.3668411-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="fe3a429d-4429-41e0-b9c2-2d3b60ea50d7">
+      <Output>
+        <ErrorInfo>
+          <Message>System.ArgumentException : Cannot write DateTimeOffset with Offset=-03:00:00 to PostgreSQL type 'timestamp with time zone', only offset 0 (UTC) is supported.  (Parameter 'value')</Message>
+          <StackTrace>   at Npgsql.Internal.Converters.DateTimeOffsetConverter.WriteCore(PgWriter writer, DateTimeOffset value)&#xD;
+   at Npgsql.Internal.PgBufferedConverter`1.Write(PgWriter writer, T value)&#xD;
+   at Npgsql.Internal.PgBufferedConverter`1.WriteAsObject(Boolean async, PgWriter writer, Object value, CancellationToken cancellationToken)&#xD;
+   at Npgsql.Internal.PgConverter.WriteAsObjectAsync(PgWriter writer, Object value, CancellationToken cancellationToken)&#xD;
+   at Npgsql.NpgsqlParameter.WriteValue(Boolean async, PgWriter writer, CancellationToken cancellationToken)&#xD;
+   at Npgsql.NpgsqlParameter.Write(Boolean async, PgWriter writer, CancellationToken cancellationToken)&#xD;
+   at Npgsql.Internal.NpgsqlConnector.WriteBind(List`1 parameters, String portal, Byte[] asciiName, Boolean allResultTypesAreUnknown, Boolean[] unknownResultTypeList, Boolean async, CancellationToken cancellationToken)&#xD;
+   at Npgsql.NpgsqlCommand.&lt;Write&gt;g__WriteExecute|101_0(NpgsqlConnector connector, Boolean async, Boolean flush, CancellationToken cancellationToken)&#xD;
+   at Npgsql.NpgsqlCommand.ExecuteReader(Boolean async, CommandBehavior behavior, CancellationToken cancellationToken)&#xD;
+   at Npgsql.NpgsqlCommand.ExecuteReader(Boolean async, CommandBehavior behavior, CancellationToken cancellationToken)&#xD;
+   at Npgsql.NpgsqlCommand.ExecuteScalar(Boolean async, CancellationToken cancellationToken)&#xD;
+   at Dapper.SqlMapper.ExecuteScalarImplAsync[T](IDbConnection cnn, CommandDefinition command) in /_/Dapper/SqlMapper.Async.cs:line 1241&#xD;
+   at APIBack.Service.MotoboyWorkService.AddPeriod(Guid store, Int32 rider, Int32 user, RiderPeriodRequest request, CancellationToken ct) in C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\Service\MotoboyWorkService.cs:line 142&#xD;
+   at APIBack.Service.MotoboyWorkService.AddPeriod(Guid store, Int32 rider, Int32 user, RiderPeriodRequest request, CancellationToken ct) in C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\Service\MotoboyWorkService.cs:line 145&#xD;
+   at APIBack.Service.MotoboyWorkService.AddPeriod(Guid store, Int32 rider, Int32 user, RiderPeriodRequest request, CancellationToken ct) in C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\Service\MotoboyWorkService.cs:line 145&#xD;
+   at APIBack.Tests.Integration.DeliverySyncDatabaseTests.WorkMigrationVerifiesAndRollbackOnlyAllowsEmptyTables() in C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\Tests\Integration\RiderWorkDatabaseTests.cs:line 190&#xD;
+   at APIBack.Tests.Integration.DeliverySyncDatabaseTests.WorkMigrationVerifiesAndRollbackOnlyAllowsEmptyTables() in C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\Tests\Integration\RiderWorkDatabaseTests.cs:line 204&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="226f1471-56e1-4c01-a7e8-0ff74507a4e6" testId="e2a1dcd9-672d-a6bc-260e-a7ece32148aa" testName="APIBack.Tests.Integration.DeliverySyncDatabaseTests.WorkHourlyPeriodsAreIdempotentAndRejectOverlaps" computerName="LMINOTE-1096" duration="00:00:02.9024005" startTime="2026-10-14T16:17:17.1338538-03:00" endTime="2026-10-14T16:17:17.1338546-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="226f1471-56e1-4c01-a7e8-0ff74507a4e6" />
+    <UnitTestResult executionId="92f81f30-e678-48e6-af18-4fbd8061dec0" testId="6bf3926e-60fc-00e7-fdfa-8b2a599d8cba" testName="APIBack.Tests.Integration.DeliverySyncDatabaseTests.WorkSettlementRequiresReviewAndCashReturnIsIndependentOfPay" computerName="LMINOTE-1096" duration="00:00:03.7710636" startTime="2026-10-14T16:17:45.1463820-03:00" endTime="2026-10-14T16:17:45.1463826-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="92f81f30-e678-48e6-af18-4fbd8061dec0" />
+    <UnitTestResult executionId="17ef357c-6ad9-4e2d-a4a2-f219f7467d97" testId="b8c39a95-169b-3153-40ba-f409fff2e542" testName="APIBack.Tests.Integration.DeliverySyncDatabaseTests.WorkPartialWeekIsProratedPersistedAndVisibleToTheRider" computerName="LMINOTE-1096" duration="00:00:02.4572585" startTime="2026-10-14T16:17:34.5814478-03:00" endTime="2026-10-14T16:17:34.5814482-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Failed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="17ef357c-6ad9-4e2d-a4a2-f219f7467d97">
+      <Output>
+        <ErrorInfo>
+          <Message>System.ArgumentException : Cannot write DateTimeOffset with Offset=-03:00:00 to PostgreSQL type 'timestamp with time zone', only offset 0 (UTC) is supported.  (Parameter 'value')</Message>
+          <StackTrace>   at Npgsql.Internal.Converters.DateTimeOffsetConverter.WriteCore(PgWriter writer, DateTimeOffset value)&#xD;
+   at Npgsql.Internal.PgBufferedConverter`1.Write(PgWriter writer, T value)&#xD;
+   at Npgsql.Internal.PgBufferedConverter`1.WriteAsObject(Boolean async, PgWriter writer, Object value, CancellationToken cancellationToken)&#xD;
+   at Npgsql.NpgsqlParameter.Write(Boolean async, PgWriter writer, CancellationToken cancellationToken)&#xD;
+   at Npgsql.Internal.NpgsqlConnector.WriteBind(List`1 parameters, String portal, Byte[] asciiName, Boolean allResultTypesAreUnknown, Boolean[] unknownResultTypeList, Boolean async, CancellationToken cancellationToken)&#xD;
+   at Npgsql.NpgsqlCommand.&lt;Write&gt;g__WriteExecute|101_0(NpgsqlConnector connector, Boolean async, Boolean flush, CancellationToken cancellationToken)&#xD;
+   at Npgsql.NpgsqlCommand.ExecuteReader(Boolean async, CommandBehavior behavior, CancellationToken cancellationToken)&#xD;
+   at Npgsql.NpgsqlCommand.ExecuteReader(Boolean async, CommandBehavior behavior, CancellationToken cancellationToken)&#xD;
+   at Npgsql.NpgsqlCommand.ExecuteScalar(Boolean async, CancellationToken cancellationToken)&#xD;
+   at Dapper.SqlMapper.ExecuteScalarImplAsync[T](IDbConnection cnn, CommandDefinition command) in /_/Dapper/SqlMapper.Async.cs:line 1241&#xD;
+   at APIBack.Service.MotoboyWorkService.AddPeriod(Guid store, Int32 rider, Int32 user, RiderPeriodRequest request, CancellationToken ct) in C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\Service\MotoboyWorkService.cs:line 142&#xD;
+   at APIBack.Service.MotoboyWorkService.AddPeriod(Guid store, Int32 rider, Int32 user, RiderPeriodRequest request, CancellationToken ct) in C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\Service\MotoboyWorkService.cs:line 145&#xD;
+   at APIBack.Service.MotoboyWorkService.AddPeriod(Guid store, Int32 rider, Int32 user, RiderPeriodRequest request, CancellationToken ct) in C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\Service\MotoboyWorkService.cs:line 145&#xD;
+   at APIBack.Tests.Integration.DeliverySyncDatabaseTests.WorkPartialWeekIsProratedPersistedAndVisibleToTheRider() in C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\Tests\Integration\RiderWorkDatabaseTests.cs:line 108&#xD;
+   at APIBack.Tests.Integration.DeliverySyncDatabaseTests.WorkPartialWeekIsProratedPersistedAndVisibleToTheRider() in C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\Tests\Integration\RiderWorkDatabaseTests.cs:line 120&#xD;
+--- End of stack trace from previous location ---</StackTrace>
+        </ErrorInfo>
+      </Output>
+    </UnitTestResult>
+    <UnitTestResult executionId="28e72de2-4e53-4cb6-bfa9-0209b7749340" testId="23907c42-1bc7-bdd3-b991-64dda9b9ba04" testName="APIBack.Tests.Integration.DeliverySyncDatabaseTests.WorkRejectsMissingPlanAndDistanceInsteadOfInventingZero" computerName="LMINOTE-1096" duration="00:00:02.6751171" startTime="2026-10-14T16:17:19.8096184-03:00" endTime="2026-10-14T16:17:19.8096190-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="28e72de2-4e53-4cb6-bfa9-0209b7749340" />
+    <UnitTestResult executionId="3244a794-65f4-4574-bd9d-91df752e448b" testId="2d3856fe-187f-ba6b-6a69-f82a7478dfbd" testName="APIBack.Tests.Integration.DeliverySyncDatabaseTests.WorkBlocksUnconfirmedCashAndCancelledSettlementReleasesEntries" computerName="LMINOTE-1096" duration="00:00:03.0814197" startTime="2026-10-14T16:17:25.9819053-03:00" endTime="2026-10-14T16:17:25.9819060-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="3244a794-65f4-4574-bd9d-91df752e448b" />
+    <UnitTestResult executionId="f1a75b3b-bc6a-434d-9a91-d5a2460eb38d" testId="0a7627f5-d954-d3be-34be-94afbc4673f3" testName="APIBack.Tests.Integration.DeliverySyncDatabaseTests.WorkModeCannotChangeDuringActiveRouteButRateCan" computerName="LMINOTE-1096" duration="00:00:02.4448220" startTime="2026-10-14T16:17:39.3708649-03:00" endTime="2026-10-14T16:17:39.3708656-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="f1a75b3b-bc6a-434d-9a91-d5a2460eb38d" />
+    <UnitTestResult executionId="899a2e18-b815-4306-bf54-c49e040af919" testId="1544a604-1b5b-57ef-c7da-e5a5114428dc" testName="APIBack.Tests.Integration.DeliverySyncDatabaseTests.InvalidCodeOrPaymentRollsBackEverything" computerName="LMINOTE-1096" duration="00:00:02.0036592" startTime="2026-10-14T16:17:41.3749147-03:00" endTime="2026-10-14T16:17:41.3749153-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="899a2e18-b815-4306-bf54-c49e040af919" />
+    <UnitTestResult executionId="791cabea-a9d7-4caa-b83e-7ec01d63f3ca" testId="5070db4f-3ecf-7623-2f90-f30eace32aff" testName="APIBack.Tests.Integration.DeliverySyncDatabaseTests.WorkQuotesFreezeAndCompletionCashDoesNotIncludeCustomerChange" computerName="LMINOTE-1096" duration="00:00:03.6900584" startTime="2026-10-14T16:17:32.0858413-03:00" endTime="2026-10-14T16:17:32.0858420-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="791cabea-a9d7-4caa-b83e-7ec01d63f3ca" />
+    <UnitTestResult executionId="68336432-aa53-4a19-8ffb-b47d11a4ae60" testId="70d4b510-6584-0b9c-094d-55516aaaba7d" testName="APIBack.Tests.Integration.DeliverySyncDatabaseTests.ParallelRetriesOnlyCompleteOriginalOrder" computerName="LMINOTE-1096" duration="00:00:02.3234417" startTime="2026-10-14T16:17:14.2309568-03:00" endTime="2026-10-14T16:17:14.2309580-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="68336432-aa53-4a19-8ffb-b47d11a4ae60" />
+    <UnitTestResult executionId="57df9817-29d3-4704-8501-070dc3d1f41f" testId="8735e591-c25f-7603-a99d-8a0edfd26e35" testName="APIBack.Tests.Integration.DeliverySyncDatabaseTests.CompletionCommitsPaymentReceiptAndNextExactlyOnce" computerName="LMINOTE-1096" duration="00:00:02.4128572" startTime="2026-10-14T16:17:28.3953504-03:00" endTime="2026-10-14T16:17:28.3953513-03:00" testType="13cdc9d9-ddb5-4fa4-a97d-d965ccfc6d4b" outcome="Passed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" relativeResultsDirectory="57df9817-29d3-4704-8501-070dc3d1f41f" />
+  </Results>
+  <TestDefinitions>
+    <UnitTest name="APIBack.Tests.Integration.DeliverySyncDatabaseTests.WorkMigrationVerifiesAndRollbackOnlyAllowsEmptyTables" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="71abe8f5-3b71-9730-6535-bf395d26a11b">
+      <Execution id="fe3a429d-4429-41e0-b9c2-2d3b60ea50d7" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Integration.DeliverySyncDatabaseTests" name="WorkMigrationVerifiesAndRollbackOnlyAllowsEmptyTables" />
+    </UnitTest>
+    <UnitTest name="APIBack.Tests.Integration.DeliverySyncDatabaseTests.WorkSettlementRequiresReviewAndCashReturnIsIndependentOfPay" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="6bf3926e-60fc-00e7-fdfa-8b2a599d8cba">
+      <Execution id="92f81f30-e678-48e6-af18-4fbd8061dec0" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Integration.DeliverySyncDatabaseTests" name="WorkSettlementRequiresReviewAndCashReturnIsIndependentOfPay" />
+    </UnitTest>
+    <UnitTest name="APIBack.Tests.Integration.DeliverySyncDatabaseTests.WorkHourlyPeriodsAreIdempotentAndRejectOverlaps" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="e2a1dcd9-672d-a6bc-260e-a7ece32148aa">
+      <Execution id="226f1471-56e1-4c01-a7e8-0ff74507a4e6" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Integration.DeliverySyncDatabaseTests" name="WorkHourlyPeriodsAreIdempotentAndRejectOverlaps" />
+    </UnitTest>
+    <UnitTest name="APIBack.Tests.Integration.DeliverySyncDatabaseTests.CodeCheckDoesNotCompleteOrChargeAndProofIsBoundToStop" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="ba6278cf-3abf-55b2-4573-06af4cf88aed">
+      <Execution id="f4e116b0-e2d8-43fe-b544-1db11fa592ed" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Integration.DeliverySyncDatabaseTests" name="CodeCheckDoesNotCompleteOrChargeAndProofIsBoundToStop" />
+    </UnitTest>
+    <UnitTest name="APIBack.Tests.Integration.DeliverySyncDatabaseTests.MilestonesVersionTenantAndSessionAreEnforced" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="72b6e9c6-7b45-8f06-ee46-c7bc9b7b1af5">
+      <Execution id="1f094b70-ef16-41e1-88a0-114cfdba6482" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Integration.DeliverySyncDatabaseTests" name="MilestonesVersionTenantAndSessionAreEnforced" />
+    </UnitTest>
+    <UnitTest name="APIBack.Tests.Integration.DeliverySyncDatabaseTests.PrivateProofIsReviewedAndOnlyReceiptOwnerCanReadAfterCompletion" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="f2768885-9ffb-9e6c-98c0-ef8342e73ee2">
+      <Execution id="47c98e4a-3803-470b-bf78-22c390051401" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Integration.DeliverySyncDatabaseTests" name="PrivateProofIsReviewedAndOnlyReceiptOwnerCanReadAfterCompletion" />
+    </UnitTest>
+    <UnitTest name="APIBack.Tests.Integration.DeliverySyncDatabaseTests.InvalidCodeOrPaymentRollsBackEverything" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="1544a604-1b5b-57ef-c7da-e5a5114428dc">
+      <Execution id="899a2e18-b815-4306-bf54-c49e040af919" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Integration.DeliverySyncDatabaseTests" name="InvalidCodeOrPaymentRollsBackEverything" />
+    </UnitTest>
+    <UnitTest name="APIBack.Tests.Integration.DeliverySyncDatabaseTests.WorkRejectsMissingPlanAndDistanceInsteadOfInventingZero" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="23907c42-1bc7-bdd3-b991-64dda9b9ba04">
+      <Execution id="28e72de2-4e53-4cb6-bfa9-0209b7749340" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Integration.DeliverySyncDatabaseTests" name="WorkRejectsMissingPlanAndDistanceInsteadOfInventingZero" />
+    </UnitTest>
+    <UnitTest name="APIBack.Tests.Integration.DeliverySyncDatabaseTests.WorkModeCannotChangeDuringActiveRouteButRateCan" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="0a7627f5-d954-d3be-34be-94afbc4673f3">
+      <Execution id="f1a75b3b-bc6a-434d-9a91-d5a2460eb38d" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Integration.DeliverySyncDatabaseTests" name="WorkModeCannotChangeDuringActiveRouteButRateCan" />
+    </UnitTest>
+    <UnitTest name="APIBack.Tests.Integration.DeliverySyncDatabaseTests.WorkIdentityAndMutationsAreRestrictedToTenantAndRider" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="cbe0bb54-4cf6-4269-a762-d298858e5f13">
+      <Execution id="80513458-b643-4744-a944-5cc8cb15789f" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Integration.DeliverySyncDatabaseTests" name="WorkIdentityAndMutationsAreRestrictedToTenantAndRider" />
+    </UnitTest>
+    <UnitTest name="APIBack.Tests.Integration.DeliverySyncDatabaseTests.WorkBlocksUnconfirmedCashAndCancelledSettlementReleasesEntries" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="2d3856fe-187f-ba6b-6a69-f82a7478dfbd">
+      <Execution id="3244a794-65f4-4574-bd9d-91df752e448b" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Integration.DeliverySyncDatabaseTests" name="WorkBlocksUnconfirmedCashAndCancelledSettlementReleasesEntries" />
+    </UnitTest>
+    <UnitTest name="APIBack.Tests.Integration.DeliverySyncDatabaseTests.WorkQuotesFreezeAndCompletionCashDoesNotIncludeCustomerChange" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="5070db4f-3ecf-7623-2f90-f30eace32aff">
+      <Execution id="791cabea-a9d7-4caa-b83e-7ec01d63f3ca" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Integration.DeliverySyncDatabaseTests" name="WorkQuotesFreezeAndCompletionCashDoesNotIncludeCustomerChange" />
+    </UnitTest>
+    <UnitTest name="APIBack.Tests.Integration.DeliverySyncDatabaseTests.CompletionCommitsPaymentReceiptAndNextExactlyOnce" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="8735e591-c25f-7603-a99d-8a0edfd26e35">
+      <Execution id="57df9817-29d3-4704-8501-070dc3d1f41f" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Integration.DeliverySyncDatabaseTests" name="CompletionCommitsPaymentReceiptAndNextExactlyOnce" />
+    </UnitTest>
+    <UnitTest name="APIBack.Tests.Integration.DeliverySyncDatabaseTests.WorkPartialWeekIsProratedPersistedAndVisibleToTheRider" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="b8c39a95-169b-3153-40ba-f409fff2e542">
+      <Execution id="17ef357c-6ad9-4e2d-a4a2-f219f7467d97" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Integration.DeliverySyncDatabaseTests" name="WorkPartialWeekIsProratedPersistedAndVisibleToTheRider" />
+    </UnitTest>
+    <UnitTest name="APIBack.Tests.Integration.DeliverySyncDatabaseTests.WorkOfferRequiresSameFinancialVersionAndRefusalCreatesNoEarning" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="8914c722-bf17-e942-afff-cd6918d6aa5c">
+      <Execution id="5893a450-24f9-45e3-8480-9c9905c6e9c2" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Integration.DeliverySyncDatabaseTests" name="WorkOfferRequiresSameFinancialVersionAndRefusalCreatesNoEarning" />
+    </UnitTest>
+    <UnitTest name="APIBack.Tests.Integration.DeliverySyncDatabaseTests.ParallelRetriesOnlyCompleteOriginalOrder" storage="c:\users\farley.silva\motoboyapp\motoboybackend\bin\debug\net8.0\apiback.dll" id="70d4b510-6584-0b9c-094d-55516aaaba7d">
+      <Execution id="68336432-aa53-4a19-8ffb-b47d11a4ae60" />
+      <TestMethod codeBase="C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\bin\Debug\net8.0\APIBack.dll" adapterTypeName="executor://xunit/VsTestRunner2/netcoreapp" className="APIBack.Tests.Integration.DeliverySyncDatabaseTests" name="ParallelRetriesOnlyCompleteOriginalOrder" />
+    </UnitTest>
+  </TestDefinitions>
+  <TestEntries>
+    <TestEntry testId="cbe0bb54-4cf6-4269-a762-d298858e5f13" executionId="80513458-b643-4744-a944-5cc8cb15789f" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="f2768885-9ffb-9e6c-98c0-ef8342e73ee2" executionId="47c98e4a-3803-470b-bf78-22c390051401" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="ba6278cf-3abf-55b2-4573-06af4cf88aed" executionId="f4e116b0-e2d8-43fe-b544-1db11fa592ed" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="8914c722-bf17-e942-afff-cd6918d6aa5c" executionId="5893a450-24f9-45e3-8480-9c9905c6e9c2" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="72b6e9c6-7b45-8f06-ee46-c7bc9b7b1af5" executionId="1f094b70-ef16-41e1-88a0-114cfdba6482" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="71abe8f5-3b71-9730-6535-bf395d26a11b" executionId="fe3a429d-4429-41e0-b9c2-2d3b60ea50d7" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="e2a1dcd9-672d-a6bc-260e-a7ece32148aa" executionId="226f1471-56e1-4c01-a7e8-0ff74507a4e6" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="6bf3926e-60fc-00e7-fdfa-8b2a599d8cba" executionId="92f81f30-e678-48e6-af18-4fbd8061dec0" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="b8c39a95-169b-3153-40ba-f409fff2e542" executionId="17ef357c-6ad9-4e2d-a4a2-f219f7467d97" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="23907c42-1bc7-bdd3-b991-64dda9b9ba04" executionId="28e72de2-4e53-4cb6-bfa9-0209b7749340" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="2d3856fe-187f-ba6b-6a69-f82a7478dfbd" executionId="3244a794-65f4-4574-bd9d-91df752e448b" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="0a7627f5-d954-d3be-34be-94afbc4673f3" executionId="f1a75b3b-bc6a-434d-9a91-d5a2460eb38d" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="1544a604-1b5b-57ef-c7da-e5a5114428dc" executionId="899a2e18-b815-4306-bf54-c49e040af919" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="5070db4f-3ecf-7623-2f90-f30eace32aff" executionId="791cabea-a9d7-4caa-b83e-7ec01d63f3ca" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="70d4b510-6584-0b9c-094d-55516aaaba7d" executionId="68336432-aa53-4a19-8ffb-b47d11a4ae60" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestEntry testId="8735e591-c25f-7603-a99d-8a0edfd26e35" executionId="57df9817-29d3-4704-8501-070dc3d1f41f" testListId="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+  </TestEntries>
+  <TestLists>
+    <TestList name="Resultados que não estão em uma lista" id="8c84fa94-04c1-424b-9868-57a2d4851a1d" />
+    <TestList name="Todos os resultados carregados" id="19431567-8539-422a-85d7-44ee4e166bda" />
+  </TestLists>
+  <ResultSummary outcome="Failed">
+    <Counters total="16" executed="16" passed="14" failed="2" error="0" timeout="0" aborted="0" inconclusive="0" passedButRunAborted="0" notRunnable="0" notExecuted="0" disconnected="0" warning="0" completed="0" inProgress="0" pending="0" />
+    <Output>
+      <StdOut>[xUnit.net 00:00:00.01] xUnit.net VSTest Adapter v2.4.5+1caef2f33e (64-bit .NET 8.0.31)&#xD;
+[xUnit.net 00:00:03.56]   Discovering: APIBack&#xD;
+[xUnit.net 00:00:05.48]   Discovered:  APIBack&#xD;
+[xUnit.net 00:00:05.54]   Starting:    APIBack&#xD;
+[xUnit.net 00:00:09.41]       System.ArgumentException : Cannot write DateTimeOffset with Offset=-03:00:00 to PostgreSQL type 'timestamp with time zone', only offset 0 (UTC) is supported.  (Parameter 'value')&#xD;
+[xUnit.net 00:00:09.42]       Stack Trace:&#xD;
+[xUnit.net 00:00:09.42]            at Npgsql.Internal.Converters.DateTimeOffsetConverter.WriteCore(PgWriter writer, DateTimeOffset value)&#xD;
+[xUnit.net 00:00:09.42]            at Npgsql.Internal.PgBufferedConverter`1.Write(PgWriter writer, T value)&#xD;
+[xUnit.net 00:00:09.42]            at Npgsql.Internal.PgBufferedConverter`1.WriteAsObject(Boolean async, PgWriter writer, Object value, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:09.42]            at Npgsql.Internal.PgConverter.WriteAsObjectAsync(PgWriter writer, Object value, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:09.42]            at Npgsql.NpgsqlParameter.WriteValue(Boolean async, PgWriter writer, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:09.42]            at Npgsql.NpgsqlParameter.Write(Boolean async, PgWriter writer, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:09.42]            at Npgsql.Internal.NpgsqlConnector.WriteBind(List`1 parameters, String portal, Byte[] asciiName, Boolean allResultTypesAreUnknown, Boolean[] unknownResultTypeList, Boolean async, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:09.42]            at Npgsql.NpgsqlCommand.&lt;Write&gt;g__WriteExecute|101_0(NpgsqlConnector connector, Boolean async, Boolean flush, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:09.42]            at Npgsql.NpgsqlCommand.ExecuteReader(Boolean async, CommandBehavior behavior, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:09.42]            at Npgsql.NpgsqlCommand.ExecuteReader(Boolean async, CommandBehavior behavior, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:09.42]            at Npgsql.NpgsqlCommand.ExecuteScalar(Boolean async, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:09.42]         /_/Dapper/SqlMapper.Async.cs(1241,0): at Dapper.SqlMapper.ExecuteScalarImplAsync[T](IDbConnection cnn, CommandDefinition command)&#xD;
+[xUnit.net 00:00:09.42]         C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\Service\MotoboyWorkService.cs(142,0): at APIBack.Service.MotoboyWorkService.AddPeriod(Guid store, Int32 rider, Int32 user, RiderPeriodRequest request, CancellationToken ct)&#xD;
+[xUnit.net 00:00:09.42]         C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\Service\MotoboyWorkService.cs(145,0): at APIBack.Service.MotoboyWorkService.AddPeriod(Guid store, Int32 rider, Int32 user, RiderPeriodRequest request, CancellationToken ct)&#xD;
+[xUnit.net 00:00:09.42]         C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\Service\MotoboyWorkService.cs(145,0): at APIBack.Service.MotoboyWorkService.AddPeriod(Guid store, Int32 rider, Int32 user, RiderPeriodRequest request, CancellationToken ct)&#xD;
+[xUnit.net 00:00:09.42]         C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\Tests\Integration\RiderWorkDatabaseTests.cs(190,0): at APIBack.Tests.Integration.DeliverySyncDatabaseTests.WorkMigrationVerifiesAndRollbackOnlyAllowsEmptyTables()&#xD;
+[xUnit.net 00:00:09.42]         C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\Tests\Integration\RiderWorkDatabaseTests.cs(204,0): at APIBack.Tests.Integration.DeliverySyncDatabaseTests.WorkMigrationVerifiesAndRollbackOnlyAllowsEmptyTables()&#xD;
+[xUnit.net 00:00:09.42]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:36.63]       System.ArgumentException : Cannot write DateTimeOffset with Offset=-03:00:00 to PostgreSQL type 'timestamp with time zone', only offset 0 (UTC) is supported.  (Parameter 'value')&#xD;
+[xUnit.net 00:00:36.63]       Stack Trace:&#xD;
+[xUnit.net 00:00:36.63]            at Npgsql.Internal.Converters.DateTimeOffsetConverter.WriteCore(PgWriter writer, DateTimeOffset value)&#xD;
+[xUnit.net 00:00:36.63]            at Npgsql.Internal.PgBufferedConverter`1.Write(PgWriter writer, T value)&#xD;
+[xUnit.net 00:00:36.64]            at Npgsql.Internal.PgBufferedConverter`1.WriteAsObject(Boolean async, PgWriter writer, Object value, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:36.64]            at Npgsql.NpgsqlParameter.Write(Boolean async, PgWriter writer, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:36.64]            at Npgsql.Internal.NpgsqlConnector.WriteBind(List`1 parameters, String portal, Byte[] asciiName, Boolean allResultTypesAreUnknown, Boolean[] unknownResultTypeList, Boolean async, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:36.64]            at Npgsql.NpgsqlCommand.&lt;Write&gt;g__WriteExecute|101_0(NpgsqlConnector connector, Boolean async, Boolean flush, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:36.64]            at Npgsql.NpgsqlCommand.ExecuteReader(Boolean async, CommandBehavior behavior, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:36.64]            at Npgsql.NpgsqlCommand.ExecuteReader(Boolean async, CommandBehavior behavior, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:36.64]            at Npgsql.NpgsqlCommand.ExecuteScalar(Boolean async, CancellationToken cancellationToken)&#xD;
+[xUnit.net 00:00:36.64]         /_/Dapper/SqlMapper.Async.cs(1241,0): at Dapper.SqlMapper.ExecuteScalarImplAsync[T](IDbConnection cnn, CommandDefinition command)&#xD;
+[xUnit.net 00:00:36.64]         C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\Service\MotoboyWorkService.cs(142,0): at APIBack.Service.MotoboyWorkService.AddPeriod(Guid store, Int32 rider, Int32 user, RiderPeriodRequest request, CancellationToken ct)&#xD;
+[xUnit.net 00:00:36.64]         C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\Service\MotoboyWorkService.cs(145,0): at APIBack.Service.MotoboyWorkService.AddPeriod(Guid store, Int32 rider, Int32 user, RiderPeriodRequest request, CancellationToken ct)&#xD;
+[xUnit.net 00:00:36.64]         C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\Service\MotoboyWorkService.cs(145,0): at APIBack.Service.MotoboyWorkService.AddPeriod(Guid store, Int32 rider, Int32 user, RiderPeriodRequest request, CancellationToken ct)&#xD;
+[xUnit.net 00:00:36.64]         C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\Tests\Integration\RiderWorkDatabaseTests.cs(108,0): at APIBack.Tests.Integration.DeliverySyncDatabaseTests.WorkPartialWeekIsProratedPersistedAndVisibleToTheRider()&#xD;
+[xUnit.net 00:00:36.64]         C:\Users\farley.silva\MotoboyApp\motoboyBackEnd\Tests\Integration\RiderWorkDatabaseTests.cs(120,0): at APIBack.Tests.Integration.DeliverySyncDatabaseTests.WorkPartialWeekIsProratedPersistedAndVisibleToTheRider()&#xD;
+[xUnit.net 00:00:36.64]         --- End of stack trace from previous location ---&#xD;
+[xUnit.net 00:00:53.24]   Finished:    APIBack&#xD;
+</StdOut>
+    </Output>
+    <RunInfos>
+      <RunInfo computerName="LMINOTE-1096" outcome="Error" timestamp="2026-10-14T16:17:07.3513143-03:00">
+        <Text>[xUnit.net 00:00:09.41]     APIBack.Tests.Integration.DeliverySyncDatabaseTests.WorkMigrationVerifiesAndRollbackOnlyAllowsEmptyTables [FAIL]</Text>
+      </RunInfo>
+      <RunInfo computerName="LMINOTE-1096" outcome="Error" timestamp="2026-10-14T16:17:34.5719036-03:00">
+        <Text>[xUnit.net 00:00:36.63]     APIBack.Tests.Integration.DeliverySyncDatabaseTests.WorkPartialWeekIsProratedPersistedAndVisibleToTheRider [FAIL]</Text>
+      </RunInfo>
+    </RunInfos>
+  </ResultSummary>
+</TestRun>

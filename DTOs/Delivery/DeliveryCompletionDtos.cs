@@ -29,6 +29,11 @@ public sealed class DeliveryCompletionContext
     public bool RequiresPayment { get; set; }
     public bool RequiresProof { get; set; }
     public DeliveryChecklist Checklist { get; set; } = new();
+    public string Origin { get; set; } = "local";
+    public IfoodPedidoIdentityDto? IdentidadeExterna { get; set; }
+    public IfoodCompletionOperationDto? ExternalOperation { get; set; }
+    public string? CompletionBlockedCode { get; set; }
+    public bool RequiresOfficialConfirmation { get; set; }
 }
 public sealed class DeliveryReceipt
 {
@@ -42,6 +47,10 @@ public sealed class DeliveryReceipt
     public List<DeliveryPaymentPart> Payments { get; set; } = new();
     public Guid? ProofId { get; set; }
     public DeliveryChecklistConfirmation? Checklist { get; set; }
+    public string Origin { get; set; } = "local";
+    public string? ExternalDisplayNumber { get; set; }
+    public string? OfficialConfirmationEvidence { get; set; }
+    public decimal? OfficialOrderTotal { get; set; }
 }
 public sealed class DeliveryCompletionResult
 {

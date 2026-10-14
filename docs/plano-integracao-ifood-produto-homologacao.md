@@ -235,7 +235,7 @@ Implementada não equivale a validada. Marcar bloqueio com causa, próxima açã
 | IF-11 | Painel completo de pedidos/preparo/retirada/iFood, identidade e sincronização; ações por capacidade | IF-03, IF-07 a IF-10 | Validada localmente |
 | IF-12 | Fila/rota/oferta compatíveis; bloqueio IFOOD/TAKEOUT e de despacho prematuro; cancelamento/encerramento em rota | IF-07 a IF-09 | Pendente |
 | IF-13 | Configuração centralizada do iFood por tela em Gestão: `client_id`/`client_secret` cifrados, autorizar/revogar merchant↔loja substituindo SQL manual, toggles globais (Enabled/Polling/Import/Projection/Commands/Exceptions) lidos em runtime pelos workers sem exigir reinício do processo | IF-04, IF-05, IF-06 | Pendente |
-| IF-14 | Backend de código oficial e conclusão persistente; recuperação sem validar localmente pedido remoto | IF-03, IF-09, IF-12 | Pendente |
+| IF-14 | Backend de código oficial e conclusão persistente; recuperação sem validar localmente pedido remoto | IF-03, IF-09, IF-12 | Validada localmente |
 | IF-15 | App com identidade, cobrança e conclusão oficial; feedback, recibo e recovery nativo | IF-03, IF-12, IF-14 | Pendente |
 | IF-16 | Permissões/diagnóstico restante e prevenção de bypass; proteção/retenção de dados (configuração central já coberta pelo IF-13) | IF-04 a IF-15 | Pendente |
 | IF-17 | Instrumentação, alertas, conciliação e contingência; verificar hospedagem sempre ativa e múltiplas instâncias | IF-06 a IF-16 | Pendente |
@@ -551,6 +551,18 @@ Status: aprovado pelo usuário, implementado e validado localmente. A lista abai
 - Limitações: **sem verificação visual em navegador** desta tela — não havia ambiente local com banco completo e login configurado nesta sessão. Comandos/exceções continuam com merchants/ações fixos em env (`CommandMerchants`/`ExceptionMerchants`/`AllowedCommands`/`AllowedExceptionActions`); autorizar isso por conexão fica para um lote 2 do IF-13, adiado deliberadamente. IF-00/IF-01/sandbox continuam pendentes; nenhuma flag real foi ligada.
 - Evidências: [IF-13](validacao-ifood/IF-13.md).
 - Próximo passo: decidir com o usuário entre retomar **IF-14** (código oficial/conclusão persistente) ou fechar o lote 2 do IF-13 (comandos/exceções por conexão); e, antes de considerar a tela pronta, fazer a verificação visual em navegador que ficou pendente.
+
+### IF-14 — backend de código oficial e conclusão persistente (14/10/2026)
+
+- Estado: **Validada localmente**, sem prova autenticada/sandbox. Autorização explícita após apresentação do objetivo, alterações, riscos, arquivos e validações no chat.
+- Entrega própria: intenção vinculada a conta/sessão/loja/pedido/parada, revalidação antes do POST oficial Order, cifra mínima do código, HMAC de idempotência, reserva/fence, resposta incerta sem reenvio e recuperação de resultado/evento sem código local.
+- Retirada: contexto/confirmar/recuperar por operador com `Delivery/integracao_ifood`, somente TAKEOUT autorizado/pronto, recibo de retirada sem criar rota, entrega física, horário de entrega, sessão ou remuneração de motoboy.
+- Finalização local e recibo/recebimento/outbox atômicos; CON correlacionado recupera incerteza sem atribuir validação HTTP por inferência. CAN concorrente impede conclusão; cancelamento posterior preserva o histórico e exige revisão. Saldo e meios OFFLINE vêm do snapshot oficial, sem reprecificação ou troca presumida.
+- Migration/rollback `20261014_03_ifood_delivery_completion`; cliente/worker em `Integrations/Ifood/Completion`; controllers/DTOs novos, parciais de conclusão/retirada, guards e leitura/projeção de identidade. `CompletionEnabled` é novo e false por padrão; demais flags/logística continuam desligadas fora das fixtures. Handshake legado não realiza mais envio sem vínculo persistente.
+- Validação: regressão ampla com **448 aprovados**; rodada final com **78 aprovados**, incluindo **38 novos IF-14**, zero falhas/ignorados nessas rodadas. Banco PostgreSQL 17 isolado em `127.0.0.1:55484`, schemas aleatórios, HTTP simulado e instância encerrada. Compilação sem erros e diff sem problemas de whitespace.
+- Verificação adicional de canais próprios/remuneração: **14 aprovados e 2 falhas fora do lote**, em serviço/testes inalterados de remuneração periódica (`MotoboyWorkService.AddPeriod`, offset `-03:00` rejeitado pelo Npgsql). Registradas no relatório; não corrigidas fora do escopo. A aprovação local IF-14 não declara a suíte inteira livre de falhas.
+- Evidências, contratos, arquivos e comandos: [IF-14](validacao-ifood/IF-14.md). Referências públicas Order reconsultadas; conteúdo indexado disponível, abertura direta 403. IF-00/IF-01/formato/efeito/capacidades reais/sandbox continuam pendentes. Nenhuma migration/flag/credencial real, commit, push, publicação, ativação ou submissão.
+- Próximo lote funcional: **IF-15**, consumo no app de identidade/saldo/ação explícita de conclusão/feedback/recibo e recovery Android. Consumo visual do contrato de retirada no painel também permanece pendente de interface/validação. Preservar separadamente as pendências do IF-13, remuneração por período e IF-00/IF-01.
 
 ### Procedimento para retomar o trabalho
 

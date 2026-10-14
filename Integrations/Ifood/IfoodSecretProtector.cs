@@ -72,6 +72,14 @@ public sealed class IfoodSecretProtector
         catch (FormatException) { }
         throw new IfoodIntegrationException("IFOOD_SECRET_KEY_UNAVAILABLE");
     }
+    // HMAC impede recuperar códigos curtos por força bruta a partir do hash de idempotência.
+    internal string Fingerprint(string value, string purpose, string? keyId = null)
+    {
+        var id = keyId ?? _options.ActiveEncryptionKeyId;
+        var key = GetKey(id);
+        try { return id + "." + Convert.ToHexString(HMACSHA256.HashData(key, Encoding.UTF8.GetBytes(purpose + ":" + value))); }
+        finally { CryptographicOperations.ZeroMemory(key); }
+    }
     // Prefere o segredo cifrado da configuração central (IF-13); cai para ClientSecret em texto
     // puro só quando nada foi migrado ainda (compatibilidade com ambientes/testes mais antigos).
     public string ResolveClientSecret(IfoodOptions options) => string.IsNullOrEmpty(options.ClientSecretCifrado)
