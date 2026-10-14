@@ -18,6 +18,15 @@ public sealed class IfoodCommandsController(IfoodCommandService service) : Contr
     [HttpGet("operations/{operationId:guid}"),RequirePermission("Delivery","integracao_ifood")]
     public Task<IActionResult> Read(Guid operationId,CancellationToken ct)
         => Run(async(store,_)=>await service.ReadAsync(store,operationId,ct) ?? throw new DeliveryDomainException(404,"IFOOD_COMMAND_NOT_FOUND","Operação não encontrada."),false);
+    [HttpGet("pedidos/{pedidoId:int}/capabilities"),RequirePermission("Delivery","integracao_ifood")]
+    public async Task<IActionResult> Capabilities(int pedidoId,CancellationToken ct)
+    {
+        Response.Headers.CacheControl="no-store";
+        if(HttpContext.GetEstabelecimentoId() is not Guid store || HttpContext.GetUserId() is not int user || user<=0) return Unauthorized();
+        try { return Ok(ApiResponse<IfoodCapabilitiesDto>.Ok(await service.CapabilitiesAsync(store,pedidoId,ct))); }
+        catch(DeliveryDomainException ex) { return StatusCode(ex.StatusCode,ApiResponse<object>.Fail(ex.Message,ex.Code)); }
+        catch(IfoodIntegrationException ex) { return StatusCode(503,ApiResponse<object>.Fail("Não foi possível consultar as ações iFood.",ex.Code)); }
+    }
     private async Task<IActionResult> Run(Func<Guid,int,Task<IfoodCommandDto>> action,bool accepted)
     {
         Response.Headers.CacheControl="no-store";

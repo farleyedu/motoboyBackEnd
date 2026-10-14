@@ -1,6 +1,6 @@
 # Plano da integração iFood no produto Zippy e homologação
 
-Data de referência: 13/10/2026. Idioma: pt-BR.
+Data de referência: 14/10/2026. Idioma: pt-BR.
 
 ## 1. Objetivo e autorização
 
@@ -8,7 +8,9 @@ Entregar o backend, o painel administrativo e o app do motoboy com os fluxos com
 
 O usuário aprovou a criação deste plano, IF-02/IF-03, o lote IF-04 de contratos C#, tabelas aditivas e testes em banco isolado e as partes locais de IF-05 (autenticação, segredos e autorização por loja), IF-06 (polling, inbox, ACK durável e recuperação), IF-07 (importação completa preservando dados oficiais), IF-08 (projeção por eventos, cancelamentos, alterações, disputas e ordem variável) e IF-09 (comandos persistentes, prazos e resultados incertos), após apresentação dos escopos. A autorização não inclui commit, push, publicação ou ativação de lojas. Antes de cada novo lote de implementação, apresentar objetivo, alterações, riscos, arquivos e validações e aguardar aprovação explícita. Após aprovação do lote, implementar e validar autonomamente dentro do escopo. Não solicitar novamente autorização para repetir trabalho já coberto pelo mesmo lote.
 
-Este arquivo será o registro de continuidade do trabalho. O DOCX `Zippy_iFood_Plano_Integracao_Segunda_Opiniao.docx` permanece preservado como referência anterior. IF-04 e as partes locais de IF-05/IF-06/IF-07/IF-08/IF-09 foram implementadas e validadas localmente. Polling, importador, projetor e comandos permanecem desabilitados; autenticação, eventos/importação/comandos reais e homologação ainda não foram realizados.
+A IF-10 foi autorizada pelo pedido de conclusão em 13/10/2026; a IF-11, pelo pedido de seguir para esse lote em 14/10/2026. Os registros abaixo delimitam as entregas locais. A autorização continua sem incluir commit, push, publicação ou ativação.
+
+Este arquivo será o registro de continuidade do trabalho. O DOCX `Zippy_iFood_Plano_Integracao_Segunda_Opiniao.docx` permanece preservado como referência anterior. IF-04 e as partes locais de IF-05/IF-06/IF-07/IF-08/IF-09/IF-10/IF-11 foram implementadas e validadas localmente. Polling, importador, projetor e comandos permanecem desabilitados; autenticação, eventos/importação/comandos reais e homologação ainda não foram realizados.
 
 ## 2. Escopo e limites
 
@@ -230,7 +232,7 @@ Implementada não equivale a validada. Marcar bloqueio com causa, próxima açã
 | IF-08 | Projeção e atualização por eventos; cancelamento/patch/disputa/estado desconhecido e ordem variável; variantes incompletas exigem conciliação e prova oficial | IF-06, IF-07 | Validada localmente |
 | IF-09 | Comandos persistentes de confirmar/preparar/pronto/despachar; SLA/agendamento e resultados incertos; capacidades/regra de prazo/prova autenticada pendentes | IF-05, IF-07, IF-08 | Validada localmente |
 | IF-10 | Cancelamento com motivos dinâmicos, rejeição e evento final; negociações aplicáveis com deadline/settlement | IF-08, IF-09 | Validada localmente |
-| IF-11 | Painel completo de pedidos/preparo/retirada/iFood, identidade e sincronização; ações por capacidade | IF-03, IF-07 a IF-10 | Pendente |
+| IF-11 | Painel completo de pedidos/preparo/retirada/iFood, identidade e sincronização; ações por capacidade | IF-03, IF-07 a IF-10 | Validada localmente |
 | IF-12 | Fila/rota/oferta compatíveis; bloqueio IFOOD/TAKEOUT e de despacho prematuro; cancelamento/encerramento em rota | IF-07 a IF-09 | Pendente |
 | IF-13 | Backend de código oficial e conclusão persistente; recuperação sem validar localmente pedido remoto | IF-03, IF-09, IF-12 | Pendente |
 | IF-14 | App com identidade, cobrança e conclusão oficial; feedback, recibo e recovery nativo | IF-03, IF-12, IF-13 | Pendente |
@@ -503,6 +505,21 @@ Status: aprovado pelo usuário, implementado e validado localmente. A lista abai
 - Configuração/rollback: `Ifood:ExceptionsEnabled=false`, lista explícita de merchants/ações. Rollback vazio **IF-10 → IF-09 → IF-08 → IF-07 → IF-06 → IF-04**; operações/revisões em uso o impedem. Nenhuma migration real, chamada oficial, commit/push/publicação ou ativação ocorreu.
 - Limites: endpoints/corpos/semântica de handshake seguem o contrato local e precisam ser confirmados com API Reference/perfil em IF-01 e exercitados em IF-18. Alternativas além de reembolso/benefício/tempo adicional e evidências não são suportadas.
 - Próxima fase: **IF-11**, painel de pedidos/preparo/retirada/iFood, identidade, sincronização e ações por capacidade consumindo IF-07 a IF-10. Apresentar lote concreto antes de editar o painel.
+
+### 14/10/2026 — Lote IF-11 (parte local, painel de operação iFood)
+
+- ID: **IF-11**. Estado: **Validada localmente**. Data: 14/10/2026.
+- Objetivo: consumir IF-07 a IF-10 no painel, com número iFood, modalidades/preparo, detalhes e valores oficiais, sincronização e ações derivadas do servidor. Usuário autorizou ao pedir para seguir para a IF-11; objetivo, arquivos, riscos e validações foram apresentados antes das alterações.
+- Backend: novos `IfoodCapabilitiesDtos.cs`, `Integrations/Ifood/Commands/IfoodCapabilities.cs`, consulta de capacidades no controller/serviço, `disputeId` na leitura de operação, filtros/busca externa em `PedidoConsultaDtos.cs`, `PedidoConsulta.cs` e `PedidoConsultaRepository.cs`; identidade/origem no map-state (`TrackingDtos.cs`/`TrackingRepository.cs`). Consulta de capacidades consistente, sem HTTP/mutação, sob permissão de integração e loja do token. Sem migration/configuração nova.
+- Painel: novo `src/features/ifood/` (contratos/clientes, regras, detalhes, operações, comanda e recuperação); atualização de `PedidosScreen`, `PedidoDetalheDrawer`, `usePedidosList`, contratos de pedidos, mapeadores e componentes de cartões/detalhes/busca/acesso à cozinha no modo comando. Ações ficam no início do detalhe; fechamento acessível no móvel. App não foi alterado.
+- Comportamento: número externo com zeros; lista acessível para TAKEOUT/logística iFood sem pin; estados local/remoto/preparo/sincronização separados; snapshot oficial com quantidades fracionadas, preço unitário sem arredondar casas originais, adicionais, valores/pagamentos/benefícios e comanda sem código do cliente. Capacidade indisponível explica condição; modalidade desconhecida não recebe logística presumida.
+- Comandos/exceções: releitura antes de enviar, motivo de cancelamento atualizado e opções de disputa derivadas do servidor, prazo/revisões/valores em centavos como texto. HTTP 202 permanece pendente; resultado incerto conserva o mesmo operationId e consulta a operação após reload. Nenhum cancelamento/reembolso/preparo é declarado apenas por aceite HTTP. Contexto isolado por loja/usuário/pedido; revogação retira ações. Ações locais/WhatsApp pelo telefone intermediado não são usadas para pedidos externos nos componentes alterados.
+- Validação funcional: **332 backend aprovados** (316 anteriores + 16 novos: 12 unitários e 4 PostgreSQL), **74 painel aprovados** e **8 verificações Chrome**, sem falhas/ignorados ou erro JavaScript nos cenários de navegador. Typecheck, lint dos arquivos do lote e build Next aprovados. Build .NET aprovado com 35 avisos preexistentes; Next mantém avisos anteriores do projeto.
+- Ambiente: PostgreSQL exclusivo `127.0.0.1:55480`, schemas aleatórios por teste, HTTP simulado; servidor encerrado. Next/Chrome em servidor local com API interceptada, encerrado depois da validação. Sem suítes integrais, banco/API/credenciais reais, commit/push/publicação/ativação.
+- Validação visual: tema claro, Chrome em 1440 × 1000 e 390 × 844, detalhe/modal inspecionados; largura e legibilidade conferidas após a transição. Capturas temporárias removidas. Tema escuro/outros navegadores não inspecionados; implementação não é referência aprovada por inferência.
+- Evidências: [IF-11](validacao-ifood/IF-11.md), [TRX backend](validacao-ifood/if11-regression.trx), [painel](../../zippy-admin/docs/validacao-ifood/README.md).
+- Limites: IF-00/IF-01/sandbox continuam pendentes e flags desligadas. Código/conclusão de retirada pertence a IF-13; diagnóstico/bypass/conciliação completos a IF-15/IF-16. Recuperação sem operação localizada mantém bloqueio, sem criar novo envio. A consulta de histórico limita a 50 operações e usa leitura individual para recuperação.
+- Próximo passo: **IF-12**, elegibilidade de fila/rota/oferta, despacho/coleta, cancelamento e encerramento em rota. Apresentar o lote concreto antes de iniciar essa fase.
 
 ### Procedimento para retomar o trabalho
 

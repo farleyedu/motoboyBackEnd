@@ -15,6 +15,8 @@ namespace APIBack.Service
     {
         public int[] Status { get; init; } = Array.Empty<int>();
         public string[] Origem { get; init; } = Array.Empty<string>();
+        public string[] Modalidade { get; init; } = Array.Empty<string>();
+        public string[] Preparo { get; init; } = Array.Empty<string>();
         public string? De { get; init; }
         public string? Ate { get; init; }
         /// <summary>Busca por numero (quando so digitos curtos) ou por texto.</summary>
@@ -106,6 +108,8 @@ namespace APIBack.Service
             {
                 Status = status,
                 Origem = origem,
+                Modalidade = ValidateKeys(request.Modalidade, new[] { "DELIVERY", "TAKEOUT", "DINE_IN", "UNKNOWN" }),
+                Preparo = ValidateKeys(request.Preparo, new[] { "awaiting_acceptance", "accepted", "preparing", "ready" }),
                 De = de,
                 Ate = ate,
                 BuscaId = buscaId,
@@ -120,6 +124,10 @@ namespace APIBack.Service
 
         private static IEnumerable<string> Split(string? value) =>
             (value ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        private static string[] ValidateKeys(string? value, string[] allowed) => Split(value).Select(key =>
+            allowed.FirstOrDefault(a => a.Equals(key, StringComparison.OrdinalIgnoreCase))
+            ?? throw new DeliveryDomainException(422, "INVALID_REQUEST", $"Filtro iFood inválido: {key}.")).Distinct().ToArray();
 
         private static string? Date(string? value, string field)
         {

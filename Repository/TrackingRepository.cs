@@ -415,6 +415,7 @@ SELECT
     p.id AS Id,
     p.nome_cliente::text AS NomeCliente,
     p.id_ifood::text AS IdIfood,
+    __ORIGEM__ AS Origem,
     p.telefone_cliente::text AS TelefoneCliente,
     p.data_pedido::text AS DataPedidoRaw,
     p.endereco_entrega::text AS EnderecoEntrega,
@@ -585,6 +586,8 @@ SELECT rs.motoboy_id AS MotoboyId, COUNT(*)::int AS DeliveredToday
             var windowRange = OrderWindowRules.Resolve(orderWindow, DateTimeOffset.UtcNow);
             // Sem inicio (janela so com fim), olha 7 dias para tras: mais que isso nao e operacao.
             var windowFromUtc = windowRange.FromUtc ?? fromUtc.AddDays(-7);
+            var coreSchema = await PedidoColumnTypes.HasCoreSchemaAsync(connection, null);
+            pedidosSql = pedidosSql.Replace("__ORIGEM__", coreSchema ? "p.origem" : "CASE WHEN p.id_ifood IS NOT NULL THEN 'ifood' ELSE 'atendente' END");
             if (await PedidoColumnTypes.HasRouteRulesSchemaAsync(connection, null))
             {
                 pedidosSql = pedidosSql.Replace("FALSE AS Locked", "COALESCE(rs.locked, FALSE) AS Locked");
@@ -599,6 +602,17 @@ SELECT rs.motoboy_id AS MotoboyId, COUNT(*)::int AS DeliveredToday
                 .Select(ToOrderMapDto)
                 .Where(pedido => IsInOrderWindow(pedido, orderWindow, windowRange))
                 .ToList();
+            var externalIdentities = await APIBack.Integrations.Ifood.Orders.IfoodOrderReadModel.IdentitiesAsync(connection,
+                estabelecimentoId, pedidos.Where(p => p.Origem == "ifood").Select(p => p.Id).ToArray());
+            foreach (var pedido in pedidos)
+                if (externalIdentities.TryGetValue(pedido.Id, out var identity))
+                {
+                    pedido.IdentidadeExterna = identity;
+                    pedido.Value = identity.OrderAmount;
+                    pedido.Items = null;
+                    pedido.CodigoEntrega = null;
+                    if (!identity.DataIsCurrent) { pedido.EnderecoEntrega = pedido.Region = pedido.TipoPagamento = null; }
+                }
             var estabelecimento = await connection.QuerySingleOrDefaultAsync<EstabelecimentoLocationRow>(
                 estabelecimentoSql, new { EstabelecimentoId = estabelecimentoId });
             // Pedido de teste (origem simulador) nao entra nas metricas reais do dia.
@@ -692,6 +706,7 @@ LEFT JOIN LATERAL (
 
         private sealed class OrderMapRow
         {
+            public string? Origem { get; set; }
             public int Id { get; set; }
             public string? NomeCliente { get; set; }
             public string? IdIfood { get; set; }
@@ -756,6 +771,7 @@ LEFT JOIN LATERAL (
                 Id = row.Id,
                 NomeCliente = row.NomeCliente,
                 IdIfood = row.IdIfood,
+                Origem = row.Origem,
                 TelefoneCliente = row.TelefoneCliente,
                 DataPedido = dataPedido,
                 EnderecoEntrega = row.EnderecoEntrega,

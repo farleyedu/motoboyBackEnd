@@ -22,4 +22,5 @@ public sealed class IfoodCommandDto
     public DateTimeOffset? FinishedAtUtc { get; set; }
     public Guid? ConfirmedEventId { get; set; }
     public string? LastErrorCode { get; set; }
+    public Guid? DisputeId { get; set; }
 }

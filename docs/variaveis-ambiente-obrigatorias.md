@@ -153,7 +153,7 @@ HTTP 202 significa aceitação assíncrona, não preparo/rota comprovados. Timeo
 
 Não calcular preparationStartDateTime nem preencher horários desconhecidos. Preparo/pronto aguardam o preparo oficial; despacho próprio requer RTP confirmado e, se agendado, não é enviado antes do início da janela nesta política local conservadora. Fonte e amostras do perfil real continuam pendentes; a flag de comandos não habilita `zippy_delivery_enabled`, prova física ou recebimento local.
 
-Endpoints/DTO e prova local: [IF-09](validacao-ifood/IF-09.md). Painel de ações/capacidades pertence a IF-11; cancelamento/disputa estão em [IF-10](validacao-ifood/IF-10.md) e rota/coleta pertence a IF-12.
+Endpoints/DTO e prova local: [IF-09](validacao-ifood/IF-09.md). Painel de ações/capacidades: [IF-11](validacao-ifood/IF-11.md); cancelamento/disputa: [IF-10](validacao-ifood/IF-10.md); rota/coleta pertence a IF-12.
 
 ## iFood — cancelamento e disputas (IF-10)
 
@@ -172,7 +172,13 @@ Com exceções ligadas, `Ifood__CommandLeaseSeconds` deve ser pelo menos `3 × H
 
 Aplicar IF-04/IF-06/IF-07/IF-08/IF-09 e `20261013_08_ifood_cancellation_disputes.sql` mais outbox no ambiente autorizado. O rollback de IF-09 exige remover IF-10 antes, e o de IF-10 recusa operações/revisões em uso. Ordem vazia: **IF-10 → IF-09 → IF-08 → IF-07 → IF-06 → IF-04**. Não iniciar API contra banco real como validação.
 
-HTTP 201/202 é só aceite assíncrono: o pedido/disputa mudam por evento oficial. Timeout, rede, 5xx e queda após o marcador de envio ficam incertos; 422 de disputa vai para revisão; novo operationId não contorna. Alternativas e valores vêm do payload da disputa, nunca de padrão local. Painel de ações pertence a IF-11 e rota/coleta a IF-12. Evidência: [IF-10](validacao-ifood/IF-10.md).
+HTTP 201/202 é só aceite assíncrono: o pedido/disputa mudam por evento oficial. Timeout, rede, 5xx e queda após o marcador de envio ficam incertos; 422 de disputa vai para revisão; novo operationId não contorna. Alternativas e valores vêm do payload da disputa, nunca de padrão local. Painel de ações: [IF-11](validacao-ifood/IF-11.md); rota/coleta: IF-12. Evidência: [IF-10](validacao-ifood/IF-10.md).
+
+## iFood — painel e capacidades (IF-11)
+
+Não acrescenta variável de ambiente nem habilita integração. `GET /api/v2/delivery/ifood/pedidos/{pedidoId}/capabilities` usa as flags, merchants e ações de IF-09/IF-10 já existentes, autorização do vínculo, revisão/estado e operações ativas. Retorna condições de bloqueio mesmo com os comandos desligados, sob `Delivery/integracao_ifood`; leitura sem HTTP externo ou efeito colateral. Respostas do pedido e capacidades não expõem credenciais.
+
+O painel consulta motivos/opções apenas por ação explícita e conserva `operationId` após resultado incerto. Polling visual não substitui inbox, evento oficial ou conciliação. Contratos, filtros de modalidade/preparo e validação: [IF-11](validacao-ifood/IF-11.md).
 
 ## Integracoes de IA / geocodificacao
 

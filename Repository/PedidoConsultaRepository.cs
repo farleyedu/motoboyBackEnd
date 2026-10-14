@@ -42,7 +42,8 @@ namespace APIBack.Repository
   ) capa ON TRUE" : string.Empty;
             var coverNameExpr = core ? "capa.ItemNome" : "NULL::text";
             var coverImageExpr = core ? "capa.ImagemUrl" : "NULL::text";
-            var (where, parameters) = BuildWhere(estabelecimentoId, filtro, origemExpr);
+            var externalSchema = await connection.ExecuteScalarAsync<bool>("SELECT to_regclass('ifood_order_links') IS NOT NULL AND to_regclass('ifood_order_snapshots') IS NOT NULL");
+            var (where, parameters) = BuildWhere(estabelecimentoId, filtro, origemExpr, externalSchema);
             if (filtro.ConversaId.HasValue)
             {
                 // Pedidos da conversa: os ligados a ela (coluna do nucleo) e os feitos pelo telefone do cliente dela.
@@ -238,11 +239,24 @@ SELECT i.id::text AS ItemId, i.produto_id AS ProdutoId, i.nome AS Nome, i.quanti
             return detail;
         }
 
-        private static (string Where, DynamicParameters Parameters) BuildWhere(Guid estabelecimentoId, PedidoFiltro filtro, string origemExpr)
+        private static (string Where, DynamicParameters Parameters) BuildWhere(Guid estabelecimentoId, PedidoFiltro filtro, string origemExpr, bool externalSchema)
         {
             var clauses = new List<string> { "p.id_estabelecimento = @EstabelecimentoId" };
             var parameters = new DynamicParameters();
             parameters.Add("EstabelecimentoId", estabelecimentoId);
+
+            if (filtro.Modalidade.Length > 0 || filtro.Preparo.Length > 0)
+            {
+                clauses.Add(externalSchema ? """
+EXISTS(SELECT 1 FROM ifood_order_links il JOIN ifood_order_snapshots iss USING(merchant_id,external_order_id,estabelecimento_id)
+WHERE il.pedido_id=p.id AND il.estabelecimento_id=p.id_estabelecimento
+AND (cardinality(@Modalidade::text[])=0 OR iss.order_type=ANY(@Modalidade)
+OR ('UNKNOWN'=ANY(@Modalidade) AND iss.order_type NOT IN('DELIVERY','TAKEOUT','DINE_IN')))
+AND (cardinality(@Preparo::text[])=0 OR iss.preparation_state=ANY(@Preparo)))
+""" : "FALSE");
+                parameters.Add("Modalidade", filtro.Modalidade);
+                parameters.Add("Preparo", filtro.Preparo);
+            }
 
             if (filtro.Status.Length > 0)
             {
@@ -269,6 +283,11 @@ SELECT i.id::text AS ItemId, i.produto_id AS ProdutoId, i.nome AS Nome, i.quanti
             if (filtro.BuscaLike != null)
             {
                 var text = "(p.nome_cliente::text ILIKE @Like OR p.endereco_entrega::text ILIKE @Like OR p.region::text ILIKE @Like OR p.telefone_cliente::text ILIKE @Like)";
+                var externalSearch = externalSchema ? """
+ OR EXISTS(SELECT 1 FROM ifood_order_links il WHERE il.pedido_id=p.id AND il.estabelecimento_id=p.id_estabelecimento
+AND (il.display_number ILIKE @Like OR il.external_order_id::text ILIKE @Like OR il.display_number=@ExternalNumber))
+""" : string.Empty;
+                parameters.Add("ExternalNumber", filtro.BuscaDigitos);
                 if (filtro.BuscaDigitos != null)
                 {
                     var byNumber = new List<string> { "p.telefone_cliente::text LIKE '%' || @Digitos || '%'" };
@@ -278,11 +297,11 @@ SELECT i.id::text AS ItemId, i.produto_id AS ProdutoId, i.nome AS Nome, i.quanti
                         parameters.Add("BuscaId", filtro.BuscaId.Value);
                     }
                     parameters.Add("Digitos", filtro.BuscaDigitos);
-                    clauses.Add("(" + string.Join(" OR ", byNumber) + ")");
+                    clauses.Add("(" + string.Join(" OR ", byNumber) + externalSearch + ")");
                 }
                 else
                 {
-                    clauses.Add(text);
+                    clauses.Add("(" + text + externalSearch + ")");
                 }
                 parameters.Add("Like", filtro.BuscaLike);
             }

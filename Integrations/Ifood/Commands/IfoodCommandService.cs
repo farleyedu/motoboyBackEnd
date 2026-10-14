@@ -17,6 +17,7 @@ public sealed class IfoodCommandService
         return _repository.EnqueueAsync(store,user,pedido,request,ct);
     }
     public Task<IfoodCommandDto?> ReadAsync(Guid store,Guid operation,CancellationToken ct=default) => _repository.ReadAsync(store,operation,ct);
+    public Task<IfoodCapabilitiesDto> CapabilitiesAsync(Guid store,int pedido,CancellationToken ct=default) => _repository.CapabilitiesAsync(store,pedido,ct);
     public async Task<int> RunOnceAsync(CancellationToken ct=default)
     {
         if(!_options.Enabled || !_options.CommandsEnabled) return 0;

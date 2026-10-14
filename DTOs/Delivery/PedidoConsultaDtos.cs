@@ -87,6 +87,8 @@ namespace APIBack.DTOs.Delivery
         public string? Status { get; set; }
         /// <summary>Lista separada por virgula: atendente,cardapio_web,ifood,ia_whatsapp,simulador.</summary>
         public string? Origem { get; set; }
+        public string? Modalidade { get; set; }
+        public string? Preparo { get; set; }
         /// <summary>AAAA-MM-DD (inclusive).</summary>
         public string? De { get; set; }
         /// <summary>AAAA-MM-DD (inclusive).</summary>

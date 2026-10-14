@@ -79,7 +79,7 @@ VALUES(@OperationId,@MerchantId,@ExternalOrderId,@EstabelecimentoId,@Command,CAS
 SELECT o.operation_id AS OperationId,l.pedido_id AS PedidoId,o.command_type AS Command,o.state AS State,
 o.expected_order_revision AS ExpectedRevision,o.attempts AS Attempts,o.created_at_utc AS CreatedAtUtc,o.not_before_utc AS NotBeforeUtc,
 o.deadline_at_utc AS DeadlineAtUtc,o.send_started_at_utc AS SendStartedAtUtc,o.http_accepted_at_utc AS HttpAcceptedAtUtc,
-o.finished_at_utc AS FinishedAtUtc,o.confirmed_event_id AS ConfirmedEventId,o.last_error_code AS LastErrorCode
+o.finished_at_utc AS FinishedAtUtc,o.confirmed_event_id AS ConfirmedEventId,o.last_error_code AS LastErrorCode,(to_jsonb(o)->>'target_dispute_id')::uuid AS DisputeId
 FROM ifood_outbound_commands o JOIN ifood_order_links l USING(merchant_id,external_order_id,estabelecimento_id)
 WHERE o.estabelecimento_id=@Store AND o.operation_id=@Operation
 """,new { Store=store,Operation=operation },tx,cancellationToken:ct));

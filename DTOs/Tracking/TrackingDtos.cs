@@ -125,6 +125,8 @@ namespace APIBack.DTOs.Tracking
     public class OrderMapDto
     {
         public int Id { get; set; }
+        public string? Origem { get; set; }
+        public APIBack.DTOs.Delivery.IfoodPedidoIdentityDto? IdentidadeExterna { get; set; }
         public string? NomeCliente { get; set; }
         public string? IdIfood { get; set; }
         public string? TelefoneCliente { get; set; }
