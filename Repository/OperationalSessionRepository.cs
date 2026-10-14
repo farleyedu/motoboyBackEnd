@@ -141,6 +141,22 @@ UPDATE motoboy_active_sessions SET expires_at_utc=NOW()+(@PresenceTtl * INTERVAL
 
             if (active != null)
             {
+                // O proprio aparelho repetindo o inicio (ex.: a resposta anterior se perdeu na rede)
+                // nao e um conflito: renova a sessao dele em vez de bloquear o dono dela.
+                if (!string.IsNullOrEmpty(active.ClientInstanceId) &&
+                    string.Equals(active.ClientInstanceId, clientInstanceId, StringComparison.OrdinalIgnoreCase))
+                {
+                    await connection.ExecuteAsync(@"
+UPDATE motoboy_active_sessions SET expires_at_utc=NOW()+(@PresenceTtl * INTERVAL '1 second'),
+ last_heartbeat_at_utc=NOW(), last_seen_at=NOW(), version=version+1
+ WHERE session_id=@SessionId AND ended_at_utc IS NULL AND revoked_at IS NULL;",
+                        new { active.SessionId, PresenceTtl = _options.PresenceTtlSeconds }, transaction);
+                    var renewed = await connection.QuerySingleAsync<OperationalSessionRecord>(
+                        SessionSelect + " WHERE s.session_id=@SessionId;", new { active.SessionId }, transaction);
+                    await CommitSessionTransactionAsync(transaction);
+                    return renewed;
+                }
+
                 if (!explicitSwitch)
                 {
                     throw SessionConflict(active);
