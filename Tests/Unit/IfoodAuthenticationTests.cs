@@ -16,6 +16,16 @@ public sealed class IfoodAuthenticationTests
         Enabled = true, ClientId = "test-client", ClientSecret = "secret-test-only-&=+",
         ActiveEncryptionKeyId = "key1", EncryptionKeys = new() { ["key1"] = Convert.ToBase64String(new byte[32]) }
     };
+    // IOptionsMonitor<T> fixo para testes: nenhum worker/cliente precisa de hot-reload real aqui,
+    // só do mesmo contrato que o DI de produção usa (ver IF-13).
+    internal sealed class StaticOptionsMonitor<T>(T value) : IOptionsMonitor<T>
+    {
+        public T CurrentValue { get; } = value;
+        public T Get(string? name) => CurrentValue;
+        public IDisposable OnChange(Action<T, string> listener) => NoopDisposable.Instance;
+        private sealed class NoopDisposable : IDisposable { public static readonly NoopDisposable Instance = new(); public void Dispose() { } }
+    }
+    internal static IOptionsMonitor<IfoodOptions> Monitor(IfoodOptions? options = null) => new StaticOptionsMonitor<IfoodOptions>(options ?? EnabledOptions());
     internal sealed class Clock : TimeProvider
     {
         private DateTimeOffset _now = new(2026, 10, 13, 12, 0, 0, TimeSpan.Zero);
@@ -37,9 +47,9 @@ public sealed class IfoodAuthenticationTests
     internal static HttpResponseMessage TokenResponse(string token = "test-token", int seconds = 600)
         => new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new { accessToken = token, type = "bearer", expiresIn = seconds })) };
     private static IfoodAuthenticationClient Client(Handler handler, Clock? clock = null, IfoodOptions? options = null)
-        => new(new Factory(handler), Microsoft.Extensions.Options.Options.Create(options ?? EnabledOptions()), clock ?? new Clock());
+        => new(new Factory(handler), Monitor(options), new IfoodSecretProtector(Microsoft.Extensions.Options.Options.Create(options ?? EnabledOptions())), clock ?? new Clock());
     private static IfoodTokenProvider Provider(Handler handler, Clock clock, IfoodOptions? options = null)
-        => new(Client(handler, clock, options), Microsoft.Extensions.Options.Options.Create(options ?? EnabledOptions()), clock);
+        => new(Client(handler, clock, options), Monitor(options), clock);
 
     [Fact]
     public async Task RequestsOnlyOfficialEndpointAndEncodedCentralizedCredentials()

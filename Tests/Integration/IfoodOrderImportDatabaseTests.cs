@@ -156,7 +156,7 @@ session_id uuid,session_epoch bigint,aggregate_version bigint,payload jsonb,occu
             new { Merchant = db.MerchantA, Store = db.StoreA, Event = Guid.NewGuid(), Order = db.OrderA });
         var options = IfoodAuthenticationTests.EnabledOptions(); options.ImportEnabled = true;
         var details = new Mock<IIfoodOrderDetailsClient>(MockBehavior.Strict);
-        var service = new IfoodOrderImportService(db.Inbox, repo, details.Object, Microsoft.Extensions.Options.Options.Create(options));
+        var service = new IfoodOrderImportService(db.Inbox, repo, details.Object, IfoodAuthenticationTests.Monitor(options));
         Assert.Equal(1, await service.RunOnceAsync());
         Assert.Equal(1, await db.Scalar<int>("SELECT COUNT(*)::int FROM ifood_events_inbox WHERE event_code='CFM' AND state='queued'"));
     }
@@ -182,7 +182,7 @@ session_id uuid,session_epoch bigint,aggregate_version bigint,payload jsonb,occu
         var options = IfoodAuthenticationTests.EnabledOptions(); options.ImportEnabled = true;
         var tokens = new Mock<IIfoodTokenProvider>();
         tokens.Setup(t => t.GetAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new IfoodAccessToken("test-only-token", DateTimeOffset.UtcNow.AddHours(1), TimeSpan.FromHours(1)));
-        var access = new IfoodMerchantAccess(db.Connections, tokens.Object, Microsoft.Extensions.Options.Options.Create(options));
+        var access = new IfoodMerchantAccess(db.Connections, tokens.Object, IfoodAuthenticationTests.Monitor(options));
         var handler = new IfoodAuthenticationTests.Handler
         {
             Send = (request, cancellation) =>
@@ -194,7 +194,7 @@ session_id uuid,session_epoch bigint,aggregate_version bigint,payload jsonb,occu
             }
         };
         var client = new IfoodOrderDetailsClient(new IfoodOrderImportTests.Factory(handler), access, tokens.Object);
-        IfoodOrderImportService NewProcess() => new(db.Inbox, repo, client, Microsoft.Extensions.Options.Options.Create(options));
+        IfoodOrderImportService NewProcess() => new(db.Inbox, repo, client, IfoodAuthenticationTests.Monitor(options));
         Assert.Equal(1, await NewProcess().RunOnceAsync());
         var next = await ImportEvent(db, db.OrderA); await db.Inbox.RetryEventAsync(next, 8, TimeSpan.Zero);
         Assert.Equal(1, await NewProcess().RunOnceAsync());

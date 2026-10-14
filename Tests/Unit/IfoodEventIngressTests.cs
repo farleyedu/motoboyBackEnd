@@ -33,7 +33,7 @@ public sealed class IfoodEventIngressTests
         connections.Setup(c => c.IsAuthorizedAsync(Store, Merchant, It.IsAny<CancellationToken>())).ReturnsAsync(authorized);
         var tokens = new Mock<IIfoodTokenProvider>();
         tokens.Setup(c => c.GetAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new IfoodAccessToken("private-test-token", DateTimeOffset.UtcNow.AddHours(1), TimeSpan.FromHours(1)));
-        var access = new IfoodMerchantAccess(connections.Object, tokens.Object, Microsoft.Extensions.Options.Options.Create(PollingOptions()));
+        var access = new IfoodMerchantAccess(connections.Object, tokens.Object, IfoodAuthenticationTests.Monitor(PollingOptions()));
         return (new(new Factory(handler), access, tokens.Object, new IfoodAuthenticationTests.Clock()), tokens);
     }
     private static Task BeforeSend(CancellationToken _) => Task.CompletedTask;
@@ -153,7 +153,7 @@ public sealed class IfoodEventIngressTests
     {
         var options = new IfoodOptions { Enabled = enabled, PollingEnabled = polling };
         var service = new IfoodPollingService(new Mock<IIfoodInboxRepository>(MockBehavior.Strict).Object,
-            new Mock<IIfoodEventsClient>(MockBehavior.Strict).Object, Microsoft.Extensions.Options.Options.Create(options), new IfoodAuthenticationTests.Clock());
+            new Mock<IIfoodEventsClient>(MockBehavior.Strict).Object, IfoodAuthenticationTests.Monitor(options), new IfoodAuthenticationTests.Clock());
         Assert.Equal(TimeSpan.FromSeconds(30), await service.RunOnceAsync());
     }
 
@@ -180,7 +180,7 @@ public sealed class IfoodEventIngressTests
             .Returns(async (IReadOnlyList<IfoodPollingMerchant> _, Func<CancellationToken, Task> send, CancellationToken ct) => { await send(ct); trace.Add("poll"); return new[] { Envelope(Merchant, Event) }; });
         events.Setup(e => e.AcknowledgeAsync(It.IsAny<IReadOnlyList<IfoodEventReceipt>>(), It.IsAny<Func<CancellationToken, Task>>(), It.IsAny<CancellationToken>()))
             .Returns(async (IReadOnlyList<IfoodEventReceipt> _, Func<CancellationToken, Task> send, CancellationToken ct) => { await send(ct); trace.Add("ack"); });
-        var service = new IfoodPollingService(inbox.Object, events.Object, Microsoft.Extensions.Options.Options.Create(options), clock);
+        var service = new IfoodPollingService(inbox.Object, events.Object, IfoodAuthenticationTests.Monitor(options), clock);
         if (failPersistence) await Assert.ThrowsAsync<IfoodIntegrationException>(() => service.RunOnceAsync());
         else await service.RunOnceAsync();
         Assert.Equal(failPersistence ? new[] { "poll", "commit" } : new[] { "poll", "commit", "ack" }, trace);
@@ -202,7 +202,7 @@ public sealed class IfoodEventIngressTests
         events.Setup(e => e.PollAsync(It.IsAny<IReadOnlyList<IfoodPollingMerchant>>(), It.IsAny<Func<CancellationToken, Task>>(), It.IsAny<CancellationToken>())).ReturnsAsync(Array.Empty<IfoodEventEnvelope>());
         events.SetupSequence(e => e.AcknowledgeAsync(It.IsAny<IReadOnlyList<IfoodEventReceipt>>(), It.IsAny<Func<CancellationToken, Task>>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new IfoodIntegrationException("IFOOD_EVENTS_TIMEOUT", retryable: true)).Returns(Task.CompletedTask);
-        var service = new IfoodPollingService(inbox.Object, events.Object, Microsoft.Extensions.Options.Options.Create(options), clock);
+        var service = new IfoodPollingService(inbox.Object, events.Object, IfoodAuthenticationTests.Monitor(options), clock);
         await Assert.ThrowsAsync<IfoodIntegrationException>(() => service.RunOnceAsync());
         inbox.Verify(r => r.AcknowledgmentFailedAsync(lease, It.IsAny<IReadOnlyList<IfoodEventReceipt>>(), "IFOOD_EVENTS_TIMEOUT", TimeSpan.FromSeconds(30), It.IsAny<CancellationToken>()), Times.Once());
         inbox.Verify(r => r.AcknowledgedAsync(lease, It.IsAny<IReadOnlyList<IfoodEventReceipt>>(), It.IsAny<CancellationToken>()), Times.Never());

@@ -133,7 +133,7 @@ public sealed class IfoodOrderImportTests
         var merchant = Guid.NewGuid(); var store = Guid.NewGuid(); var id = Guid.NewGuid();
         var connections = new Mock<IIfoodConnectionRepository>(); connections.Setup(c => c.IsAuthorizedAsync(store, merchant, It.IsAny<CancellationToken>())).ReturnsAsync(true);
         var tokens = new Mock<IIfoodTokenProvider>(); tokens.Setup(t => t.GetAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new IfoodAccessToken("test-only-token", DateTimeOffset.UtcNow.AddHours(1), TimeSpan.FromHours(1)));
-        var access = new IfoodMerchantAccess(connections.Object, tokens.Object, Microsoft.Extensions.Options.Options.Create(IfoodAuthenticationTests.EnabledOptions()));
+        var access = new IfoodMerchantAccess(connections.Object, tokens.Object, IfoodAuthenticationTests.Monitor(IfoodAuthenticationTests.EnabledOptions()));
         var handler = new IfoodAuthenticationTests.Handler { Send = (_, _) => Task.FromResult(new HttpResponseMessage((HttpStatusCode)status) { Content = new StringContent("private-server-body") }) };
         var client = new IfoodOrderDetailsClient(new Factory(handler), access, tokens.Object);
         var ex = await Assert.ThrowsAsync<IfoodIntegrationException>(() => client.GetAsync(new(merchant, id, store, Guid.NewGuid(), null), _ => Task.CompletedTask, default));
@@ -147,7 +147,7 @@ public sealed class IfoodOrderImportTests
     {
         await using var source = NpgsqlDataSource.Create("Host=127.0.0.1;Port=9;Database=unused;Username=unused");
         var details = new Mock<IIfoodOrderDetailsClient>(MockBehavior.Strict);
-        var service = new IfoodOrderImportService(new(source), new(source), details.Object, Microsoft.Extensions.Options.Options.Create(new IfoodOptions()));
+        var service = new IfoodOrderImportService(new(source), new(source), details.Object, IfoodAuthenticationTests.Monitor(new IfoodOptions()));
         Assert.Equal(0, await service.RunOnceAsync());
     }
     internal sealed class Factory(IfoodAuthenticationTests.Handler handler) : IHttpClientFactory

@@ -113,7 +113,7 @@ public sealed class IfoodOrderProjectionTests
     {
         await using var source=NpgsqlDataSource.Create("Host=127.0.0.1;Port=1;Database=unused;Username=unused");
         var options=IfoodAuthenticationTests.EnabledOptions();
-        var service=new IfoodOrderProjectionService(new(source),new(source),Microsoft.Extensions.Options.Options.Create(options));
+        var service=new IfoodOrderProjectionService(new(source),new(source),IfoodAuthenticationTests.Monitor(options));
         Assert.Equal(0,await service.RunOnceAsync());
         options.ProjectionEnabled=true;options.ProjectionLeaseSeconds=1;
         Assert.True(new IfoodOptionsValidator().Validate(null,options).Failed);

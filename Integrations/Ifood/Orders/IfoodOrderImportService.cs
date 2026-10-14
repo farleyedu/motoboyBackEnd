@@ -8,9 +8,10 @@ public sealed class IfoodOrderImportService
     private readonly IfoodInboxRepository _inbox;
     private readonly IfoodOrderImportRepository _orders;
     private readonly IIfoodOrderDetailsClient _details;
-    private readonly IfoodOptions _options;
-    public IfoodOrderImportService(IfoodInboxRepository inbox, IfoodOrderImportRepository orders, IIfoodOrderDetailsClient details, IOptions<IfoodOptions> options)
-        => (_inbox, _orders, _details, _options) = (inbox, orders, details, options.Value);
+    private readonly IOptionsMonitor<IfoodOptions> _optionsMonitor;
+    private IfoodOptions _options => _optionsMonitor.CurrentValue;
+    public IfoodOrderImportService(IfoodInboxRepository inbox, IfoodOrderImportRepository orders, IIfoodOrderDetailsClient details, IOptionsMonitor<IfoodOptions> options)
+        => (_inbox, _orders, _details, _optionsMonitor) = (inbox, orders, details, options);
 
     public async Task<int> RunOnceAsync(CancellationToken ct = default)
     {
@@ -60,15 +61,19 @@ public sealed class IfoodOrderImportService
 public sealed class IfoodOrderImportWorker : BackgroundService
 {
     private readonly IfoodOrderImportService _service;
-    private readonly IfoodOptions _options;
+    private readonly IOptionsMonitor<IfoodOptions> _options;
     private readonly ILogger<IfoodOrderImportWorker> _logger;
-    public IfoodOrderImportWorker(IfoodOrderImportService service, IOptions<IfoodOptions> options, ILogger<IfoodOrderImportWorker> logger)
-        => (_service, _options, _logger) = (service, options.Value, logger);
+    public IfoodOrderImportWorker(IfoodOrderImportService service, IOptionsMonitor<IfoodOptions> options, ILogger<IfoodOrderImportWorker> logger)
+        => (_service, _options, _logger) = (service, options, logger);
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (!_options.Enabled || !_options.ImportEnabled) return;
         while (!stoppingToken.IsCancellationRequested)
         {
+            if (!_options.CurrentValue.Enabled || !_options.CurrentValue.ImportEnabled)
+            {
+                try { await Task.Delay(TimeSpan.FromSeconds(15), stoppingToken); } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
+                continue;
+            }
             try { await _service.RunOnceAsync(stoppingToken); }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
             catch (IfoodIntegrationException ex) { _logger.LogWarning("Importação iFood interrompida: {Code}.", ex.Code); }

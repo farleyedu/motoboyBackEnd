@@ -23,7 +23,7 @@ public sealed partial class IfoodIntegrationSchemaDatabaseTests
         catch { await db.DisposeAsync();throw; }
     }
     private static IfoodCommandRepository CommandRepo(Database db,IfoodOptions? options=null,IfoodCommandTests.Clock? clock=null)
-        => new(db.Source,Microsoft.Extensions.Options.Options.Create(options??IfoodCommandTests.Options(db.MerchantA,db.StoreA)),clock??new());
+        => new(db.Source,IfoodAuthenticationTests.Monitor(options??IfoodCommandTests.Options(db.MerchantA,db.StoreA)),clock??new());
     private static IfoodCommandRequest CommandRequest(string command="confirm",long revision=1,Guid? operation=null)
         => new() { Command=command,ExpectedRevision=revision,OperationId=operation??Guid.NewGuid() };
     private static IfoodCommandService CommandService(Database db,IfoodCommandRepository repo,IfoodAuthenticationTests.Handler handler,IfoodOptions options,IfoodCommandTests.Clock clock,Func<Task>? tokenAction=null)
@@ -33,7 +33,7 @@ public sealed partial class IfoodIntegrationSchemaDatabaseTests
         {
             if(tokenAction!=null)await tokenAction();return new IfoodAccessToken("test-only-token",DateTimeOffset.UtcNow.AddHours(1),TimeSpan.FromHours(1));
         });
-        var bound=Microsoft.Extensions.Options.Options.Create(options);
+        var bound=IfoodAuthenticationTests.Monitor(options);
         var client=new IfoodCommandClient(new IfoodOrderImportTests.Factory(handler),new IfoodMerchantAccess(db.Connections,tokens.Object,bound),tokens.Object,clock);
         return new(repo,client,bound);
     }

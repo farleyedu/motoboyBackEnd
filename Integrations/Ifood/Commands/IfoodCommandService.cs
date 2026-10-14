@@ -8,9 +8,10 @@ public sealed class IfoodCommandService
 {
     private readonly IfoodCommandRepository _repository;
     private readonly IIfoodCommandClient _client;
-    private readonly IfoodOptions _options;
-    public IfoodCommandService(IfoodCommandRepository repository,IIfoodCommandClient client,IOptions<IfoodOptions> options)
-        => (_repository,_client,_options)=(repository,client,options.Value);
+    private readonly IOptionsMonitor<IfoodOptions> _optionsMonitor;
+    private IfoodOptions _options => _optionsMonitor.CurrentValue;
+    public IfoodCommandService(IfoodCommandRepository repository,IIfoodCommandClient client,IOptionsMonitor<IfoodOptions> options)
+        => (_repository,_client,_optionsMonitor)=(repository,client,options);
     public Task<IfoodCommandDto> SubmitAsync(Guid store,int user,int pedido,IfoodCommandRequest request,CancellationToken ct=default)
     {
         if(!_options.Enabled || !_options.CommandsEnabled) throw new DeliveryDomainException(503,"IFOOD_COMMANDS_DISABLED","Os comandos iFood ainda não estão habilitados.");
@@ -40,15 +41,20 @@ public sealed class IfoodCommandService
 public sealed class IfoodCommandWorker : BackgroundService
 {
     private readonly IfoodCommandService _service;
-    private readonly IfoodOptions _options;
+    private readonly IOptionsMonitor<IfoodOptions> _options;
     private readonly ILogger<IfoodCommandWorker> _logger;
-    public IfoodCommandWorker(IfoodCommandService service,IOptions<IfoodOptions> options,ILogger<IfoodCommandWorker> logger)
-        => (_service,_options,_logger)=(service,options.Value,logger);
+    public IfoodCommandWorker(IfoodCommandService service,IOptionsMonitor<IfoodOptions> options,ILogger<IfoodCommandWorker> logger)
+        => (_service,_options,_logger)=(service,options,logger);
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if(!_options.Enabled || !_options.CommandsEnabled) return;
         while(!stoppingToken.IsCancellationRequested)
         {
+            // Flag lida a cada volta: a tela de configuração (IF-13) liga/desliga sem reiniciar o processo.
+            if(!_options.CurrentValue.Enabled || !_options.CurrentValue.CommandsEnabled)
+            {
+                try { await Task.Delay(TimeSpan.FromSeconds(15),stoppingToken); } catch(OperationCanceledException) when(stoppingToken.IsCancellationRequested) { break; }
+                continue;
+            }
             try { await _service.RunOnceAsync(stoppingToken); }
             catch(OperationCanceledException) when(stoppingToken.IsCancellationRequested) { break; }
             catch(IfoodIntegrationException ex) { _logger.LogWarning("Comandos iFood interrompidos: {Code}.",ex.Code); }

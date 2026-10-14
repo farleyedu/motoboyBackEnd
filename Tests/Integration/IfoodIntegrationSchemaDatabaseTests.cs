@@ -133,6 +133,7 @@ END $$;
         public NpgsqlDataSource Source => _source;
         public APIBack.Integrations.Ifood.IIfoodConnectionRepository Connections => new APIBack.Integrations.Ifood.IfoodConnectionRepository(_source);
         public APIBack.Integrations.Ifood.Events.IfoodInboxRepository Inbox => new(_source);
+        public APIBack.Integrations.Ifood.Config.IIfoodRuntimeSettingsRepository RuntimeSettings => new APIBack.Integrations.Ifood.Config.IfoodRuntimeSettingsRepository(_source);
         public Guid StoreA { get; } = Guid.NewGuid();
         public Guid StoreB { get; } = Guid.NewGuid();
         public Guid MerchantA { get; } = Guid.NewGuid();

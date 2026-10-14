@@ -139,7 +139,7 @@ public sealed class IfoodExceptionTests
     [Fact]
     public async Task DisabledExceptionServiceDoesNotAccessDatabaseAndEveryEndpointHasIntegrationPermission()
     {
-        await using var source=NpgsqlDataSource.Create("Host=127.0.0.1;Port=1;Database=unused;Username=unused");var options=Microsoft.Extensions.Options.Options.Create(new IfoodOptions());
+        await using var source=NpgsqlDataSource.Create("Host=127.0.0.1;Port=1;Database=unused;Username=unused");var options=IfoodAuthenticationTests.Monitor(new IfoodOptions());
         var service=new IfoodExceptionService(new(source,options,new IfoodCommandTests.Clock()),new Mock<IIfoodCommandClient>().Object,new Mock<IIfoodCancellationReasonsClient>().Object,options,new IfoodCommandTests.Clock());
         Assert.Equal(0,await service.RunOnceAsync());await Assert.ThrowsAsync<DeliveryDomainException>(()=>service.ReasonsAsync(Guid.NewGuid(),100));
         foreach(var name in new[] { "Reasons","Cancel","Options","Respond" })Assert.NotEmpty(typeof(IfoodExceptionsController).GetMethod(name)!.GetCustomAttributes(typeof(APIBack.Attributes.RequirePermissionAttribute),true));

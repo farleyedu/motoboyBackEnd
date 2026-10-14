@@ -34,7 +34,7 @@ public sealed partial class IfoodIntegrationSchemaDatabaseTests
         var tokens = new RevokingTokens(async () => await db.Execute(
             "UPDATE ifood_connections SET status='revoked',revoked_at_utc=NOW() WHERE merchant_id=@Merchant", new { Merchant = db.MerchantA }));
         var access = new IfoodMerchantAccess(db.Connections, tokens,
-            Microsoft.Extensions.Options.Options.Create(APIBack.Tests.Unit.IfoodAuthenticationTests.EnabledOptions()));
+            APIBack.Tests.Unit.IfoodAuthenticationTests.Monitor(APIBack.Tests.Unit.IfoodAuthenticationTests.EnabledOptions()));
         Assert.Equal("IFOOD_MERCHANT_NOT_AUTHORIZED", (await Assert.ThrowsAsync<IfoodIntegrationException>(() => access.GetTokenAsync(db.StoreA, db.MerchantA))).Code);
         Assert.Equal(1, tokens.Calls);
         await Assert.ThrowsAsync<IfoodIntegrationException>(() => access.GetTokenAsync(db.StoreA, db.MerchantA));

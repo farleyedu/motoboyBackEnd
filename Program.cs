@@ -21,6 +21,7 @@ using APIBack.Payments.Repository.Interface;
 using APIBack.Payments.Services;
 using APIBack.Payments.Services.Interface;
 using APIBack.Integrations.Ifood;
+using APIBack.Integrations.Ifood.Config;
 using System.Net;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
@@ -69,6 +70,12 @@ APIBack.Infrastructure.DapperConfiguration.Configure();
 // ================= CONFIGURAÇÃO DO NPGSQL (BEGIN) ======================
 // 1. Pega a connection string do appsettings.json
 var connectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+
+// IF-13: configuração central do iFood (client/secret, toggles, merchants autorizados) lida do
+// banco e recarregada em runtime, por cima de appsettings/env; tela de Gestão escreve na tabela,
+// os workers enxergam a mudança no próximo ciclo sem reiniciar o processo (ver IfoodOptionsMonitor).
+if (!string.IsNullOrEmpty(connectionString))
+    builder.Configuration.AddIfoodDatabaseConfig(connectionString);
 
 // 2. Cria um "construtor de fonte de dados" com a connection string
 var dataSourceBuilder = new NpgsqlDataSourceBuilder(connectionString);

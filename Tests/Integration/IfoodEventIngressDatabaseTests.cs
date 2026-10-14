@@ -183,7 +183,7 @@ public sealed partial class IfoodIntegrationSchemaDatabaseTests
         options.PollingEnabled = true; options.PollingMerchants = Merchants(db).ToList();
         var tokens = new Mock<IIfoodTokenProvider>();
         tokens.Setup(t => t.GetAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new IfoodAccessToken("test-only-token", DateTimeOffset.UtcNow.AddHours(1), TimeSpan.FromHours(1)));
-        var access = new IfoodMerchantAccess(db.Connections, tokens.Object, Microsoft.Extensions.Options.Options.Create(options));
+        var access = new IfoodMerchantAccess(db.Connections, tokens.Object, IfoodAuthenticationTests.Monitor(options));
         var handler = new IfoodAuthenticationTests.Handler(); var polls = 0; var acknowledgments = 0;
         var incoming = IfoodEventIngressTests.Envelope(db.MerchantA);
         handler.Send = async (request, cancellation) =>
@@ -202,7 +202,7 @@ public sealed partial class IfoodIntegrationSchemaDatabaseTests
             return new HttpResponseMessage(HttpStatusCode.Accepted);
         };
         var client = new IfoodEventsClient(new IngressHttpFactory(handler), access, tokens.Object, TimeProvider.System);
-        IfoodPollingService NewProcess() => new(db.Inbox, client, Microsoft.Extensions.Options.Options.Create(options), TimeProvider.System);
+        IfoodPollingService NewProcess() => new(db.Inbox, client, IfoodAuthenticationTests.Monitor(options), TimeProvider.System);
         await Assert.ThrowsAsync<IfoodIntegrationException>(() => NewProcess().RunOnceAsync());
         Assert.Equal("queued", await db.Scalar<string>("SELECT state FROM ifood_events_inbox"));
         Assert.Equal(1, await db.Scalar<int>("SELECT ack_attempts FROM ifood_events_inbox"));

@@ -6,10 +6,11 @@ public sealed class IfoodPollingService
 {
     private readonly IIfoodInboxRepository _inbox;
     private readonly IIfoodEventsClient _events;
-    private readonly IfoodOptions _options;
+    private readonly IOptionsMonitor<IfoodOptions> _optionsMonitor;
+    private IfoodOptions _options => _optionsMonitor.CurrentValue;
     private readonly TimeProvider _clock;
-    public IfoodPollingService(IIfoodInboxRepository inbox, IIfoodEventsClient events, IOptions<IfoodOptions> options, TimeProvider clock)
-        => (_inbox, _events, _options, _clock) = (inbox, events, options.Value, clock);
+    public IfoodPollingService(IIfoodInboxRepository inbox, IIfoodEventsClient events, IOptionsMonitor<IfoodOptions> options, TimeProvider clock)
+        => (_inbox, _events, _optionsMonitor, _clock) = (inbox, events, options, clock);
 
     public async Task<TimeSpan> RunOnceAsync(CancellationToken ct = default)
     {
@@ -54,15 +55,19 @@ public sealed class IfoodPollingService
 public sealed class IfoodPollingWorker : BackgroundService
 {
     private readonly IfoodPollingService _polling;
-    private readonly IfoodOptions _options;
+    private readonly IOptionsMonitor<IfoodOptions> _options;
     private readonly ILogger<IfoodPollingWorker> _logger;
-    public IfoodPollingWorker(IfoodPollingService polling, IOptions<IfoodOptions> options, ILogger<IfoodPollingWorker> logger)
-        => (_polling, _options, _logger) = (polling, options.Value, logger);
+    public IfoodPollingWorker(IfoodPollingService polling, IOptionsMonitor<IfoodOptions> options, ILogger<IfoodPollingWorker> logger)
+        => (_polling, _options, _logger) = (polling, options, logger);
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (!_options.Enabled || !_options.PollingEnabled) return;
         while (!stoppingToken.IsCancellationRequested)
         {
+            if (!_options.CurrentValue.Enabled || !_options.CurrentValue.PollingEnabled)
+            {
+                try { await Task.Delay(TimeSpan.FromSeconds(15), stoppingToken); } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
+                continue;
+            }
             var delay = TimeSpan.FromSeconds(30);
             try { delay = await _polling.RunOnceAsync(stoppingToken); }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }

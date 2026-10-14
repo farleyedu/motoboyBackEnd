@@ -54,7 +54,7 @@ public sealed partial class IfoodIntegrationSchemaDatabaseTests
             if(rig.TokenAction!=null) await rig.TokenAction();
             return new IfoodAccessToken("test-only-token",DateTimeOffset.UtcNow.AddHours(1),TimeSpan.FromHours(1));
         });
-        var bound=Microsoft.Extensions.Options.Options.Create(rig.Options);var factory=new IfoodOrderImportTests.Factory(rig.Handler);
+        var bound=IfoodAuthenticationTests.Monitor(rig.Options);var factory=new IfoodOrderImportTests.Factory(rig.Handler);
         var access=new IfoodMerchantAccess(db.Connections,tokens.Object,bound);
         rig.Repo=new(db.Source,bound,rig.Clock);
         rig.Service=new(rig.Repo,new IfoodCommandClient(factory,access,tokens.Object,rig.Clock),new IfoodCancellationReasonsClient(factory,access,tokens.Object),bound,rig.Clock);

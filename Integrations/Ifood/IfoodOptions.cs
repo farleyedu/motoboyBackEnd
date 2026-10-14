@@ -9,6 +9,8 @@ public sealed class IfoodOptions
     public bool Enabled { get; set; }
     public string ClientId { get; set; } = "";
     [JsonIgnore] public string ClientSecret { get; set; } = "";
+    // Preenchido somente pela configuração central (IF-13), nunca por appsettings/env; decifrado sob demanda via IfoodSecretProtector.ResolveClientSecret.
+    [JsonIgnore] public string? ClientSecretCifrado { get; set; }
     public int HttpTimeoutSeconds { get; set; } = 15;
     public int RenewalSkewSeconds { get; set; } = 60;
     public int FailureCooldownSeconds { get; set; } = 10;
@@ -47,8 +49,9 @@ public sealed class IfoodOptionsValidator : IValidateOptions<IfoodOptions>
     {
         if (!options.Enabled) return ValidateOptionsResult.Success;
         var errors = new List<string>();
-        if (!ValidCredential(options.ClientId) || !ValidCredential(options.ClientSecret))
-            errors.Add("Ifood:ClientId e ClientSecret devem ser configurados no servidor.");
+        if (!ValidCredential(options.ClientId) ||
+            (!ValidCredential(options.ClientSecret) && string.IsNullOrEmpty(options.ClientSecretCifrado)))
+            errors.Add("Ifood:ClientId e ClientSecret (ou ClientSecretCifrado) devem ser configurados.");
         if (options.HttpTimeoutSeconds is < 1 or > 120 || options.RenewalSkewSeconds is < 0 or > 300 ||
             options.FailureCooldownSeconds is < 1 or > 300)
             errors.Add("Timeout, margem de renovação ou pausa de autenticação iFood inválidos.");

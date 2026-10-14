@@ -234,14 +234,15 @@ Implementada não equivale a validada. Marcar bloqueio com causa, próxima açã
 | IF-10 | Cancelamento com motivos dinâmicos, rejeição e evento final; negociações aplicáveis com deadline/settlement | IF-08, IF-09 | Validada localmente |
 | IF-11 | Painel completo de pedidos/preparo/retirada/iFood, identidade e sincronização; ações por capacidade | IF-03, IF-07 a IF-10 | Validada localmente |
 | IF-12 | Fila/rota/oferta compatíveis; bloqueio IFOOD/TAKEOUT e de despacho prematuro; cancelamento/encerramento em rota | IF-07 a IF-09 | Pendente |
-| IF-13 | Backend de código oficial e conclusão persistente; recuperação sem validar localmente pedido remoto | IF-03, IF-09, IF-12 | Pendente |
-| IF-14 | App com identidade, cobrança e conclusão oficial; feedback, recibo e recovery nativo | IF-03, IF-12, IF-13 | Pendente |
-| IF-15 | Configuração/permissões/diagnóstico; proteção de dados, retenção e prevenção de bypass | IF-04 a IF-14 | Pendente |
-| IF-16 | Instrumentação, alertas, conciliação e contingência; verificar hospedagem sempre ativa e múltiplas instâncias | IF-06 a IF-15 | Pendente |
-| IF-17 | Regressão dos canais próprios e falhas distribuídas; contratos backend/painel/app e validação visual | IF-07 a IF-16 | Pendente |
-| IF-18 | Ensaiar checklist oficial integral no sandbox com código real das aplicações e registrar evidências | IF-00, IF-01, IF-17 | Pendente |
-| IF-19 | Submeter quando solicitado, analisar relatório e corrigir; registrar aprovação automática e validação final separadas | IF-18; autorização de submissão | Pendente |
-| IF-20 | Autorizar/ativar loja piloto quando solicitado; acompanhar pedidos e recuperar incidentes | IF-19; autorização comercial/loja | Pendente |
+| IF-13 | Configuração centralizada do iFood por tela em Gestão: `client_id`/`client_secret` cifrados, autorizar/revogar merchant↔loja substituindo SQL manual, toggles globais (Enabled/Polling/Import/Projection/Commands/Exceptions) lidos em runtime pelos workers sem exigir reinício do processo | IF-04, IF-05, IF-06 | Pendente |
+| IF-14 | Backend de código oficial e conclusão persistente; recuperação sem validar localmente pedido remoto | IF-03, IF-09, IF-12 | Pendente |
+| IF-15 | App com identidade, cobrança e conclusão oficial; feedback, recibo e recovery nativo | IF-03, IF-12, IF-14 | Pendente |
+| IF-16 | Permissões/diagnóstico restante e prevenção de bypass; proteção/retenção de dados (configuração central já coberta pelo IF-13) | IF-04 a IF-15 | Pendente |
+| IF-17 | Instrumentação, alertas, conciliação e contingência; verificar hospedagem sempre ativa e múltiplas instâncias | IF-06 a IF-16 | Pendente |
+| IF-18 | Regressão dos canais próprios e falhas distribuídas; contratos backend/painel/app e validação visual | IF-07 a IF-17 | Pendente |
+| IF-19 | Ensaiar checklist oficial integral no sandbox com código real das aplicações e registrar evidências | IF-00, IF-01, IF-18 | Pendente |
+| IF-20 | Submeter quando solicitado, analisar relatório e corrigir; registrar aprovação automática e validação final separadas | IF-19; autorização de submissão | Pendente |
+| IF-21 | Autorizar/ativar loja piloto quando solicitado; acompanhar pedidos e recuperar incidentes | IF-20; autorização comercial/loja | Pendente |
 
 IF-02/03 e desenho de IF-04 podem avançar sem CNPJ. Não implementar URLs, formatos de código ou regras remotas como fatos confirmados antes de IF-01. Não esconder tarefas bloqueadas nem substituir seu aceite por mock.
 
@@ -266,24 +267,24 @@ Próximo passo:
 
 ## 11. Matriz de homologação e evidências
 
-Consultar novamente fontes/API Reference ao fechar IF-01 e imediatamente antes de IF-18. Nenhum item aplicável pode ficar somente simulado. A coluna referência aponta à seção 15.
+Consultar novamente fontes/API Reference ao fechar IF-01 e imediatamente antes de IF-19. Nenhum item aplicável pode ficar somente simulado. A coluna referência aponta à seção 15.
 
 | ID | Requisito e implementação | Tarefas | Evidência de aceite | Referência |
 |---|---|---|---|---|
-| H-01 | Conta profissional, app funcional, credenciais e merchant de teste | IF-00/01/18 | Cadastro e execução autenticada sem expor segredos | R1/R2/R3 |
+| H-01 | Conta profissional, app funcional, credenciais e merchant de teste | IF-00/01/19 | Cadastro e execução autenticada sem expor segredos | R1/R2/R3 |
 | H-02 | Receber eventos pelo transporte escolhido e confirmar recebimento corretamente | IF-06 | Evento real persistido; polling+ACK ou webhook+assinatura/resposta conforme contrato | R3/R7/R8 |
 | H-03 | Confirmar DELIVERY/TAKEOUT, inclusive agendado, dentro do SLA | IF-09/11 | Ação no painel, resposta/evento e horários | R2 |
 | H-04 | Consultar motivos e solicitar cancelamento; tratar confirmação/rejeição | IF-08/10/11 | Ação real, motivo, solicitação e evento final | R2/R9 |
 | H-05 | Processar cancelamento iniciado por cliente/plataforma e negociação aplicável | IF-08/10/11 | Disputa, prazo, resposta e settlement; cancelar após despacho | R2/R9/R10 |
-| H-06 | Exibir pagamento/bandeira e calcular troco quando aplicável | IF-07/11/14 | Conferência dos detalhes oficiais, tela e recibo sem cobrança duplicada | R2/R6 |
-| H-07 | Exibir observações e informações completas dos itens | IF-07/11/14 | Pedido/comanda/tela comparados com detalhes oficiais | R2/R6 |
-| H-08 | Fluxo TAKEOUT pronto para retirada | IF-07/09/11/13 | Pedido real sem rota Zippy; readyToPickup e conclusão aplicável | R2/R5 |
-| H-09 | Entrega própria pronta antes de dispatch | IF-09/12/14 | Ordem de comandos comprovada e tentativa prematura bloqueada | R2 |
-| H-10 | Confirmar código elegível pelo endpoint oficial Order | IF-13/14 | Código válido/inválido, request real e estado/recibo coerente | R5 |
-| H-11 | Token renovado conforme expiração e limites respeitados | IF-05/16 | Logs sem segredo, expiração/401/429 e retomada | R2/R4 |
-| H-12 | App completa no wizard: conectividade, confirmar, cancelar, despachar e concluir | IF-18/19 | Relatório do portal e gravação/registro funcional dos sistemas | R2/R3 |
-| H-13 | Webhook + fallback, se adotado | IF-06/16/18 | Teste manual com endpoint indisponível e polling; nenhum pedido perdido/duplicado | R3 |
-| H-14 | Outros critérios/módulos efetivamente habilitados | IF-01/18 | Checklist específico e justificativa de aplicabilidade | R1/API Reference |
+| H-06 | Exibir pagamento/bandeira e calcular troco quando aplicável | IF-07/11/15 | Conferência dos detalhes oficiais, tela e recibo sem cobrança duplicada | R2/R6 |
+| H-07 | Exibir observações e informações completas dos itens | IF-07/11/15 | Pedido/comanda/tela comparados com detalhes oficiais | R2/R6 |
+| H-08 | Fluxo TAKEOUT pronto para retirada | IF-07/09/11/14 | Pedido real sem rota Zippy; readyToPickup e conclusão aplicável | R2/R5 |
+| H-09 | Entrega própria pronta antes de dispatch | IF-09/12/15 | Ordem de comandos comprovada e tentativa prematura bloqueada | R2 |
+| H-10 | Confirmar código elegível pelo endpoint oficial Order | IF-14/15 | Código válido/inválido, request real e estado/recibo coerente | R5 |
+| H-11 | Token renovado conforme expiração e limites respeitados | IF-05/17 | Logs sem segredo, expiração/401/429 e retomada | R2/R4 |
+| H-12 | App completa no wizard: conectividade, confirmar, cancelar, despachar e concluir | IF-19/20 | Relatório do portal e gravação/registro funcional dos sistemas | R2/R3 |
+| H-13 | Webhook + fallback, se adotado | IF-06/17/19 | Teste manual com endpoint indisponível e polling; nenhum pedido perdido/duplicado | R3 |
+| H-14 | Outros critérios/módulos efetivamente habilitados | IF-01/19 | Checklist específico e justificativa de aplicabilidade | R1/API Reference |
 
 O critério técnico de webhook adotará meta interna mais estrita e persistência rápida. Eventual conflito entre páginas deve ser resolvido por referência específica e prova em sandbox, com registro de decisão; não escolher silenciosamente o comportamento conveniente.
 
@@ -316,11 +317,11 @@ Comandos previstos, somente durante implementação/validação autorizada:
 
 ### Pronta localmente
 
-IF-02 a IF-17 concluídas nas partes aplicáveis, builds/testes relevantes aprovados, contrato entre aplicações consistente, nenhum segredo exposto, nenhuma regressão crítica aberta. Não chamar esse marco de homologado.
+IF-02 a IF-18 concluídas nas partes aplicáveis, builds/testes relevantes aprovados, contrato entre aplicações consistente, nenhum segredo exposto, nenhuma regressão crítica aberta. Não chamar esse marco de homologado.
 
 ### Pronta para submissão
 
-IF-00/01 resolvidas e IF-18 concluída: matriz H preenchida com evidências reais, todos os cenários obrigatórios operacionais nas interfaces finais, credenciais/configuração corretas, hospedagem contínua e recuperação demonstrada. Não usar somente chamadas curl ou simulador.
+IF-00/01 resolvidas e IF-19 concluída: matriz H preenchida com evidências reais, todos os cenários obrigatórios operacionais nas interfaces finais, credenciais/configuração corretas, hospedagem contínua e recuperação demonstrada. Não usar somente chamadas curl ou simulador.
 
 ### Homologada
 
@@ -520,6 +521,36 @@ Status: aprovado pelo usuário, implementado e validado localmente. A lista abai
 - Evidências: [IF-11](validacao-ifood/IF-11.md), [TRX backend](validacao-ifood/if11-regression.trx), [painel](../../zippy-admin/docs/validacao-ifood/README.md).
 - Limites: IF-00/IF-01/sandbox continuam pendentes e flags desligadas. Código/conclusão de retirada pertence a IF-13; diagnóstico/bypass/conciliação completos a IF-15/IF-16. Recuperação sem operação localizada mantém bloqueio, sem criar novo envio. A consulta de histórico limita a 50 operações e usa leitura individual para recuperação.
 - Próximo passo: **IF-12**, elegibilidade de fila/rota/oferta, despacho/coleta, cancelamento e encerramento em rota. Apresentar o lote concreto antes de iniciar essa fase.
+
+### 14/10/2026 — Lote IF-12 (fila, rota, oferta e coleta)
+
+- ID: **IF-12**. Estado: **Validada localmente**. Data: 14/10/2026.
+- Objetivo: elegibilidade de fila/rota/oferta, bloqueio de despacho prematuro, coleta com checklist oficial e cancelamento/encerramento em rota, autorizado após apresentação de objetivo, arquivos e riscos.
+- Backend: migration `20261014_01_ifood_delivery_routing.sql` e rollback; parciais de `PedidoQueueRepository` (fila, oferta, coleta, ações, checklist, encerramento, conclusão); `TrackingRepository.cs`; DTOs de identidade/fila/checklist; `DeliveryChecklistRules.cs`. `ifood_order_links.zippy_delivery_enabled` permanece desligada fora das fixtures de teste.
+- Painel: `src/features/ifood/{contracts,routing}.ts`, `useRouteBuilder.ts`, `OrderPanels.tsx`, `despachoView.ts`, `DespachoTab.tsx`.
+- Validação funcional: **410 testes backend aprovados** (12 novos IF-12) e **111 testes do painel aprovados** em 9 arquivos, incluindo `routingPanel.test.tsx` (reexecutado nesta sessão; o JSON comitado originalmente só tinha 8 arquivos/109 testes). Typecheck limpo.
+- Evidências: [IF-12](validacao-ifood/IF-12.md), [TRX](validacao-ifood/if12-regression.trx), [JSON painel](../../zippy-admin/docs/validacao-ifood/if12-tests.json).
+- Limites: IF-00/IF-01/sandbox continuam pendentes; flags desligadas. App do motoboy não alterado (IF-15). Logística permanece desligada até código/conclusão (IF-14), app (IF-15) e proteção/diagnóstico (IF-16/17).
+- Próximo passo: ver renumeração abaixo — **IF-13** passa a ser a tela de configuração central, antes de retomar código/conclusão.
+
+### 14/10/2026 — Renumeração: IF-13 antecipado como configuração central
+
+- Decisão do usuário via chat: antes de prosseguir para o antigo IF-13 (código oficial/conclusão), antecipar a parte de configuração do antigo IF-15 (tela em Gestão para client_id/secret cifrados, autorizar/revogar merchant↔loja substituindo SQL manual, e toggles globais lidos em runtime pelos workers). Motivo: destravar IF-01 (merchant/módulo de teste) e testes de sandbox sem depender de edição manual de banco/variável de ambiente a cada mudança.
+- Efeito: **todos os IDs de IF-13 em diante foram deslocados +1** (antigo IF-13→14, 14→15, 15→16, 16→17, 17→18, 18→19, 19→20, 20→21). O novo IF-13 ocupa a posição antes vaga, com escopo recortado do antigo IF-15; o restante do antigo IF-15 (permissões/diagnóstico/retenção/bypass) virou o novo IF-16.
+- Os registros já escritos (lotes IF-06 a IF-11 acima, e `IF-06.md` a `IF-11.md`/`IF-12.md` em `validacao-ifood/`) citam a numeração **anterior** a esta renumeração e não foram reescritos — são evidência histórica do que estava pendente na data em que foram validados, não o estado atual do plano. Usar a tabela da seção 10 (já atualizada) como referência corrente.
+- Decisão técnica em aberto para o lote IF-13: hoje `IfoodOptions` é lido do ambiente uma única vez no boot (`IOptions<IfoodOptions>`); os workers (polling/import/projeção/comandos) precisarão passar a consultar a configuração em runtime (cache curto com invalidação ao salvar, não leitura sem cache a cada ciclo) para a tela ter efeito sem reiniciar o processo. Avaliado como não ter impacto de performance relevante: os ciclos já são de 30-90s e dominados pelas chamadas HTTP ao iFood; uma leitura extra em cache por ciclo é desprezível perto disso.
+- Próximo passo: apresentar lote concreto do IF-13 (schema, endpoints, tela) antes de editar.
+
+### 14/10/2026 — Lote IF-13 (configuração centralizada, completo)
+
+- ID: **IF-13**. Estado: **Validada localmente**. Data: 14/10/2026. Autorização: usuário escolheu a opção "completo agora" entre as duas profundidades de hot-reload apresentadas (completo vs. só cadastro/autorização), após eu levantar que os 5 workers tinham um `if (!enabled) return;` antes do loop que só lia a flag uma vez no boot.
+- Implementação: migration `20261014_02_ifood_runtime_settings.sql` (tabela `ifood_app_settings`); `IfoodDatabaseConfigurationProvider` (fonte de `IConfiguration` pré-DI, poll a cada 15s, nunca decifra segredo, nunca emite combinação que o validator rejeitaria); troca de `IOptions<IfoodOptions>` por `IOptionsMonitor<IfoodOptions>` em ~10 arquivos (os 5 pares serviço/worker, `IfoodTokenProvider`, `IfoodAuthenticationClient`, `IfoodMerchantAccess`, `Commands/IfoodCommandRepository`), com os `return` de boot virando checagem por iteração; `IfoodSecretProtector` ganhou `ResolveClientSecret` e perdeu o `EnsureEnabled()` que impedia cifrar/decifrar com a integração ainda desligada; novo `IfoodConfigController` (`api/v2/ifood/config` e `.../connections`), reaproveitando a permissão `Delivery/integracao_ifood` já usada por comandos/exceções.
+- Painel: nova tela `Configuração iFood` em Gestão (`/apps/gestao/ifood`), seguindo o mesmo molde do `ExperienceSettings` (carregar/editar/salvar com estados de loading/erro/sucesso). Por pedido explícito do usuário, o client_secret é **visível para reler** (não write-only como o token do WhatsApp) e qualquer usuário logado com a permissão `Delivery/integracao_ifood` pode abrir a tela, sem papel novo.
+- Validação funcional: **275 testes backend aprovados** (270 regressão + 5 novos: migration idempotente, CRUD de settings preservando segredo em toggle isolado, conflito de merchant vinculado a outra loja, revogar/reautorizar, rollback recusado com `enabled=true`, e o provider nunca ligando polling sem merchant autorizado). Build .NET limpo. Painel: typecheck e lint limpos; suíte de `src/features/ifood` (48 testes) sem regressão.
+- Ambiente: PostgreSQL 17 portátil isolado, schema aleatório por teste, `127.0.0.1:55482`, instância encerrada após a rodada. Sem banco/credenciais reais.
+- Limitações: **sem verificação visual em navegador** desta tela — não havia ambiente local com banco completo e login configurado nesta sessão. Comandos/exceções continuam com merchants/ações fixos em env (`CommandMerchants`/`ExceptionMerchants`/`AllowedCommands`/`AllowedExceptionActions`); autorizar isso por conexão fica para um lote 2 do IF-13, adiado deliberadamente. IF-00/IF-01/sandbox continuam pendentes; nenhuma flag real foi ligada.
+- Evidências: [IF-13](validacao-ifood/IF-13.md).
+- Próximo passo: decidir com o usuário entre retomar **IF-14** (código oficial/conclusão persistente) ou fechar o lote 2 do IF-13 (comandos/exceções por conexão); e, antes de considerar a tela pronta, fazer a verificação visual em navegador que ficou pendente.
 
 ### Procedimento para retomar o trabalho
 

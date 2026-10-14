@@ -38,14 +38,14 @@ public sealed class IfoodMerchantAccess
 {
     private readonly IIfoodConnectionRepository _connections;
     private readonly IIfoodTokenProvider _tokens;
-    private readonly IfoodOptions _options;
-    public IfoodMerchantAccess(IIfoodConnectionRepository connections, IIfoodTokenProvider tokens, IOptions<IfoodOptions> options)
-        => (_connections, _tokens, _options) = (connections, tokens, options.Value);
+    private readonly IOptionsMonitor<IfoodOptions> _options;
+    public IfoodMerchantAccess(IIfoodConnectionRepository connections, IIfoodTokenProvider tokens, IOptionsMonitor<IfoodOptions> options)
+        => (_connections, _tokens, _options) = (connections, tokens, options);
 
     // Porta interna para futuros consumidores. Não concede autorização nem habilita uma loja.
     public async Task<IfoodAccessToken> GetTokenAsync(Guid estabelecimentoId, Guid merchantId, CancellationToken cancellationToken = default)
     {
-        if (!_options.Enabled) throw new IfoodIntegrationException("IFOOD_DISABLED");
+        if (!_options.CurrentValue.Enabled) throw new IfoodIntegrationException("IFOOD_DISABLED");
         if (estabelecimentoId == Guid.Empty || merchantId == Guid.Empty)
             throw new IfoodIntegrationException("IFOOD_MERCHANT_NOT_AUTHORIZED");
         await EnsureAuthorizedAsync(estabelecimentoId, merchantId, cancellationToken);

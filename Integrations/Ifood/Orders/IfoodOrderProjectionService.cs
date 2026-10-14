@@ -7,9 +7,10 @@ public sealed class IfoodOrderProjectionService
 {
     private readonly IfoodInboxRepository _inbox;
     private readonly IfoodOrderProjectionRepository _repository;
-    private readonly IfoodOptions _options;
-    public IfoodOrderProjectionService(IfoodInboxRepository inbox, IfoodOrderProjectionRepository repository, IOptions<IfoodOptions> options)
-        => (_inbox,_repository,_options)=(inbox,repository,options.Value);
+    private readonly IOptionsMonitor<IfoodOptions> _optionsMonitor;
+    private IfoodOptions _options => _optionsMonitor.CurrentValue;
+    public IfoodOrderProjectionService(IfoodInboxRepository inbox, IfoodOrderProjectionRepository repository, IOptionsMonitor<IfoodOptions> options)
+        => (_inbox,_repository,_optionsMonitor)=(inbox,repository,options);
     public async Task<int> RunOnceAsync(CancellationToken ct = default)
     {
         if (!_options.Enabled || !_options.ProjectionEnabled) return 0;
@@ -33,15 +34,19 @@ public sealed class IfoodOrderProjectionService
 public sealed class IfoodOrderProjectionWorker : BackgroundService
 {
     private readonly IfoodOrderProjectionService _service;
-    private readonly IfoodOptions _options;
+    private readonly IOptionsMonitor<IfoodOptions> _options;
     private readonly ILogger<IfoodOrderProjectionWorker> _logger;
-    public IfoodOrderProjectionWorker(IfoodOrderProjectionService service,IOptions<IfoodOptions> options,ILogger<IfoodOrderProjectionWorker> logger)
-        => (_service,_options,_logger)=(service,options.Value,logger);
+    public IfoodOrderProjectionWorker(IfoodOrderProjectionService service,IOptionsMonitor<IfoodOptions> options,ILogger<IfoodOrderProjectionWorker> logger)
+        => (_service,_options,_logger)=(service,options,logger);
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if (!_options.Enabled || !_options.ProjectionEnabled) return;
         while (!stoppingToken.IsCancellationRequested)
         {
+            if (!_options.CurrentValue.Enabled || !_options.CurrentValue.ProjectionEnabled)
+            {
+                try { await Task.Delay(TimeSpan.FromSeconds(15), stoppingToken); } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
+                continue;
+            }
             try { await _service.RunOnceAsync(stoppingToken); }
             catch (OperationCanceledException) when(stoppingToken.IsCancellationRequested) { break; }
             catch (IfoodIntegrationException ex) { _logger.LogWarning("Projeção iFood interrompida: {Code}.",ex.Code); }

@@ -63,12 +63,14 @@ DELIVERY_TRACKING_DISABLED`, o `DeliveryOutboxPublisher` nao publica eventos no 
 
 O módulo novo permanece desabilitado por padrão e não executa chamadas no boot. Estas variáveis são exclusivas do backend; não usar prefixos públicos do Next.js/Expo nem guardar valores reais em arquivos versionados. Credencial da aplicação e autorização de cada loja são controles diferentes.
 
+> **A partir do IF-13**, `Ifood__Enabled`, `Ifood__ClientId`, `Ifood__ClientSecret` e `Ifood__PollingEnabled`/`Ifood__PollingMerchants__*` **não devem mais ser configurados por variável de ambiente**: a tela `Configuração iFood` (Gestão → `/apps/gestao/ifood`) grava isso em `ifood_app_settings`/`ifood_connections`, e um `IConfigurationProvider` dedicado sobrepõe esses valores por cima do que estiver em env a cada 15s. Deixar essas variáveis configuradas em paralelo não quebra nada (a tela sempre vence quando a tabela existe), mas é redundante e pode confundir leitura de ambiente. `Ifood__CommandsEnabled`/`Ifood__ExceptionsEnabled` também passaram a ser lidos da tela (toggle mestre); `Ifood__CommandMerchants__*`/`Ifood__ExceptionMerchants__*`/`Ifood__AllowedCommands__*`/`Ifood__AllowedExceptionActions__*` continuam só em env até o lote 2 do IF-13.
+
 | Variável | Descrição |
 | --- | --- |
-| `Ifood__Enabled` | `false` por padrão. Quando `true`, valida credenciais e chave no início; não habilita loja, eventos ou importação por si só. |
-| `Ifood__ClientId` | ID da aplicação centralizada, obtido no portal. |
-| `Ifood__ClientSecret` | Segredo da aplicação centralizada, fornecido por variável/secret store do servidor. |
-| `Ifood__ActiveEncryptionKeyId` | Identificador da chave de escrita, por exemplo `key1`. Aceita letras ASCII, números, `_` e `-`, até 64 caracteres. |
+| `Ifood__Enabled` | `false` por padrão. **Legado/fallback**: só vale se a tabela `ifood_app_settings` ainda não existir no ambiente. Quando `true`, valida credenciais e chave no início; não habilita loja, eventos ou importação por si só. |
+| `Ifood__ClientId` | **Legado/fallback** (ver nota acima). ID da aplicação centralizada, obtido no portal. |
+| `Ifood__ClientSecret` | **Legado/fallback** (ver nota acima). Segredo da aplicação centralizada, fornecido por variável/secret store do servidor. |
+| `Ifood__ActiveEncryptionKeyId` | Identificador da chave de escrita, por exemplo `key1`. Aceita letras ASCII, números, `_` e `-`, até 64 caracteres. Continua exclusivamente em env mesmo depois do IF-13 — é a chave que cifra/decifra o `client_secret` gravado pela tela; guardá-la no mesmo lugar que o segredo anularia a proteção. |
 | `Ifood__EncryptionKeys__key1` | Chave aleatória de exatamente 32 bytes, codificada em Base64. O identificador deve corresponder à chave ativa. Não aceita frase convertida em hash. |
 | `Ifood__HttpTimeoutSeconds` | Timeout de autenticação, padrão 15, de 1 a 120 segundos. |
 | `Ifood__RenewalSkewSeconds` | Margem máxima, padrão 60, de 0 a 300 segundos. Limitada a 10% da validade recebida para suportar tokens curtos. |
@@ -86,9 +88,9 @@ O worker fica inativo até habilitação **das duas flags**, confirmação de IF
 
 | Variável | Descrição |
 | --- | --- |
-| `Ifood__PollingEnabled` | `false` por padrão. Com `Ifood__Enabled=true`, ativa o worker de ingresso; não importa pedidos nem executa comandos de aceite/despacho. |
-| `Ifood__PollingMerchants__0__MerchantId` | UUID oficial da primeira loja de teste/autorizada. Índices `1`, `2` etc. acrescentam lojas, até 100 merchants únicos. |
-| `Ifood__PollingMerchants__0__EstabelecimentoId` | UUID Zippy vinculado a esse merchant em `ifood_connections`, já autorizado e sem revogação. Não há autorização automática ao configurar. |
+| `Ifood__PollingEnabled` | `false` por padrão. **Legado/fallback** (ver nota do IF-13 acima) — com a tela de configuração, o toggle "Polling de eventos" grava isso direto. Com `Ifood__Enabled=true`, ativa o worker de ingresso; não importa pedidos nem executa comandos de aceite/despacho. |
+| `Ifood__PollingMerchants__0__MerchantId` | **Legado/fallback.** A partir do IF-13 essa lista é derivada automaticamente de `ifood_connections` (merchants com `status='authorized'`) — autorizar pela tela já basta, sem configurar isso em env. |
+| `Ifood__PollingMerchants__0__EstabelecimentoId` | **Legado/fallback**, mesma observação acima. |
 | `Ifood__PollingLeaseSeconds` | Reserva de captura no banco, padrão 90 segundos; deve superar `HttpTimeoutSeconds` em pelo menos 10 e ser no máximo 600. |
 | `Ifood__AckBatchSize` | Quantidade máxima por ACK, padrão 2000, de 1 a 2000. Há no máximo cinco lotes de ACK por rodada; backlog fica durável para a próxima. |
 

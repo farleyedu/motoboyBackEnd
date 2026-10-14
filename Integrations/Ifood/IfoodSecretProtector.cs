@@ -10,9 +10,11 @@ public sealed class IfoodSecretProtector
     private readonly IfoodOptions _options;
     public IfoodSecretProtector(IOptions<IfoodOptions> options) => _options = options.Value;
 
+    // Cifra/decifra independem do interruptor de negócio (Enabled): a tela de configuração
+    // precisa gravar/reler o client_secret antes mesmo de ligar a integração. A chave de
+    // criptografia configurada no ambiente é a única guarda real (GetKey já recusa se ausente).
     public string Protect(string secret, string purpose)
     {
-        EnsureEnabled();
         if (string.IsNullOrEmpty(secret) || secret.Length > 8000 || !IfoodOptionsValidator.ValidKeyId(purpose))
             throw new IfoodIntegrationException("IFOOD_SECRET_INVALID_INPUT");
         var id = _options.ActiveEncryptionKeyId;
@@ -32,7 +34,6 @@ public sealed class IfoodSecretProtector
 
     public string Unprotect(string envelope, string purpose)
     {
-        EnsureEnabled();
         if (string.IsNullOrEmpty(envelope) || envelope.Length > 44000 || !IfoodOptionsValidator.ValidKeyId(purpose))
             throw new IfoodIntegrationException("IFOOD_SECRET_INVALID_ENVELOPE");
         var parts = envelope.Split('.', 3);
@@ -71,7 +72,10 @@ public sealed class IfoodSecretProtector
         catch (FormatException) { }
         throw new IfoodIntegrationException("IFOOD_SECRET_KEY_UNAVAILABLE");
     }
-    private void EnsureEnabled()
-    { if (!_options.Enabled) throw new IfoodIntegrationException("IFOOD_DISABLED"); }
+    // Prefere o segredo cifrado da configuração central (IF-13); cai para ClientSecret em texto
+    // puro só quando nada foi migrado ainda (compatibilidade com ambientes/testes mais antigos).
+    public string ResolveClientSecret(IfoodOptions options) => string.IsNullOrEmpty(options.ClientSecretCifrado)
+        ? options.ClientSecret : Unprotect(options.ClientSecretCifrado, ClientSecretPurpose);
+    public const string ClientSecretPurpose = "client_secret";
     private static byte[] AssociatedData(string id, string purpose) => Encoding.UTF8.GetBytes($"ifood:v1:{id}:{purpose}");
 }

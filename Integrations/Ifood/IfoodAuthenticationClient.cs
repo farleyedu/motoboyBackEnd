@@ -25,14 +25,16 @@ public sealed class IfoodAuthenticationClient : IIfoodAuthenticationClient
     public const string ClientName = "ifood-authentication";
     public static readonly Uri TokenEndpoint = new("https://merchant-api.ifood.com.br/authentication/v1.0/oauth/token");
     private readonly IHttpClientFactory _http;
-    private readonly IfoodOptions _options;
+    private readonly IOptionsMonitor<IfoodOptions> _options;
+    private readonly IfoodSecretProtector _protector;
     private readonly TimeProvider _clock;
-    public IfoodAuthenticationClient(IHttpClientFactory http, IOptions<IfoodOptions> options, TimeProvider clock)
-        => (_http, _options, _clock) = (http, options.Value, clock);
+    public IfoodAuthenticationClient(IHttpClientFactory http, IOptionsMonitor<IfoodOptions> options, IfoodSecretProtector protector, TimeProvider clock)
+        => (_http, _options, _protector, _clock) = (http, options, protector, clock);
 
     public async Task<IfoodAccessToken> RequestTokenAsync(CancellationToken cancellationToken = default)
     {
-        if (!_options.Enabled) throw new IfoodIntegrationException("IFOOD_DISABLED");
+        var options = _options.CurrentValue;
+        if (!options.Enabled) throw new IfoodIntegrationException("IFOOD_DISABLED");
         // Contar desde o envio evita prolongar artificialmente a validade pelo tempo de rede.
         var requestedAt = _clock.GetUtcNow();
         using var client = _http.CreateClient(ClientName);
@@ -40,8 +42,8 @@ public sealed class IfoodAuthenticationClient : IIfoodAuthenticationClient
         {
             Content = new FormUrlEncodedContent(new Dictionary<string, string>
             {
-                ["grantType"] = "client_credentials", ["clientId"] = _options.ClientId,
-                ["clientSecret"] = _options.ClientSecret
+                ["grantType"] = "client_credentials", ["clientId"] = options.ClientId,
+                ["clientSecret"] = _protector.ResolveClientSecret(options)
             })
         };
         try

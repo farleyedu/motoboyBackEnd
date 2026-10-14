@@ -110,7 +110,7 @@ public sealed class IfoodCommandTests
         var options=Options(item.MerchantId,item.EstabelecimentoId);var connections=new Mock<IIfoodConnectionRepository>();
         connections.Setup(c=>c.IsAuthorizedAsync(item.EstabelecimentoId,item.MerchantId,It.IsAny<CancellationToken>())).ReturnsAsync(true);
         tokens=new Mock<IIfoodTokenProvider>();tokens.Setup(t=>t.GetAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new IfoodAccessToken("test-token",DateTimeOffset.UtcNow.AddHours(1),TimeSpan.FromHours(1)));
-        var access=new IfoodMerchantAccess(connections.Object,tokens.Object,Microsoft.Extensions.Options.Options.Create(options));
+        var access=new IfoodMerchantAccess(connections.Object,tokens.Object,IfoodAuthenticationTests.Monitor(options));
         return new(new IfoodOrderImportTests.Factory(handler),access,tokens.Object,new Clock());
     }
     [Theory]
@@ -174,7 +174,7 @@ public sealed class IfoodCommandTests
         await Assert.ThrowsAsync<IfoodIntegrationException>(()=>Client(handler,item,out _).SendAsync(item,_=>throw new IfoodIntegrationException("IFOOD_COMMAND_LEASE_LOST"),default));
         Assert.Equal(0,handler.Calls);
         await using var source=NpgsqlDataSource.Create("Host=127.0.0.1;Port=1;Database=unused;Username=unused");
-        var options=Microsoft.Extensions.Options.Options.Create(new IfoodOptions());
+        var options=IfoodAuthenticationTests.Monitor(new IfoodOptions());
         var service=new IfoodCommandService(new(source,options,new Clock()),new Mock<IIfoodCommandClient>().Object,options);
         Assert.Equal(0,await service.RunOnceAsync());await Assert.ThrowsAsync<DeliveryDomainException>(()=>service.SubmitAsync(Guid.NewGuid(),1,100,new()));
     }

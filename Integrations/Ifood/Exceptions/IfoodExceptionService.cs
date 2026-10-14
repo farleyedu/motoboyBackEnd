@@ -10,10 +10,11 @@ public sealed class IfoodExceptionService
     private readonly IfoodCommandRepository _repository;
     private readonly IIfoodCommandClient _client;
     private readonly IIfoodCancellationReasonsClient _reasons;
-    private readonly IfoodOptions _options;
+    private readonly IOptionsMonitor<IfoodOptions> _optionsMonitor;
+    private IfoodOptions _options => _optionsMonitor.CurrentValue;
     private readonly TimeProvider _clock;
-    public IfoodExceptionService(IfoodCommandRepository repository,IIfoodCommandClient client,IIfoodCancellationReasonsClient reasons,IOptions<IfoodOptions> options,TimeProvider clock)
-        => (_repository,_client,_reasons,_options,_clock)=(repository,client,reasons,options.Value,clock);
+    public IfoodExceptionService(IfoodCommandRepository repository,IIfoodCommandClient client,IIfoodCancellationReasonsClient reasons,IOptionsMonitor<IfoodOptions> options,TimeProvider clock)
+        => (_repository,_client,_reasons,_optionsMonitor,_clock)=(repository,client,reasons,options,clock);
     private void Enabled()
     {
         if(!_options.Enabled || !_options.ExceptionsEnabled) throw new DeliveryDomainException(503,"IFOOD_EXCEPTIONS_DISABLED","Cancelamento e respostas a disputas iFood ainda não estão habilitados.");
@@ -58,14 +59,18 @@ public sealed class IfoodExceptionService
 public sealed class IfoodExceptionWorker : BackgroundService
 {
     private readonly IfoodExceptionService _service;
-    private readonly IfoodOptions _options;
+    private readonly IOptionsMonitor<IfoodOptions> _options;
     private readonly ILogger<IfoodExceptionWorker> _logger;
-    public IfoodExceptionWorker(IfoodExceptionService service,IOptions<IfoodOptions> options,ILogger<IfoodExceptionWorker> logger)=>(_service,_options,_logger)=(service,options.Value,logger);
+    public IfoodExceptionWorker(IfoodExceptionService service,IOptionsMonitor<IfoodOptions> options,ILogger<IfoodExceptionWorker> logger)=>(_service,_options,_logger)=(service,options,logger);
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        if(!_options.Enabled || !_options.ExceptionsEnabled) return;
         while(!stoppingToken.IsCancellationRequested)
         {
+            if(!_options.CurrentValue.Enabled || !_options.CurrentValue.ExceptionsEnabled)
+            {
+                try { await Task.Delay(TimeSpan.FromSeconds(15),stoppingToken); } catch(OperationCanceledException) when(stoppingToken.IsCancellationRequested) { break; }
+                continue;
+            }
             try { await _service.RunOnceAsync(stoppingToken); }
             catch(OperationCanceledException) when(stoppingToken.IsCancellationRequested) { break; }
             catch(IfoodIntegrationException ex) { _logger.LogWarning("Cancelamento/disputas iFood interrompidos: {Code}.",ex.Code); }

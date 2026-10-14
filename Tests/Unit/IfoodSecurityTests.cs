@@ -76,7 +76,7 @@ public sealed class IfoodSecurityTests
         var store = Guid.NewGuid(); var merchant = Guid.NewGuid();
         var connections = new Connections(store, merchant);
         var tokens = new Tokens();
-        var access = new IfoodMerchantAccess(connections, tokens, Microsoft.Extensions.Options.Options.Create(IfoodAuthenticationTests.EnabledOptions()));
+        var access = new IfoodMerchantAccess(connections, tokens, IfoodAuthenticationTests.Monitor(IfoodAuthenticationTests.EnabledOptions()));
         Assert.Equal("IFOOD_MERCHANT_NOT_AUTHORIZED", (await Assert.ThrowsAsync<IfoodIntegrationException>(() => access.GetTokenAsync(Guid.NewGuid(), merchant))).Code);
         Assert.Equal(0, tokens.Calls);
         await access.GetTokenAsync(store, merchant);
@@ -93,7 +93,7 @@ public sealed class IfoodSecurityTests
     {
         var connections = new Connections(Guid.NewGuid(), Guid.NewGuid());
         var tokens = new Tokens();
-        var access = new IfoodMerchantAccess(connections, tokens, Microsoft.Extensions.Options.Options.Create(new IfoodOptions()));
+        var access = new IfoodMerchantAccess(connections, tokens, IfoodAuthenticationTests.Monitor(new IfoodOptions()));
         Assert.Equal("IFOOD_DISABLED", (await Assert.ThrowsAsync<IfoodIntegrationException>(() => access.GetTokenAsync(Guid.NewGuid(), Guid.NewGuid()))).Code);
         Assert.Equal(0, connections.Calls);
         Assert.Equal(0, tokens.Calls);

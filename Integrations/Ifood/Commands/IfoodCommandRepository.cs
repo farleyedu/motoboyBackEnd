@@ -24,10 +24,11 @@ public sealed class IfoodCommandReservation
 public sealed partial class IfoodCommandRepository
 {
     private readonly NpgsqlDataSource _source;
-    private readonly IfoodOptions _options;
+    private readonly IOptionsMonitor<IfoodOptions> _optionsMonitor;
     private readonly TimeProvider _clock;
-    public IfoodCommandRepository(NpgsqlDataSource source,IOptions<IfoodOptions> options,TimeProvider clock)
-        => (_source,_options,_clock)=(source,options.Value,clock);
+    public IfoodCommandRepository(NpgsqlDataSource source,IOptionsMonitor<IfoodOptions> options,TimeProvider clock)
+        => (_source,_optionsMonitor,_clock)=(source,options,clock);
+    private IfoodOptions _options => _optionsMonitor.CurrentValue;
     private const string ReservationColumns="""
 operation_id AS OperationId,merchant_id AS MerchantId,external_order_id AS ExternalOrderId,estabelecimento_id AS EstabelecimentoId,
 lease_id AS LeaseId,command_type AS Command,state AS State,attempts AS Attempts,actor_user_id AS ActorUserId,

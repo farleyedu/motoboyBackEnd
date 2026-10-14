@@ -22,6 +22,7 @@ public static class IfoodServiceCollectionExtensions
         services.AddSingleton<IfoodSecretProtector>();
         services.AddSingleton<IIfoodConnectionRepository, IfoodConnectionRepository>();
         services.AddSingleton<IfoodMerchantAccess>();
+        services.AddSingleton<Config.IIfoodRuntimeSettingsRepository, Config.IfoodRuntimeSettingsRepository>();
         services.AddHttpClient(Events.IfoodEventsClient.ClientName, (provider, client) =>
         {
             client.Timeout = TimeSpan.FromSeconds(provider.GetRequiredService<IOptions<IfoodOptions>>().Value.HttpTimeoutSeconds);

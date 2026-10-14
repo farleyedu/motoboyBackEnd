@@ -108,7 +108,7 @@ VALUES(@Merchant,@Store,@Event,@Order,@Code,CAST(@Payload AS jsonb),@At)
         await new IfoodOrderImportRepository(db.Source).ImportAsync(plc,IfoodOrderNormalizer.Normalize(IfoodOrderImportTests.Payload(db.MerchantA,db.OrderA),db.MerchantA,db.OrderA));
         await db.Execute("UPDATE ifood_events_inbox SET next_attempt_at_utc=NOW()-INTERVAL '1 second' WHERE event_code='CFM'");
         var options=IfoodAuthenticationTests.EnabledOptions();options.ProjectionEnabled=true;
-        var service=new IfoodOrderProjectionService(db.Inbox,new(db.Source),Microsoft.Extensions.Options.Options.Create(options));
+        var service=new IfoodOrderProjectionService(db.Inbox,new(db.Source),IfoodAuthenticationTests.Monitor(options));
         Assert.Equal(1,await service.RunOnceAsync());
         var another=await ImportEvent(db,db.OrderA);await db.Inbox.RetryEventAsync(another,8,TimeSpan.Zero);
         Assert.Equal(0,await service.RunOnceAsync());

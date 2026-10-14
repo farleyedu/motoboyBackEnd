@@ -12,7 +12,7 @@ public interface IIfoodTokenProvider
 public sealed class IfoodTokenProvider : IIfoodTokenProvider
 {
     private readonly IIfoodAuthenticationClient _authentication;
-    private readonly IfoodOptions _options;
+    private readonly IOptionsMonitor<IfoodOptions> _options;
     private readonly TimeProvider _clock;
     private readonly SemaphoreSlim _gate = new(1, 1);
     private IfoodAccessToken? _cached;
@@ -20,19 +20,20 @@ public sealed class IfoodTokenProvider : IIfoodTokenProvider
     private DateTimeOffset _retryAt;
     private int _consecutiveFailures;
 
-    public IfoodTokenProvider(IIfoodAuthenticationClient authentication, IOptions<IfoodOptions> options, TimeProvider clock)
-        => (_authentication, _options, _clock) = (authentication, options.Value, clock);
+    public IfoodTokenProvider(IIfoodAuthenticationClient authentication, IOptionsMonitor<IfoodOptions> options, TimeProvider clock)
+        => (_authentication, _options, _clock) = (authentication, options, clock);
 
     public async Task<IfoodAccessToken> GetAsync(CancellationToken cancellationToken = default)
     {
-        if (!_options.Enabled) throw new IfoodIntegrationException("IFOOD_DISABLED");
+        var options = _options.CurrentValue;
+        if (!options.Enabled) throw new IfoodIntegrationException("IFOOD_DISABLED");
         await _gate.WaitAsync(cancellationToken);
         try
         {
             var current = Volatile.Read(ref _cached);
             var now = _clock.GetUtcNow();
             if (current != null && current.ExpiresAtUtc - now >
-                TimeSpan.FromSeconds(Math.Min(_options.RenewalSkewSeconds, current.Lifetime.TotalSeconds / 10)))
+                TimeSpan.FromSeconds(Math.Min(options.RenewalSkewSeconds, current.Lifetime.TotalSeconds / 10)))
                 return current;
             if (_failure != null && now < _retryAt)
                 throw new IfoodIntegrationException(_failure.Code, _failure.RemoteStatus,
@@ -52,7 +53,7 @@ public sealed class IfoodTokenProvider : IIfoodTokenProvider
                 _failure = ex;
                 _consecutiveFailures = Math.Min(_consecutiveFailures + 1, 6);
                 var delay = TimeSpan.FromSeconds(Math.Min(300,
-                    _options.FailureCooldownSeconds * Math.Pow(2, _consecutiveFailures - 1)));
+                    options.FailureCooldownSeconds * Math.Pow(2, _consecutiveFailures - 1)));
                 if (ex.RetryAfter is { } retry && retry > delay) delay = retry;
                 var failureAt = _clock.GetUtcNow();
                 _retryAt = delay > DateTimeOffset.MaxValue - failureAt ? DateTimeOffset.MaxValue : failureAt.Add(delay);
