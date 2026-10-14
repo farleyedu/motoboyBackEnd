@@ -551,12 +551,19 @@ RETURNING id;",
                 "WHERE motoboy_id = @MotoboyId AND estabelecimento_id = @EstabelecimentoId RETURNING version;",
                 new { MotoboyId = motoboyId, EstabelecimentoId = estabelecimentoId }, transaction);
 
-        private static Task<PedidoRow?> GetPedidoAsync(
-            NpgsqlConnection connection, NpgsqlTransaction transaction, Guid estabelecimentoId, int pedidoId, bool forUpdate) =>
-            connection.QuerySingleOrDefaultAsync<PedidoRow?>(
+        private static async Task<PedidoRow?> GetPedidoAsync(
+            NpgsqlConnection connection, NpgsqlTransaction transaction, Guid estabelecimentoId, int pedidoId, bool forUpdate)
+        {
+            var row = await connection.QuerySingleOrDefaultAsync<PedidoRow?>(
                 "SELECT id AS Id, status_pedido AS StatusPedido, motoboy_responsavel AS MotoboyResponsavel " +
                 "FROM pedido WHERE id = @PedidoId AND id_estabelecimento = @EstabelecimentoId" + (forUpdate ? " FOR UPDATE;" : ";"),
                 new { PedidoId = pedidoId, EstabelecimentoId = estabelecimentoId }, transaction);
+            if (row != null && forUpdate && await connection.ExecuteScalarAsync<bool>("SELECT to_regclass('ifood_order_links') IS NOT NULL", transaction: transaction)
+                && await connection.ExecuteScalarAsync<bool>("SELECT EXISTS(SELECT 1 FROM ifood_order_links WHERE pedido_id=@Pedido AND estabelecimento_id=@Store)",
+                    new { Pedido = pedidoId, Store = estabelecimentoId }, transaction))
+                throw new DeliveryDomainException(409, "IFOOD_ORDER_MANAGED_EXTERNALLY", "Este pedido deve ser operado pelos comandos oficiais do iFood.");
+            return row;
+        }
 
         private static Task<StopRow?> GetActiveStopForPedidoAsync(
             NpgsqlConnection connection, NpgsqlTransaction transaction, Guid estabelecimentoId, int pedidoId, bool forUpdate) =>

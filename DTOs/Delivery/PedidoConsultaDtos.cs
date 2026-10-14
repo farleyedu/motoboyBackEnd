@@ -9,6 +9,7 @@ namespace APIBack.DTOs.Delivery
         /// <summary>rascunho, pendente, atribuido, em_rota, concluido ou cancelado.</summary>
         public string Status { get; set; } = "pendente";
         public string Origem { get; set; } = "atendente";
+        public IfoodPedidoIdentityDto? IdentidadeExterna { get; set; }
         public string? NomeCliente { get; set; }
         public string? TelefoneCliente { get; set; }
         public string? Bairro { get; set; }
@@ -54,6 +55,8 @@ namespace APIBack.DTOs.Delivery
 
     public class PedidoDetalheDto : PedidoResumoDto
     {
+        public APIBack.Integrations.Ifood.Orders.IfoodImportedOrder? PedidoIfood { get; set; }
+        public IReadOnlyList<IfoodDisputeSummaryDto> DisputasIfood { get; set; } = Array.Empty<IfoodDisputeSummaryDto>();
         public string? Rua { get; set; }
         public string? Numero { get; set; }
         public string? Cidade { get; set; }

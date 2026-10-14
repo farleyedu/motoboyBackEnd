@@ -60,5 +60,6 @@ public sealed class IfoodInboxReservation
     [JsonIgnore] public string PayloadJson { get; set; } = "{}";
     public int Attempts { get; set; }
     public Guid LeaseId { get; set; }
+    public DateTimeOffset? OccurredAtUtc { get; set; }
     public override string ToString() => "[reserva da inbox iFood; payload omitido]";
 }

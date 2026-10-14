@@ -100,9 +100,23 @@ SELECT p.id AS Id,
  ORDER BY p.id DESC
  LIMIT @Limit OFFSET @Offset;", parameters)).ToList();
 
+            var summaries = rows.Select(ToResumo).ToList();
+            if (summaries.Any(p => p.Origem == "ifood"))
+            {
+                var identities = await APIBack.Integrations.Ifood.Orders.IfoodOrderReadModel.IdentitiesAsync(connection, estabelecimentoId,
+                    summaries.Where(p => p.Origem == "ifood").Select(p => p.Id).ToArray());
+                foreach (var summary in summaries)
+                    if (identities.TryGetValue(summary.Id, out var identity))
+                    {
+                        summary.IdentidadeExterna = identity; summary.Total = identity.OrderAmount;
+                        summary.Subtotal = identity.Subtotal; summary.TaxaEntrega = identity.DeliveryFee;
+                        summary.QuantidadeItens = identity.DataIsCurrent ? identity.ItemCount : 0;
+                        if (!identity.DataIsCurrent) { summary.EnderecoEntrega = null; summary.Bairro = null; summary.FormaPagamento = null; }
+                    }
+            }
             return new PedidoListaDto
             {
-                Itens = rows.Select(ToResumo).ToList(),
+                Itens = summaries,
                 Total = total,
                 Page = filtro.Page,
                 PageSize = filtro.PageSize
@@ -199,6 +213,28 @@ SELECT i.id::text AS ItemId, i.produto_id AS ProdutoId, i.nome AS Nome, i.quanti
                 Itens = itens
             };
             Fill(detail, row);
+            if (detail.Origem == "ifood")
+            {
+                var identities = await APIBack.Integrations.Ifood.Orders.IfoodOrderReadModel.IdentitiesAsync(connection, estabelecimentoId, new[] { pedidoId });
+                if (identities.TryGetValue(pedidoId, out var identity))
+                {
+                    detail.IdentidadeExterna = identity; detail.Total = identity.OrderAmount;
+                    detail.Subtotal = identity.Subtotal; detail.TaxaEntrega = identity.DeliveryFee;
+                    detail.QuantidadeItens = identity.DataIsCurrent ? identity.ItemCount : 0;
+                    detail.PedidoIfood = await APIBack.Integrations.Ifood.Orders.IfoodOrderReadModel.DetailsAsync(connection, estabelecimentoId, pedidoId, identity.ActiveCommand == null);
+                    detail.DisputasIfood = await APIBack.Integrations.Ifood.Orders.IfoodOrderReadModel.DisputesAsync(connection, estabelecimentoId, pedidoId);
+                    // DTO legado usa quantidades inteiras e total calculado. O snapshot externo é o contrato fiel.
+                    detail.Itens.Clear();
+                    if (!identity.DataIsCurrent)
+                    {
+                        detail.Subtotal = detail.TaxaEntrega = detail.Troco = null;
+                        detail.StatusPagamento = "requer_revisao";
+                        detail.FormaPagamento = null;
+                        detail.EnderecoEntrega = detail.Bairro = detail.Rua = detail.Numero = detail.Cidade = detail.Estado = detail.Cep = null;
+                        detail.Latitude = detail.Longitude = null;
+                    }
+                }
+            }
             return detail;
         }
 

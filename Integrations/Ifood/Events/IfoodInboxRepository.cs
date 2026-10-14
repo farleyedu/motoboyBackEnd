@@ -168,7 +168,8 @@ WHERE application_key=@ApplicationKey AND lease_id=@LeaseId AND lease_until_utc>
     }
 
     // Primitivas para IF-07/IF-08: nenhum worker marca evento processado sem efeito de domínio.
-    public Task<IReadOnlyList<IfoodInboxReservation>> ClaimAsync(int max, int leaseSeconds, int maxAttempts, CancellationToken ct = default) => Guard<IReadOnlyList<IfoodInboxReservation>>(async () =>
+    public Task<IReadOnlyList<IfoodInboxReservation>> ClaimAsync(int max, int leaseSeconds, int maxAttempts, CancellationToken ct = default,
+        string[]? codes = null, string[]? excludedCodes = null) => Guard<IReadOnlyList<IfoodInboxReservation>>(async () =>
     {
         if (max is < 1 or > 2000 || leaseSeconds is < 1 or > 600 || maxAttempts is < 1 or > 100)
             throw new ArgumentOutOfRangeException(nameof(max));
@@ -178,11 +179,15 @@ WHERE application_key=@ApplicationKey AND lease_id=@LeaseId AND lease_until_utc>
 UPDATE ifood_events_inbox SET state=CASE WHEN attempts>=@MaxAttempts THEN 'failed' ELSE 'queued' END,
     lease_id=NULL,lease_until_utc=NULL,last_error_code='IFOOD_EVENT_LEASE_EXPIRED'
 WHERE state='processing' AND lease_until_utc<=NOW()
-""", new { MaxAttempts = maxAttempts }, transaction, cancellationToken: ct));
+AND (CAST(@Codes AS text[]) IS NULL OR event_code=ANY(CAST(@Codes AS text[])))
+AND (CAST(@ExcludedCodes AS text[]) IS NULL OR NOT event_code=ANY(CAST(@ExcludedCodes AS text[])))
+""", new { MaxAttempts = maxAttempts, Codes = codes, ExcludedCodes = excludedCodes }, transaction, cancellationToken: ct));
         var rows = await connection.QueryAsync<IfoodInboxReservation>(new CommandDefinition("""
 WITH picked AS (
     SELECT e.id FROM ifood_events_inbox e JOIN ifood_connections c USING(merchant_id,estabelecimento_id)
     WHERE e.state='queued' AND e.next_attempt_at_utc<=NOW() AND e.attempts<@MaxAttempts
+    AND (CAST(@Codes AS text[]) IS NULL OR e.event_code=ANY(CAST(@Codes AS text[])))
+    AND (CAST(@ExcludedCodes AS text[]) IS NULL OR NOT e.event_code=ANY(CAST(@ExcludedCodes AS text[])))
     AND c.status='authorized' AND c.authorized_at_utc IS NOT NULL AND c.revoked_at_utc IS NULL
     ORDER BY e.occurred_at_utc NULLS LAST,e.received_at_utc,e.id LIMIT @Max FOR UPDATE OF e SKIP LOCKED
 )
@@ -190,8 +195,8 @@ UPDATE ifood_events_inbox e SET state='processing',attempts=e.attempts+1,
     lease_id=@Lease,lease_until_utc=NOW()+make_interval(secs=>@Seconds)
 FROM picked WHERE e.id=picked.id
 RETURNING e.id AS Id,e.merchant_id AS MerchantId,e.estabelecimento_id AS EstabelecimentoId,e.event_id AS EventId,
-    e.external_order_id AS ExternalOrderId,e.event_code AS EventCode,e.payload::text AS PayloadJson,e.attempts AS Attempts,e.lease_id AS LeaseId
-""", new { Max = max, MaxAttempts = maxAttempts, Lease = Guid.NewGuid(), Seconds = leaseSeconds }, transaction, cancellationToken: ct));
+    e.external_order_id AS ExternalOrderId,e.event_code AS EventCode,e.payload::text AS PayloadJson,e.attempts AS Attempts,e.lease_id AS LeaseId,e.occurred_at_utc AS OccurredAtUtc
+""", new { Max = max, MaxAttempts = maxAttempts, Lease = Guid.NewGuid(), Seconds = leaseSeconds, Codes = codes, ExcludedCodes = excludedCodes }, transaction, cancellationToken: ct));
         await transaction.CommitAsync(ct);
         return rows.ToArray();
     });
@@ -207,11 +212,11 @@ AND lease_id=@LeaseId AND lease_until_utc>NOW()
 """, new { item.Id, item.MerchantId, item.EstabelecimentoId, item.LeaseId, Seconds = seconds }, cancellationToken: ct)) == 1;
     });
 
-    public Task<bool> FinishEventAsync(IfoodInboxReservation item, IfoodInboxOutcome outcome, CancellationToken ct = default)
+    public Task<bool> FinishEventAsync(IfoodInboxReservation item, IfoodInboxOutcome outcome, CancellationToken ct = default, string? errorCode = null)
     {
         var state = outcome switch { IfoodInboxOutcome.Processed => "processed", IfoodInboxOutcome.Ignored => "ignored",
             IfoodInboxOutcome.Review => "review", _ => throw new ArgumentOutOfRangeException(nameof(outcome)) };
-        return EndEventAsync(item, state, null, TimeSpan.Zero, 0, ct);
+        return EndEventAsync(item, state, errorCode, TimeSpan.Zero, 0, ct);
     }
     public Task<bool> RetryEventAsync(IfoodInboxReservation item, int maxAttempts, TimeSpan delay, CancellationToken ct = default)
     {

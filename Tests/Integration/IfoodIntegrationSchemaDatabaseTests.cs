@@ -130,6 +130,7 @@ END $$;
         private readonly string _schema = "ifood_schema_" + Guid.NewGuid().ToString("N");
         private string _baseConnection = "";
         private NpgsqlDataSource _source = null!;
+        public NpgsqlDataSource Source => _source;
         public APIBack.Integrations.Ifood.IIfoodConnectionRepository Connections => new APIBack.Integrations.Ifood.IfoodConnectionRepository(_source);
         public APIBack.Integrations.Ifood.Events.IfoodInboxRepository Inbox => new(_source);
         public Guid StoreA { get; } = Guid.NewGuid();

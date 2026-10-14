@@ -29,9 +29,42 @@ public static class IfoodServiceCollectionExtensions
         }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false })
             .RedactLoggedHeaders(_ => true).RemoveAllLoggers();
         services.AddSingleton<Events.IIfoodEventsClient, Events.IfoodEventsClient>();
-        services.AddSingleton<Events.IIfoodInboxRepository, Events.IfoodInboxRepository>();
+        services.AddSingleton<Events.IfoodInboxRepository>();
+        services.AddSingleton<Events.IIfoodInboxRepository>(provider => provider.GetRequiredService<Events.IfoodInboxRepository>());
         services.AddSingleton<Events.IfoodPollingService>();
         services.AddHostedService<Events.IfoodPollingWorker>();
+        services.AddHttpClient(Orders.IfoodOrderDetailsClient.ClientName, (provider, client) =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(provider.GetRequiredService<IOptions<IfoodOptions>>().Value.HttpTimeoutSeconds);
+            client.MaxResponseContentBufferSize = 4 * 1024 * 1024;
+        }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false })
+            .RedactLoggedHeaders(_ => true).RemoveAllLoggers();
+        services.AddSingleton<Orders.IIfoodOrderDetailsClient, Orders.IfoodOrderDetailsClient>();
+        services.AddSingleton<Orders.IfoodOrderImportRepository>();
+        services.AddSingleton<Orders.IfoodOrderImportService>();
+        services.AddHostedService<Orders.IfoodOrderImportWorker>();
+        services.AddSingleton<Orders.IfoodOrderProjectionRepository>();
+        services.AddSingleton<Orders.IfoodOrderProjectionService>();
+        services.AddHostedService<Orders.IfoodOrderProjectionWorker>();
+        services.AddHttpClient(Commands.IfoodCommandClient.ClientName,(provider,client)=>
+        {
+            client.Timeout=TimeSpan.FromSeconds(provider.GetRequiredService<IOptions<IfoodOptions>>().Value.HttpTimeoutSeconds);
+            client.MaxResponseContentBufferSize=32768;
+        }).ConfigurePrimaryHttpMessageHandler(()=>new HttpClientHandler { AllowAutoRedirect=false,UseCookies=false })
+            .RedactLoggedHeaders(_=>true).RemoveAllLoggers();
+        services.AddSingleton<Commands.IIfoodCommandClient,Commands.IfoodCommandClient>();
+        services.AddSingleton<Commands.IfoodCommandRepository>();
+        services.AddSingleton<Commands.IfoodCommandService>();
+        services.AddHostedService<Commands.IfoodCommandWorker>();
+        services.AddHttpClient(Exceptions.IfoodCancellationReasonsClient.ClientName,(provider,client)=>
+        {
+            client.Timeout=TimeSpan.FromSeconds(provider.GetRequiredService<IOptions<IfoodOptions>>().Value.HttpTimeoutSeconds);
+            client.MaxResponseContentBufferSize=256*1024;
+        }).ConfigurePrimaryHttpMessageHandler(()=>new HttpClientHandler { AllowAutoRedirect=false,UseCookies=false })
+            .RedactLoggedHeaders(_=>true).RemoveAllLoggers();
+        services.AddSingleton<Exceptions.IIfoodCancellationReasonsClient,Exceptions.IfoodCancellationReasonsClient>();
+        services.AddSingleton<Exceptions.IfoodExceptionService>();
+        services.AddHostedService<Exceptions.IfoodExceptionWorker>();
         return services;
     }
 }

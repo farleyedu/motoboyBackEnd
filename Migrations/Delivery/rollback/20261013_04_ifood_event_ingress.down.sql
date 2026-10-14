@@ -1,4 +1,9 @@
 BEGIN;
+DO $$ BEGIN
+    IF to_regclass('ifood_order_details_cache') IS NOT NULL THEN
+        RAISE EXCEPTION 'Execute rollback IF-07 antes de IF-06';
+    END IF;
+END $$;
 -- Recusa apagar obrigações/dados de ingresso. Somente infraestrutura vazia pode voltar.
 LOCK TABLE ifood_events_inbox, ifood_event_rejections, ifood_polling_state IN ACCESS EXCLUSIVE MODE;
 DO $$ BEGIN

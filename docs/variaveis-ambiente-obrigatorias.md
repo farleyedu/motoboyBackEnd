@@ -98,6 +98,82 @@ O intervalo de polling é controlado no banco por aplicação e não tem opção
 
 A lista atende uma aplicação configurada com até 100 merchants. Não executar duas credenciais diferentes sobre a mesma inbox como estratégia de escala: apenas uma procedência de ACK fica ativa por evento. O hash do client ID identifica a reserva/procedência, mas não é segredo nem credencial. Autorização/revogação oficial continua dependendo de sua sincronização com o portal nos lotes seguintes.
 
+## iFood — importação de pedidos (IF-07)
+
+O importador exige `Ifood__Enabled=true` e `Ifood__ImportEnabled=true`. As flags permanecem falsas por padrão; nenhuma foi alterada em ambiente real. Ele pode consumir a inbox já durável independentemente da flag de polling, mas precisa de autorização atual do merchant antes da consulta/gravação.
+
+| Variável | Descrição |
+| --- | --- |
+| `Ifood__ImportEnabled` | `false` por padrão. Liga somente importação de PLC/PLACED; não confirma/prepara/despacha pedidos. |
+| `Ifood__ImportLeaseSeconds` | Padrão 90; deve superar `2 × HttpTimeoutSeconds + 10`, até 600 segundos. Abrange autenticação/consulta e a projeção; renovação ocorre antes do envio/importação. |
+| `Ifood__ImportBatchSize` | Padrão 5, entre 1 e 50. Claims individuais evitam consumir a reserva de pedidos esperando HTTP de outro. |
+| `Ifood__ImportMaxAttempts` | Padrão 8, entre 1 e 100. Falhas transitórias têm prazo progressivo; falhas permanentes ficam em revisão. |
+
+Aplicar IF-04, IF-06, schema do núcleo `20260925_02_schema.sql` e IF-07 `20261013_05_ifood_order_import.sql`, além das dependências de outbox do ambiente autorizado, antes da ativação. Cache/snapshots não são credenciais e não usam client secret; documentos/códigos esperados são removidos do payload. Retenção/diagnóstico do cache ainda precisam de IF-15/IF-16.
+
+Pedidos importados ficam em Rascunho local e `zippy_delivery_enabled=false`, sem atribuição. Não alterar esse campo para contornar a proteção: critérios de preparo/rota/comando serão implementados em IF-09/IF-12. Frontends devem usar `identidadeExterna` e `pedidoIfood`, não converter os itens externos em quantidades inteiras. A importação não cria cliente/conversa do canal próprio pelo telefone iFood.
+
+Rollback somente vazio, na ordem **IF-07 → IF-06 → IF-04**; com cache/pedidos existentes ele é recusado. Desligar flags não cancela nem apaga obrigações já persistidas. Nenhuma consulta oficial/implantação ocorreu na validação local: [IF-07](validacao-ifood/IF-07.md).
+
+## iFood — projeção por eventos (IF-08)
+
+O projetor exige `Ifood__Enabled=true` e `Ifood__ProjectionEnabled=true`, falsos por padrão. Consome a inbox durável sem HTTP novo; polling/importação têm flags independentes. Merchant e estabelecimento devem continuar autorizados.
+
+| Variável | Descrição |
+| --- | --- |
+| `Ifood__ProjectionEnabled` | `false` por padrão. Liga projeção dos eventos restantes, sem comandos remotos nem habilitação de rotas. |
+| `Ifood__ProjectionLeaseSeconds` | Padrão 90; de 10 a 600 segundos. Fence final impede efeito de proprietário expirado. |
+| `Ifood__ProjectionBatchSize` | Padrão 20; de 1 a 100. Claims individuais com atualização transacional. |
+| `Ifood__ProjectionMaxAttempts` | Padrão 8; de 1 a 100. Falha transitória tem retry limitado; espera por importação não gasta tentativa técnica. |
+
+Aplicar IF-04/IF-06/IF-07 e `20261013_06_ifood_order_projection.sql`, além da outbox, no ambiente autorizado antes de habilitar. Não executar API/migrations em banco real como teste. Projeção não confirma/prepara/despacha pela API: comandos são IF-09. CAN confirma cancelamento local; CON permanece conclusão externa e não cria prova física ou recebimento Zippy.
+
+Patch incompleto/desconhecido e alteração de endereço ficam em revisão; consulta oculta valores/detalhes que perderam atualidade. Não habilitar cobrança/rota usando os valores legados. Deadline de disputa não executa timeoutAction no banco; resposta/settlement oficial são distintos. Reconciliação e alertas de backlog/revisão ainda pertencem a IF-15/IF-16.
+
+Rollback vazio na ordem **IF-08 → IF-07 → IF-06 → IF-04**; histórico/efeitos impedem remoção. Não ligar `zippy_delivery_enabled` para contornar a proteção. Nenhuma flag real foi alterada. Evidência: [IF-08](validacao-ifood/IF-08.md).
+
+## iFood — comandos persistentes (IF-09)
+
+Exigem `Ifood__Enabled=true` e `Ifood__CommandsEnabled=true`, falsos por padrão, merchants já autorizados e ações explicitamente habilitadas. Não houve configuração/ativação real. Confirmar capacidades e contrato do perfil na IF-01 antes de ligar.
+
+| Variável | Descrição |
+| --- | --- |
+| `Ifood__CommandsEnabled` | `false`. Liga somente intenções/envio de confirmar, iniciar preparo, pronto e despacho; sem habilitar rotas. |
+| `Ifood__CommandMerchants__0__MerchantId` | UUID de merchant explicitamente autorizado para comandos. Até 100, sem repetição. |
+| `Ifood__CommandMerchants__0__EstabelecimentoId` | UUID da loja vinculada a esse merchant; token HTTP e reserva rechecados por esse vínculo. |
+| `Ifood__AllowedCommands__0` | Ação habilitada do contrato confirmado: `confirm`, `start_preparation`, `ready_to_pickup` ou `dispatch`. Lista vazia por padrão; ações de cancelamento/disputa não entram neste worker. |
+| `Ifood__CommandLeaseSeconds` | Padrão 90; pelo menos `2 × HttpTimeoutSeconds + 10`, no máximo 600. Renovada antes do POST. |
+| `Ifood__CommandBatchSize` | Padrão 5, de 1 a 50, com claims individuais. |
+| `Ifood__CommandMaxAttempts` | Padrão 8, de 1 a 100. Limitam falha anterior ao envio ou rejeição HTTP explícita 401/429; resultado incerto nunca é reenviado automaticamente. |
+| `Ifood__ScheduledConfirmationUsesPreparationStart` | `false`. Padrão conservador usa o menor prazo entre createdAt+8min e preparo+8min. `true` usa preparo+8min no SCHEDULED, somente após confirmação do contrato do perfil em IF-01. IMMEDIATE continua createdAt+8min. |
+
+Aplicar IF-04/IF-06/IF-07/IF-08 e `20261013_07_ifood_outbound_commands.sql` mais outbox no ambiente autorizado. SQL de rollback de IF-08 exige remover IF-09 antes; rollback de IF-09 recusa qualquer operação Food/histórico. Ordem vazia: **IF-09 → IF-08 → IF-07 → IF-06 → IF-04**. Não iniciar API contra banco real como validação.
+
+HTTP 202 significa aceitação assíncrona, não preparo/rota comprovados. Timeout, falha de rede, 5xx e crash após o marcador de envio ficam incertos; novo operationId não contorna o bloqueio. 401/429 têm retry com pausa/limite, respeitando Retry-After; valor acima de 30 dias exige revisão sem envio antecipado. Recuperação por eventos e diagnóstico/conciliador IF-16 permanecem separados.
+
+Não calcular preparationStartDateTime nem preencher horários desconhecidos. Preparo/pronto aguardam o preparo oficial; despacho próprio requer RTP confirmado e, se agendado, não é enviado antes do início da janela nesta política local conservadora. Fonte e amostras do perfil real continuam pendentes; a flag de comandos não habilita `zippy_delivery_enabled`, prova física ou recebimento local.
+
+Endpoints/DTO e prova local: [IF-09](validacao-ifood/IF-09.md). Painel de ações/capacidades pertence a IF-11; cancelamento/disputa estão em [IF-10](validacao-ifood/IF-10.md) e rota/coleta pertence a IF-12.
+
+## iFood — cancelamento e disputas (IF-10)
+
+Exigem `Ifood__Enabled=true` e `Ifood__ExceptionsEnabled=true`, falsos por padrão, merchants já autorizados e ações explicitamente habilitadas. Não houve configuração/ativação real. Confirmar endpoints, corpos e handshake do perfil na IF-01 antes de ligar.
+
+| Variável | Descrição |
+| --- | --- |
+| `Ifood__ExceptionsEnabled` | `false`. Liga consulta de motivos, solicitação de cancelamento e resposta a disputas. Não cancela, reembolsa nem executa timeout localmente. |
+| `Ifood__ExceptionMerchants__0__MerchantId` | UUID de merchant explicitamente autorizado. Até 100, sem repetição. |
+| `Ifood__ExceptionMerchants__0__EstabelecimentoId` | UUID da loja vinculada; token HTTP e reserva rechecados por esse vínculo. |
+| `Ifood__AllowedExceptionActions__0` | Ação habilitada: `request_cancellation`, `dispute_accept`, `dispute_reject` ou `dispute_alternative`. Lista vazia por padrão. |
+| `Ifood__ExceptionBatchSize` | Padrão 5, de 1 a 50, com claims individuais. |
+| `Ifood__CancellationReasonsTtlSeconds` | Padrão 120, de 15 a 300. Validade do catálogo de motivos; o motivo é consultado de novo antes do POST. |
+
+Com exceções ligadas, `Ifood__CommandLeaseSeconds` deve ser pelo menos `3 × HttpTimeoutSeconds + 10` (máximo 600) e `Ifood__CommandMaxAttempts` segue valendo. O worker de exceções é independente do de comandos IF-09.
+
+Aplicar IF-04/IF-06/IF-07/IF-08/IF-09 e `20261013_08_ifood_cancellation_disputes.sql` mais outbox no ambiente autorizado. O rollback de IF-09 exige remover IF-10 antes, e o de IF-10 recusa operações/revisões em uso. Ordem vazia: **IF-10 → IF-09 → IF-08 → IF-07 → IF-06 → IF-04**. Não iniciar API contra banco real como validação.
+
+HTTP 201/202 é só aceite assíncrono: o pedido/disputa mudam por evento oficial. Timeout, rede, 5xx e queda após o marcador de envio ficam incertos; 422 de disputa vai para revisão; novo operationId não contorna. Alternativas e valores vêm do payload da disputa, nunca de padrão local. Painel de ações pertence a IF-11 e rota/coleta a IF-12. Evidência: [IF-10](validacao-ifood/IF-10.md).
+
 ## Integracoes de IA / geocodificacao
 
 | Variavel | Descricao |

@@ -13,6 +13,26 @@ public sealed class IfoodOptions
     public int RenewalSkewSeconds { get; set; } = 60;
     public int FailureCooldownSeconds { get; set; } = 10;
     public bool PollingEnabled { get; set; }
+    public bool ImportEnabled { get; set; }
+    public bool ProjectionEnabled { get; set; }
+    public int ProjectionLeaseSeconds { get; set; } = 90;
+    public int ProjectionBatchSize { get; set; } = 20;
+    public int ProjectionMaxAttempts { get; set; } = 8;
+    public bool CommandsEnabled { get; set; }
+    public int CommandLeaseSeconds { get; set; } = 90;
+    public int CommandBatchSize { get; set; } = 5;
+    public int CommandMaxAttempts { get; set; } = 8;
+    public List<Events.IfoodPollingMerchant> CommandMerchants { get; set; } = new();
+    public List<string> AllowedCommands { get; set; } = new();
+    public bool ScheduledConfirmationUsesPreparationStart { get; set; }
+    public bool ExceptionsEnabled { get; set; }
+    public int ExceptionBatchSize { get; set; } = 5;
+    public int CancellationReasonsTtlSeconds { get; set; } = 120;
+    public List<Events.IfoodPollingMerchant> ExceptionMerchants { get; set; } = new();
+    public List<string> AllowedExceptionActions { get; set; } = new();
+    public int ImportLeaseSeconds { get; set; } = 90;
+    public int ImportBatchSize { get; set; } = 5;
+    public int ImportMaxAttempts { get; set; } = 8;
     public int PollingLeaseSeconds { get; set; } = 90;
     public int AckBatchSize { get; set; } = 2000;
     public List<Events.IfoodPollingMerchant> PollingMerchants { get; set; } = new();
@@ -46,6 +66,26 @@ public sealed class IfoodOptionsValidator : IValidateOptions<IfoodOptions>
             options.PollingLeaseSeconds < options.HttpTimeoutSeconds + 10 || options.PollingLeaseSeconds > 600 ||
             options.AckBatchSize is < 1 or > 2000))
             errors.Add("Polling iFood requer 1 a 100 merchants únicos, lojas válidas, reserva maior que timeout e ACK de até 2000 eventos.");
+        if (options.ImportEnabled && (options.ImportLeaseSeconds < options.HttpTimeoutSeconds * 2 + 10 ||
+            options.ImportLeaseSeconds > 600 || options.ImportBatchSize is < 1 or > 50 || options.ImportMaxAttempts is < 1 or > 100))
+            errors.Add("Importação iFood requer reserva superior a dois timeouts, lote de 1 a 50 e tentativas de 1 a 100.");
+        if (options.ProjectionEnabled && (options.ProjectionLeaseSeconds is < 10 or > 600 ||
+            options.ProjectionBatchSize is < 1 or > 100 || options.ProjectionMaxAttempts is < 1 or > 100))
+            errors.Add("Projeção iFood requer reserva de 10 a 600 segundos, lote de 1 a 100 e tentativas de 1 a 100.");
+        if (options.CommandsEnabled && (options.CommandLeaseSeconds < 2 * options.HttpTimeoutSeconds + 10 || options.CommandLeaseSeconds > 600 ||
+            options.CommandBatchSize is < 1 or > 50 || options.CommandMaxAttempts is < 1 or > 100 ||
+            options.CommandMerchants.Count is < 1 or > 100 || options.CommandMerchants.Any(m => m.MerchantId == Guid.Empty || m.EstabelecimentoId == Guid.Empty) ||
+            options.CommandMerchants.Select(m => m.MerchantId).Distinct().Count() != options.CommandMerchants.Count ||
+            options.AllowedCommands.Count is < 1 or > 4 || options.AllowedCommands.Distinct().Count() != options.AllowedCommands.Count ||
+            options.AllowedCommands.Any(c => !Commands.IfoodCommandRules.IsKnown(c))))
+            errors.Add("Comandos iFood requerem merchants/lojas explícitos, comandos habilitados, reserva superior a dois timeouts e limites válidos.");
+        if (options.ExceptionsEnabled && (options.CommandLeaseSeconds < 3 * options.HttpTimeoutSeconds + 10 || options.CommandLeaseSeconds > 600 ||
+            options.CommandMaxAttempts is < 1 or > 100 || options.ExceptionBatchSize is < 1 or > 50 || options.CancellationReasonsTtlSeconds is < 15 or > 300 ||
+            options.ExceptionMerchants.Count is < 1 or > 100 || options.ExceptionMerchants.Any(m=>m.MerchantId==Guid.Empty || m.EstabelecimentoId==Guid.Empty) ||
+            options.ExceptionMerchants.Select(m=>m.MerchantId).Distinct().Count()!=options.ExceptionMerchants.Count ||
+            options.AllowedExceptionActions.Count is < 1 or > 4 || options.AllowedExceptionActions.Distinct().Count()!=options.AllowedExceptionActions.Count ||
+            options.AllowedExceptionActions.Any(c=>!Exceptions.IfoodExceptionRules.IsKnown(c))))
+            errors.Add("Cancelamento/disputas iFood requerem merchants/ações explícitos, reserva de três timeouts, limites e validade dos motivos configurados.");
         return errors.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(errors);
     }
 
