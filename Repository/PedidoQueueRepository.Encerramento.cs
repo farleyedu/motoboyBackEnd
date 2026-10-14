@@ -93,11 +93,13 @@ SELECT encerramento_auto_ativo AS Ativo, encerramento_auto_horas AS Horas
         public async Task<IReadOnlyList<EncerramentoCandidate>> ListOpenOrdersForEncerramentoAsync(Guid estabelecimentoId)
         {
             await using var connection = await _dataSource.OpenConnectionAsync();
-            var rows = await connection.QueryAsync<EncerramentoOpenRow>(@"
+            var excludeExternal = await connection.ExecuteScalarAsync<bool>("SELECT to_regclass('ifood_order_links') IS NOT NULL")
+                ? "AND NOT EXISTS(SELECT 1 FROM ifood_order_links l WHERE l.pedido_id=p.id AND l.estabelecimento_id=p.id_estabelecimento)" : "";
+            var rows = await connection.QueryAsync<EncerramentoOpenRow>($@"
 SELECT p.id AS Id, p.data_pedido::text AS DataPedidoRaw, p.horario_pedido::text AS HorarioPedidoRaw
   FROM pedido p
  WHERE p.id_estabelecimento = @EstabelecimentoId
-   AND COALESCE(p.status_pedido, 1) IN (1, 2, 5, 8);", new { EstabelecimentoId = estabelecimentoId });
+   AND COALESCE(p.status_pedido, 1) IN (1, 2, 5, 8) {excludeExternal};", new { EstabelecimentoId = estabelecimentoId });
 
             return rows.Select(row =>
             {

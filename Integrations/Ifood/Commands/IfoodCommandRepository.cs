@@ -183,13 +183,28 @@ AND status='authorized' AND authorized_at_utc IS NOT NULL AND revoked_at_utc IS 
         if(found==null) throw new IfoodIntegrationException("IFOOD_MERCHANT_NOT_AUTHORIZED");
     }
     private static async Task<IfoodCommandContext> Context(NpgsqlConnection c,NpgsqlTransaction tx,Guid merchant,Guid order,Guid store,CancellationToken ct)
-        => await c.QuerySingleOrDefaultAsync<IfoodCommandContext>(new CommandDefinition("""
+    {
+        var context = await c.QuerySingleOrDefaultAsync<IfoodCommandContext>(new CommandDefinition("""
 SELECT l.pedido_id AS PedidoId,s.merchant_id AS MerchantId,s.external_order_id AS ExternalOrderId,s.estabelecimento_id AS EstabelecimentoId,
 s.revision AS Revision,s.remote_status AS RemoteStatus,s.preparation_state AS PreparationState,s.synchronization_state AS SynchronizationState,
 s.cancellation_state AS CancellationState,s.data_is_current AS DataIsCurrent,s.payload::text AS Payload
 FROM ifood_order_snapshots s JOIN ifood_order_links l USING(merchant_id,external_order_id,estabelecimento_id)
 WHERE s.merchant_id=@Merchant AND s.external_order_id=@Order AND s.estabelecimento_id=@Store FOR UPDATE OF s
 """,new { Merchant=merchant,Order=order,Store=store },tx,cancellationToken:ct)) ?? throw IfoodCommandRules.Error("IFOOD_COMMAND_SNAPSHOT_MISSING");
+        await ReadRoutingContext(c, tx, context, ct);
+        return context;
+    }
+    private static async Task ReadRoutingContext(NpgsqlConnection c, NpgsqlTransaction tx, IfoodCommandContext context, CancellationToken ct)
+    {
+        context.DeliveryRoutingRequired = await c.ExecuteScalarAsync<bool>(new CommandDefinition("SELECT to_regprocedure('ifood_delivery_blocked_code(uuid,integer,boolean)') IS NOT NULL", transaction: tx, cancellationToken: ct));
+        if (!context.DeliveryRoutingRequired) return;
+        context.DeliveryRouteAccepted = await c.ExecuteScalarAsync<bool>(new CommandDefinition("""
+SELECT EXISTS(SELECT 1 FROM delivery_route_stops rs JOIN pedido p ON p.id=rs.pedido_id AND p.id_estabelecimento=rs.estabelecimento_id
+JOIN ifood_order_links l ON l.pedido_id=p.id AND l.estabelecimento_id=p.id_estabelecimento
+WHERE p.id=@PedidoId AND p.id_estabelecimento=@EstabelecimentoId AND l.zippy_delivery_enabled
+AND rs.stop_status IN('assigned','en_route') AND rs.offered_at_utc IS NULL AND p.motoboy_responsavel=rs.motoboy_id AND p.status_pedido IN(2,5))
+""", context, tx, cancellationToken: ct));
+    }
     internal static Task<int> Journal(NpgsqlConnection c,NpgsqlTransaction tx,IfoodCommandReservation item,string stage,string? code,int? status,CancellationToken ct)
         => c.ExecuteAsync(new CommandDefinition("""
 INSERT INTO ifood_command_attempts(operation_id,attempt_number,stage,code,http_status)VALUES(@OperationId,@Attempts,@Stage,@Code,@Status) ON CONFLICT DO NOTHING

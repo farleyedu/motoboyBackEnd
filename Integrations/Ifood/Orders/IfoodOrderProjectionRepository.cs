@@ -30,6 +30,8 @@ SELECT merchant_id FROM ifood_connections WHERE merchant_id=@MerchantId AND esta
 AND status='authorized' AND authorized_at_utc IS NOT NULL AND revoked_at_utc IS NULL FOR SHARE
 """, item, tx, cancellationToken: ct));
             if (authorized == null) throw new IfoodIntegrationException("IFOOD_MERCHANT_NOT_AUTHORIZED");
+            if (item.ExternalOrderId.HasValue)
+                await APIBack.Repository.PedidoQueueRepository.LockIfoodQueueAsync(connection, tx, item.EstabelecimentoId, item.MerchantId, item.ExternalOrderId.Value);
             IfoodOrderProjectionEvent? ev = null; string? reason = null; string outcome = "review";
             try { ev = IfoodOrderProjectionEvent.Parse(item); }
             catch (IfoodIntegrationException ex) { reason = ex.Code; }
@@ -148,6 +150,12 @@ VALUES(@Id,@MerchantId,@EstabelecimentoId,@ExternalOrderId,@EventId,@Code,@At,@O
                 if (outcome == "applied" && ev?.Code == "CANCELLED")
                     await connection.ExecuteAsync(new CommandDefinition("UPDATE pedido SET status_pedido=4 WHERE id=@PedidoId AND id_estabelecimento=@Store",
                         new { snapshot.PedidoId, Store = item.EstabelecimentoId }, tx, cancellationToken: ct));
+                if (outcome == "applied" && ev?.Code == "CONCLUDED" &&
+                    await connection.ExecuteScalarAsync<bool>("SELECT to_regprocedure('ifood_delivery_blocked_code(uuid,integer,boolean)') IS NOT NULL", transaction: tx))
+                    await connection.ExecuteAsync(new CommandDefinition("UPDATE pedido SET status_pedido=6 WHERE id=@PedidoId AND id_estabelecimento=@Store",
+                        new { snapshot.PedidoId, Store = item.EstabelecimentoId }, tx, cancellationToken: ct));
+                await APIBack.Repository.PedidoQueueRepository.ReconcileIfoodQueueAsync(connection, tx, item.EstabelecimentoId, snapshot.PedidoId,
+                    outcome == "applied" ? snapshot.RemoteStatus ?? "" : "");
                 var payload = JsonSerializer.Serialize(new { schemaVersion = 2, pedidoId = snapshot.PedidoId, estabelecimentoId = item.EstabelecimentoId,
                     action = "ifood_projected", revision = snapshot.Revision + 1, remoteStatus = snapshot.RemoteStatus, synchronizationState = snapshot.SynchronizationState });
                 await connection.ExecuteAsync(new CommandDefinition("""

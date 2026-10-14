@@ -10,6 +10,8 @@ public sealed class IfoodCommandContext
     public string? RemoteStatus { get; set; } public string PreparationState { get; set; } = "";
     public string SynchronizationState { get; set; } = ""; public string CancellationState { get; set; } = "";
     public bool DataIsCurrent { get; set; }
+    public bool DeliveryRoutingRequired { get; set; }
+    public bool DeliveryRouteAccepted { get; set; }
     [System.Text.Json.Serialization.JsonIgnore] public string Payload { get; set; } = "{}";
     public override string ToString() => "[contexto de comando iFood; payload omitido]";
 }
@@ -65,6 +67,7 @@ public static class IfoodCommandRules
                 if(order.PreparationStartUtc is {} ready) notBefore=ready>now?ready:now;
                 break;
             case "dispatch":
+                if (context.DeliveryRoutingRequired && !context.DeliveryRouteAccepted) throw Error("IFOOD_DELIVERY_ROUTE_NOT_ACCEPTED");
                 if(order.OrderType!="DELIVERY" || order.DeliveredBy!="MERCHANT") throw Error("IFOOD_COMMAND_DISPATCH_NOT_APPLICABLE");
                 if(context.RemoteStatus!="CONFIRMED" || context.PreparationState!="ready") throw Error("IFOOD_COMMAND_READY_EVENT_REQUIRED");
                 if(scheduled) notBefore=order.ScheduledStartUtc!.Value>now?order.ScheduledStartUtc.Value:now;

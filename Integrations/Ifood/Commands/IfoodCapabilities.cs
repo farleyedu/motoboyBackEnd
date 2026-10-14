@@ -49,6 +49,7 @@ FROM ifood_order_snapshots s JOIN ifood_order_links l USING(merchant_id,external
 WHERE l.estabelecimento_id=@Store AND l.pedido_id=@Pedido
 """, new { Store = store, Pedido = pedido }, tx, cancellationToken: ct));
         if (context == null) throw new DeliveryDomainException(404, "IFOOD_ORDER_NOT_FOUND", "Pedido iFood não encontrado.");
+        await ReadRoutingContext(c, tx, context, ct);
         var authorized = await c.ExecuteScalarAsync<bool>(new CommandDefinition("""
 SELECT EXISTS(SELECT 1 FROM ifood_connections WHERE estabelecimento_id=@EstabelecimentoId AND merchant_id=@MerchantId
 AND status='authorized' AND authorized_at_utc IS NOT NULL AND revoked_at_utc IS NULL)

@@ -588,6 +588,9 @@ SELECT rs.motoboy_id AS MotoboyId, COUNT(*)::int AS DeliveredToday
             var windowFromUtc = windowRange.FromUtc ?? fromUtc.AddDays(-7);
             var coreSchema = await PedidoColumnTypes.HasCoreSchemaAsync(connection, null);
             pedidosSql = pedidosSql.Replace("__ORIGEM__", coreSchema ? "p.origem" : "CASE WHEN p.id_ifood IS NOT NULL THEN 'ifood' ELSE 'atendente' END");
+            if (await connection.ExecuteScalarAsync<bool>("SELECT to_regprocedure('ifood_delivery_blocked_code(uuid,integer,boolean)') IS NOT NULL"))
+                pedidosSql = pedidosSql.Replace("COALESCE(p.status_pedido, 1) IN (1, 2, 5, 8)",
+                    "(COALESCE(p.status_pedido, 1) IN (1, 2, 5, 8) OR (p.status_pedido=6 AND EXISTS(SELECT 1 FROM ifood_order_links il WHERE il.pedido_id=p.id AND il.estabelecimento_id=p.id_estabelecimento) AND ifood_delivery_blocked_code(p.id_estabelecimento,p.id,FALSE) IS NULL))");
             if (await PedidoColumnTypes.HasRouteRulesSchemaAsync(connection, null))
             {
                 pedidosSql = pedidosSql.Replace("FALSE AS Locked", "COALESCE(rs.locked, FALSE) AS Locked");
@@ -600,7 +603,6 @@ SELECT rs.motoboy_id AS MotoboyId, COUNT(*)::int AS DeliveredToday
             var pedidos = (await connection.QueryAsync<OrderMapRow>(
                     pedidosSql, new { EstabelecimentoId = estabelecimentoId, WindowFromUtc = windowFromUtc }))
                 .Select(ToOrderMapDto)
-                .Where(pedido => IsInOrderWindow(pedido, orderWindow, windowRange))
                 .ToList();
             var externalIdentities = await APIBack.Integrations.Ifood.Orders.IfoodOrderReadModel.IdentitiesAsync(connection,
                 estabelecimentoId, pedidos.Where(p => p.Origem == "ifood").Select(p => p.Id).ToArray());
@@ -611,8 +613,10 @@ SELECT rs.motoboy_id AS MotoboyId, COUNT(*)::int AS DeliveredToday
                     pedido.Value = identity.OrderAmount;
                     pedido.Items = null;
                     pedido.CodigoEntrega = null;
+                    if (pedido.StatusPedido == "rascunho" && identity.CanAssignDelivery) pedido.StatusPedido = "pendente";
                     if (!identity.DataIsCurrent) { pedido.EnderecoEntrega = pedido.Region = pedido.TipoPagamento = null; }
                 }
+            pedidos = pedidos.Where(pedido => IsInOrderWindow(pedido, orderWindow, windowRange)).ToList();
             var estabelecimento = await connection.QuerySingleOrDefaultAsync<EstabelecimentoLocationRow>(
                 estabelecimentoSql, new { EstabelecimentoId = estabelecimentoId });
             // Pedido de teste (origem simulador) nao entra nas metricas reais do dia.

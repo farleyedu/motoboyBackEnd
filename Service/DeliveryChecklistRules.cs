@@ -7,6 +7,28 @@ namespace APIBack.Service;
 
 public static class DeliveryChecklistRules
 {
+    public static DeliveryChecklist BuildIfood(APIBack.Integrations.Ifood.Orders.IfoodImportedOrder order)
+    {
+        var items = new List<DeliveryChecklistItem>();
+        for (var index = 0; index < order.Items.Count; index++)
+        {
+            var product = order.Items[index];
+            var key = "ifood:" + index;
+            items.Add(new() { Key = key, Name = product.Name, Quantity = product.Quantity, Unit = product.Unit, Note = product.Observations });
+            if (product.Options.ValueKind != JsonValueKind.Array) continue;
+            var optionIndex = 0;
+            foreach (var option in product.Options.EnumerateArray())
+            {
+                var name = option.TryGetProperty("name", out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+                var quantity = option.TryGetProperty("quantity", out value) && value.ValueKind == JsonValueKind.Number && value.TryGetDecimal(out var number) ? number : (decimal?)null;
+                if (name == null || quantity == null || quantity <= 0)
+                    throw new DeliveryDomainException(409, "IFOOD_DELIVERY_REVIEW_REQUIRED", "Confira os adicionais oficiais antes da coleta.");
+                items.Add(new() { Key = key + ":option:" + optionIndex++, Name = name, ParentName = product.Name, Quantity = quantity.Value });
+            }
+        }
+        return new() { Items = items, Version = Digest(JsonSerializer.Serialize(items)), DetailsUnavailable = items.Count == 0 };
+    }
+
     public static DeliveryChecklist Build(IReadOnlyList<PedidoItemDto> products)
     {
         var items = new List<DeliveryChecklistItem>();

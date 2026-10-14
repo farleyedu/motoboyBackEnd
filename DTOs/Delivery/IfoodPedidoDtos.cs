@@ -25,6 +25,10 @@ public sealed class IfoodPedidoIdentityDto
     public string? DeliveryState { get; set; }
     public bool DataIsCurrent { get; set; } = true;
     public IfoodCommandDto? ActiveCommand { get; set; }
+    public bool CanAssignDelivery { get; set; }
+    public bool CanDepartDelivery { get; set; }
+    public string? DeliveryBlockedCode { get; set; }
+    public string? DepartureBlockedCode { get; set; }
 }
 
 public sealed class IfoodDisputeSummaryDto

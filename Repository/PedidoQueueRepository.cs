@@ -122,9 +122,14 @@ SELECT m.id
                 : null;
             await LockQueuesAsync(connection, transaction, estabelecimentoId, motoboyId, previousOwner);
 
-            var pedido = await GetPedidoAsync(connection, transaction, estabelecimentoId, pedidoId, forUpdate: true)
+            var pedido = await GetPedidoAsync(connection, transaction, estabelecimentoId, pedidoId, forUpdate: true, allowIfoodRouting: true)
                 ?? throw new DeliveryDomainException(404, "PEDIDO_NOT_FOUND", "Pedido nao encontrado neste estabelecimento.");
             var currentStatus = StatusPedidoExtensions.FromDbValue(pedido.StatusPedido) ?? StatusPedido.Pendente;
+
+            // A importação preserva Rascunho local; a elegibilidade remota já foi revalidada sob trava.
+            if (currentStatus == StatusPedido.Rascunho && await HasIfoodRoutingAsync(connection, transaction) &&
+                await connection.ExecuteScalarAsync<bool>("SELECT EXISTS(SELECT 1 FROM ifood_order_links WHERE pedido_id=@Pedido AND estabelecimento_id=@Store)", new { Pedido = pedidoId, Store = estabelecimentoId }, transaction))
+                currentStatus = StatusPedido.Pendente;
 
             // Idempotencia: repetir a mesma atribuicao nao muda nada.
             if ((currentStatus == StatusPedido.Atribuido || currentStatus == StatusPedido.EmRota || currentStatus == StatusPedido.AguardandoMotoboy)
@@ -371,6 +376,8 @@ SELECT m.id
             var current = await GetCurrentStopAsync(connection, transaction, estabelecimentoId, motoboyId, forUpdate: true)
                 ?? throw new DeliveryDomainException(409, "NO_CURRENT_DELIVERY", "Este motoboy nao possui entrega atual em rota.");
 
+            await GetPedidoAsync(connection, transaction, estabelecimentoId, current.PedidoId, forUpdate: true);
+
             if (enforceCode)
             {
                 var settings = await GetSettingsInternalAsync(connection, transaction, estabelecimentoId);
@@ -457,8 +464,9 @@ SELECT m.id
 
             // Oferta: a parada espera o aceite do motoboy, entao nunca vira entrega atual aqui.
             var offered = offerId.HasValue;
-            var stopStatus = hasCurrent || offered ? "assigned" : "en_route";
-            var newPedidoStatus = offered ? StatusPedido.AguardandoMotoboy : hasCurrent ? StatusPedido.Atribuido : StatusPedido.EmRota;
+            var waitForDispatch = await IfoodRoutingBlockAsync(connection, transaction, estabelecimentoId, pedidoId, true) != null;
+            var stopStatus = hasCurrent || offered || waitForDispatch ? "assigned" : "en_route";
+            var newPedidoStatus = offered ? StatusPedido.AguardandoMotoboy : stopStatus == "assigned" ? StatusPedido.Atribuido : StatusPedido.EmRota;
 
             var stopId = await connection.ExecuteScalarAsync<long>(@"
 INSERT INTO delivery_route_stops
@@ -552,7 +560,7 @@ RETURNING id;",
                 new { MotoboyId = motoboyId, EstabelecimentoId = estabelecimentoId }, transaction);
 
         private static async Task<PedidoRow?> GetPedidoAsync(
-            NpgsqlConnection connection, NpgsqlTransaction transaction, Guid estabelecimentoId, int pedidoId, bool forUpdate)
+            NpgsqlConnection connection, NpgsqlTransaction transaction, Guid estabelecimentoId, int pedidoId, bool forUpdate, bool allowIfoodRouting = false)
         {
             var row = await connection.QuerySingleOrDefaultAsync<PedidoRow?>(
                 "SELECT id AS Id, status_pedido AS StatusPedido, motoboy_responsavel AS MotoboyResponsavel " +
@@ -561,7 +569,11 @@ RETURNING id;",
             if (row != null && forUpdate && await connection.ExecuteScalarAsync<bool>("SELECT to_regclass('ifood_order_links') IS NOT NULL", transaction: transaction)
                 && await connection.ExecuteScalarAsync<bool>("SELECT EXISTS(SELECT 1 FROM ifood_order_links WHERE pedido_id=@Pedido AND estabelecimento_id=@Store)",
                     new { Pedido = pedidoId, Store = estabelecimentoId }, transaction))
-                throw new DeliveryDomainException(409, "IFOOD_ORDER_MANAGED_EXTERNALLY", "Este pedido deve ser operado pelos comandos oficiais do iFood.");
+            {
+                if (!allowIfoodRouting || !await HasIfoodRoutingAsync(connection, transaction))
+                    throw new DeliveryDomainException(409, "IFOOD_ORDER_MANAGED_EXTERNALLY", "Este pedido deve ser operado pelos comandos oficiais do iFood.");
+                await EnsureIfoodRoutingAsync(connection, transaction, estabelecimentoId, pedidoId, false);
+            }
             return row;
         }
 
@@ -657,6 +669,9 @@ UPDATE delivery_route_stops s
                 "ORDER BY s.position LIMIT 1 FOR UPDATE;",
                 new { MotoboyId = motoboyId, EstabelecimentoId = estabelecimentoId }, transaction);
             if (next == null) return;
+
+            // Não ultrapassa silenciosamente a primeira parada que ainda espera despacho oficial.
+            if (await IfoodRoutingBlockAsync(connection, transaction, estabelecimentoId, next.PedidoId, true) != null) return;
 
             await connection.ExecuteAsync(
                 "UPDATE delivery_route_stops SET stop_status = 'en_route', started_at_utc = NOW(), updated_at_utc = NOW() WHERE id = @Id;",
@@ -799,6 +814,14 @@ SELECT s.id AS Id, s.pedido_id AS PedidoId, s.position AS Position, s.stop_statu
 
             var settings = await GetSettingsInternalAsync(connection, transaction, estabelecimentoId, cancellationToken);
 
+            var identities = await APIBack.Integrations.Ifood.Orders.IfoodOrderReadModel.IdentitiesAsync(connection, estabelecimentoId, rows.Select(r => r.PedidoId).ToArray(), transaction);
+            var officialOrders = new Dictionary<int, APIBack.Integrations.Ifood.Orders.IfoodImportedOrder>();
+            foreach (var (pedido, identity) in identities)
+            {
+                var official = await APIBack.Integrations.Ifood.Orders.IfoodOrderReadModel.DetailsAsync(connection, estabelecimentoId, pedido, identity.CanAssignDelivery, transaction);
+                if (official != null) officialOrders[pedido] = official;
+            }
+
             var quotes = new Dictionary<long, RiderPayQuote>();
             if (await MotoboyWorkService.Available(connection, transaction, cancellationToken))
             {
@@ -820,6 +843,9 @@ SELECT s.id AS Id, s.pedido_id AS PedidoId, s.position AS Position, s.stop_statu
                 Locked = row.Locked,
                 Pedido = new DeliveryStopOrderDto
                 {
+                    Origem = identities.ContainsKey(row.PedidoId) ? "ifood" : null,
+                    IdentidadeExterna = identities.GetValueOrDefault(row.PedidoId),
+                    PedidoIfood = officialOrders.GetValueOrDefault(row.PedidoId),
                     Id = row.PedidoId,
                     NomeCliente = row.NomeCliente,
                     TelefoneCliente = row.TelefoneCliente,
@@ -833,14 +859,14 @@ SELECT s.id AS Id, s.pedido_id AS PedidoId, s.position AS Position, s.stop_statu
                     Latitude = row.Latitude,
                     Longitude = row.Longitude,
                     Items = row.Items,
-                    Value = row.Value,
+                    Value = identities.TryGetValue(row.PedidoId, out var identity) ? identity.OrderAmount : row.Value,
                     TipoPagamento = row.TipoPagamento,
                     StatusPagamento = row.StatusPagamento,
                     Troco = row.Troco,
                     Observacoes = row.Observacoes,
                     PrevisaoEntrega = DeliveryRules.ParseStoredDateTime(
                         row.PrevisaoEntregaRaw, DeliveryRules.ParseStoredDateTime(row.DataPedidoRaw)),
-                    RequerCodigoEntrega = settings.RequireDeliveryCode && row.HasDeliveryCode
+                    RequerCodigoEntrega = !identities.ContainsKey(row.PedidoId) && settings.RequireDeliveryCode && row.HasDeliveryCode
                 }
             };
 

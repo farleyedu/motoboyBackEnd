@@ -42,6 +42,10 @@ namespace APIBack.Repository
                 ?? throw new DeliveryDomainException(409, "NO_CURRENT_DELIVERY", "Voce nao tem entrega atual em rota.");
 
             DeliveryArrivalRules.EnsureExpectedPedido(expectedPedidoId, current.PedidoId);
+            await EnsureIfoodRoutingAsync(connection, transaction, estabelecimentoId, current.PedidoId, true);
+            if (column == "picked_up_at_utc" && await HasIfoodRoutingAsync(connection, transaction) &&
+                await connection.ExecuteScalarAsync<bool>("SELECT EXISTS(SELECT 1 FROM ifood_order_links WHERE pedido_id=@Pedido AND estabelecimento_id=@Store)", new { Pedido = current.PedidoId, Store = estabelecimentoId }, transaction))
+                throw new DeliveryDomainException(409, "IFOOD_PICKUP_CHECKLIST_REQUIRED", "Confira os itens oficiais pelo fluxo de coleta versionado.");
             if (column == "arrived_at_utc") DeliveryArrivalRules.EnsurePickedUp(current.PickedUpAtUtc);
 
             var alreadyMarked = column == "picked_up_at_utc" ? current.PickedUpAtUtc.HasValue : current.ArrivedAtUtc.HasValue;

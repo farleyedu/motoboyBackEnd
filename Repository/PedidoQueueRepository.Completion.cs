@@ -21,7 +21,10 @@ public sealed partial class PedidoQueueRepository
         public DateTimeOffset? PickedUp { get; set; }
         public DateTimeOffset? Arrived { get; set; }
     }
-    private static Task<CompletionOrder?> ReadCompletionOrder(NpgsqlConnection c, NpgsqlTransaction tx, Guid store, int rider, int pedido, CancellationToken ct) => c.QuerySingleOrDefaultAsync<CompletionOrder>(new CommandDefinition($"""
+    private static async Task<CompletionOrder?> ReadCompletionOrder(NpgsqlConnection c, NpgsqlTransaction tx, Guid store, int rider, int pedido, CancellationToken ct)
+    {
+        await GetPedidoAsync(c, tx, store, pedido, forUpdate: true);
+        return await c.QuerySingleOrDefaultAsync<CompletionOrder>(new CommandDefinition($"""
 SELECT s.id AS StopId, p.id AS PedidoId,p.nome_cliente AS NomeCliente,
  CASE WHEN p.value::text ~ {NumericPattern} THEN p.value::text::numeric END AS Total,
  CASE WHEN LOWER(p.tipo_pagamento::text)='pagoapp' THEN 'pago' ELSE p.status_pagamento::text END AS PaymentStatus,p.codigo_entrega::text AS Code,
@@ -32,6 +35,7 @@ SELECT s.id AS StopId, p.id AS PedidoId,p.nome_cliente AS NomeCliente,
  WHERE s.estabelecimento_id=@Store AND s.motoboy_id=@Rider AND s.pedido_id=@Pedido AND s.stop_status='en_route'
  FOR UPDATE OF s,p
 """, new { Store=store,Rider=rider,Pedido=pedido }, tx, commandTimeout:10,cancellationToken:ct));
+    }
     private static CompletionOrder RequireCompletionOrder(CompletionOrder? row, bool requireMilestones = true)
     {
         if (row == null) throw new DeliveryDomainException(409,"CURRENT_DELIVERY_CHANGED","Este pedido não é mais sua entrega atual. Confira a rota.");

@@ -87,6 +87,9 @@ namespace APIBack.DTOs.Delivery
     /// </summary>
     public sealed class DeliveryStopOrderDto
     {
+        public string? Origem { get; set; }
+        public IfoodPedidoIdentityDto? IdentidadeExterna { get; set; }
+        public APIBack.Integrations.Ifood.Orders.IfoodImportedOrder? PedidoIfood { get; set; }
         public int Id { get; set; }
         public string? NomeCliente { get; set; }
         public string? TelefoneCliente { get; set; }

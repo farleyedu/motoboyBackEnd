@@ -175,6 +175,8 @@ SELECT s.id AS Id, s.pedido_id AS PedidoId
             }
 
             var eligibility = await GetEligibilityAsync(connection, transaction, motoboyId, estabelecimentoId);
+            foreach (var stop in stops)
+                await EnsureIfoodRoutingAsync(connection, transaction, estabelecimentoId, stop.PedidoId, false);
             if (acceptedPedidoIds != null)
             {
                 if (expectedVersion != currentVersion || acceptedPedidoIds.Count is < 1 or > 100 || acceptedPedidoIds.Distinct().Count() != acceptedPedidoIds.Count || acceptedPedidoIds.Any(id => !stops.Any(s => s.PedidoId == id)))

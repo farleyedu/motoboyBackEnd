@@ -22,6 +22,8 @@ public sealed partial class PedidoQueueRepository
         DeliveryPickupRules.ValidateSnapshot(request, version, acceptedIds, alreadyPickedUp);
         if (!alreadyPickedUp)
         {
+            foreach (var id in request.PedidoIds)
+                await EnsureIfoodRoutingAsync(connection, transaction, estabelecimentoId, id, true);
             if (request.Checklists != null && (request.Checklists.Count != request.PedidoIds.Count || request.Checklists.Select(c => c.PedidoId).Distinct().Count() != request.Checklists.Count))
                 throw new DeliveryDomainException(422, "CHECKLIST_INVALID", "Confira os itens de cada pedido da retirada.");
             foreach (var id in request.PedidoIds)
