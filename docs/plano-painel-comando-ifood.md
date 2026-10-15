@@ -12,6 +12,7 @@ O comando mostra entrega própria, logística iFood, retirada e consumo no local
 - Estado: situação oficial, preparo, sincronização e estado local separados. A etapa operacional alimenta cartão, filtros e contadores; não grava status.
 - Mapa: só marcadores com coordenadas válidas e modalidade DELIVERY com dados atuais. Retirada/consumo continuam na lista sem marcador.
 - Ações: disponíveis destacadas, demais desabilitadas e justificadas. Permissão para ver não concede permissão para operar.
+- Peso do painel: o detalhe iFood é carregado sob demanda (`next/dynamic`, sem SSR). A árvore de Pedidos não entra no grafo de importação de quem não abre um pedido iFood.
 - DINE_IN: visível; ações dependentes da confirmação oficial de suporte ficam explicitamente bloqueadas. Não presumir conclusão por código para essa modalidade.
 - Configuração: credenciais e manutenção só na Gestão/superadmin; restaurante vê conexão e situação. Ativar a conexão prepara a operação completa; configurações existentes pausadas exigem aplicar o preset e salvar. Kill-switches são preservados. Nenhuma configuração de produção foi ativada nesta entrega.
 - Pedidos abertos fora da janela continuam visíveis quando `AlwaysShowOpenOrders` estiver ativo. Terminais usam timestamps oficiais/vínculo confiável; sem horário não ficam eternamente na lista.

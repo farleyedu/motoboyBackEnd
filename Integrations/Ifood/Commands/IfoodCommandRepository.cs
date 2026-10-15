@@ -201,14 +201,6 @@ WHERE s.merchant_id=@Merchant AND s.external_order_id=@Order AND s.estabelecimen
 SELECT EXISTS(SELECT 1 FROM ifood_events_inbox WHERE merchant_id=@MerchantId
 AND external_order_id=@ExternalOrderId AND estabelecimento_id=@EstabelecimentoId AND state IN('review','failed'))
 """, context, tx, cancellationToken: ct));
-        context.DeliveryRoutingRequired = await c.ExecuteScalarAsync<bool>(new CommandDefinition("SELECT to_regprocedure('ifood_delivery_blocked_code(uuid,integer,boolean)') IS NOT NULL", transaction: tx, cancellationToken: ct));
-        if (!context.DeliveryRoutingRequired) return;
-        context.DeliveryRouteAccepted = await c.ExecuteScalarAsync<bool>(new CommandDefinition("""
-SELECT EXISTS(SELECT 1 FROM delivery_route_stops rs JOIN pedido p ON p.id=rs.pedido_id AND p.id_estabelecimento=rs.estabelecimento_id
-JOIN ifood_order_links l ON l.pedido_id=p.id AND l.estabelecimento_id=p.id_estabelecimento
-WHERE p.id=@PedidoId AND p.id_estabelecimento=@EstabelecimentoId AND l.zippy_delivery_enabled
-AND rs.stop_status IN('assigned','en_route') AND rs.offered_at_utc IS NULL AND p.motoboy_responsavel=rs.motoboy_id AND p.status_pedido IN(2,5))
-""", context, tx, cancellationToken: ct));
     }
     internal static Task<int> Journal(NpgsqlConnection c,NpgsqlTransaction tx,IfoodCommandReservation item,string stage,string? code,int? status,CancellationToken ct)
         => c.ExecuteAsync(new CommandDefinition("""

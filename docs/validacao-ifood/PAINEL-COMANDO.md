@@ -50,11 +50,33 @@ Mapa: só recebe marcador o pedido com coordenada válida, modalidade `DELIVERY`
 
 ## Resultados locais
 
-RESULTADOS_PENDENTES
+Executados em 15/10/2026, nesta máquina, com PostgreSQL de teste local em `127.0.0.1:55496` (`TEST_DELIVERY_DATABASE` definido somente no processo de teste; schemas das fixtures, removidos ao final).
+
+| Validação | Resultado |
+|---|---|
+| Backend `dotnet build` | OK (exit 0) |
+| Backend `dotnet test --filter ~Ifood` | **349 passaram, 0 falharam, 0 skipped** (6 m 23 s). Nenhum teste de banco foi pulado. `command-panel-final-review.trx` |
+| Painel `npm run typecheck` | OK (exit 0) |
+| Painel `npm run lint` | OK (exit 0); apenas avisos pré-existentes de `react-hooks/exhaustive-deps` e `no-img-element`, nenhum nos arquivos deste lote |
+| Painel `npm run build` | OK (exit 0), "Compiled successfully", 179 páginas geradas |
+| Painel `npm run test` | 78 arquivos / 780 testes. 77 arquivos OK; 2 falhas de tempo em `conversasPanel.test.tsx`, que passa 19/19 isolado (ver abaixo) |
+| `DeliveryScreen.smoke.test.tsx` isolado | 3/3 OK, 6,8 s |
+| `conversasPanel.test.tsx` isolado | 19/19 OK, 16,2 s |
+
+Cobertura dos critérios do plano pelos testes novos: visibilidade sem rota/endereço e sem mutar o status local, e 409 oficial na atribuição por API para DELIVERY/TAKEOUT/DINE_IN (`CommandVisibilityDoesNotRequireRoutingOrAddressAndDoesNotMutateLocalStatus`); janela pelo estado oficial sem promover rascunho (`WindowRecognizesOfficialOpenStateWithoutPromotingDraft`); DDCR informativo sem revisão (`DeliveryCodeRequestIsInformationalAndDoesNotPutOrderInReview`); recuperação por CFM sem PLC com reaplicação antes de liberar comandos (`RecoveryImportsWithoutPlacedEventAndReplaysConfirmationBeforeEnablingCommands`); pendência independente não impede aceite mas conflito de evento impede (`IndependentDataIssueDoesNotPreventAcceptanceButEventConflictDoes`); recuperado não aceita de novo (`RecoveredUnknownStateCannotBeAcceptedAgain`); reconsulta auditada sem inventar estado e com rollback recusado (`RefreshOfficialDetailsRepairsDataWithoutInventingStatusAndIsAudited`); disputa sobrevive ao pedido terminal e respeita a loja (`DisputeAlertSurvivesTerminalOrderAndRemainsScopedToStore`); etapa única em cartão/filtros/contadores e pino com número oficial (`useOrderFilters.test.tsx`, `orderPin.test.ts`).
+
+### Dois ajustes feitos na revisão
+
+1. **Regressão de carregamento corrigida.** `OrderDetailPanel` importava `IfoodCommandOrder` estaticamente, trazendo a árvore inteira de Pedidos (operação, itens, comanda, eventos, disputas, MUI) para o grafo de importação do painel de comando de todo operador, inclusive quem não usa iFood. O smoke do `DeliveryScreen` passou de ~7 s para mais de 30 s e estourou o limite. Passou a `next/dynamic` com `ssr: false`, idioma já usado no repositório: o detalhe só existe no clique de um pedido iFood e não precisa de servidor. Com isso o smoke voltou a 6,8 s.
+2. **Projeção normalizava o payload duas vezes** no mesmo evento de ciclo de vida. Passou a reaproveitar uma única normalização (`official`), sem mudança de comportamento.
+
+### Fragilidade pré-existente, não corrigida aqui
+
+`conversasPanel.test.tsx` depende do tempo de carga: o primeiro teste importa o painel de conversas inteiro e leva ~16 s isolado, enquanto um teste irmão do mesmo arquivo corre no limite padrão de 5 s. Em suíte completa, com a máquina carregada, os dois estouram. As duas execuções completas desta sessão falharam em arquivos diferentes (primeiro o smoke, depois esse), e o arquivo passa 19/19 isolado — assinatura de carga, não de defeito. O arquivo não foi tocado por este lote e não importa nada do grafo iFood (`CommandListPanel`, `OrderDetailPanel`, `IfoodAlerts` e `IfoodCommandOrder` não aparecem em `features/delivery/chat/`). A correção natural é o mesmo `vi.setConfig({ testTimeout })` que o smoke já usa, mas isso é decisão do dono daquele teste e ficou fora deste lote.
 
 ## Limites e pendências
 
 - Nada aqui é evidência de homologação. O roteiro de sandbox precisa ser repetido sobre esta versão: T-01, T-03 a T-07, T-14 a T-18, T-20, T-23 a T-28, T-32 a T-35 e T-38. T-02/T-31 e a migration nova exigem implantação autorizada; T-08 a T-13, T-29 e T-30 dependem do app e do fluxo físico.
 - 6485 e 8999 não foram consultados: exigiria chamada autenticada ao banco de produção, que não foi feita nesta sessão. O caminho é `getIfoodOrderEvents` pelo ID interno (ou a consulta de leitura em `docs/diagnostico-pedidos-ifood.sql`) e, conforme o `outcome`/`reasonCode`, reprocessar o evento ou conciliar com anotação. A hipótese documentada é o conflito de código do DDCR; o endereço fictício não é a causa provável e não deve ser assumido.
 - Revisão visual e de design das telas novas (lista com os novos chips, avisos no painel esquerdo, detalhe iFood no comando) em tema claro/escuro e largura de celular continua pendente, como nas demais telas do lote iFood.
-- Sem commit, push, deploy, publicação, ativação de loja ou alteração de flags de produção. A API local não foi apontada para o banco de produção; a integração de banco usou PostgreSQL de teste local em schemas isolados.
+- O código foi commitado em 15/10/2026 — `7ea3a30` no painel e `6308e0e` no backend, ambos "ajuste ifood integração" — enquanto estas validações rodavam. Os commits contêm a versão validada aqui, inclusive os dois ajustes da revisão. **Não** houve push, deploy, migration aplicada em produção, publicação, ativação de loja ou alteração de flags. A API local não foi apontada para o banco de produção; a integração de banco usou PostgreSQL de teste local em schemas isolados.

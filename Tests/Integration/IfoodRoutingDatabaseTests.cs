@@ -225,21 +225,18 @@ INSERT INTO delivery_settings(estabelecimento_id) VALUES(@StoreA);
     }
 
     [DeliveryDatabaseFact]
-    public async Task IfoodRouting_DispatchRequiresAcceptedLocalRouteAndWorkerRevalidatesEnablement()
+    public async Task IfoodRouting_DispatchDoesNotDependOnTheLocalRoute()
     {
+        // A loja despacha quando quiser: atribuir motoboy Zippy continua opcional e nao condiciona o dispatch.
         await using var db = await RoutingDatabase(); await EnableRouting(db);
         await Project(db, await ProjectionEvent(db, "CFM")); await Project(db, await ProjectionEvent(db, "RTP", 2));
-        var commands = CommandRepo(db); var queue = new PedidoQueueRepository(db.Source);
+        var commands = CommandRepo(db);
         var request = CommandRequest("dispatch", 3);
-        Assert.Equal("IFOOD_DELIVERY_ROUTE_NOT_ACCEPTED", (await Assert.ThrowsAsync<DeliveryDomainException>(() => commands.EnqueueAsync(db.StoreA, 1, 100, request))).Code);
-        await queue.AssignAsync(db.StoreA, 1, 1, 100);
-        Assert.Equal("IFOOD_DELIVERY_ROUTE_NOT_ACCEPTED", (await commands.CapabilitiesAsync(db.StoreA, 100)).Actions.Single(a => a.Command == "dispatch").BlockedCode);
-        await queue.AcceptOfferAsync(db.StoreA, 1);
         Assert.True((await commands.CapabilitiesAsync(db.StoreA, 100)).Actions.Single(a => a.Command == "dispatch").Available);
         await commands.EnqueueAsync(db.StoreA, 1, 100, request);
         var claimed = await commands.ClaimAsync(); Assert.NotNull(claimed);
         await db.Execute("UPDATE ifood_order_links SET zippy_delivery_enabled=FALSE");
-        Assert.Equal("IFOOD_DELIVERY_ROUTE_NOT_ACCEPTED", (await Assert.ThrowsAsync<DeliveryDomainException>(() => commands.MarkSendingAsync(claimed!))).Code);
-        Assert.True(await db.Scalar<bool>("SELECT send_started_at_utc IS NULL FROM ifood_outbound_commands"));
+        await commands.MarkSendingAsync(claimed!);
+        Assert.True(await db.Scalar<bool>("SELECT send_started_at_utc IS NOT NULL FROM ifood_outbound_commands"));
     }
 }
