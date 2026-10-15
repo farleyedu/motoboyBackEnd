@@ -10,6 +10,7 @@ public sealed class IfoodCommandContext
     public string? RemoteStatus { get; set; } public string PreparationState { get; set; } = "";
     public string SynchronizationState { get; set; } = ""; public string CancellationState { get; set; } = "";
     public bool DataIsCurrent { get; set; }
+    public bool HasReviewEvents { get; set; }
     public bool DeliveryRoutingRequired { get; set; }
     public bool DeliveryRouteAccepted { get; set; }
     [System.Text.Json.Serialization.JsonIgnore] public string Payload { get; set; } = "{}";
@@ -32,10 +33,18 @@ public static class IfoodCommandRules
         if(!options.CommandMerchants.Any(m=>m.MerchantId==context.MerchantId && m.EstabelecimentoId==context.EstabelecimentoId)) throw Error("IFOOD_COMMAND_MERCHANT_NOT_ENABLED");
         if(revision!=context.Revision) throw Error("IFOOD_COMMAND_STALE_REVISION");
         if(context.RemoteStatus is "CANCELLED" or "CONCLUDED") throw Error("IFOOD_ORDER_TERMINAL");
-        if(!context.DataIsCurrent || context.SynchronizationState != "synced") throw Error("IFOOD_COMMAND_REQUIRES_REVIEW");
-        if(context.CancellationState=="requested") throw Error("IFOOD_CANCELLATION_PENDING");
         var order=IfoodOrderNormalizer.Normalize(context.Payload,context.MerchantId,context.ExternalOrderId);
-        if(order.RequiresReview || order.Category!="FOOD") throw Error("IFOOD_COMMAND_REQUIRES_REVIEW");
+        if (order.OrderType == "DINE_IN") throw Error(command == "dispatch" ? "IFOOD_COMMAND_DISPATCH_NOT_APPLICABLE" : "IFOOD_COMMAND_MODALITY_NOT_SUPPORTED");
+        if (order.ImportedByRecovery) throw Error("IFOOD_RECOVERED_ORDER");
+        // Falta de localização e divergência financeira não impedem aceite/preparo.
+        // Conflitos de eventos, recuperação e alterações incompletas continuam bloqueando.
+        var independentReview = order.ReviewReasons.Count > 0 && order.ReviewReasons.All(reason =>
+            reason is "IFOOD_PAYMENT_DATA_REVIEW" or "IFOOD_DELIVERY_LOCATION_REQUIRED");
+        if (!context.DataIsCurrent || context.HasReviewEvents ||
+            (context.SynchronizationState != "synced" && !(context.SynchronizationState == "review" && independentReview)) ||
+            (order.RequiresReview && !independentReview) || order.Category != "FOOD") throw Error("IFOOD_COMMAND_REQUIRES_REVIEW");
+        if(context.CancellationState=="requested") throw Error("IFOOD_CANCELLATION_PENDING");
+        if (command == "dispatch" && order.ReviewReasons.Contains("IFOOD_DELIVERY_LOCATION_REQUIRED")) throw Error("IFOOD_DELIVERY_LOCATION_REQUIRED");
         using(var document=System.Text.Json.JsonDocument.Parse(context.Payload))
         {
             var root=document.RootElement;

@@ -17,7 +17,7 @@ public sealed class IfoodOrderImportRepository
     private readonly NpgsqlDataSource _source;
     public IfoodOrderImportRepository(NpgsqlDataSource source) => _source = source;
 
-    public Task<IfoodDetailsReservation?> ReserveDetailsAsync(IfoodInboxReservation item, int seconds, CancellationToken ct) => Guard(async () =>
+    public Task<IfoodDetailsReservation?> ReserveDetailsAsync(IfoodInboxReservation item, int seconds, CancellationToken ct, bool force = false) => Guard(async () =>
     {
         if (item.ExternalOrderId is null || item.ExternalOrderId == Guid.Empty) throw new IfoodIntegrationException("IFOOD_ORDER_MISSING_ID");
         await using var connection = await _source.OpenConnectionAsync(ct);
@@ -25,12 +25,13 @@ public sealed class IfoodOrderImportRepository
         var reservation = await connection.QuerySingleOrDefaultAsync<IfoodDetailsReservation>(new CommandDefinition("""
 INSERT INTO ifood_order_details_cache(merchant_id,external_order_id,estabelecimento_id,lease_id,lease_until_utc)
 VALUES(@MerchantId,@ExternalOrderId,@EstabelecimentoId,@Lease,NOW()+make_interval(secs=>@Seconds))
-ON CONFLICT(merchant_id,external_order_id) DO UPDATE SET lease_id=EXCLUDED.lease_id,lease_until_utc=EXCLUDED.lease_until_utc
-WHERE ifood_order_details_cache.estabelecimento_id=EXCLUDED.estabelecimento_id AND ifood_order_details_cache.payload IS NULL
+ON CONFLICT(merchant_id,external_order_id) DO UPDATE SET lease_id=EXCLUDED.lease_id,lease_until_utc=EXCLUDED.lease_until_utc,payload=NULL
+WHERE ifood_order_details_cache.estabelecimento_id=EXCLUDED.estabelecimento_id
+AND (ifood_order_details_cache.payload IS NULL OR (@Force AND ifood_order_details_cache.fetched_at_utc<NOW()-INTERVAL '15 seconds'))
 AND ifood_order_details_cache.next_fetch_at_utc<=NOW()
 AND (ifood_order_details_cache.lease_id IS NULL OR ifood_order_details_cache.lease_until_utc<=NOW())
 RETURNING merchant_id AS MerchantId,external_order_id AS ExternalOrderId,estabelecimento_id AS EstabelecimentoId,lease_id AS LeaseId,NULL::text AS PayloadJson
-""", new { item.MerchantId, item.ExternalOrderId, item.EstabelecimentoId, Lease = Guid.NewGuid(), Seconds = seconds }, cancellationToken: ct));
+""", new { item.MerchantId, item.ExternalOrderId, item.EstabelecimentoId, Lease = Guid.NewGuid(), Seconds = seconds, Force = force }, cancellationToken: ct));
         if (reservation != null) return reservation;
         return await connection.QuerySingleOrDefaultAsync<IfoodDetailsReservation>(new CommandDefinition("""
 SELECT merchant_id AS MerchantId,external_order_id AS ExternalOrderId,estabelecimento_id AS EstabelecimentoId,
@@ -79,6 +80,7 @@ WHERE merchant_id=@MerchantId AND external_order_id=@ExternalOrderId AND estabel
 
     public Task<int> ImportAsync(IfoodInboxReservation item, IfoodImportedOrder order, CancellationToken ct = default) => Guard(async () =>
     {
+        var recovered = item.EventCode is not ("PLC" or "PLACED");
         if (item.ExternalOrderId != order.ExternalOrderId || item.MerchantId != order.MerchantId)
             throw new IfoodIntegrationException("IFOOD_ORDER_IDENTITY_MISMATCH");
         await using var connection = await _source.OpenConnectionAsync(ct);
@@ -171,8 +173,9 @@ currency,order_amount,prepaid_amount,pending_amount,scheduled_start_utc,schedule
 VALUES(@MerchantId,@ExternalOrderId,@EstabelecimentoId,@OrderType,@DeliveredBy,'PLACED','awaiting_acceptance',@Sync,
 @Currency,@OrderAmount,@PrepaidAmount,@PendingAmount,@Start,@End,CAST(@PayloadJson AS jsonb))
 """, new { item.MerchantId, item.ExternalOrderId, item.EstabelecimentoId, order.OrderType, order.DeliveredBy,
-                Sync = order.RequiresReview ? "review" : "synced", order.Currency, order.OrderAmount, order.PrepaidAmount, order.PendingAmount,
-                Start = validSchedule ? order.ScheduledStartUtc : null, End = validSchedule ? order.ScheduledEndUtc : null, order.PayloadJson }, transaction, cancellationToken: ct));
+                Sync = order.RequiresReview ? "review" : recovered ? "pending" : "synced", order.Currency, order.OrderAmount, order.PrepaidAmount, order.PendingAmount,
+                Start = validSchedule ? order.ScheduledStartUtc : null, End = validSchedule ? order.ScheduledEndUtc : null,
+                PayloadJson = recovered ? RecoveryPayload(order.PayloadJson) : order.PayloadJson }, transaction, cancellationToken: ct));
             var lines = order.Items.Select((line, index) => new { ordinal = index, external_item_id = line.ExternalItemId,
                 name = line.Name, quantity = line.Quantity, unit = line.Unit, unit_price = line.UnitPrice, price = line.Price,
                 options_price = line.OptionsPrice, total_price = line.TotalPrice, observations = line.Observations, options = line.Options });
@@ -192,13 +195,23 @@ VALUES(@Event,@Name,@Target,@Store,NULL,NULL,NULL,1,CAST(@Payload AS jsonb),NOW(
         }
         // Fence final usa relógio real mesmo dentro de transação longa; falha desfaz também pedido/outbox.
         var completed = await connection.ExecuteAsync(new CommandDefinition("""
-UPDATE ifood_events_inbox SET state='processed',processed_at_utc=NOW(),lease_id=NULL,lease_until_utc=NULL,last_error_code=NULL
+UPDATE ifood_events_inbox SET state=CASE WHEN @Recovered THEN 'queued' ELSE 'processed' END,
+processed_at_utc=CASE WHEN @Recovered THEN NULL ELSE NOW() END,lease_id=NULL,lease_until_utc=NULL,
+last_error_code=CASE WHEN @Recovered THEN 'IFOOD_RECOVERED_ORDER' ELSE NULL END,
+next_attempt_at_utc=NOW(),attempts=CASE WHEN @Recovered THEN 0 ELSE attempts END
 WHERE id=@Id AND merchant_id=@MerchantId AND estabelecimento_id=@EstabelecimentoId AND state='processing' AND lease_id=@LeaseId AND lease_until_utc>clock_timestamp()
-""", item, transaction, cancellationToken: ct));
+""", new { item.Id, item.MerchantId, item.EstabelecimentoId, item.LeaseId, Recovered = recovered }, transaction, cancellationToken: ct));
         if (completed != 1) throw new IfoodIntegrationException("IFOOD_EVENT_LEASE_LOST", retryable: true);
         await transaction.CommitAsync(ct);
         return pedido;
     });
+
+    private static string RecoveryPayload(string json)
+    {
+        var payload = System.Text.Json.Nodes.JsonNode.Parse(json)!.AsObject();
+        payload["zippyRecovery"] = true;
+        return payload.ToJsonString();
+    }
 
     private static async Task EnsureAuthorizedAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, Guid store, Guid merchant, CancellationToken ct)
     {

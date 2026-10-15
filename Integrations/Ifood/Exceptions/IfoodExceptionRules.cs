@@ -35,7 +35,10 @@ public static class IfoodExceptionRules
         if(!IsKnown(command) || !options.AllowedExceptionActions.Contains(command)) throw Error("IFOOD_EXCEPTION_ACTION_NOT_ENABLED");
         if(!options.ExceptionMerchants.Any(m=>m.MerchantId==order.MerchantId && m.EstabelecimentoId==order.EstabelecimentoId)) throw Error("IFOOD_EXCEPTION_MERCHANT_NOT_ENABLED");
         if(order.Revision!=revision) throw Error("IFOOD_COMMAND_STALE_REVISION");
-        if(IfoodOrderNormalizer.Normalize(order.Payload,order.MerchantId,order.ExternalOrderId).Category!="FOOD") throw Error("IFOOD_EXCEPTION_CATEGORY_NOT_SUPPORTED");
+        var official = IfoodOrderNormalizer.Normalize(order.Payload,order.MerchantId,order.ExternalOrderId);
+        if(official.Category!="FOOD") throw Error("IFOOD_EXCEPTION_CATEGORY_NOT_SUPPORTED");
+        if(official.OrderType=="DINE_IN") throw Error("IFOOD_COMMAND_MODALITY_NOT_SUPPORTED");
+        if(official.ImportedByRecovery) throw Error("IFOOD_RECOVERED_ORDER");
     }
     public static void Cancellation(IfoodCommandContext order)
     {

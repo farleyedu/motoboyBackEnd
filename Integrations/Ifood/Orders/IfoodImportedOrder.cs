@@ -32,6 +32,8 @@ public sealed class IfoodImportedOrder
     public string? Currency { get; init; }
     public string PaymentState { get; init; } = "requer_revisao";
     public bool RequiresReview { get; init; }
+    public bool ImportedByRecovery { get; init; }
+    public IReadOnlyList<string> ReviewReasons { get; init; } = Array.Empty<string>();
     [JsonIgnore] public bool CollectionAllowed { get; init; } = true;
     public decimal? AmountToCollect => !CollectionAllowed || PaymentState == "requer_revisao" ? null : PendingAmount;
     public string? Observations { get; init; }
@@ -89,14 +91,15 @@ public static class IfoodOrderNormalizer
         var timing = Text(root, "orderTiming"); var carrier = Text(delivery, "deliveredBy"); var category = Text(root, "category");
         var start = Date(schedule, "deliveryDateTimeStart"); var end = Date(schedule, "deliveryDateTimeEnd");
         var preparation = Date(root, "preparationStartDateTime") ?? Date(schedule, "preparationStartDateTime");
-        var review = type is not ("DELIVERY" or "TAKEOUT" or "DINE_IN") || category != "FOOD" ||
-            timing is not ("IMMEDIATE" or "SCHEDULED") ||
-            (type == "DELIVERY" && carrier is not ("MERCHANT" or "IFOOD")) ||
-            (timing == "SCHEDULED" && (start == null || end == null || end < start)) ||
+        var modalityReview = type is not ("DELIVERY" or "TAKEOUT" or "DINE_IN") || category != "FOOD" ||
+            timing is not ("IMMEDIATE" or "SCHEDULED") || (type == "DELIVERY" && carrier is not ("MERCHANT" or "IFOOD"));
+        var scheduleReview = (timing == "SCHEDULED" && (start == null || end == null || end < start)) ||
             (alternateSchedule.ValueKind == JsonValueKind.Object && Field(root,"schedule").ValueKind == JsonValueKind.Object &&
                 (Date(alternateSchedule,"deliveryDateTimeStart") != start || Date(alternateSchedule,"deliveryDateTimeEnd") != end)) ||
             (Date(alternateSchedule,"preparationStartDateTime") is {} alternatePreparation && alternatePreparation != preparation) ||
             (Date(root,"preparationStartDateTime") is {} primaryPreparation && Date(schedule,"preparationStartDateTime") is {} schedulePreparation && primaryPreparation != schedulePreparation);
+        var review = modalityReview || scheduleReview;
+        var itemReview = false;
         var items = new List<IfoodImportedItem>();
         var itemArray = Field(root, "items");
         if (itemArray.ValueKind != JsonValueKind.Array || itemArray.GetArrayLength() == 0) throw Invalid("IFOOD_ORDER_INVALID_ITEMS");
@@ -106,15 +109,15 @@ public static class IfoodOrderNormalizer
             var quantity = Number(item, "quantity") ?? throw Invalid("IFOOD_ORDER_INVALID_ITEMS");
             if (quantity <= 0) throw Invalid("IFOOD_ORDER_INVALID_ITEMS");
             var options = Field(item, "options");
-            if (options.ValueKind is not (JsonValueKind.Array or JsonValueKind.Undefined or JsonValueKind.Null)) review = true;
+            if (options.ValueKind is not (JsonValueKind.Array or JsonValueKind.Undefined or JsonValueKind.Null)) itemReview = true;
             if (options.ValueKind == JsonValueKind.Array)
                 foreach (var option in options.EnumerateArray())
                 {
-                    if (Text(option, "name") == null || Number(option, "quantity") is not > 0) review = true;
+                    if (Text(option, "name") == null || Number(option, "quantity") is not > 0) itemReview = true;
                     _ = Money(option, "price"); _ = Number(option, "unitPrice");
                 }
             var itemTotal = Money(item, "totalPrice"); var unitPrice = Number(item, "unitPrice");
-            if (itemTotal == null || unitPrice == null) review = true;
+            if (itemTotal == null || unitPrice == null) itemReview = true;
             items.Add(new(Text(item, "id"), name, quantity, Text(item, "unit"), unitPrice, Money(item, "price"),
                 Money(item, "optionsPrice"), itemTotal, Text(item, "observations"), CloneOr(options, "[]")));
         }
@@ -145,13 +148,22 @@ public static class IfoodOrderNormalizer
         }
         var latitude = Coordinate(coordinates, "latitude", 90);
         var longitude = Coordinate(coordinates, "longitude", 180);
+        var reasons = new List<string>();
+        if (modalityReview) reasons.Add("IFOOD_ORDER_MODALITY_REVIEW");
+        if (scheduleReview) reasons.Add("IFOOD_ORDER_SCHEDULE_REVIEW");
+        if (itemReview) { review = true; reasons.Add("IFOOD_ORDER_ITEMS_REVIEW"); }
+        if (methodArray.ValueKind != JsonValueKind.Array && !paymentReview) reasons.Add("IFOOD_PAYMENT_DATA_REVIEW");
+        if (paymentReview) reasons.Add("IFOOD_PAYMENT_DATA_REVIEW");
         if (type == "DELIVERY" && carrier == "MERCHANT" &&
-            (Text(address, "streetName") == null || Text(address, "streetNumber") == null || Text(address, "city") == null || latitude == null || longitude == null)) review = true;
+            (Text(address, "streetName") == null || Text(address, "streetNumber") == null || Text(address, "city") == null || latitude == null || longitude == null))
+        { review = true; reasons.Add("IFOOD_DELIVERY_LOCATION_REQUIRED"); }
         return new IfoodImportedOrder
         {
             ExternalOrderId = expectedOrder, MerchantId = expectedMerchant, DisplayNumber = Text(root, "displayId"), CollectionAllowed = collectionAllowed,
             OrderType = type, DeliveredBy = carrier, OrderTiming = timing, Category = category,
             IsTest = Field(root, "isTest").ValueKind is JsonValueKind.True or JsonValueKind.False ? Field(root, "isTest").GetBoolean() : null,
+            ImportedByRecovery = Field(root, "zippyRecovery").ValueKind == JsonValueKind.True,
+            ReviewReasons = reasons,
             CreatedAtUtc = Date(root, "createdAt") ?? throw Invalid("IFOOD_ORDER_INVALID_DATE"),
             PreparationStartUtc = preparation, ScheduledStartUtc = start, ScheduledEndUtc = end,
             CustomerName = Text(customer, "name"), ContactNumber = Text(phone, "number"), Localizer = Text(phone, "localizer"),

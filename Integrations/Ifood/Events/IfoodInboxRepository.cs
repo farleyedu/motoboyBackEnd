@@ -169,7 +169,7 @@ WHERE application_key=@ApplicationKey AND lease_id=@LeaseId AND lease_until_utc>
 
     // Primitivas para IF-07/IF-08: nenhum worker marca evento processado sem efeito de domínio.
     public Task<IReadOnlyList<IfoodInboxReservation>> ClaimAsync(int max, int leaseSeconds, int maxAttempts, CancellationToken ct = default,
-        string[]? codes = null, string[]? excludedCodes = null) => Guard<IReadOnlyList<IfoodInboxReservation>>(async () =>
+        string[]? codes = null, string[]? excludedCodes = null, bool importCandidates = false, bool requireOrder = false) => Guard<IReadOnlyList<IfoodInboxReservation>>(async () =>
     {
         if (max is < 1 or > 2000 || leaseSeconds is < 1 or > 600 || maxAttempts is < 1 or > 100)
             throw new ArgumentOutOfRangeException(nameof(max));
@@ -189,6 +189,10 @@ WITH picked AS (
     AND (CAST(@Codes AS text[]) IS NULL OR e.event_code=ANY(CAST(@Codes AS text[])))
     AND (CAST(@ExcludedCodes AS text[]) IS NULL OR NOT e.event_code=ANY(CAST(@ExcludedCodes AS text[])))
     AND c.status='authorized' AND c.authorized_at_utc IS NOT NULL AND c.revoked_at_utc IS NULL
+    AND (NOT @ImportCandidates OR e.event_code IN ('PLC','PLACED') OR (e.external_order_id IS NOT NULL AND NOT EXISTS
+        (SELECT 1 FROM ifood_order_snapshots sn WHERE sn.merchant_id=e.merchant_id AND sn.external_order_id=e.external_order_id AND sn.estabelecimento_id=e.estabelecimento_id)))
+    AND (NOT @RequireOrder OR e.external_order_id IS NULL OR EXISTS
+        (SELECT 1 FROM ifood_order_snapshots sn WHERE sn.merchant_id=e.merchant_id AND sn.external_order_id=e.external_order_id AND sn.estabelecimento_id=e.estabelecimento_id))
     ORDER BY e.occurred_at_utc NULLS LAST,e.received_at_utc,e.id LIMIT @Max FOR UPDATE OF e SKIP LOCKED
 )
 UPDATE ifood_events_inbox e SET state='processing',attempts=e.attempts+1,
@@ -196,7 +200,7 @@ UPDATE ifood_events_inbox e SET state='processing',attempts=e.attempts+1,
 FROM picked WHERE e.id=picked.id
 RETURNING e.id AS Id,e.merchant_id AS MerchantId,e.estabelecimento_id AS EstabelecimentoId,e.event_id AS EventId,
     e.external_order_id AS ExternalOrderId,e.event_code AS EventCode,e.payload::text AS PayloadJson,e.attempts AS Attempts,e.lease_id AS LeaseId,e.occurred_at_utc AS OccurredAtUtc
-""", new { Max = max, MaxAttempts = maxAttempts, Lease = Guid.NewGuid(), Seconds = leaseSeconds, Codes = codes, ExcludedCodes = excludedCodes }, transaction, cancellationToken: ct));
+""", new { Max = max, MaxAttempts = maxAttempts, Lease = Guid.NewGuid(), Seconds = leaseSeconds, Codes = codes, ExcludedCodes = excludedCodes, ImportCandidates = importCandidates, RequireOrder = requireOrder }, transaction, cancellationToken: ct));
         await transaction.CommitAsync(ct);
         return rows.ToArray();
     });

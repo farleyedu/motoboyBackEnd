@@ -56,13 +56,26 @@ WHERE l.merchant_id=@MerchantId AND l.external_order_id=@ExternalOrderId AND l.e
                     await Finish(connection, tx, item, "queued", "IFOOD_WAITING_ORDER_IMPORT", ct);
                     await tx.CommitAsync(ct); return "waiting_import";
                 }
-                var baseline = IfoodOrderNormalizer.Normalize(snapshot.Payload, item.MerchantId, item.ExternalOrderId!.Value).CreatedAtUtc;
+                var official = IfoodOrderNormalizer.Normalize(snapshot.Payload, item.MerchantId, item.ExternalOrderId!.Value);
+                var baseline = official.CreatedAtUtc;
                 snapshot.StatusAt ??= baseline; snapshot.PreparationAt ??= baseline; snapshot.DataAt ??= baseline;
                 var code = ev.Code;
                 if (code is "CONFIRMED" or "DISPATCHED" or "CONCLUDED" or "CANCELLED")
                 {
                     outcome = IfoodProjectionOrdering.Decide(ev.At, snapshot.StatusAt, snapshot.RemoteStatus, code, IfoodProjectionOrdering.StatusRank);
-                    if (outcome == "applied") { snapshot.RemoteStatus = code; snapshot.StatusAt = ev.At; changed = true; }
+                    if (outcome == "applied")
+                    {
+                        snapshot.RemoteStatus = code; snapshot.StatusAt = ev.At; changed = true;
+                        // Evento oficial de ciclo de vida e a prova que faltava ao pedido recuperado.
+                        if (official.ImportedByRecovery)
+                        {
+                            var payload = System.Text.Json.Nodes.JsonNode.Parse(snapshot.Payload)!.AsObject();
+                            payload["zippyRecovery"] = false;
+                            snapshot.Payload = payload.ToJsonString();
+                            if (snapshot.SynchronizationState == "pending" && !official.RequiresReview)
+                                snapshot.SynchronizationState = "synced";
+                        }
+                    }
                     if (code == "CONFIRMED" && outcome != "review" && snapshot.RemoteStatus is not ("CANCELLED" or "CONCLUDED"))
                     {
                         var prep = IfoodProjectionOrdering.Decide(ev.At, snapshot.PreparationAt, snapshot.PreparationState, "accepted", IfoodProjectionOrdering.PreparationRank);
@@ -180,7 +193,7 @@ VALUES(@Event,@Name,@Target,@Store,NULL,NULL,NULL,@Revision,CAST(@Payload AS jso
     private static bool Known(string code) => code is "CONFIRMED" or "PREPARATION_STARTED" or "READY_TO_PICKUP" or "SEPARATION_STARTED" or "SEPARATION_ENDED"
         or "DISPATCHED" or "CONCLUDED" or "CANCELLED" or "CANCELLATION_REQUESTED" or "CANCELLATION_REQUEST_FAILED" or "ORDER_PATCHED"
         or "HANDSHAKE_DISPUTE" or "HANDSHAKE_SETTLEMENT" or "RECOMMENDED_PREPARATION_START" or "DELIVERY_GROUP_ASSOCIATED"
-        or "DELIVERY_RETURN_CODE_REQUESTED" or "DELIVERY_ADDRESS_CHANGE_REQUESTED" || Tracking(code);
+        or "DELIVERY_RETURN_CODE_REQUESTED" or "DELIVERY_DROP_CODE_REQUESTED" or "DELIVERY_ADDRESS_CHANGE_REQUESTED" || Tracking(code);
     private static bool Tracking(string code) => code is "ASSIGN_DRIVER" or "GOING_TO_ORIGIN" or "ARRIVED_AT_ORIGIN" or "COLLECTED"
         or "ARRIVED_AT_DESTINATION" or "DELIVERY_RETURNING_TO_ORIGIN" or "DELIVERY_RETURNED_TO_ORIGIN";
     private static async Task Save(NpgsqlConnection c, NpgsqlTransaction tx, IfoodInboxReservation item, Snapshot s, CancellationToken ct)
@@ -194,7 +207,7 @@ WHERE merchant_id=@MerchantId AND external_order_id=@ExternalOrderId AND estabel
 """, new { item.MerchantId, item.ExternalOrderId, item.EstabelecimentoId, s.RemoteStatus, s.PreparationState, s.SynchronizationState,
             s.StatusAt, s.PreparationAt, s.DataAt, s.CancellationAt, s.TrackingAt, s.CancellationState, s.DeliveryState, s.DataIsCurrent,
             s.Payload, s.OrderAmount, s.PrepaidAmount, s.PendingAmount, s.Currency }, tx, cancellationToken: ct));
-    private static async Task ReplaceItems(NpgsqlConnection c, NpgsqlTransaction tx, IfoodInboxReservation item, IfoodImportedOrder order, CancellationToken ct)
+    internal static async Task ReplaceItems(NpgsqlConnection c, NpgsqlTransaction tx, IfoodInboxReservation item, IfoodImportedOrder order, CancellationToken ct)
     {
         await c.ExecuteAsync(new CommandDefinition("DELETE FROM ifood_order_items WHERE merchant_id=@MerchantId AND external_order_id=@ExternalOrderId AND estabelecimento_id=@EstabelecimentoId", item, tx, cancellationToken: ct));
         var lines = order.Items.Select((line, index) => new { ordinal=index,external_item_id=line.ExternalItemId,name=line.Name,quantity=line.Quantity,unit=line.Unit,

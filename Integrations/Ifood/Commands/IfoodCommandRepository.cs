@@ -197,6 +197,10 @@ WHERE s.merchant_id=@Merchant AND s.external_order_id=@Order AND s.estabelecimen
     }
     private static async Task ReadRoutingContext(NpgsqlConnection c, NpgsqlTransaction tx, IfoodCommandContext context, CancellationToken ct)
     {
+        context.HasReviewEvents = await c.ExecuteScalarAsync<bool>(new CommandDefinition("""
+SELECT EXISTS(SELECT 1 FROM ifood_events_inbox WHERE merchant_id=@MerchantId
+AND external_order_id=@ExternalOrderId AND estabelecimento_id=@EstabelecimentoId AND state IN('review','failed'))
+""", context, tx, cancellationToken: ct));
         context.DeliveryRoutingRequired = await c.ExecuteScalarAsync<bool>(new CommandDefinition("SELECT to_regprocedure('ifood_delivery_blocked_code(uuid,integer,boolean)') IS NOT NULL", transaction: tx, cancellationToken: ct));
         if (!context.DeliveryRoutingRequired) return;
         context.DeliveryRouteAccepted = await c.ExecuteScalarAsync<bool>(new CommandDefinition("""

@@ -20,7 +20,7 @@ public sealed class IfoodOrderImportService
         var count = 0;
         for (var index = 0; index < _options.ImportBatchSize; index++)
         {
-            var rows = await _inbox.ClaimAsync(1, _options.ImportLeaseSeconds, _options.ImportMaxAttempts, ct, new[] { "PLC", "PLACED" });
+            var rows = await _inbox.ClaimAsync(1, _options.ImportLeaseSeconds, _options.ImportMaxAttempts, ct, importCandidates: true);
             if (rows.Count == 0) break;
             var item = rows[0];
             IfoodDetailsReservation? reservation = null;

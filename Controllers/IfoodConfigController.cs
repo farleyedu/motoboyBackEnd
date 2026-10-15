@@ -92,22 +92,19 @@ public sealed class IfoodConfigController(IIfoodRuntimeSettingsRepository reposi
         { return StatusCode(404, ApiResponse<object>.Fail("Conexão não encontrada ou revogada.", ex.Code)); }
     }
 
-    // Credenciais e interruptores são globais (um único app centralizado para todas as lojas) e o segredo
-    // é devolvido decifrado: só administradores Zippy. Restaurantes usam api/v2/ifood/store (somente leitura).
+    // Credenciais e interruptores são globais: só administradores Zippy. O segredo nunca
+    // é devolvido; valor vazio no PUT preserva o já gravado. Restaurantes usam api/v2/ifood/store.
     private IActionResult SuperAdminRequired() => StatusCode(403,
         ApiResponse<object>.Fail("Apenas administradores Zippy podem alterar a configuração global do iFood.", "IFOOD_CONFIG_SUPERADMIN_REQUIRED"));
 
     private IfoodRuntimeSettingsDto ToDto(IfoodRuntimeSettings settings) => new()
     {
         ClientId = settings.ClientId,
-        ClientSecret = string.IsNullOrEmpty(settings.ClientSecretCifrado) ? null : SafeUnprotect(settings.ClientSecretCifrado),
+        ClientSecret = null,
         Enabled = settings.Enabled, PollingEnabled = settings.PollingEnabled, ImportEnabled = settings.ImportEnabled,
         ProjectionEnabled = settings.ProjectionEnabled, CommandsEnabled = settings.CommandsEnabled, ExceptionsEnabled = settings.ExceptionsEnabled,
         CompletionEnabled = settings.CompletionEnabled, RetentionEnabled = settings.RetentionEnabled, RetentionDays = settings.RetentionDays, UpdatedAtUtc = settings.UpdatedAtUtc, UpdatedBy = settings.UpdatedBy
     };
-    // Segredo gravado com chave antiga/rotacionada de forma incompatível não deve derrubar a tela.
-    private string? SafeUnprotect(string cifrado)
-    { try { return protector.Unprotect(cifrado, IfoodSecretProtector.ClientSecretPurpose); } catch (IfoodIntegrationException) { return null; } }
     private static IfoodConnectionDto ToDto(IfoodConnectionRow row) => new()
     {
         MerchantId = row.MerchantId, EstabelecimentoId = row.EstabelecimentoId, Status = row.Status,

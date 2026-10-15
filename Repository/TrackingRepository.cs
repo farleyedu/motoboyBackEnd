@@ -588,9 +588,9 @@ SELECT rs.motoboy_id AS MotoboyId, COUNT(*)::int AS DeliveredToday
             var windowFromUtc = windowRange.FromUtc ?? fromUtc.AddDays(-7);
             var coreSchema = await PedidoColumnTypes.HasCoreSchemaAsync(connection, null);
             pedidosSql = pedidosSql.Replace("__ORIGEM__", coreSchema ? "p.origem" : "CASE WHEN p.id_ifood IS NOT NULL THEN 'ifood' ELSE 'atendente' END");
-            if (await connection.ExecuteScalarAsync<bool>("SELECT to_regprocedure('ifood_delivery_blocked_code(uuid,integer,boolean)') IS NOT NULL"))
+            if (await connection.ExecuteScalarAsync<bool>("SELECT to_regclass('ifood_order_snapshots') IS NOT NULL"))
                 pedidosSql = pedidosSql.Replace("COALESCE(p.status_pedido, 1) IN (1, 2, 5, 8)",
-                    "(COALESCE(p.status_pedido, 1) IN (1, 2, 5, 8) OR (p.status_pedido=6 AND EXISTS(SELECT 1 FROM ifood_order_links il WHERE il.pedido_id=p.id AND il.estabelecimento_id=p.id_estabelecimento) AND ifood_delivery_blocked_code(p.id_estabelecimento,p.id,FALSE) IS NULL))");
+                    $"(COALESCE(p.status_pedido, 1) IN (1, 2, 5, 8) OR {IfoodCommandVisibilitySql})");
             if (await PedidoColumnTypes.HasRouteRulesSchemaAsync(connection, null))
             {
                 pedidosSql = pedidosSql.Replace("FALSE AS Locked", "COALESCE(rs.locked, FALSE) AS Locked");
@@ -613,7 +613,6 @@ SELECT rs.motoboy_id AS MotoboyId, COUNT(*)::int AS DeliveredToday
                     pedido.Value = identity.OrderAmount;
                     pedido.Items = null;
                     pedido.CodigoEntrega = null;
-                    if (pedido.StatusPedido == "rascunho" && identity.CanAssignDelivery) pedido.StatusPedido = "pendente";
                     if (!identity.DataIsCurrent) { pedido.EnderecoEntrega = pedido.Region = pedido.TipoPagamento = null; }
                 }
             pedidos = pedidos.Where(pedido => IsInOrderWindow(pedido, orderWindow, windowRange)).ToList();
@@ -624,7 +623,9 @@ SELECT rs.motoboy_id AS MotoboyId, COUNT(*)::int AS DeliveredToday
             var statsQuery = motoboyStatsSql;
             if (await PedidoColumnTypes.HasCoreSchemaAsync(connection, null))
             {
-                const string notSimulated = " AND NOT EXISTS (SELECT 1 FROM pedido px WHERE px.id = rs.pedido_id AND px.origem = 'simulador')";
+                var notSimulated = " AND NOT EXISTS (SELECT 1 FROM pedido px WHERE px.id = rs.pedido_id AND px.origem = 'simulador')";
+                if (await connection.ExecuteScalarAsync<bool>("SELECT to_regclass('ifood_order_snapshots') IS NOT NULL"))
+                    notSimulated += " AND NOT EXISTS (SELECT 1 FROM ifood_order_links il JOIN ifood_order_snapshots sn USING(merchant_id,external_order_id,estabelecimento_id) WHERE il.pedido_id=rs.pedido_id AND il.estabelecimento_id=rs.estabelecimento_id AND sn.payload->'isTest'='true'::jsonb)";
                 metricsQuery = metricsQuery.Replace("AND COALESCE(rs.completed_at_utc, rs.failed_at_utc) >= @FromUtc;", "AND COALESCE(rs.completed_at_utc, rs.failed_at_utc) >= @FromUtc" + notSimulated + ";");
                 statsQuery = statsQuery.Replace("GROUP BY rs.motoboy_id;", notSimulated.TrimStart() + " GROUP BY rs.motoboy_id;");
             }
@@ -684,18 +685,30 @@ SELECT rs.motoboy_id AS MotoboyId, COUNT(*)::int AS DeliveredToday
         /// </summary>
         internal static bool IsInOrderWindow(OrderMapDto pedido, DTOs.Delivery.OrderWindowDto window, OrderWindowRange range)
         {
-            var open = pedido.StatusPedido is "pendente" or "atribuido" or "em_rota" or "aguardando_motoboy";
+            var identity = pedido.IdentidadeExterna;
+            var externalOpen = identity != null && identity.RemoteStatus is not ("CANCELLED" or "CONCLUDED");
+            var open = identity != null ? externalOpen : pedido.StatusPedido is "pendente" or "atribuido" or "em_rota" or "aguardando_motoboy";
             if (open && window.AlwaysShowOpenOrders) return true;
 
-            var placed = OrderWindowRules.PlacedAtUtc(pedido.HorarioPedido ?? pedido.DataPedido);
-            if (placed is null) return true;
+            var placed = identity?.CreatedAtUtc ?? OrderWindowRules.PlacedAtUtc(pedido.HorarioPedido ?? pedido.DataPedido);
+            if (placed is null) return identity == null || externalOpen;
             if (range.Contains(placed.Value)) return true;
 
             // Encerrado automaticamente nao conta pela hora do encerramento (acontece de madrugada, no dia
             // seguinte): so aparece se foi FEITO dentro da janela, como qualquer outro.
-            var finishedAt = pedido.CompletedAtUtc ?? pedido.CanceledAtUtc;
+            var finishedAt = pedido.CompletedAtUtc ?? pedido.CanceledAtUtc ?? identity?.StatusOccurredAtUtc;
             return !open && finishedAt is not null && range.Contains(finishedAt.Value);
         }
+
+        // Visibilidade não depende de endereço, revisão ou elegibilidade para rota. Ativos nunca
+        // são cortados por idade; terminais usam a data oficial ou a data confiável do vínculo.
+        internal const string IfoodCommandVisibilitySql = """
+        EXISTS(SELECT 1 FROM ifood_order_links il
+        JOIN ifood_order_snapshots sn USING(merchant_id,external_order_id,estabelecimento_id)
+        WHERE il.pedido_id=p.id AND il.estabelecimento_id=p.id_estabelecimento
+        AND (COALESCE(sn.remote_status,'PLACED') NOT IN ('CANCELLED','CONCLUDED')
+             OR COALESCE((to_jsonb(sn)->>'status_occurred_at_utc')::timestamptz,il.created_at_utc)>=@WindowFromUtc))
+        """;
 
         /// <summary>Quando o pedido foi encerrado automaticamente (so o encerramento que ainda vale, nao o reaberto).</summary>
         private const string EncerramentoJoinSql = @"

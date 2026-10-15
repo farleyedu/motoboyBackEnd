@@ -2,6 +2,8 @@
 
 Data de referência: 14/10/2026. Idioma: pt-BR.
 
+**Continuidade em 15/10/2026:** lote complementar de [gestão no painel de comando](plano-painel-comando-ifood.md), autorizado na conversa e implementado localmente. Possui migration própria e evidências locais separadas; não altera retroativamente os resultados de sandbox abaixo. Implantação e homologação da versão nova continuam pendentes.
+
 ## 0. Estado atual (resumo para se guiar; atualizado em 14/10/2026, noite)
 
 **Ambiente.** Testes diretos em **produção** (decisão do usuário: ainda não há servidor de teste). Backend no Render, banco PostgreSQL no Railway, painel na Vercel, app Android via EAS. Loja **sandbox** e app **Teste (C)** (centralizado, perfil PDV) do portal iFood; merchant de teste ligado ao estabelecimento "ZippyGo Restaurante". Segredos ficam fora dos repositórios (`C:\Users\farle\TI\Zippy\secrets\`).

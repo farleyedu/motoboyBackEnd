@@ -43,6 +43,7 @@ public static class IfoodServiceCollectionExtensions
         services.AddSingleton<Orders.IIfoodOrderDetailsClient, Orders.IfoodOrderDetailsClient>();
         services.AddSingleton<Orders.IfoodOrderImportRepository>();
         services.AddSingleton<Orders.IfoodOrderImportService>();
+        services.AddSingleton<Orders.IfoodOrderRefreshService>();
         services.AddHostedService<Orders.IfoodOrderImportWorker>();
         services.AddSingleton<Orders.IfoodOrderProjectionRepository>();
         services.AddSingleton<Orders.IfoodOrderProjectionService>();

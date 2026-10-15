@@ -43,7 +43,10 @@ public sealed class IfoodOrderDetailsClient : IIfoodOrderDetailsClient
                 throw new IfoodIntegrationException(code, response.StatusCode,
                     response.StatusCode is HttpStatusCode.NotFound or HttpStatusCode.Unauthorized or HttpStatusCode.TooManyRequests || (int)response.StatusCode >= 500, retry);
             }
-            return IfoodOrderNormalizer.Sanitize(await response.Content.ReadAsStringAsync(ct), reservation.MerchantId, reservation.ExternalOrderId);
+            var sanitized = IfoodOrderNormalizer.Sanitize(await response.Content.ReadAsStringAsync(ct), reservation.MerchantId, reservation.ExternalOrderId);
+            var root = System.Text.Json.Nodes.JsonNode.Parse(sanitized)!.AsObject();
+            root.Remove("zippyRecovery"); // marcador exclusivamente local, nunca aceito da API remota
+            return root.ToJsonString();
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw new OperationCanceledException(ct); }
         catch (OperationCanceledException) { throw new IfoodIntegrationException("IFOOD_ORDER_TIMEOUT", retryable: true); }

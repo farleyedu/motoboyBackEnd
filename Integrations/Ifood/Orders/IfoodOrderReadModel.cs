@@ -15,7 +15,9 @@ SELECT l.pedido_id AS PedidoId,l.merchant_id AS MerchantId,l.external_order_id A
 s.order_type AS OrderType,s.delivered_by AS DeliveredBy,s.order_amount AS OrderAmount,s.prepaid_amount AS PrepaidAmount,s.pending_amount AS PendingAmount,
 s.revision AS Revision,s.remote_status AS RemoteStatus,s.preparation_state AS PreparationState,s.synchronization_state AS SynchronizationState,
 to_jsonb(s)->>'cancellation_state' AS CancellationState,to_jsonb(s)->>'delivery_state' AS DeliveryState,
-COALESCE((to_jsonb(s)->>'data_is_current')::boolean,TRUE) AS DataIsCurrent
+COALESCE((to_jsonb(s)->>'data_is_current')::boolean,TRUE) AS DataIsCurrent,
+s.payload::text AS Payload, (to_jsonb(s)->>'status_occurred_at_utc')::timestamptz AS StatusOccurredAtUtc,
+l.created_at_utc AS LinkedAtUtc
 ,(CASE WHEN COALESCE((to_jsonb(s)->>'data_is_current')::boolean,TRUE) THEN s.payload->'total'->>'subTotal' END)::numeric AS Subtotal
 ,(CASE WHEN COALESCE((to_jsonb(s)->>'data_is_current')::boolean,TRUE) THEN s.payload->'total'->>'deliveryFee' END)::numeric AS DeliveryFee
 ,jsonb_array_length(s.payload->'items') AS ItemCount
@@ -31,6 +33,28 @@ WHERE l.estabelecimento_id=@Store AND l.pedido_id=ANY(@Orders)
             PreparationState = r.PreparationState, SynchronizationState = r.SynchronizationState,
             CancellationState = r.CancellationState, DeliveryState = r.DeliveryState, DataIsCurrent = r.DataIsCurrent
         });
+        foreach (var row in rows)
+        {
+            var identity = identities[row.PedidoId];
+            identity.CreatedAtUtc = row.LinkedAtUtc;
+            identity.StatusOccurredAtUtc = row.StatusOccurredAtUtc ?? row.LinkedAtUtc;
+            IfoodImportedOrder order;
+            try { order = IfoodOrderNormalizer.Normalize(row.Payload, row.MerchantId, row.ExternalOrderId); }
+            catch (IfoodIntegrationException)
+            {
+                identity.DataIsCurrent = false; identity.SynchronizationState = "review";
+                identity.ReviewReasons = new[] { "IFOOD_ORDER_DATA_REVIEW" }; continue;
+            }
+            identity.IsTest = order.IsTest;
+            identity.CreatedAtUtc = order.CreatedAtUtc;
+            identity.StatusOccurredAtUtc = row.StatusOccurredAtUtc ?? row.LinkedAtUtc;
+            identity.OrderTiming = order.OrderTiming;
+            identity.PreparationStartUtc = order.PreparationStartUtc;
+            identity.ScheduledStartUtc = order.ScheduledStartUtc;
+            identity.ScheduledEndUtc = order.ScheduledEndUtc;
+            identity.ImportedByRecovery = order.ImportedByRecovery;
+            identity.ReviewReasons = order.ReviewReasons;
+        }
         if (await connection.ExecuteScalarAsync<bool>("SELECT to_regclass('ifood_command_attempts') IS NOT NULL", transaction: transaction))
         {
             var commands = await connection.QueryAsync<IfoodCommandDto>("""
@@ -100,6 +124,9 @@ WHERE d.estabelecimento_id=@Store AND l.pedido_id=@Pedido ORDER BY d.expires_at_
     }
     private class IfoodPedidoIdentityBase
     {
+        public string Payload { get; set; } = "{}";
+        public DateTimeOffset? StatusOccurredAtUtc { get; set; }
+        public DateTimeOffset LinkedAtUtc { get; set; }
         public Guid MerchantId { get; set; } public Guid ExternalOrderId { get; set; }
         public string? DisplayNumber { get; set; } public string OrderType { get; set; } = "";
         public string? DeliveredBy { get; set; } public decimal? OrderAmount { get; set; }

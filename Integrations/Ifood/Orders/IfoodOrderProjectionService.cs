@@ -18,7 +18,7 @@ public sealed class IfoodOrderProjectionService
         for (var index=0;index<_options.ProjectionBatchSize;index++)
         {
             var rows = await _inbox.ClaimAsync(1,_options.ProjectionLeaseSeconds,_options.ProjectionMaxAttempts,ct,
-                excludedCodes: new[] { "PLC","PLACED" });
+                excludedCodes: new[] { "PLC","PLACED" }, requireOrder: true);
             if (rows.Count == 0) break;
             var item=rows[0];
             try { await _repository.ProjectAsync(item,ct); count++; }

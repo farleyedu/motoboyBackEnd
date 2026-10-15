@@ -27,6 +27,9 @@ public sealed class IfoodAlertDto
     public string Severity { get; set; } = "warning";
     public int Count { get; set; }
     public DateTimeOffset? OldestAtUtc { get; set; }
+    public int? PedidoId { get; set; }
+    public string? DisplayNumber { get; set; }
+    public DateTimeOffset? ExpiresAtUtc { get; set; }
 }
 
 public sealed class IfoodReconciliationNoteRequest
@@ -68,7 +71,8 @@ public sealed class IfoodDiagnosticsController(IIfoodReconciliationRepository re
     public Task<IActionResult> Alerts(CancellationToken ct) => Run(async (store, _) =>
     {
         var alerts = (await repository.GetStoreAlertsAsync(store, ct)).Select(row => new IfoodAlertDto
-        { Code = row.Code, Severity = row.Severity, Count = row.Count, OldestAtUtc = row.OldestAtUtc }).ToList();
+        { Code = row.Code, Severity = row.Severity, Count = row.Count, OldestAtUtc = row.OldestAtUtc,
+          PedidoId = row.PedidoId, DisplayNumber = row.DisplayNumber, ExpiresAtUtc = row.ExpiresAtUtc }).ToList();
         var config = await settings.GetSettingsAsync(ct);
         if (config.Enabled && config.PollingEnabled)
         {

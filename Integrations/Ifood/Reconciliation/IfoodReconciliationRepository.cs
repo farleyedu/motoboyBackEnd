@@ -22,6 +22,9 @@ public sealed class IfoodAlertRow
     public string Severity { get; set; } = "warning";
     public int Count { get; set; }
     public DateTimeOffset? OldestAtUtc { get; set; }
+    public int? PedidoId { get; set; }
+    public string? DisplayNumber { get; set; }
+    public DateTimeOffset? ExpiresAtUtc { get; set; }
 }
 
 public sealed class IfoodPollingHealth
@@ -189,6 +192,7 @@ WITH waiting AS (
     JOIN ifood_order_links l ON l.merchant_id=s.merchant_id AND l.external_order_id=s.external_order_id
     WHERE s.estabelecimento_id=@Store AND s.preparation_state='awaiting_acceptance'
       AND COALESCE(s.remote_status,'PLACED')='PLACED' AND s.order_type IN ('DELIVERY','TAKEOUT')
+      AND COALESCE(s.payload->'zippyRecovery','false'::jsonb)<>'true'::jsonb
 )
 SELECT 'IFOOD_ACCEPTANCE_DEADLINE' AS Code, 'critical' AS Severity, COUNT(*)::int AS Count, MIN(created_at) AS OldestAtUtc
 FROM waiting WHERE created_at <= NOW() - INTERVAL '6 minutes'
@@ -205,13 +209,35 @@ UNION ALL
 SELECT 'IFOOD_EVENT_FAILED', 'critical', COUNT(*)::int, MIN(received_at_utc)
 FROM ifood_events_inbox WHERE estabelecimento_id=@Store AND state='failed' AND received_at_utc > NOW() - INTERVAL '7 days'
 UNION ALL
+SELECT 'IFOOD_EVENT_REVIEW', 'warning', COUNT(*)::int, MIN(received_at_utc)
+FROM ifood_events_inbox WHERE estabelecimento_id=@Store AND state='review' AND received_at_utc > NOW() - INTERVAL '30 days'
+UNION ALL
 SELECT 'IFOOD_COMMAND_UNCERTAIN', 'critical', COUNT(*)::int, MIN(updated_at_utc)
 FROM ifood_outbound_commands WHERE estabelecimento_id=@Store AND state IN ('uncertain','review') AND updated_at_utc > NOW() - INTERVAL '7 days'
 UNION ALL
 SELECT 'IFOOD_COMPLETION_UNCERTAIN', 'critical', COUNT(*)::int, MIN(created_at_utc)
 FROM ifood_delivery_completions WHERE estabelecimento_id=@Store AND state IN ('uncertain','review') AND created_at_utc > NOW() - INTERVAL '7 days'
 """, new { Store = estabelecimentoId }, cancellationToken: ct))).AsList();
-        return rows.Where(row => row.Count > 0).ToList();
+        var attention = await connection.QueryAsync<IfoodAlertRow>(new CommandDefinition("""
+SELECT 'IFOOD_DISPUTE_OPEN' AS Code,'critical' AS Severity,COUNT(*)::int AS Count,
+MIN(d.opened_at_utc) AS OldestAtUtc,l.pedido_id AS PedidoId,l.display_number AS DisplayNumber,MIN(d.expires_at_utc) AS ExpiresAtUtc
+FROM ifood_disputes d JOIN ifood_order_links l USING(merchant_id,external_order_id,estabelecimento_id)
+WHERE d.estabelecimento_id=@Store AND d.state='open'
+GROUP BY l.pedido_id,l.display_number
+UNION ALL
+SELECT 'IFOOD_SCHEDULED_ORDER','warning',1,l.created_at_utc,l.pedido_id,l.display_number,s.scheduled_start_utc
+FROM ifood_order_snapshots s JOIN ifood_order_links l USING(merchant_id,external_order_id,estabelecimento_id)
+WHERE s.estabelecimento_id=@Store AND s.payload->>'orderTiming'='SCHEDULED'
+AND COALESCE(s.remote_status,'PLACED') NOT IN('CANCELLED','CONCLUDED')
+AND s.scheduled_start_utc IS NOT NULL
+UNION ALL
+SELECT 'IFOOD_RECOVERED_ORDER','warning',1,l.created_at_utc,l.pedido_id,l.display_number,NULL::timestamptz
+FROM ifood_order_snapshots s JOIN ifood_order_links l USING(merchant_id,external_order_id,estabelecimento_id)
+WHERE s.estabelecimento_id=@Store AND s.payload->'zippyRecovery'='true'::jsonb
+AND COALESCE(s.remote_status,'PLACED') NOT IN('CANCELLED','CONCLUDED')
+ORDER BY ExpiresAtUtc NULLS LAST,OldestAtUtc
+""", new { Store = estabelecimentoId }, cancellationToken: ct));
+        return rows.Where(row => row.Count > 0).Concat(attention).ToList();
     }
 
     public async Task<IfoodPollingHealth?> GetPollingHealthAsync(CancellationToken ct = default)

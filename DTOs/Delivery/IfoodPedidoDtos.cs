@@ -24,6 +24,15 @@ public sealed class IfoodPedidoIdentityDto
     public string? CancellationState { get; set; }
     public string? DeliveryState { get; set; }
     public bool DataIsCurrent { get; set; } = true;
+    public bool? IsTest { get; set; }
+    public DateTimeOffset? CreatedAtUtc { get; set; }
+    public DateTimeOffset? StatusOccurredAtUtc { get; set; }
+    public DateTimeOffset? ScheduledStartUtc { get; set; }
+    public DateTimeOffset? ScheduledEndUtc { get; set; }
+    public DateTimeOffset? PreparationStartUtc { get; set; }
+    public string? OrderTiming { get; set; }
+    public bool ImportedByRecovery { get; set; }
+    public IReadOnlyList<string> ReviewReasons { get; set; } = Array.Empty<string>();
     public IfoodCommandDto? ActiveCommand { get; set; }
     public bool CanAssignDelivery { get; set; }
     public bool CanDepartDelivery { get; set; }
