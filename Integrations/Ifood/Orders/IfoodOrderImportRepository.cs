@@ -153,6 +153,17 @@ RETURNING id
 INSERT INTO ifood_order_links(merchant_id,external_order_id,estabelecimento_id,pedido_id,display_number)
 VALUES(@MerchantId,@ExternalOrderId,@EstabelecimentoId,@Pedido,@DisplayNumber)
 """, new { item.MerchantId, item.ExternalOrderId, item.EstabelecimentoId, Pedido = pedido, order.DisplayNumber }, transaction, cancellationToken: ct));
+            // A loja pode liberar a entrega Zippy pela tela; o pedido novo herda esse valor. Tolera schema sem a coluna.
+            // A coluna é verificada antes: o PostgreSQL recusa o comando inteiro se ela não existir, mesmo com EXISTS.
+            var hasDeliveryFlag = await connection.ExecuteScalarAsync<bool>(new CommandDefinition(
+                "SELECT EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='ifood_connections' AND column_name='zippy_delivery_enabled')",
+                transaction: transaction, cancellationToken: ct));
+            if (hasDeliveryFlag)
+                await connection.ExecuteAsync(new CommandDefinition("""
+UPDATE ifood_order_links l SET zippy_delivery_enabled=c.zippy_delivery_enabled
+FROM ifood_connections c
+WHERE l.merchant_id=@MerchantId AND l.external_order_id=@ExternalOrderId AND c.merchant_id=l.merchant_id AND c.zippy_delivery_enabled
+""", new { item.MerchantId, item.ExternalOrderId }, transaction, cancellationToken: ct));
             var validSchedule = order.ScheduledStartUtc != null && order.ScheduledEndUtc != null && order.ScheduledEndUtc >= order.ScheduledStartUtc;
             await connection.ExecuteAsync(new CommandDefinition("""
 INSERT INTO ifood_order_snapshots(merchant_id,external_order_id,estabelecimento_id,order_type,delivered_by,remote_status,preparation_state,synchronization_state,

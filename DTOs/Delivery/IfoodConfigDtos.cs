@@ -11,6 +11,8 @@ public sealed class IfoodRuntimeSettingsDto
     public bool ProjectionEnabled { get; set; }
     public bool CommandsEnabled { get; set; }
     public bool ExceptionsEnabled { get; set; }
+    // Conclusão da entrega com o código oficial do cliente (exige Comandos e ao menos um merchant autorizado).
+    public bool CompletionEnabled { get; set; }
     public DateTimeOffset UpdatedAtUtc { get; set; }
     public string? UpdatedBy { get; set; }
 }
@@ -26,6 +28,7 @@ public sealed class IfoodRuntimeSettingsRequest
     public bool ProjectionEnabled { get; set; }
     public bool CommandsEnabled { get; set; }
     public bool ExceptionsEnabled { get; set; }
+    public bool CompletionEnabled { get; set; }
 }
 
 public sealed class IfoodConnectionDto
@@ -37,6 +40,13 @@ public sealed class IfoodConnectionDto
     public DateTimeOffset? RevokedAtUtc { get; set; }
     public DateTimeOffset? LastEventAtUtc { get; set; }
     public DateTimeOffset CreatedAtUtc { get; set; }
+    // Pedidos NOVOS desta loja já nascem elegíveis à entrega Zippy (fila, rota e oferta ao motoboy).
+    public bool ZippyDeliveryEnabled { get; set; }
+}
+
+public sealed class IfoodConnectionDeliveryRequest
+{
+    public bool Enabled { get; set; }
 }
 
 public sealed class IfoodConnectionRequest
@@ -55,4 +65,5 @@ public sealed class IfoodStoreStatusDto
     public bool ImportEnabled { get; set; }
     public bool ProjectionEnabled { get; set; }
     public bool CommandsEnabled { get; set; }
+    public bool CompletionEnabled { get; set; }
 }

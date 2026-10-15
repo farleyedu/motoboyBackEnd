@@ -38,7 +38,7 @@ public sealed class IfoodConfigController(IIfoodRuntimeSettingsRepository reposi
         { return StatusCode(503, ApiResponse<object>.Fail("Não foi possível cifrar o client secret.", ex.Code)); }
         var updatedBy = HttpContext.GetUserId()?.ToString();
         await repository.UpdateSettingsAsync(request.ClientId.Trim(), cifrado, request.Enabled, request.PollingEnabled,
-            request.ImportEnabled, request.ProjectionEnabled, request.CommandsEnabled, request.ExceptionsEnabled, updatedBy, ct);
+            request.ImportEnabled, request.ProjectionEnabled, request.CommandsEnabled, request.ExceptionsEnabled, updatedBy, request.CompletionEnabled, ct);
         return Ok(ApiResponse<IfoodRuntimeSettingsDto>.Ok(ToDto(await repository.GetSettingsAsync(ct))));
     }
 
@@ -78,6 +78,16 @@ public sealed class IfoodConfigController(IIfoodRuntimeSettingsRepository reposi
         { return StatusCode(404, ApiResponse<object>.Fail("Conexão não encontrada ou já revogada.", ex.Code)); }
     }
 
+    [HttpPut("connections/{merchantId:guid}/delivery"), RequirePermission("Delivery", "integracao_ifood")]
+    public async Task<IActionResult> SetDelivery(Guid merchantId, IfoodConnectionDeliveryRequest request, CancellationToken ct)
+    {
+        if (!HttpContext.IsSuperAdmin()) return SuperAdminRequired();
+        Response.Headers.CacheControl = "no-store";
+        try { await repository.SetConnectionDeliveryAsync(merchantId, request.Enabled, ct); return Ok(ApiResponse<object>.Ok(new { })); }
+        catch (IfoodIntegrationException ex)
+        { return StatusCode(404, ApiResponse<object>.Fail("Conexão não encontrada ou revogada.", ex.Code)); }
+    }
+
     // Credenciais e interruptores são globais (um único app centralizado para todas as lojas) e o segredo
     // é devolvido decifrado: só administradores Zippy. Restaurantes usam api/v2/ifood/store (somente leitura).
     private IActionResult SuperAdminRequired() => StatusCode(403,
@@ -89,7 +99,7 @@ public sealed class IfoodConfigController(IIfoodRuntimeSettingsRepository reposi
         ClientSecret = string.IsNullOrEmpty(settings.ClientSecretCifrado) ? null : SafeUnprotect(settings.ClientSecretCifrado),
         Enabled = settings.Enabled, PollingEnabled = settings.PollingEnabled, ImportEnabled = settings.ImportEnabled,
         ProjectionEnabled = settings.ProjectionEnabled, CommandsEnabled = settings.CommandsEnabled, ExceptionsEnabled = settings.ExceptionsEnabled,
-        UpdatedAtUtc = settings.UpdatedAtUtc, UpdatedBy = settings.UpdatedBy
+        CompletionEnabled = settings.CompletionEnabled, UpdatedAtUtc = settings.UpdatedAtUtc, UpdatedBy = settings.UpdatedBy
     };
     // Segredo gravado com chave antiga/rotacionada de forma incompatível não deve derrubar a tela.
     private string? SafeUnprotect(string cifrado)
@@ -97,7 +107,8 @@ public sealed class IfoodConfigController(IIfoodRuntimeSettingsRepository reposi
     private static IfoodConnectionDto ToDto(IfoodConnectionRow row) => new()
     {
         MerchantId = row.MerchantId, EstabelecimentoId = row.EstabelecimentoId, Status = row.Status,
-        AuthorizedAtUtc = row.AuthorizedAtUtc, RevokedAtUtc = row.RevokedAtUtc, LastEventAtUtc = row.LastEventAtUtc, CreatedAtUtc = row.CreatedAtUtc
+        AuthorizedAtUtc = row.AuthorizedAtUtc, RevokedAtUtc = row.RevokedAtUtc, LastEventAtUtc = row.LastEventAtUtc, CreatedAtUtc = row.CreatedAtUtc,
+        ZippyDeliveryEnabled = row.ZippyDeliveryEnabled
     };
 }
 
@@ -120,10 +131,12 @@ public sealed class IfoodStoreController(IIfoodRuntimeSettingsRepository reposit
             Connection = row is null ? null : new IfoodConnectionDto
             {
                 MerchantId = row.MerchantId, EstabelecimentoId = row.EstabelecimentoId, Status = row.Status,
-                AuthorizedAtUtc = row.AuthorizedAtUtc, RevokedAtUtc = row.RevokedAtUtc, LastEventAtUtc = row.LastEventAtUtc, CreatedAtUtc = row.CreatedAtUtc
+                AuthorizedAtUtc = row.AuthorizedAtUtc, RevokedAtUtc = row.RevokedAtUtc, LastEventAtUtc = row.LastEventAtUtc, CreatedAtUtc = row.CreatedAtUtc,
+                ZippyDeliveryEnabled = row.ZippyDeliveryEnabled
             },
             IntegrationEnabled = enabled, PollingEnabled = enabled && settings.PollingEnabled, ImportEnabled = enabled && settings.ImportEnabled,
-            ProjectionEnabled = enabled && settings.ProjectionEnabled, CommandsEnabled = enabled && settings.CommandsEnabled
+            ProjectionEnabled = enabled && settings.ProjectionEnabled, CommandsEnabled = enabled && settings.CommandsEnabled,
+            CompletionEnabled = enabled && settings.CommandsEnabled && settings.CompletionEnabled
         }));
     }
 }

@@ -7,12 +7,15 @@ public interface IIfoodRuntimeSettingsRepository
 {
     Task<IfoodRuntimeSettings> GetSettingsAsync(CancellationToken ct = default);
     Task UpdateSettingsAsync(string clientId, string? clientSecretCifrado, bool enabled, bool pollingEnabled,
-        bool importEnabled, bool projectionEnabled, bool commandsEnabled, bool exceptionsEnabled, string? updatedBy, CancellationToken ct = default);
+        bool importEnabled, bool projectionEnabled, bool commandsEnabled, bool exceptionsEnabled, string? updatedBy,
+        bool completionEnabled = false, CancellationToken ct = default);
     Task<IReadOnlyList<IfoodConnectionRow>> ListConnectionsAsync(CancellationToken ct = default);
     // Conexão mais recente de UMA loja; nunca devolve dados de outro estabelecimento.
     Task<IfoodConnectionRow?> GetStoreConnectionAsync(Guid estabelecimentoId, CancellationToken ct = default);
     Task AuthorizeConnectionAsync(Guid merchantId, Guid estabelecimentoId, CancellationToken ct = default);
     Task RevokeConnectionAsync(Guid merchantId, CancellationToken ct = default);
+    // Valor que os pedidos NOVOS da loja herdam para a entrega Zippy; não altera pedidos já importados.
+    Task SetConnectionDeliveryAsync(Guid merchantId, bool enabled, CancellationToken ct = default);
 }
 
 public sealed class IfoodRuntimeSettingsRepository : IIfoodRuntimeSettingsRepository
@@ -26,7 +29,7 @@ public sealed class IfoodRuntimeSettingsRepository : IIfoodRuntimeSettingsReposi
         var row = await connection.QuerySingleOrDefaultAsync<IfoodRuntimeSettings>(new CommandDefinition("""
 SELECT client_id AS ClientId, client_secret_cifrado AS ClientSecretCifrado, enabled AS Enabled,
        polling_enabled AS PollingEnabled, import_enabled AS ImportEnabled, projection_enabled AS ProjectionEnabled,
-       commands_enabled AS CommandsEnabled, exceptions_enabled AS ExceptionsEnabled,
+       commands_enabled AS CommandsEnabled, exceptions_enabled AS ExceptionsEnabled, completion_enabled AS CompletionEnabled,
        updated_at_utc AS UpdatedAtUtc, updated_by AS UpdatedBy
 FROM ifood_app_settings WHERE id=1
 """, cancellationToken: ct));
@@ -34,7 +37,8 @@ FROM ifood_app_settings WHERE id=1
     }
 
     public async Task UpdateSettingsAsync(string clientId, string? clientSecretCifrado, bool enabled, bool pollingEnabled,
-        bool importEnabled, bool projectionEnabled, bool commandsEnabled, bool exceptionsEnabled, string? updatedBy, CancellationToken ct = default)
+        bool importEnabled, bool projectionEnabled, bool commandsEnabled, bool exceptionsEnabled, string? updatedBy,
+        bool completionEnabled = false, CancellationToken ct = default)
     {
         await using var connection = await _source.OpenConnectionAsync(ct);
         // clientSecretCifrado nulo preserva o segredo já gravado (toggle isolado não exige redigitar).
@@ -42,12 +46,12 @@ FROM ifood_app_settings WHERE id=1
 UPDATE ifood_app_settings SET client_id=@ClientId,
     client_secret_cifrado=COALESCE(@ClientSecretCifrado, client_secret_cifrado),
     enabled=@Enabled, polling_enabled=@PollingEnabled, import_enabled=@ImportEnabled,
-    projection_enabled=@ProjectionEnabled, commands_enabled=@CommandsEnabled, exceptions_enabled=@ExceptionsEnabled,
+    projection_enabled=@ProjectionEnabled, commands_enabled=@CommandsEnabled, exceptions_enabled=@ExceptionsEnabled, completion_enabled=@CompletionEnabled,
     updated_at_utc=NOW(), updated_by=@UpdatedBy
 WHERE id=1
 """, new { ClientId = clientId, ClientSecretCifrado = clientSecretCifrado, Enabled = enabled, PollingEnabled = pollingEnabled,
             ImportEnabled = importEnabled, ProjectionEnabled = projectionEnabled, CommandsEnabled = commandsEnabled,
-            ExceptionsEnabled = exceptionsEnabled, UpdatedBy = updatedBy }, cancellationToken: ct));
+            ExceptionsEnabled = exceptionsEnabled, CompletionEnabled = completionEnabled, UpdatedBy = updatedBy }, cancellationToken: ct));
     }
 
     public async Task<IReadOnlyList<IfoodConnectionRow>> ListConnectionsAsync(CancellationToken ct = default)
@@ -56,7 +60,7 @@ WHERE id=1
         var rows = await connection.QueryAsync<IfoodConnectionRow>(new CommandDefinition("""
 SELECT merchant_id AS MerchantId, estabelecimento_id AS EstabelecimentoId, status AS Status,
        authorized_at_utc AS AuthorizedAtUtc, revoked_at_utc AS RevokedAtUtc, last_event_at_utc AS LastEventAtUtc,
-       created_at_utc AS CreatedAtUtc
+       created_at_utc AS CreatedAtUtc, zippy_delivery_enabled AS ZippyDeliveryEnabled
 FROM ifood_connections ORDER BY created_at_utc DESC
 """, cancellationToken: ct));
         return rows.AsList();
@@ -69,7 +73,7 @@ FROM ifood_connections ORDER BY created_at_utc DESC
         return await connection.QueryFirstOrDefaultAsync<IfoodConnectionRow>(new CommandDefinition("""
 SELECT merchant_id AS MerchantId, estabelecimento_id AS EstabelecimentoId, status AS Status,
        authorized_at_utc AS AuthorizedAtUtc, revoked_at_utc AS RevokedAtUtc, last_event_at_utc AS LastEventAtUtc,
-       created_at_utc AS CreatedAtUtc
+       created_at_utc AS CreatedAtUtc, zippy_delivery_enabled AS ZippyDeliveryEnabled
 FROM ifood_connections WHERE estabelecimento_id=@EstabelecimentoId
 ORDER BY (revoked_at_utc IS NULL) DESC, created_at_utc DESC LIMIT 1
 """, new { EstabelecimentoId = estabelecimentoId }, cancellationToken: ct));
@@ -101,6 +105,16 @@ ON CONFLICT (merchant_id) DO UPDATE SET status='authorized', authorized_at_utc=N
 UPDATE ifood_connections SET status='revoked', revoked_at_utc=NOW(), updated_at_utc=NOW()
 WHERE merchant_id=@MerchantId AND revoked_at_utc IS NULL
 """, new { MerchantId = merchantId }, cancellationToken: ct));
+        if (affected == 0) throw new IfoodIntegrationException("IFOOD_CONNECTION_NOT_FOUND");
+    }
+
+    public async Task SetConnectionDeliveryAsync(Guid merchantId, bool enabled, CancellationToken ct = default)
+    {
+        await using var connection = await _source.OpenConnectionAsync(ct);
+        var affected = await connection.ExecuteAsync(new CommandDefinition("""
+UPDATE ifood_connections SET zippy_delivery_enabled=@Enabled, updated_at_utc=NOW()
+WHERE merchant_id=@MerchantId AND status='authorized' AND revoked_at_utc IS NULL
+""", new { MerchantId = merchantId, Enabled = enabled }, cancellationToken: ct));
         if (affected == 0) throw new IfoodIntegrationException("IFOOD_CONNECTION_NOT_FOUND");
     }
 }

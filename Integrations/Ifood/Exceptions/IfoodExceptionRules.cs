@@ -26,6 +26,7 @@ public sealed class IfoodExceptionIntent
 }
 public static class IfoodExceptionRules
 {
+    public static readonly string[] All = { "request_cancellation", "dispute_accept", "dispute_reject", "dispute_alternative" };
     public static bool IsKnown(string command)=>command is "request_cancellation" or "dispute_accept" or "dispute_reject" or "dispute_alternative";
     public static bool IsDispute(string command)=>command is "dispute_accept" or "dispute_reject" or "dispute_alternative";
     public static void Enabled(IfoodOptions options,IfoodCommandContext order,string command,long revision)

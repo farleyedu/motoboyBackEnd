@@ -19,6 +19,8 @@ public sealed record IfoodCommandWindow(DateTimeOffset NotBeforeUtc,DateTimeOffs
 
 public static class IfoodCommandRules
 {
+    // Todos os comandos que o sistema sabe enviar; a tela de configuração os habilita juntos (sem lista em variável de ambiente).
+    public static readonly string[] All = { "confirm", "start_preparation", "ready_to_pickup", "dispatch" };
     public static bool IsKnown(string command) => command is "confirm" or "start_preparation" or "ready_to_pickup" or "dispatch";
     public static string Endpoint(string command) => command switch
     { "confirm"=>"confirm","start_preparation"=>"startPreparation","ready_to_pickup"=>"readyToPickup","dispatch"=>"dispatch",_=>throw Error("IFOOD_COMMAND_UNKNOWN") };

@@ -11,6 +11,7 @@ public sealed class IfoodRuntimeSettings
     public bool ProjectionEnabled { get; set; }
     public bool CommandsEnabled { get; set; }
     public bool ExceptionsEnabled { get; set; }
+    public bool CompletionEnabled { get; set; }
     public DateTimeOffset UpdatedAtUtc { get; set; }
     public string? UpdatedBy { get; set; }
 }
@@ -24,4 +25,5 @@ public sealed class IfoodConnectionRow
     public DateTimeOffset? RevokedAtUtc { get; set; }
     public DateTimeOffset? LastEventAtUtc { get; set; }
     public DateTimeOffset CreatedAtUtc { get; set; }
+    public bool ZippyDeliveryEnabled { get; set; }
 }
