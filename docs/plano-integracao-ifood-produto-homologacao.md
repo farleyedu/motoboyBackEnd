@@ -23,7 +23,7 @@ Data de referência: 14/10/2026. Idioma: pt-BR.
 
 **Ligado em produção hoje:** Integração, Polling, Importação, Projeção. **Desligado:** Comandos, Cancelamento/disputas, `CompletionEnabled`, `zippy_delivery_enabled` (entrega Zippy para pedidos iFood).
 
-**Próximos passos (ordem):** (1) reprovar DDCR com pedido novo; (2) revisar e validar o app (IF-15); (3) liberar Comandos (aceite/preparo/pronto/despacho) pelo painel; (4) ligar `zippy_delivery_enabled` na loja de teste e ensaiar rota + código + conclusão no Android; (5) cancelamento e disputas; (6) build de produção do app e envio à Play Store (service account pronta, ver `eas.json`); (7) IF-16 em diante.
+**Próximos passos (ordem):** (1) reprovar DDCR com pedido novo; (2) ensaiar o IF-15 no Android (regras já testadas com Jest; roteiro na entrada "Revisão do app (IF-15)"); (3) liberar Comandos (aceite/preparo/pronto/despacho) pelo painel; (4) ligar `zippy_delivery_enabled` na loja de teste e ensaiar rota + código + conclusão no Android; (5) cancelamento e disputas; (6) build de produção do app e envio à Play Store (service account pronta, ver `eas.json`); (7) IF-16 em diante.
 
 **Pendências abertas:** IF-00/IF-01 formais (portal, módulos, CNPJ); backup do banco antes das migrations não foi confirmado; dois testes de remuneração (`MotoboyWorkService.AddPeriod`, offset `-03:00`); `Jwt.SecretKey` de exemplo e `VerifyToken` fracos no Secret file do Render; `bundletool.jar` (32 MB) commitado no app; tela "Operação iFood" sem revisão visual de design.
 
@@ -261,7 +261,7 @@ Implementada não equivale a validada. Marcar bloqueio com causa, próxima açã
 | IF-12 | Fila/rota/oferta compatíveis; bloqueio IFOOD/TAKEOUT e de despacho prematuro; cancelamento/encerramento em rota | IF-07 a IF-09 | Validada localmente |
 | IF-13 | Configuração centralizada do iFood por tela em Gestão: `client_id`/`client_secret` cifrados, autorizar/revogar merchant↔loja substituindo SQL manual, toggles globais (Enabled/Polling/Import/Projection/Commands/Exceptions) lidos em runtime pelos workers sem exigir reinício do processo | IF-04, IF-05, IF-06 | Validada localmente (tela sem verificação visual em navegador; sem uso em produção) |
 | IF-14 | Backend de código oficial e conclusão persistente; recuperação sem validar localmente pedido remoto | IF-03, IF-09, IF-12 | Validada localmente |
-| IF-15 | App com identidade, cobrança e conclusão oficial; feedback, recibo e recovery nativo | IF-03, IF-12, IF-14 | Implementada (commit `c2dd079` no app, 14/10/2026); sem relatório de validação, sem teste Android nativo e sem prova contra backend publicado |
+| IF-15 | App com identidade, cobrança e conclusão oficial; feedback, recibo e recovery nativo | IF-03, IF-12, IF-14 | Implementada (commit `c2dd079`); regras de identidade, saldo, código, pagamento oficial e armazenamento testadas com Jest (34 testes, 14/10/2026). Sem teste Android nativo e sem prova contra o backend publicado |
 | IF-16 | Permissões/diagnóstico restante e prevenção de bypass; proteção/retenção de dados (configuração central já coberta pelo IF-13) | IF-04 a IF-15 | Pendente |
 | IF-17 | Instrumentação, alertas, conciliação e contingência; verificar hospedagem sempre ativa e múltiplas instâncias | IF-06 a IF-16 | Pendente |
 | IF-18 | Regressão dos canais próprios e falhas distribuídas; contratos backend/painel/app e validação visual | IF-07 a IF-17 | Pendente |
@@ -611,6 +611,22 @@ Status: aprovado pelo usuário, implementado e validado localmente. A lista abai
 - **Aba do restaurante:** card "Integração iFood" em Configurações (`/apps/configuracoes/ifood`, visível com módulo Delivery e permissão `integracao_ifood`; regra de rota em `utils/permissions.ts`). Mostra conexão da loja, estado da integração e atalho aos pedidos iFood; superadmin vê também o formulário de vínculo (loja atual) e o atalho da configuração global em Gestão. Sem credenciais.
 - **Validação:** backend **132 testes aprovados** (`IfoodIntegrationSchemaDatabaseTests` + `IfoodOrderProjectionTests`, PostgreSQL isolado e descartável na porta 55490, instância removida), incluindo `StoreConnectionNeverReturnsAnotherStoresMerchantAndPrefersTheActiveOne`; painel **56 testes aprovados** (`features/ifood` + `configuracoes`) e typecheck limpo. Sem verificação visual das duas telas novas em navegador.
 - **Limites:** nenhum Comando enviado ao iFood; cancelamento, disputas e conclusão por código não foram exercitados no sandbox. Sem prova do `verifyDeliveryCode`.
+
+### 14/10/2026 (noite) — Revisão do app (IF-15) e testes automatizados
+
+- Estado IF-15: **Implementada; regras validadas localmente por Jest; sem validação em aparelho.** Revisão por leitura do commit `c2dd079` contra o contrato do backend IF-14.
+- **Contrato conferido (sem divergência):** `POST /v2/motoboys/me/session/completion/ifood` (envio, 202 enquanto não confirmado), `GET /motoboys/me/ifood-completions/{operationId}` (recuperação por conta), estados `queued/processing/uncertain/verified/succeeded/rejected/review`, recibo com `origin`, `externalDisplayNumber` e `officialConfirmationEvidence`, contexto com `requiresOfficialConfirmation` e `completionBlockedCode`.
+- **Comportamento do app, conforme o código:** número `iFood #N` na rota, oferta, recibo e detalhe; saldo a cobrar vem do snapshot oficial (pago online não cobra; pagamento parcial cobra o saldo); só os meios OFFLINE do iFood, no máximo dois, com soma igual ao total; código de até 32 caracteres sem fixar quatro dígitos; o código não é persistido (removido do rascunho e das operações enviadas); resposta incerta, conflito ou ausência de registro **nunca** gera novo POST; contexto da fila precisa estar na mesma revisão/loja/pedido e `DISPATCHED` + `synced`; itens oficiais, complementos e customizações de terceiro nível; registro de conclusão em blocos de até 450 caracteres com ponteiro atômico (SecureStore).
+- **Lacuna encontrada e fechada:** o app não tinha nenhum teste automatizado. Adicionados `src/delivery/ifoodRules.test.ts` (27 casos) e `src/delivery/completionStorage.test.ts` (7 casos): **34 testes aprovados**, `tsc` sem erros em `src/delivery`. Um caso falhou na primeira execução por erro do próprio teste (o estado remoto é conferido no contexto do servidor, não na fila); o código do app estava correto.
+- **Pontos ainda não comprovados (exigem aparelho ou backend com a entrega Zippy ligada):**
+  1. Oferta e aceite de pedido iFood (`MERCHANT`) depois de ligar `zippy_delivery_enabled` na loja de teste.
+  2. Coleta com checklist oficial (`IFOOD_PICKUP_CHECKLIST_REQUIRED` no endpoint antigo) e conferência dos itens, inclusive customizações.
+  3. Espera do evento `DISPATCHED`: o contrato traz `canDepartDelivery`/`departureBlockedCode`, mas as telas não usam esses campos; o motoboy vê a mensagem de erro do backend ao tentar sair. Melhoria possível: mostrar o motivo antes do toque.
+  4. Cancelamento (`CAN`) com a entrega em rota: remoção da parada e aviso ao motoboy.
+  5. Recuperação nativa: matar o app e perder a rede durante o envio; estado "Confirmação pendente"; recibo oficial depois.
+  6. Pagamento parcial e dinheiro com troco no aparelho; tema claro/escuro e larguras.
+- **Plano de teste Android (ordem):** (a) criar pedido novo no portal sem mexer nele; (b) confirmar a projeção sem revisão; (c) ligar `zippy_delivery_enabled` só para a loja de teste (hoje exige SQL em produção, sem tela); (d) liberar Comandos (confirmar, preparar, pronto, despachar) pelo painel; (e) montar rota e ofertar; (f) aceitar, coletar com checklist, aguardar `DISPATCHED`; (g) chegar, informar o código, conferir o recebimento e concluir; (h) repetir com pagamento OFFLINE parcial e com resposta perdida; (i) cancelamento em rota.
+- Limites: nenhum aparelho Android foi usado; `verifyDeliveryCode` real não foi exercitado; o formato do código de entrega do sandbox continua sem prova.
 
 ### Procedimento para retomar o trabalho
 
