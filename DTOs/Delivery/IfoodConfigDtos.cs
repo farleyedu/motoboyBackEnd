@@ -44,3 +44,15 @@ public sealed class IfoodConnectionRequest
     public Guid MerchantId { get; set; }
     public Guid EstabelecimentoId { get; set; }
 }
+
+// Visão do restaurante: somente a conexão da própria loja e o estado geral da integração.
+// Sem credenciais, sem lista de outras lojas.
+public sealed class IfoodStoreStatusDto
+{
+    public IfoodConnectionDto? Connection { get; set; }
+    public bool IntegrationEnabled { get; set; }
+    public bool PollingEnabled { get; set; }
+    public bool ImportEnabled { get; set; }
+    public bool ProjectionEnabled { get; set; }
+    public bool CommandsEnabled { get; set; }
+}

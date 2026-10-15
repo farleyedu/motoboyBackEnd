@@ -9,6 +9,8 @@ public interface IIfoodRuntimeSettingsRepository
     Task UpdateSettingsAsync(string clientId, string? clientSecretCifrado, bool enabled, bool pollingEnabled,
         bool importEnabled, bool projectionEnabled, bool commandsEnabled, bool exceptionsEnabled, string? updatedBy, CancellationToken ct = default);
     Task<IReadOnlyList<IfoodConnectionRow>> ListConnectionsAsync(CancellationToken ct = default);
+    // Conexão mais recente de UMA loja; nunca devolve dados de outro estabelecimento.
+    Task<IfoodConnectionRow?> GetStoreConnectionAsync(Guid estabelecimentoId, CancellationToken ct = default);
     Task AuthorizeConnectionAsync(Guid merchantId, Guid estabelecimentoId, CancellationToken ct = default);
     Task RevokeConnectionAsync(Guid merchantId, CancellationToken ct = default);
 }
@@ -58,6 +60,19 @@ SELECT merchant_id AS MerchantId, estabelecimento_id AS EstabelecimentoId, statu
 FROM ifood_connections ORDER BY created_at_utc DESC
 """, cancellationToken: ct));
         return rows.AsList();
+    }
+
+    public async Task<IfoodConnectionRow?> GetStoreConnectionAsync(Guid estabelecimentoId, CancellationToken ct = default)
+    {
+        if (estabelecimentoId == Guid.Empty) return null;
+        await using var connection = await _source.OpenConnectionAsync(ct);
+        return await connection.QueryFirstOrDefaultAsync<IfoodConnectionRow>(new CommandDefinition("""
+SELECT merchant_id AS MerchantId, estabelecimento_id AS EstabelecimentoId, status AS Status,
+       authorized_at_utc AS AuthorizedAtUtc, revoked_at_utc AS RevokedAtUtc, last_event_at_utc AS LastEventAtUtc,
+       created_at_utc AS CreatedAtUtc
+FROM ifood_connections WHERE estabelecimento_id=@EstabelecimentoId
+ORDER BY (revoked_at_utc IS NULL) DESC, created_at_utc DESC LIMIT 1
+""", new { EstabelecimentoId = estabelecimentoId }, cancellationToken: ct));
     }
 
     public async Task AuthorizeConnectionAsync(Guid merchantId, Guid estabelecimentoId, CancellationToken ct = default)

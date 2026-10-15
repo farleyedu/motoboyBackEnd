@@ -65,6 +65,28 @@ public sealed partial class IfoodIntegrationSchemaDatabaseTests
     }
 
     [DeliveryDatabaseFact]
+    public async Task StoreConnectionNeverReturnsAnotherStoresMerchantAndPrefersTheActiveOne()
+    {
+        await using var db = await Database.Create(apply: false);
+        await db.Migrate(SchemaFile);
+        await db.Migrate(RuntimeSettingsFile);
+        var merchantA = Guid.NewGuid(); var merchantB = Guid.NewGuid(); var oldA = Guid.NewGuid();
+        Assert.Null(await db.RuntimeSettings.GetStoreConnectionAsync(db.StoreA));
+
+        await db.RuntimeSettings.AuthorizeConnectionAsync(oldA, db.StoreA);
+        await db.RuntimeSettings.RevokeConnectionAsync(oldA);
+        await db.RuntimeSettings.AuthorizeConnectionAsync(merchantA, db.StoreA);
+        await db.RuntimeSettings.AuthorizeConnectionAsync(merchantB, db.StoreB);
+
+        var a = await db.RuntimeSettings.GetStoreConnectionAsync(db.StoreA);
+        Assert.NotNull(a); Assert.Equal(merchantA, a!.MerchantId); Assert.Equal("authorized", a.Status); Assert.Equal(db.StoreA, a.EstabelecimentoId);
+        var b = await db.RuntimeSettings.GetStoreConnectionAsync(db.StoreB);
+        Assert.Equal(merchantB, b!.MerchantId); Assert.Equal(db.StoreB, b.EstabelecimentoId);
+        Assert.Null(await db.RuntimeSettings.GetStoreConnectionAsync(Guid.NewGuid()));
+        Assert.Null(await db.RuntimeSettings.GetStoreConnectionAsync(Guid.Empty));
+    }
+
+    [DeliveryDatabaseFact]
     public async Task DatabaseConfigurationProviderNeverEmitsPollingEnabledWithoutAnAuthorizedMerchant()
     {
         await using var db = await Database.Create(apply: false);

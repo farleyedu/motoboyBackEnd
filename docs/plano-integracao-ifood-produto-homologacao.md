@@ -2,6 +2,31 @@
 
 Data de referência: 14/10/2026. Idioma: pt-BR.
 
+## 0. Estado atual (resumo para se guiar; atualizado em 14/10/2026, noite)
+
+**Ambiente.** Testes diretos em **produção** (decisão do usuário: ainda não há servidor de teste). Backend no Render, banco PostgreSQL no Railway, painel na Vercel, app Android via EAS. Loja **sandbox** e app **Teste (C)** (centralizado, perfil PDV) do portal iFood; merchant de teste ligado ao estabelecimento "ZippyGo Restaurante". Segredos ficam fora dos repositórios (`C:\Users\farle\TI\Zippy\secrets\`).
+
+**Provado contra o sandbox real (evidência: logs do portal e consultas de leitura ao banco):**
+
+| Item | Resultado | Evidência |
+|---|---|---|
+| Autenticação centralizada, token, chave de criptografia | OK (H-01 parcial) | Polling autenticado respondendo 204/200 no portal |
+| Polling a cada ~30 s | OK | `GET /events/v1.0/events:polling` regular nos Logs da API |
+| Recebimento + ACK (H-02, polling) | OK | polling 200 seguido de `POST .../acknowledgment` 202 em ~1 s; eventos não se repetem |
+| Importação do pedido (IF-07) | OK | pedido `iFood #7183` no painel; valores e pagamento batem com o portal |
+| Projeção (IF-08) | OK com 1 defeito corrigido | `CFM` e `CON` aplicados; `DDCR` caiu em revisão (ver abaixo) |
+
+**Defeitos encontrados no sandbox e corrigidos (ainda sem nova prova no sandbox):**
+1. `DDCR` (`DELIVERY_DROP_CODE_REQUESTED`) ausente da tabela de códigos → `IFOOD_EVENT_CODE_CONFLICT` → pedido em "Requer revisão". Corrigido (commit `6a5f8ee`). **Reprovar com um pedido novo.**
+2. Customizações de terceiro nível (`customizations`) não exibidas no painel nem no app. Corrigido (painel `18347ae`, app `dee268d`). Observação: o `optionsPrice` do iFood (R$ 8,00) exclui as 3 customizações de R$ 1,00 e `totalPrice` (R$ 16,00) as inclui; o sistema exibe os valores oficiais sem recalcular.
+3. **Segurança:** as rotas globais de configuração (`api/v2/ifood/config`) exigiam só a permissão `integracao_ifood`, devolviam o `client_secret` decifrado e deixavam autorizar/revogar merchant de qualquer loja. Agora exigem **superadmin** (`IFOOD_CONFIG_SUPERADMIN_REQUIRED`). Restaurantes usam `GET api/v2/ifood/store`, restrito à própria loja e sem credenciais.
+
+**Ligado em produção hoje:** Integração, Polling, Importação, Projeção. **Desligado:** Comandos, Cancelamento/disputas, `CompletionEnabled`, `zippy_delivery_enabled` (entrega Zippy para pedidos iFood).
+
+**Próximos passos (ordem):** (1) reprovar DDCR com pedido novo; (2) revisar e validar o app (IF-15); (3) liberar Comandos (aceite/preparo/pronto/despacho) pelo painel; (4) ligar `zippy_delivery_enabled` na loja de teste e ensaiar rota + código + conclusão no Android; (5) cancelamento e disputas; (6) build de produção do app e envio à Play Store (service account pronta, ver `eas.json`); (7) IF-16 em diante.
+
+**Pendências abertas:** IF-00/IF-01 formais (portal, módulos, CNPJ); backup do banco antes das migrations não foi confirmado; dois testes de remuneração (`MotoboyWorkService.AddPeriod`, offset `-03:00`); `Jwt.SecretKey` de exemplo e `VerifyToken` fracos no Secret file do Render; `bundletool.jar` (32 MB) commitado no app; tela "Operação iFood" sem revisão visual de design.
+
 ## 1. Objetivo e autorização
 
 Entregar o backend, o painel administrativo e o app do motoboy com os fluxos completos da integração oficial Food Order/Events, mantendo pedidos iFood diferenciados dos canais próprios. O resultado esperado é uma aplicação pronta para submissão à homologação, validada no ambiente de testes oficial. Aprovação no processo automático e validação final do iFood são marcos externos e não podem ser declarados por inferência.
@@ -221,8 +246,8 @@ Implementada não equivale a validada. Marcar bloqueio com causa, próxima açã
 
 | ID | Entrega e aceite | Dependências | Estado inicial |
 |---|---|---|---|
-| IF-00 | Regularizar CNPJ/CNAE, conta profissional, proprietário do app e loja/credenciais de teste; registrar acesso sem segredos | Usuário/contador/portal | Pendente |
-| IF-01 | Confirmar PDV/Food, módulos, transporte, URLs/versionamento, presença, requisitos atuais e poderes do app; matriz de aplicabilidade aprovada | IF-00 para prova real | Pendente |
+| IF-00 | Regularizar CNPJ/CNAE, conta profissional, proprietário do app e loja/credenciais de teste; registrar acesso sem segredos | Usuário/contador/portal | Em andamento: loja sandbox e credenciais em posse do usuário (14/10/2026); regularização cadastral e conferência no portal pendentes |
+| IF-01 | Confirmar PDV/Food, módulos, transporte, URLs/versionamento, presença, requisitos atuais e poderes do app; matriz de aplicabilidade aprovada | IF-00 para prova real | Em andamento: perfil PDV informado pelo usuário; módulos, transporte e poderes do app ainda sem conferência no portal |
 | IF-02 | Inventariar queries/DTOs/telas/legado; fechar identidade, modalidades, estados, valores, privacidade e casos de uso | Inspeção local; contratos oficiais pendentes em IF-01 | Implementada |
 | IF-03 | Definir desenho funcional e sequência do código/arraste, cancelamento, retirada e erros nas aplicações; validar dependências oficiais antes de telas | IF-02; contrato IF-01 para confirmação remota | Implementada |
 | IF-04 | Implementar contratos e schema passivo, constraints e rollback; preservar legado sem backfill presumido/ativação e testar duas lojas | IF-02 | Validada localmente |
@@ -233,10 +258,10 @@ Implementada não equivale a validada. Marcar bloqueio com causa, próxima açã
 | IF-09 | Comandos persistentes de confirmar/preparar/pronto/despachar; SLA/agendamento e resultados incertos; capacidades/regra de prazo/prova autenticada pendentes | IF-05, IF-07, IF-08 | Validada localmente |
 | IF-10 | Cancelamento com motivos dinâmicos, rejeição e evento final; negociações aplicáveis com deadline/settlement | IF-08, IF-09 | Validada localmente |
 | IF-11 | Painel completo de pedidos/preparo/retirada/iFood, identidade e sincronização; ações por capacidade | IF-03, IF-07 a IF-10 | Validada localmente |
-| IF-12 | Fila/rota/oferta compatíveis; bloqueio IFOOD/TAKEOUT e de despacho prematuro; cancelamento/encerramento em rota | IF-07 a IF-09 | Pendente |
-| IF-13 | Configuração centralizada do iFood por tela em Gestão: `client_id`/`client_secret` cifrados, autorizar/revogar merchant↔loja substituindo SQL manual, toggles globais (Enabled/Polling/Import/Projection/Commands/Exceptions) lidos em runtime pelos workers sem exigir reinício do processo | IF-04, IF-05, IF-06 | Pendente |
+| IF-12 | Fila/rota/oferta compatíveis; bloqueio IFOOD/TAKEOUT e de despacho prematuro; cancelamento/encerramento em rota | IF-07 a IF-09 | Validada localmente |
+| IF-13 | Configuração centralizada do iFood por tela em Gestão: `client_id`/`client_secret` cifrados, autorizar/revogar merchant↔loja substituindo SQL manual, toggles globais (Enabled/Polling/Import/Projection/Commands/Exceptions) lidos em runtime pelos workers sem exigir reinício do processo | IF-04, IF-05, IF-06 | Validada localmente (tela sem verificação visual em navegador; sem uso em produção) |
 | IF-14 | Backend de código oficial e conclusão persistente; recuperação sem validar localmente pedido remoto | IF-03, IF-09, IF-12 | Validada localmente |
-| IF-15 | App com identidade, cobrança e conclusão oficial; feedback, recibo e recovery nativo | IF-03, IF-12, IF-14 | Pendente |
+| IF-15 | App com identidade, cobrança e conclusão oficial; feedback, recibo e recovery nativo | IF-03, IF-12, IF-14 | Implementada (commit `c2dd079` no app, 14/10/2026); sem relatório de validação, sem teste Android nativo e sem prova contra backend publicado |
 | IF-16 | Permissões/diagnóstico restante e prevenção de bypass; proteção/retenção de dados (configuração central já coberta pelo IF-13) | IF-04 a IF-15 | Pendente |
 | IF-17 | Instrumentação, alertas, conciliação e contingência; verificar hospedagem sempre ativa e múltiplas instâncias | IF-06 a IF-16 | Pendente |
 | IF-18 | Regressão dos canais próprios e falhas distribuídas; contratos backend/painel/app e validação visual | IF-07 a IF-17 | Pendente |
@@ -563,6 +588,29 @@ Status: aprovado pelo usuário, implementado e validado localmente. A lista abai
 - Verificação adicional de canais próprios/remuneração: **14 aprovados e 2 falhas fora do lote**, em serviço/testes inalterados de remuneração periódica (`MotoboyWorkService.AddPeriod`, offset `-03:00` rejeitado pelo Npgsql). Registradas no relatório; não corrigidas fora do escopo. A aprovação local IF-14 não declara a suíte inteira livre de falhas.
 - Evidências, contratos, arquivos e comandos: [IF-14](validacao-ifood/IF-14.md). Referências públicas Order reconsultadas; conteúdo indexado disponível, abertura direta 403. IF-00/IF-01/formato/efeito/capacidades reais/sandbox continuam pendentes. Nenhuma migration/flag/credencial real, commit, push, publicação, ativação ou submissão.
 - Próximo lote funcional: **IF-15**, consumo no app de identidade/saldo/ação explícita de conclusão/feedback/recibo e recovery Android. Consumo visual do contrato de retirada no painel também permanece pendente de interface/validação. Preservar separadamente as pendências do IF-13, remuneração por período e IF-00/IF-01.
+
+### 14/10/2026 — Credenciais sandbox, preparo do ambiente real e IF-15 implementada
+
+- ID: **IF-00/IF-01 (parcial) e IF-15**. Autorização: usuário decidiu testar diretamente em produção, por ainda não haver servidor de teste, e pediu para registrar o avanço.
+- **Credenciais e perfil (declarados pelo usuário, não conferidos no portal):** loja **sandbox**, perfil **PDV**, credenciais de aplicação já em posse do usuário. Nenhum segredo é registrado neste plano. Pendentes: conferir no portal os módulos habilitados (Order/Events), transporte de produção e poderes do app; regularização cadastral (CNPJ/CNAE) segue como requisito para a homologação, não para os testes sandbox.
+- **Segredos do ambiente (preparo concluído, aplicação pendente):** gerada chave de 32 bytes para cifrar o `client_secret` (`Ifood__ActiveEncryptionKeyId`/`Ifood__EncryptionKeys__key1`), guardada fora do repositório. O `client_id`/`client_secret` **ainda não foram cadastrados**: dependem da tela Configuração iFood em produção. Proposta, ainda não confirmada pelo usuário (que prefere manter tudo no Secret file): colocar a chave por variável de ambiente do Render em vez de dentro do `appsettings.secrets.json`, porque uma edição desse arquivo deixou o JSON inválido e o deploy falhou na inicialização. O trecho JSON pronto está em `secrets\ifood-secret-file-trecho.json.txt`.
+- **Estado da produção (verificado por consulta a rotas em 14/10/2026):** o serviço **continua com código até o IF-11** (`/api/v2/ifood/config` e as rotas de conclusão do IF-14 respondem 404). O deploy do `master` (`if14`) falhou duas vezes em `Failed to load configuration from file '/app/appsettings.secrets.json'` (JSON com objeto aberto, linha 68); o Render manteve a versão anterior no ar. **Nenhuma das 10 migrations IF-04 a IF-14 foi aplicada em produção.** `DeliveryTracking:ApplyMigrationsOnStartup` é `true` em `appsettings.json`, portanto o próximo deploy bem-sucedido as aplica todas na inicialização. Banco: PostgreSQL no Railway; **backup pendente de confirmação** antes do deploy.
+- **IF-12 e IF-13:** a tabela da seção 10 estava desatualizada ("Pendente"); ambas foram implementadas e validadas localmente (relatórios `IF-12.md` e `IF-13.md`). Corrigido nesta data. IF-13 continua sem verificação visual em navegador.
+- **IF-15 (app do motoboy):** estado **Implementada**, commit `c2dd079` ("if15") em `zippygo-motoboy`, mais `a9c953a` (remoção do serviço de mídia em segundo plano, fora do escopo iFood). Arquivos principais: `src/delivery/ifoodRules.ts` e `ifoodContracts.ts` (identidade, saldo a cobrar, plano de pagamento oficial, mensagens por estado da operação), `OfficialDeliveryCode.tsx`, `DeliveryCodeScreen.tsx`, `DeliveryCompletionContext.tsx`, `completionStorage.ts`, `completionApi.ts`, `RouteDeck.tsx`, `FinishScreen.tsx`. **Não há relatório de validação IF-15** nem registro de testes Jest ou Android nativo; o `if15-typecheck-baseline.log` lista erros preexistentes de `expo-router/react-navigation` e o `if15-typecheck-current.log` está praticamente vazio. Tratar como implementada, **não validada**. O commit também incluiu `docs/google-play/bundletool.jar` (32 MB) por engano provável; avaliar remoção do repositório.
+- **Pendência herdada, ainda aberta:** dois testes de remuneração periódica (`MotoboyWorkService.AddPeriod`, offset `-03:00` rejeitado pelo Npgsql) falham no código atual; confirmar se é apenas do ambiente local antes de publicar.
+- **Próximos passos, em ordem:** (1) backup do banco no Railway; (2) corrigir o Secret file (remover o bloco `Ifood`) e as duas variáveis de ambiente de chave; (3) deploy e conferência de que IF-12/IF-13/IF-14 respondem; (4) regressão ponta a ponta dos canais próprios em produção; (5) cadastrar credenciais sandbox na tela Configuração iFood e autorizar o merchant; (6) ligar somente o polling e provar token, eventos e ACK (H-01/H-02); (7) pedido de teste: importação e projeção; (8) plano de testes do IF-15 no Android após leitura e validação do código; (9) build de produção do app para a Play Store, somente após a regressão.
+- Limites: nenhuma chamada autenticada ao iFood foi feita; nenhuma flag foi ligada; nenhum pedido sandbox foi criado. Sem commit/push realizado por este registro.
+
+### 14/10/2026 (noite) — Primeira prova no sandbox, correção DDCR, customizações e aba do restaurante
+
+- Estado: **Validada no sandbox (parcial)** para autenticação, polling, ACK, importação e projeção de `PLC/CFM/CON`. Validada localmente para o restante.
+- **Prova real:** polling regular (204) e pedido de teste `7ea21362…` (`iFood #7183`) recebido (`PLC`, `CFM`, `DDCR`, depois `CON` ~30 min depois, concluído sozinho pelo sandbox) com ACK 202 logo após cada polling 200. Importação e valores conferidos com o portal: subtotal R$ 21,00 + entrega R$ 5,00 + taxa de serviço R$ 1,00 = R$ 27,00, pago online (Visa R$ 17 + Master R$ 10), saldo a cobrar R$ 0,00.
+- **Defeito `DDCR`:** a tabela de `IfoodOrderProjectionEvent` não mapeava `DDCR`; o código curto divergia do `fullCode` e gerava `IFOOD_EVENT_CODE_CONFLICT` e sincronização "review". Correção: mapear `DDCR → DELIVERY_DROP_CODE_REQUESTED` (tratado como informativo). Teste unitário novo. O pedido #7183 permanece em revisão em produção (histórico por evento é único, não reprocessar à mão); reprovar com pedido novo.
+- **Customizações:** o iFood aninha o terceiro nível em `options[].customizations`. Painel (`view.ts`, usado também pela comanda) e app (`ifoodRules.ts`) passam a percorrer `options` e `customizations`. 49 testes do painel de `features/ifood` na época; teste novo no `view.test.ts`.
+- **Segurança (achado):** `GET/PUT api/v2/ifood/config`, `GET/POST .../connections` e `PUT .../revoke` exigiam apenas `Delivery/integracao_ifood`, devolviam o `client_secret` decifrado e aceitavam `EstabelecimentoId` no corpo: um usuário de um restaurante com essa permissão poderia ler a credencial global e vincular/revogar merchants de outras lojas. Correção: essas rotas passam a exigir **superadmin** (403 `IFOOD_CONFIG_SUPERADMIN_REQUIRED`). Nova rota `GET api/v2/ifood/store` (permissão `Delivery/integracao_ifood`, escopo da loja do token): devolve só a conexão da própria loja e booleanos do estado da integração. Vincular/revogar merchant continua com superadmin.
+- **Aba do restaurante:** card "Integração iFood" em Configurações (`/apps/configuracoes/ifood`, visível com módulo Delivery e permissão `integracao_ifood`; regra de rota em `utils/permissions.ts`). Mostra conexão da loja, estado da integração e atalho aos pedidos iFood; superadmin vê também o formulário de vínculo (loja atual) e o atalho da configuração global em Gestão. Sem credenciais.
+- **Validação:** backend **132 testes aprovados** (`IfoodIntegrationSchemaDatabaseTests` + `IfoodOrderProjectionTests`, PostgreSQL isolado e descartável na porta 55490, instância removida), incluindo `StoreConnectionNeverReturnsAnotherStoresMerchantAndPrefersTheActiveOne`; painel **56 testes aprovados** (`features/ifood` + `configuracoes`) e typecheck limpo. Sem verificação visual das duas telas novas em navegador.
+- **Limites:** nenhum Comando enviado ao iFood; cancelamento, disputas e conclusão por código não foram exercitados no sandbox. Sem prova do `verifyDeliveryCode`.
 
 ### Procedimento para retomar o trabalho
 

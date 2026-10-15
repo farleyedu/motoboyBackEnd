@@ -16,6 +16,7 @@ public sealed class IfoodConfigController(IIfoodRuntimeSettingsRepository reposi
     [HttpGet, RequirePermission("Delivery", "integracao_ifood")]
     public async Task<IActionResult> Get(CancellationToken ct)
     {
+        if (!HttpContext.IsSuperAdmin()) return SuperAdminRequired();
         Response.Headers.CacheControl = "no-store";
         return Ok(ApiResponse<IfoodRuntimeSettingsDto>.Ok(ToDto(await repository.GetSettingsAsync(ct))));
     }
@@ -23,6 +24,7 @@ public sealed class IfoodConfigController(IIfoodRuntimeSettingsRepository reposi
     [HttpPut, RequirePermission("Delivery", "integracao_ifood")]
     public async Task<IActionResult> Put(IfoodRuntimeSettingsRequest request, CancellationToken ct)
     {
+        if (!HttpContext.IsSuperAdmin()) return SuperAdminRequired();
         Response.Headers.CacheControl = "no-store";
         if (string.IsNullOrWhiteSpace(request.ClientId))
             return BadRequest(ApiResponse<object>.Fail("Informe o Client ID.", "IFOOD_CONFIG_INVALID_CLIENT_ID"));
@@ -43,6 +45,7 @@ public sealed class IfoodConfigController(IIfoodRuntimeSettingsRepository reposi
     [HttpGet("connections"), RequirePermission("Delivery", "integracao_ifood")]
     public async Task<IActionResult> ListConnections(CancellationToken ct)
     {
+        if (!HttpContext.IsSuperAdmin()) return SuperAdminRequired();
         Response.Headers.CacheControl = "no-store";
         var rows = await repository.ListConnectionsAsync(ct);
         return Ok(ApiResponse<IReadOnlyList<IfoodConnectionDto>>.Ok(rows.Select(ToDto).ToList()));
@@ -51,6 +54,7 @@ public sealed class IfoodConfigController(IIfoodRuntimeSettingsRepository reposi
     [HttpPost("connections"), RequirePermission("Delivery", "integracao_ifood")]
     public async Task<IActionResult> Authorize(IfoodConnectionRequest request, CancellationToken ct)
     {
+        if (!HttpContext.IsSuperAdmin()) return SuperAdminRequired();
         Response.Headers.CacheControl = "no-store";
         try
         {
@@ -67,11 +71,17 @@ public sealed class IfoodConfigController(IIfoodRuntimeSettingsRepository reposi
     [HttpPut("connections/{merchantId:guid}/revoke"), RequirePermission("Delivery", "integracao_ifood")]
     public async Task<IActionResult> Revoke(Guid merchantId, CancellationToken ct)
     {
+        if (!HttpContext.IsSuperAdmin()) return SuperAdminRequired();
         Response.Headers.CacheControl = "no-store";
         try { await repository.RevokeConnectionAsync(merchantId, ct); return Ok(ApiResponse<object>.Ok(new { })); }
         catch (IfoodIntegrationException ex)
         { return StatusCode(404, ApiResponse<object>.Fail("Conexão não encontrada ou já revogada.", ex.Code)); }
     }
+
+    // Credenciais e interruptores são globais (um único app centralizado para todas as lojas) e o segredo
+    // é devolvido decifrado: só administradores Zippy. Restaurantes usam api/v2/ifood/store (somente leitura).
+    private IActionResult SuperAdminRequired() => StatusCode(403,
+        ApiResponse<object>.Fail("Apenas administradores Zippy podem alterar a configuração global do iFood.", "IFOOD_CONFIG_SUPERADMIN_REQUIRED"));
 
     private IfoodRuntimeSettingsDto ToDto(IfoodRuntimeSettings settings) => new()
     {
@@ -89,4 +99,31 @@ public sealed class IfoodConfigController(IIfoodRuntimeSettingsRepository reposi
         MerchantId = row.MerchantId, EstabelecimentoId = row.EstabelecimentoId, Status = row.Status,
         AuthorizedAtUtc = row.AuthorizedAtUtc, RevokedAtUtc = row.RevokedAtUtc, LastEventAtUtc = row.LastEventAtUtc, CreatedAtUtc = row.CreatedAtUtc
     };
+}
+
+// Visão do restaurante em Configurações > iFood: somente leitura e restrita à loja do token.
+[ApiController, Route("api/v2/ifood/store")]
+public sealed class IfoodStoreController(IIfoodRuntimeSettingsRepository repository) : ControllerBase
+{
+    [HttpGet, RequirePermission("Delivery", "integracao_ifood")]
+    public async Task<IActionResult> Get(CancellationToken ct)
+    {
+        Response.Headers.CacheControl = "no-store";
+        var store = HttpContext.GetEstabelecimentoId();
+        if (store is null)
+            return BadRequest(ApiResponse<object>.Fail("Selecione um estabelecimento.", "IFOOD_STORE_NOT_SELECTED"));
+        var settings = await repository.GetSettingsAsync(ct);
+        var row = await repository.GetStoreConnectionAsync(store.Value, ct);
+        var enabled = settings.Enabled && !string.IsNullOrWhiteSpace(settings.ClientId) && !string.IsNullOrWhiteSpace(settings.ClientSecretCifrado);
+        return Ok(ApiResponse<IfoodStoreStatusDto>.Ok(new IfoodStoreStatusDto
+        {
+            Connection = row is null ? null : new IfoodConnectionDto
+            {
+                MerchantId = row.MerchantId, EstabelecimentoId = row.EstabelecimentoId, Status = row.Status,
+                AuthorizedAtUtc = row.AuthorizedAtUtc, RevokedAtUtc = row.RevokedAtUtc, LastEventAtUtc = row.LastEventAtUtc, CreatedAtUtc = row.CreatedAtUtc
+            },
+            IntegrationEnabled = enabled, PollingEnabled = enabled && settings.PollingEnabled, ImportEnabled = enabled && settings.ImportEnabled,
+            ProjectionEnabled = enabled && settings.ProjectionEnabled, CommandsEnabled = enabled && settings.CommandsEnabled
+        }));
+    }
 }
