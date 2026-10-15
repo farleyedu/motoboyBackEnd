@@ -14,7 +14,7 @@ public sealed record IfoodOrderProjectionEvent(string Code, DateTimeOffset At, [
         ["ADR"]="ASSIGN_DRIVER", ["GTO"]="GOING_TO_ORIGIN", ["AAO"]="ARRIVED_AT_ORIGIN", ["CLT"]="COLLECTED",
         ["AAD"]="ARRIVED_AT_DESTINATION", ["DRGO"]="DELIVERY_RETURNING_TO_ORIGIN", ["DRDO"]="DELIVERY_RETURNED_TO_ORIGIN",
         ["DRCR"]="DELIVERY_RETURN_CODE_REQUESTED", ["RPS"]="RECOMMENDED_PREPARATION_START", ["DGAC"]="DELIVERY_GROUP_ASSOCIATED",
-        ["DAR"]="DELIVERY_ADDRESS_CHANGE_REQUESTED"
+        ["DAR"]="DELIVERY_ADDRESS_CHANGE_REQUESTED", ["DDCR"]="DELIVERY_DROP_CODE_REQUESTED"
     };
     public static string Canonical(string code) => Codes.GetValueOrDefault(code) ?? code;
     public static IfoodOrderProjectionEvent Parse(IfoodInboxReservation item)

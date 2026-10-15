@@ -22,6 +22,7 @@ public sealed class IfoodOrderProjectionTests
     [InlineData("CAN","CANCELLED")]
     [InlineData("OPA","ORDER_PATCHED")]
     [InlineData("HSS","HANDSHAKE_SETTLEMENT")]
+    [InlineData("DDCR","DELIVERY_DROP_CODE_REQUESTED")]
     [InlineData("FUTURE","FUTURE")]
     public void PreservesUnknownCodesAndChecksIdentityFullCodeAndOfficialTimestamp(string code,string full)
     {
