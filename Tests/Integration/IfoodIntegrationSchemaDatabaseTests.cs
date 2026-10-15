@@ -178,10 +178,15 @@ INSERT INTO pedido VALUES(1,@StoreA,'preservado'),(2,@StoreB,'preservado');
             await using var connection = await _source.OpenConnectionAsync();
             await connection.ExecuteAsync(sql, args);
         }
-        public async Task<T> Scalar<T>(string sql)
+        public async Task<T> Scalar<T>(string sql, object? args = null)
         {
             await using var connection = await _source.OpenConnectionAsync();
-            return (await connection.ExecuteScalarAsync<T>(sql))!;
+            return (await connection.ExecuteScalarAsync<T>(sql, args))!;
+        }
+        public async Task<IReadOnlyList<T>> Query<T>(string sql, object? args = null)
+        {
+            await using var connection = await _source.OpenConnectionAsync();
+            return (await connection.QueryAsync<T>(sql, args)).AsList();
         }
         public async Task Migrate(string file) => await Execute(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "Migrations", "Delivery", file)));
         public async Task Rollback() => await Execute(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "Migrations", "Delivery", "rollback", "20261013_01_ifood_integration_schema.down.sql")));

@@ -12,6 +12,8 @@ public sealed class IfoodRuntimeSettings
     public bool CommandsEnabled { get; set; }
     public bool ExceptionsEnabled { get; set; }
     public bool CompletionEnabled { get; set; }
+    public bool RetentionEnabled { get; set; }
+    public int RetentionDays { get; set; } = 30;
     public DateTimeOffset UpdatedAtUtc { get; set; }
     public string? UpdatedBy { get; set; }
 }

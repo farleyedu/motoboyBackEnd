@@ -23,6 +23,9 @@ public sealed class IfoodOptions
     public bool CommandsEnabled { get; set; }
     // IF-14: habilitação explícita; reutiliza a allowlist merchant/loja dos comandos.
     public bool CompletionEnabled { get; set; }
+    // Limpeza automática do corpo de eventos antigos (ligada e dimensionada pela tela).
+    public bool RetentionEnabled { get; set; }
+    public int RetentionDays { get; set; } = 30;
     public int CommandLeaseSeconds { get; set; } = 90;
     public int CommandBatchSize { get; set; } = 5;
     public int CommandMaxAttempts { get; set; } = 8;
@@ -91,6 +94,8 @@ public sealed class IfoodOptionsValidator : IValidateOptions<IfoodOptions>
             options.AllowedExceptionActions.Count is < 1 or > 4 || options.AllowedExceptionActions.Distinct().Count()!=options.AllowedExceptionActions.Count ||
             options.AllowedExceptionActions.Any(c=>!Exceptions.IfoodExceptionRules.IsKnown(c))))
             errors.Add("Cancelamento/disputas iFood requerem merchants/ações explícitos, reserva de três timeouts, limites e validade dos motivos configurados.");
+        if (options.RetentionEnabled && options.RetentionDays is < 7 or > 365)
+            errors.Add("A retenção iFood deve ficar entre 7 e 365 dias.");
         return errors.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(errors);
     }
 

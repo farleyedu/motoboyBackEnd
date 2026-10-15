@@ -38,7 +38,7 @@ public sealed class IfoodConfigController(IIfoodRuntimeSettingsRepository reposi
         { return StatusCode(503, ApiResponse<object>.Fail("Não foi possível cifrar o client secret.", ex.Code)); }
         var updatedBy = HttpContext.GetUserId()?.ToString();
         await repository.UpdateSettingsAsync(request.ClientId.Trim(), cifrado, request.Enabled, request.PollingEnabled,
-            request.ImportEnabled, request.ProjectionEnabled, request.CommandsEnabled, request.ExceptionsEnabled, updatedBy, request.CompletionEnabled, ct);
+            request.ImportEnabled, request.ProjectionEnabled, request.CommandsEnabled, request.ExceptionsEnabled, updatedBy, request.CompletionEnabled, request.RetentionEnabled, request.RetentionDays, ct);
         return Ok(ApiResponse<IfoodRuntimeSettingsDto>.Ok(ToDto(await repository.GetSettingsAsync(ct))));
     }
 
@@ -83,7 +83,11 @@ public sealed class IfoodConfigController(IIfoodRuntimeSettingsRepository reposi
     {
         if (!HttpContext.IsSuperAdmin()) return SuperAdminRequired();
         Response.Headers.CacheControl = "no-store";
-        try { await repository.SetConnectionDeliveryAsync(merchantId, request.Enabled, ct); return Ok(ApiResponse<object>.Ok(new { })); }
+        try
+        {
+            var updated = await repository.SetConnectionDeliveryAsync(merchantId, request.Enabled, request.ApplyToOpenOrders, ct);
+            return Ok(ApiResponse<IfoodConnectionDeliveryResult>.Ok(new IfoodConnectionDeliveryResult { OrdersUpdated = updated }));
+        }
         catch (IfoodIntegrationException ex)
         { return StatusCode(404, ApiResponse<object>.Fail("Conexão não encontrada ou revogada.", ex.Code)); }
     }
@@ -99,7 +103,7 @@ public sealed class IfoodConfigController(IIfoodRuntimeSettingsRepository reposi
         ClientSecret = string.IsNullOrEmpty(settings.ClientSecretCifrado) ? null : SafeUnprotect(settings.ClientSecretCifrado),
         Enabled = settings.Enabled, PollingEnabled = settings.PollingEnabled, ImportEnabled = settings.ImportEnabled,
         ProjectionEnabled = settings.ProjectionEnabled, CommandsEnabled = settings.CommandsEnabled, ExceptionsEnabled = settings.ExceptionsEnabled,
-        CompletionEnabled = settings.CompletionEnabled, UpdatedAtUtc = settings.UpdatedAtUtc, UpdatedBy = settings.UpdatedBy
+        CompletionEnabled = settings.CompletionEnabled, RetentionEnabled = settings.RetentionEnabled, RetentionDays = settings.RetentionDays, UpdatedAtUtc = settings.UpdatedAtUtc, UpdatedBy = settings.UpdatedBy
     };
     // Segredo gravado com chave antiga/rotacionada de forma incompatível não deve derrubar a tela.
     private string? SafeUnprotect(string cifrado)

@@ -75,6 +75,9 @@ public static class IfoodServiceCollectionExtensions
         services.AddSingleton<Completion.IIfoodDeliveryCodeClient, Completion.IfoodDeliveryCodeClient>();
         services.AddSingleton<Completion.IfoodCompletionService>();
         services.AddHostedService<Completion.IfoodCompletionWorker>();
+        services.AddSingleton<Reconciliation.IIfoodReconciliationRepository, Reconciliation.IfoodReconciliationRepository>();
+        services.AddSingleton<Retention.IfoodRetentionService>();
+        services.AddHostedService<Retention.IfoodRetentionWorker>();
         return services;
     }
 }

@@ -9,6 +9,8 @@ public partial class DeliverySyncDatabaseTests
 {
     private static async Task<Database> WorkDatabase()
     {
+        // Mesmo registro do Program.cs: sem ele o Npgsql recusa DateTimeOffset com offset diferente de UTC (-03:00).
+        APIBack.Infrastructure.DapperConfiguration.Configure();
         var db=await CompletionDatabase();
         await db.Execute("""
 ALTER TABLE pedido ADD COLUMN distancia_km numeric;
