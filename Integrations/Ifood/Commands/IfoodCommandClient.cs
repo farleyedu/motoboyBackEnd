@@ -31,7 +31,9 @@ public sealed class IfoodCommandClient : IIfoodCommandClient
         using var request=new HttpRequestMessage(HttpMethod.Post,endpoint);
         request.Headers.Authorization=new AuthenticationHeaderValue("Bearer",token.Value);
         var payload=exception?intent!.Body.GetRawText():IfoodCommandRules.Payload(command.Command);
+        // O iFood recusa com 400 "Invalid mime type" quando o Content-Type leva charset.
         request.Content=new StringContent(payload,Encoding.UTF8,"application/json");
+        request.Content.Headers.ContentType=new MediaTypeHeaderValue("application/json");
         // Fence e registro de início de envio após token/configuração, imediatamente antes de SendAsync.
         await beforeSend(ct);
         try

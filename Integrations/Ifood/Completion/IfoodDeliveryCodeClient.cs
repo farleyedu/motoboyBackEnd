@@ -23,7 +23,9 @@ public sealed class IfoodDeliveryCodeClient(IHttpClientFactory http, IfoodMercha
         using var request = new HttpRequestMessage(HttpMethod.Post,
             $"https://merchant-api.ifood.com.br/order/v1.0/orders/{order:D}/verifyDeliveryCode");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Value);
+        // O iFood recusa com 400 "Invalid mime type" quando o Content-Type leva charset.
         request.Content = new StringContent(JsonSerializer.Serialize(new { code }), Encoding.UTF8, "application/json");
+        request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
         // Intenção e marcador de envio confirmados no banco antes do POST. Nunca repetir envio incerto.
         await beforeSend(ct);
         try
