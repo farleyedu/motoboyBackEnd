@@ -76,7 +76,10 @@ SELECT EXISTS(SELECT 1 FROM ifood_outbound_commands WHERE merchant_id=@MerchantI
 AND command_type IN('confirm','start_preparation','ready_to_pickup','dispatch','request_cancellation') AND state IN('queued','processing','uncertain','review'))
 """,context,tx,cancellationToken:ct));
             if(active) throw IfoodCommandRules.Error("IFOOD_COMMAND_ACTIVE_OPERATION");
-            payload=input;
+            // O iFood exige cancellationCode alem de reason. Mantemos o codigo nos dois campos:
+            // e o valor que a API ja aceitava em reason, e o unico que o catalogo garante ser valido.
+            payload=JsonSerializer.Serialize(new IfoodExceptionIntent { CatalogId=intent.CatalogId,
+                Body=JsonSerializer.SerializeToElement(new { reason=Code(intent),cancellationCode=Code(intent) }) });
         }
         else
         {
@@ -124,7 +127,7 @@ VALUES(@Operation,@MerchantId,@ExternalOrderId,@EstabelecimentoId,@Command,CAST(
         IfoodExceptionRules.Enabled(_options,context,current.Command,current.ExpectedRevision);var intent=IfoodExceptionRules.Intent(current.PayloadJson);
         if(current.Command=="request_cancellation")
         {
-            IfoodExceptionRules.Cancellation(context);var reason=Reason(intent);
+            IfoodExceptionRules.Cancellation(context);var reason=Code(intent);
             if(freshReasons==null || fetchedAt==null || fetchedAt>_clock.GetUtcNow() || fetchedAt.Value.AddSeconds(_options.CancellationReasonsTtlSeconds)<=_clock.GetUtcNow() || !freshReasons.Any(r=>r.Code==reason))
                 throw IfoodExceptionRules.Error("IFOOD_CANCELLATION_REASON_NO_LONGER_AVAILABLE");
         }
@@ -146,13 +149,22 @@ WHERE operation_id=@OperationId AND state='processing' AND lease_id=@LeaseId AND
     });
     private async Task ValidateCatalog(NpgsqlConnection c,NpgsqlTransaction tx,IfoodCommandContext context,IfoodExceptionIntent intent,CancellationToken ct)
     {
-        var reason=Reason(intent);
+        var code=Code(intent);
         var reasons=await c.QuerySingleOrDefaultAsync<string>(new CommandDefinition("""
 SELECT reasons::text FROM ifood_cancellation_reason_snapshots WHERE catalog_id=@Catalog AND merchant_id=@MerchantId AND external_order_id=@ExternalOrderId
 AND estabelecimento_id=@EstabelecimentoId AND expected_order_revision=@Revision AND expires_at_utc>@Now
 """,new { Catalog=intent.CatalogId,context.MerchantId,context.ExternalOrderId,context.EstabelecimentoId,context.Revision,Now=_clock.GetUtcNow() },tx,cancellationToken:ct));
-        if(reasons==null || !(JsonSerializer.Deserialize<IfoodCancellationReasonDto[]>(reasons)??Array.Empty<IfoodCancellationReasonDto>()).Any(r=>r.Code==reason))
+        if(reasons==null || !(JsonSerializer.Deserialize<IfoodCancellationReasonDto[]>(reasons)??Array.Empty<IfoodCancellationReasonDto>()).Any(r=>r.Code==code))
             throw IfoodExceptionRules.Error("IFOOD_CANCELLATION_REASON_NOT_IN_CURRENT_CATALOG");
+    }
+    // O codigo fica em cancellationCode. Intencoes gravadas antes desse campo existir trazem o codigo em reason.
+    private static string Code(IfoodExceptionIntent intent)
+    {
+        var field=Orders.IfoodOrderNormalizer.Field(intent.Body,"cancellationCode");
+        var code=field.ValueKind==JsonValueKind.String?field.GetString():null;
+        if(code==null) return Reason(intent);
+        if(!IfoodExceptionRules.Text(code,128)) throw IfoodExceptionRules.Error("IFOOD_CANCELLATION_REASON_INVALID");
+        return code;
     }
     private static string Reason(IfoodExceptionIntent intent)
     {
