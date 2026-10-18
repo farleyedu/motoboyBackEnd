@@ -73,19 +73,24 @@ public sealed class IfoodCommandTests
         Assert.Equal(expected,Assert.Throws<DeliveryDomainException>(()=>IfoodCommandRules.Validate("dispatch",c,1,new Clock().Now,Options(c.MerchantId,c.EstabelecimentoId))).Code);
     }
     [Fact]
-    public void ConfirmationExpiresAtEightMinutesAndScheduledRuleIsExplicitWithoutInventedPrepTime()
+    public void ConfirmationExpiresAtEightMinutesAndScheduledFollowsTheWindow()
     {
         var c=Context();var options=Options(c.MerchantId,c.EstabelecimentoId);var at=DateTimeOffset.Parse("2026-10-13T18:08:00Z");
         Assert.Equal("IFOOD_COMMAND_CONFIRMATION_DEADLINE",Assert.Throws<DeliveryDomainException>(()=>IfoodCommandRules.Validate("confirm",c,1,at,options)).Code);
         var root=JsonNode.Parse(c.Payload)!;root["orderTiming"]="SCHEDULED";
         root["scheduled"]=JsonNode.Parse("{\"preparationStartDateTime\":\"2026-10-13T19:00:00Z\",\"deliveryDateTimeStart\":\"2026-10-13T19:20:00Z\",\"deliveryDateTimeEnd\":\"2026-10-13T19:40:00Z\"}");c.Payload=root.ToJsonString();
-        Assert.Throws<DeliveryDomainException>(()=>IfoodCommandRules.Validate("confirm",c,1,at,options));
+        // Agendado: o prazo acompanha a janela da entrega, nao a criacao do pedido.
+        Assert.Equal(DateTimeOffset.Parse("2026-10-13T19:28:00Z"),IfoodCommandRules.Validate("confirm",c,1,at,options).DeadlineAtUtc);
         options.ScheduledConfirmationUsesPreparationStart=true;
         Assert.Equal(DateTimeOffset.Parse("2026-10-13T19:08:00Z"),IfoodCommandRules.Validate("confirm",c,1,at,options).DeadlineAtUtc);
         c.RemoteStatus="CONFIRMED";c.PreparationState="accepted";
         Assert.Equal(DateTimeOffset.Parse("2026-10-13T19:00:00Z"),IfoodCommandRules.Validate("start_preparation",c,1,at,options).NotBeforeUtc);
         root["scheduled"]!.AsObject().Remove("preparationStartDateTime");c.Payload=root.ToJsonString();
         Assert.Equal("IFOOD_COMMAND_SCHEDULE_INCOMPLETE",Assert.Throws<DeliveryDomainException>(()=>IfoodCommandRules.Validate("start_preparation",c,1,at,options)).Code);
+        // Preparo anterior a criacao do pedido nao encurta o prazo: o aceite continua valendo pela janela.
+        root["scheduled"]=JsonNode.Parse("{\"preparationStartDateTime\":\"2026-01-22T15:20:00Z\",\"deliveryDateTimeStart\":\"2026-10-13T19:20:00Z\",\"deliveryDateTimeEnd\":\"2026-10-13T19:40:00Z\"}");c.Payload=root.ToJsonString();
+        c.RemoteStatus="PLACED";c.PreparationState="awaiting_acceptance";
+        Assert.Equal(DateTimeOffset.Parse("2026-10-13T19:28:00Z"),IfoodCommandRules.Validate("confirm",c,1,at,options).DeadlineAtUtc);
     }
     [Fact]
     public void PreparationTimestampWithoutTimezoneCannotAuthorizeEarlyCooking()

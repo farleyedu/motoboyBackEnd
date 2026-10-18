@@ -61,14 +61,15 @@ public static class IfoodCommandRules
         {
             case "confirm":
                 if(context.RemoteStatus!="PLACED") throw Error("IFOOD_COMMAND_INVALID_STATE");
-                // Até IF-01 confirmar a regra do perfil, aplica o prazo mais restritivo dos guias públicos.
-                // Preparo anterior à criação do pedido não é referência válida: o sandbox manda isso em
-                // pedido agendado, e usar essa data deixaria o aceite vencido no instante em que ele chega.
-                var prepStart=scheduled && order.PreparationStartUtc is {} start && start>=order.CreatedAtUtc ? start : (DateTimeOffset?)null;
-                deadline=prepStart!=null && options.ScheduledConfirmationUsesPreparationStart
-                    ? prepStart.Value.AddMinutes(8) : order.CreatedAtUtc.AddMinutes(8);
-                if(prepStart!=null && !options.ScheduledConfirmationUsesPreparationStart && prepStart.Value.AddMinutes(8)<deadline)
-                    deadline=prepStart.Value.AddMinutes(8);
+                // Pedido imediato: 8 minutos da criação, como nos guias públicos.
+                // Pedido agendado: o prazo acompanha a janela, não a criação, porque o cliente agenda horas
+                // antes e a loja aceita quando se organiza. Com a opção ligada, o prazo é mais curto e segue
+                // o início do preparo. Preparo anterior à criação não é referência válida (o sandbox manda
+                // datas assim) e cai no início da janela.
+                var prepStart=order.PreparationStartUtc is {} start && start>=order.CreatedAtUtc ? start : (DateTimeOffset?)null;
+                deadline=scheduled
+                    ? (options.ScheduledConfirmationUsesPreparationStart ? prepStart ?? order.ScheduledStartUtc!.Value : order.ScheduledStartUtc!.Value).AddMinutes(8)
+                    : order.CreatedAtUtc.AddMinutes(8);
                 if(now>=deadline) throw Error("IFOOD_COMMAND_CONFIRMATION_DEADLINE");
                 break;
             case "start_preparation":
