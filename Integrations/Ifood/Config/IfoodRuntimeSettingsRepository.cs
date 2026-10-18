@@ -8,7 +8,7 @@ public interface IIfoodRuntimeSettingsRepository
     Task<IfoodRuntimeSettings> GetSettingsAsync(CancellationToken ct = default);
     Task UpdateSettingsAsync(string clientId, string? clientSecretCifrado, bool enabled, bool pollingEnabled,
         bool importEnabled, bool projectionEnabled, bool commandsEnabled, bool exceptionsEnabled, string? updatedBy,
-        bool completionEnabled = false, bool retentionEnabled = false, int retentionDays = 30, CancellationToken ct = default);
+        bool completionEnabled = false, bool retentionEnabled = false, int retentionDays = 30, bool dineInEnabled = false, CancellationToken ct = default);
     Task<IReadOnlyList<IfoodConnectionRow>> ListConnectionsAsync(CancellationToken ct = default);
     // Conexão mais recente de UMA loja; nunca devolve dados de outro estabelecimento.
     Task<IfoodConnectionRow?> GetStoreConnectionAsync(Guid estabelecimentoId, CancellationToken ct = default);
@@ -31,7 +31,7 @@ public sealed class IfoodRuntimeSettingsRepository : IIfoodRuntimeSettingsReposi
 SELECT client_id AS ClientId, client_secret_cifrado AS ClientSecretCifrado, enabled AS Enabled,
        polling_enabled AS PollingEnabled, import_enabled AS ImportEnabled, projection_enabled AS ProjectionEnabled,
        commands_enabled AS CommandsEnabled, exceptions_enabled AS ExceptionsEnabled, completion_enabled AS CompletionEnabled,
-       retention_enabled AS RetentionEnabled, retention_days AS RetentionDays,
+       dine_in_enabled AS DineInEnabled, retention_enabled AS RetentionEnabled, retention_days AS RetentionDays,
        updated_at_utc AS UpdatedAtUtc, updated_by AS UpdatedBy
 FROM ifood_app_settings WHERE id=1
 """, cancellationToken: ct));
@@ -40,7 +40,7 @@ FROM ifood_app_settings WHERE id=1
 
     public async Task UpdateSettingsAsync(string clientId, string? clientSecretCifrado, bool enabled, bool pollingEnabled,
         bool importEnabled, bool projectionEnabled, bool commandsEnabled, bool exceptionsEnabled, string? updatedBy,
-        bool completionEnabled = false, bool retentionEnabled = false, int retentionDays = 30, CancellationToken ct = default)
+        bool completionEnabled = false, bool retentionEnabled = false, int retentionDays = 30, bool dineInEnabled = false, CancellationToken ct = default)
     {
         if (retentionDays is < 7 or > 365) throw new IfoodIntegrationException("IFOOD_CONFIG_INVALID_RETENTION");
         await using var connection = await _source.OpenConnectionAsync(ct);
@@ -50,12 +50,12 @@ UPDATE ifood_app_settings SET client_id=@ClientId,
     client_secret_cifrado=COALESCE(@ClientSecretCifrado, client_secret_cifrado),
     enabled=@Enabled, polling_enabled=@PollingEnabled, import_enabled=@ImportEnabled,
     projection_enabled=@ProjectionEnabled, commands_enabled=@CommandsEnabled, exceptions_enabled=@ExceptionsEnabled, completion_enabled=@CompletionEnabled,
-    retention_enabled=@RetentionEnabled, retention_days=@RetentionDays,
+    dine_in_enabled=@DineInEnabled, retention_enabled=@RetentionEnabled, retention_days=@RetentionDays,
     updated_at_utc=NOW(), updated_by=@UpdatedBy
 WHERE id=1
 """, new { ClientId = clientId, ClientSecretCifrado = clientSecretCifrado, Enabled = enabled, PollingEnabled = pollingEnabled,
             ImportEnabled = importEnabled, ProjectionEnabled = projectionEnabled, CommandsEnabled = commandsEnabled,
-            ExceptionsEnabled = exceptionsEnabled, CompletionEnabled = completionEnabled, RetentionEnabled = retentionEnabled, RetentionDays = retentionDays, UpdatedBy = updatedBy }, cancellationToken: ct));
+            ExceptionsEnabled = exceptionsEnabled, CompletionEnabled = completionEnabled, DineInEnabled = dineInEnabled, RetentionEnabled = retentionEnabled, RetentionDays = retentionDays, UpdatedBy = updatedBy }, cancellationToken: ct));
     }
 
     public async Task<IReadOnlyList<IfoodConnectionRow>> ListConnectionsAsync(CancellationToken ct = default)

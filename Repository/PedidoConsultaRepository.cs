@@ -18,6 +18,7 @@ namespace APIBack.Repository
         // convertido com seguranca em C#. Valor mal formatado vira null naquele campo, nunca 500.
         private const string Numeric = @"'^-?[0-9]+(\.[0-9]+)?$'";
         private readonly NpgsqlDataSource _dataSource;
+        private static volatile bool _externalSchemaKnown;
 
         public PedidoConsultaRepository(NpgsqlDataSource dataSource)
         {
@@ -42,7 +43,9 @@ namespace APIBack.Repository
   ) capa ON TRUE" : string.Empty;
             var coverNameExpr = core ? "capa.ItemNome" : "NULL::text";
             var coverImageExpr = core ? "capa.ImagemUrl" : "NULL::text";
-            var externalSchema = await connection.ExecuteScalarAsync<bool>("SELECT to_regclass('ifood_order_links') IS NOT NULL AND to_regclass('ifood_order_snapshots') IS NOT NULL");
+            // O schema nao muda em runtime: depois do primeiro true a sonda sai do caminho de cada request.
+            var externalSchema = _externalSchemaKnown || await connection.ExecuteScalarAsync<bool>("SELECT to_regclass('ifood_order_links') IS NOT NULL AND to_regclass('ifood_order_snapshots') IS NOT NULL");
+            if (externalSchema) _externalSchemaKnown = true;
             var (where, parameters) = BuildWhere(estabelecimentoId, filtro, origemExpr, externalSchema);
             if (filtro.ConversaId.HasValue)
             {

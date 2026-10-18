@@ -38,7 +38,7 @@ public sealed class IfoodConfigController(IIfoodRuntimeSettingsRepository reposi
         { return StatusCode(503, ApiResponse<object>.Fail("Não foi possível cifrar o client secret.", ex.Code)); }
         var updatedBy = HttpContext.GetUserId()?.ToString();
         await repository.UpdateSettingsAsync(request.ClientId.Trim(), cifrado, request.Enabled, request.PollingEnabled,
-            request.ImportEnabled, request.ProjectionEnabled, request.CommandsEnabled, request.ExceptionsEnabled, updatedBy, request.CompletionEnabled, request.RetentionEnabled, request.RetentionDays, ct);
+            request.ImportEnabled, request.ProjectionEnabled, request.CommandsEnabled, request.ExceptionsEnabled, updatedBy, request.CompletionEnabled, request.RetentionEnabled, request.RetentionDays, request.DineInEnabled, ct);
         return Ok(ApiResponse<IfoodRuntimeSettingsDto>.Ok(ToDto(await repository.GetSettingsAsync(ct))));
     }
 
@@ -103,7 +103,7 @@ public sealed class IfoodConfigController(IIfoodRuntimeSettingsRepository reposi
         ClientSecret = null,
         Enabled = settings.Enabled, PollingEnabled = settings.PollingEnabled, ImportEnabled = settings.ImportEnabled,
         ProjectionEnabled = settings.ProjectionEnabled, CommandsEnabled = settings.CommandsEnabled, ExceptionsEnabled = settings.ExceptionsEnabled,
-        CompletionEnabled = settings.CompletionEnabled, RetentionEnabled = settings.RetentionEnabled, RetentionDays = settings.RetentionDays, UpdatedAtUtc = settings.UpdatedAtUtc, UpdatedBy = settings.UpdatedBy
+        CompletionEnabled = settings.CompletionEnabled, DineInEnabled = settings.DineInEnabled, RetentionEnabled = settings.RetentionEnabled, RetentionDays = settings.RetentionDays, UpdatedAtUtc = settings.UpdatedAtUtc, UpdatedBy = settings.UpdatedBy
     };
     private static IfoodConnectionDto ToDto(IfoodConnectionRow row) => new()
     {
@@ -137,7 +137,8 @@ public sealed class IfoodStoreController(IIfoodRuntimeSettingsRepository reposit
             },
             IntegrationEnabled = enabled, PollingEnabled = enabled && settings.PollingEnabled, ImportEnabled = enabled && settings.ImportEnabled,
             ProjectionEnabled = enabled && settings.ProjectionEnabled, CommandsEnabled = enabled && settings.CommandsEnabled,
-            CompletionEnabled = enabled && settings.CommandsEnabled && settings.CompletionEnabled
+            CompletionEnabled = enabled && settings.CommandsEnabled && settings.CompletionEnabled,
+            DineInEnabled = enabled && settings.CommandsEnabled && settings.DineInEnabled
         }));
     }
 }

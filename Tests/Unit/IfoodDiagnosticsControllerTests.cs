@@ -36,7 +36,7 @@ public sealed class IfoodDiagnosticsControllerTests
     {
         public Task<IfoodRuntimeSettings> GetSettingsAsync(CancellationToken ct = default) => Task.FromResult(new IfoodRuntimeSettings { Enabled = enabled, PollingEnabled = polling });
         public Task UpdateSettingsAsync(string clientId, string? clientSecretCifrado, bool enabled, bool pollingEnabled, bool importEnabled, bool projectionEnabled,
-            bool commandsEnabled, bool exceptionsEnabled, string? updatedBy, bool completionEnabled = false, bool retentionEnabled = false, int retentionDays = 30, CancellationToken ct = default) => throw new NotSupportedException();
+            bool commandsEnabled, bool exceptionsEnabled, string? updatedBy, bool completionEnabled = false, bool retentionEnabled = false, int retentionDays = 30, bool dineInEnabled = false, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<IReadOnlyList<IfoodConnectionRow>> ListConnectionsAsync(CancellationToken ct = default) => throw new NotSupportedException();
         public Task<IfoodConnectionRow?> GetStoreConnectionAsync(Guid estabelecimentoId, CancellationToken ct = default) => throw new NotSupportedException();
         public Task AuthorizeConnectionAsync(Guid merchantId, Guid estabelecimentoId, CancellationToken ct = default) => throw new NotSupportedException();

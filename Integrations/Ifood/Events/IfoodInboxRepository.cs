@@ -109,6 +109,14 @@ UPDATE ifood_events_inbox SET acknowledged_at_utc=NULL,ack_application_key=@Appl
 WHERE merchant_id=@MerchantId AND event_id=@EventId AND estabelecimento_id=@Store
 """, new { item.MerchantId, item.EventId, Store = store, lease.ApplicationKey }, transaction, cancellationToken: ct));
             }
+            else
+            {
+                // Marca na conexao da loja quando entrou o ultimo evento: e o sinal de que o polling esta vivo.
+                await connection.ExecuteAsync(new CommandDefinition("""
+UPDATE ifood_connections SET last_event_at_utc=GREATEST(COALESCE(last_event_at_utc,'-infinity'::timestamptz),COALESCE(@OccurredAtUtc,NOW()))
+WHERE merchant_id=@MerchantId AND estabelecimento_id=@Store
+""", new { item.MerchantId, Store = store, item.OccurredAtUtc }, transaction, cancellationToken: ct));
+            }
         }
         await transaction.CommitAsync(ct);
         return true;

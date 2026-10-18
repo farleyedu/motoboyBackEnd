@@ -37,7 +37,8 @@ public static class IfoodExceptionRules
         if(order.Revision!=revision) throw Error("IFOOD_COMMAND_STALE_REVISION");
         var official = IfoodOrderNormalizer.Normalize(order.Payload,order.MerchantId,order.ExternalOrderId);
         if(official.Category!="FOOD") throw Error("IFOOD_EXCEPTION_CATEGORY_NOT_SUPPORTED");
-        if(official.OrderType=="DINE_IN") throw Error("IFOOD_COMMAND_MODALITY_NOT_SUPPORTED");
+        // Consumo no local so opera quando a tela de Gestao libera; dispensa continua recusando por regra.
+        if(official.OrderType=="DINE_IN" && !options.DineInEnabled) throw Error("IFOOD_COMMAND_MODALITY_NOT_SUPPORTED");
         if(official.ImportedByRecovery) throw Error("IFOOD_RECOVERED_ORDER");
     }
     public static void Cancellation(IfoodCommandContext order)

@@ -55,7 +55,7 @@ public sealed class IfoodDatabaseConfigurationProvider : ConfigurationProvider, 
         await using var connection = new NpgsqlConnection(_connectionString);
         await connection.OpenAsync();
         var settings = await connection.QuerySingleOrDefaultAsync<SettingsRow>(
-            "SELECT client_id, client_secret_cifrado, enabled, polling_enabled, import_enabled, projection_enabled, commands_enabled, exceptions_enabled, completion_enabled, retention_enabled, retention_days FROM ifood_app_settings WHERE id=1");
+            "SELECT client_id, client_secret_cifrado, enabled, polling_enabled, import_enabled, projection_enabled, commands_enabled, exceptions_enabled, completion_enabled, dine_in_enabled, retention_enabled, retention_days FROM ifood_app_settings WHERE id=1");
         if (settings == null) return null;
         var connections = (await connection.QueryAsync<ConnectionRow>(
             "SELECT merchant_id, estabelecimento_id FROM ifood_connections WHERE status='authorized' AND authorized_at_utc IS NOT NULL AND revoked_at_utc IS NULL ORDER BY merchant_id")).AsList();
@@ -79,6 +79,7 @@ public sealed class IfoodDatabaseConfigurationProvider : ConfigurationProvider, 
             ["Ifood:CommandsEnabled"] = commandsOn ? "true" : "false",
             ["Ifood:ExceptionsEnabled"] = exceptionsOn ? "true" : "false",
             ["Ifood:CompletionEnabled"] = (commandsOn && settings.completion_enabled) ? "true" : "false",
+            ["Ifood:DineInEnabled"] = (commandsOn && settings.dine_in_enabled) ? "true" : "false",
             ["Ifood:RetentionEnabled"] = (enabled && settings.retention_enabled) ? "true" : "false",
             ["Ifood:RetentionDays"] = Math.Clamp((int)settings.retention_days, 7, 365).ToString(System.Globalization.CultureInfo.InvariantCulture),
         };
@@ -118,6 +119,7 @@ public sealed class IfoodDatabaseConfigurationProvider : ConfigurationProvider, 
         public bool commands_enabled { get; set; }
         public bool exceptions_enabled { get; set; }
         public bool completion_enabled { get; set; }
+        public bool dine_in_enabled { get; set; }
         public bool retention_enabled { get; set; }
         public short retention_days { get; set; } = 30;
     }

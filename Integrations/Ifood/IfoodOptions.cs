@@ -23,6 +23,7 @@ public sealed class IfoodOptions
     public bool CommandsEnabled { get; set; }
     // IF-14: habilitação explícita; reutiliza a allowlist merchant/loja dos comandos.
     public bool CompletionEnabled { get; set; }
+    public bool DineInEnabled { get; set; }
     // Limpeza automática do corpo de eventos antigos (ligada e dimensionada pela tela).
     public bool RetentionEnabled { get; set; }
     public int RetentionDays { get; set; } = 30;

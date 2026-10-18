@@ -13,6 +13,8 @@ public sealed class IfoodRuntimeSettingsDto
     public bool ExceptionsEnabled { get; set; }
     // Conclusão da entrega com o código oficial do cliente (exige Comandos e ao menos um merchant autorizado).
     public bool CompletionEnabled { get; set; }
+    // Consumo no local (DINE_IN): libera aceitar, preparar, pronto e cancelar nessa modalidade.
+    public bool DineInEnabled { get; set; }
     // Limpeza automática do corpo de eventos antigos (7 a 365 dias). Começa desligada.
     public bool RetentionEnabled { get; set; }
     public int RetentionDays { get; set; } = 30;
@@ -32,6 +34,7 @@ public sealed class IfoodRuntimeSettingsRequest
     public bool CommandsEnabled { get; set; }
     public bool ExceptionsEnabled { get; set; }
     public bool CompletionEnabled { get; set; }
+    public bool DineInEnabled { get; set; }
     public bool RetentionEnabled { get; set; }
     public int RetentionDays { get; set; } = 30;
 }
@@ -78,4 +81,5 @@ public sealed class IfoodStoreStatusDto
     public bool ProjectionEnabled { get; set; }
     public bool CommandsEnabled { get; set; }
     public bool CompletionEnabled { get; set; }
+    public bool DineInEnabled { get; set; }
 }

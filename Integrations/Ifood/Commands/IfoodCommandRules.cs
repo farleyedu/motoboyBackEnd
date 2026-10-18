@@ -32,7 +32,9 @@ public static class IfoodCommandRules
         if(revision!=context.Revision) throw Error("IFOOD_COMMAND_STALE_REVISION");
         if(context.RemoteStatus is "CANCELLED" or "CONCLUDED") throw Error("IFOOD_ORDER_TERMINAL");
         var order=IfoodOrderNormalizer.Normalize(context.Payload,context.MerchantId,context.ExternalOrderId);
-        if (order.OrderType == "DINE_IN") throw Error(command == "dispatch" ? "IFOOD_COMMAND_DISPATCH_NOT_APPLICABLE" : "IFOOD_COMMAND_MODALITY_NOT_SUPPORTED");
+        // Consumo no local so opera quando a tela de Gestao libera. Despacho nunca se aplica: nao ha entrega.
+        if (order.OrderType == "DINE_IN" && (command == "dispatch" || !options.DineInEnabled))
+            throw Error(command == "dispatch" ? "IFOOD_COMMAND_DISPATCH_NOT_APPLICABLE" : "IFOOD_COMMAND_MODALITY_NOT_SUPPORTED");
         if (order.ImportedByRecovery) throw Error("IFOOD_RECOVERED_ORDER");
         // Falta de localização e divergência financeira não impedem aceite/preparo.
         // Conflitos de eventos, recuperação e alterações incompletas continuam bloqueando.
