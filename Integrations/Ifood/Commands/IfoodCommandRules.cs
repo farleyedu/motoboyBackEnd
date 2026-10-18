@@ -62,9 +62,13 @@ public static class IfoodCommandRules
             case "confirm":
                 if(context.RemoteStatus!="PLACED") throw Error("IFOOD_COMMAND_INVALID_STATE");
                 // Até IF-01 confirmar a regra do perfil, aplica o prazo mais restritivo dos guias públicos.
-                deadline=scheduled && options.ScheduledConfirmationUsesPreparationStart ? order.PreparationStartUtc!.Value.AddMinutes(8) : order.CreatedAtUtc.AddMinutes(8);
-                if(scheduled && !options.ScheduledConfirmationUsesPreparationStart)
-                    deadline=deadline<order.PreparationStartUtc!.Value.AddMinutes(8) ? deadline : order.PreparationStartUtc.Value.AddMinutes(8);
+                // Preparo anterior à criação do pedido não é referência válida: o sandbox manda isso em
+                // pedido agendado, e usar essa data deixaria o aceite vencido no instante em que ele chega.
+                var prepStart=scheduled && order.PreparationStartUtc is {} start && start>=order.CreatedAtUtc ? start : (DateTimeOffset?)null;
+                deadline=prepStart!=null && options.ScheduledConfirmationUsesPreparationStart
+                    ? prepStart.Value.AddMinutes(8) : order.CreatedAtUtc.AddMinutes(8);
+                if(prepStart!=null && !options.ScheduledConfirmationUsesPreparationStart && prepStart.Value.AddMinutes(8)<deadline)
+                    deadline=prepStart.Value.AddMinutes(8);
                 if(now>=deadline) throw Error("IFOOD_COMMAND_CONFIRMATION_DEADLINE");
                 break;
             case "start_preparation":
