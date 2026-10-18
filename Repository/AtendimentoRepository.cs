@@ -425,6 +425,15 @@ SELECT p.id AS PedidoId, p.id_estabelecimento AS EstabelecimentoId, p.conversa_i
  WHERE p.status_pedido = 3 -- Concluido
    AND p.conversa_id IS NOT NULL
    AND c.status_atendimento IN ('com_bot', 'em_andamento', 'aguardando_cliente', 'aguardando_interno')
+   AND NOT EXISTS (SELECT 1 FROM pedido outro WHERE outro.conversa_id = c.id
+                    AND outro.id_estabelecimento = p.id_estabelecimento
+                    AND outro.status_pedido IN (1, 2, 5, 6, 8))
+   AND NOT EXISTS (SELECT 1 FROM conversa_eventos ev
+                    WHERE ev.id_conversa_grupo = COALESCE(c.id_conversa_grupo, c.id)
+                      AND ev.origem = 'bot' AND ev.motivo LIKE 'suporte:%'
+                      AND ev.data_criacao > COALESCE((SELECT MAX(data_criacao) FROM conversa_eventos
+                                              WHERE id_conversa_grupo = COALESCE(c.id_conversa_grupo, c.id)
+                                                AND tipo = 'closed'), '-infinity'::timestamptz))
  ORDER BY p.id DESC
  LIMIT 200;");
             return rows.ToList();

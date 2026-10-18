@@ -32,6 +32,10 @@ public sealed class IfoodPedidoIdentityDto
     public DateTimeOffset? PreparationStartUtc { get; set; }
     public string? OrderTiming { get; set; }
     public bool ImportedByRecovery { get; set; }
+    public bool LocationRequired { get; set; }
+    public string? LocationSource { get; set; }
+    public string? LocationLookupStatus { get; set; }
+    public DateTimeOffset? LocationUpdatedAtUtc { get; set; }
     public IReadOnlyList<string> ReviewReasons { get; set; } = Array.Empty<string>();
     public IfoodCommandDto? ActiveCommand { get; set; }
     public bool CanAssignDelivery { get; set; }

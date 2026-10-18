@@ -1,4 +1,4 @@
-﻿// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
+// ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -77,24 +77,20 @@ namespace APIBack.Automation.Services
                 return null;
             }
 
-            // Verificar duplicidade (com exceção em DEV)
-            var ambiente = _configuration.GetValue<string>("ASPNETCORE_ENVIRONMENT");
-            var isDev = string.Equals(ambiente, "Development", StringComparison.OrdinalIgnoreCase);
-
-            var duplicata = await _repositorio.ExisteIdMensagemPorProvedorWaAsync(idMensagemWa);
-            if (duplicata)
+            // Retentativa da fila: reutiliza a entrada sem inserir novamente ou trocar o canal.
+            if (await _repositorio.ExisteIdMensagemPorProvedorWaAsync(idMensagemWa))
             {
-                if (isDev)
-                {
-                    _logger.LogWarning(
-                        "DEV: Duplicata detectada IdMensagemWa={WaMessageId}, processamento continuará para testes.",
-                        idMensagemWa);
-                }
-                else
-                {
-                    _logger.LogInformation("Ignorando duplicata de entrada IdMensagemWa={WaMessageId}", idMensagemWa);
-                    return null;
-                }
+                await using var cx = new NpgsqlConnection(_connectionString);
+                var gravada = await cx.QuerySingleOrDefaultAsync<Message>(@"
+SELECT m.id AS Id, m.id_conversa AS IdConversa, m.conteudo AS Conteudo,
+       m.id_provedor AS IdMensagemWa, m.data_criacao AS DataCriacao
+FROM mensagens m JOIN conversas c ON c.id = m.id_conversa
+WHERE m.id_provedor = @Wa AND c.id_estabelecimento = @Loja AND c.id_canal = @Canal;",
+                    new { Wa = idMensagemWa, Loja = idEstabelecimentoDoCanal, Canal = idCanal });
+                if (gravada == null) return null;
+                var operacional = await ObterEstadoOperacionalAsync(idEstabelecimentoDoCanal!.Value);
+                if (!operacional.EmpresaAtiva) return null;
+                return new ConversationIngressResult(gravada, false, EmpresaPausada: operacional.EmpresaPausada);
             }
 
             // A loja vem do canal (numero de WhatsApp) que recebeu a mensagem, resolvido pelo WaEventoProcessor pelo
@@ -170,7 +166,7 @@ namespace APIBack.Automation.Services
             Guid idConversaGrupo;
             Guid idEstabelecimentoEfetivo;
             Conversation? existente;
-            var conversaResolvidaPorTelefone = await ResolverConversaAbertaPorTelefoneAsync(telefoneE164, idEstabelecimento.Value);
+            var conversaResolvidaPorTelefone = await ResolverConversaAbertaPorTelefoneAsync(telefoneE164, idEstabelecimento.Value, idCanal);
             var conversaAbertaPorTelefone = conversaResolvidaPorTelefone.Conversa;
 
             if (conversaAbertaPorTelefone != null)
@@ -387,61 +383,19 @@ namespace APIBack.Automation.Services
             fila.Enqueue(mensagem);
         }
 
-        private async Task<ConversationLookupResult> ResolverConversaAbertaPorTelefoneAsync(string telefoneE164, Guid idEstabelecimentoEntrada)
+        private async Task<ConversationLookupResult> ResolverConversaAbertaPorTelefoneAsync(string telefoneE164, Guid loja, Guid? canal)
         {
-            if (string.IsNullOrWhiteSpace(telefoneE164))
-            {
-                return new ConversationLookupResult(null, false);
-            }
-
-            var abertas = (await _repositorio.ListarConversasAbertasPorTelefoneAsync(telefoneE164)).ToList();
-            if (abertas.Count == 0)
-            {
-                return new ConversationLookupResult(null, false);
-            }
-
-            var preservada = abertas
-                .Where(c => c.IdEstabelecimento == idEstabelecimentoEntrada)
-                .OrderByDescending(ConversationTimestamp)
-                .FirstOrDefault();
-
-            if (preservada == null)
-            {
-                await _repositorio.FecharConversasAbertasPorTelefoneAsync(
-                    telefoneE164,
-                    idAgente: null,
-                    motivo: "Troca de atendimento por telefone",
-                    tipoFechamento: "manual");
-                return new ConversationLookupResult(null, false);
-            }
-
-            var classificacao = await ClassificarConversaParaEntradaAsync(preservada);
-            if (classificacao.ReiniciadaPorExpiracao)
-            {
-                return classificacao;
-            }
-
-            if (classificacao.Conversa == null)
-            {
-                return new ConversationLookupResult(null, false, classificacao.DataFechamentoAnteriorManual);
-            }
-
-            await _repositorio.FecharConversasAbertasPorTelefoneAsync(
-                telefoneE164,
-                idAgente: null,
-                motivo: "Reconciliacao de conversa unica por telefone",
-                tipoFechamento: "manual",
-                preservarConversaId: classificacao.Conversa.IdConversa);
-
-            _logger.LogInformation(
-                "[Automation] Conversa preservada por telefone {Telefone}: {Conversa}",
-                telefoneE164,
-                classificacao.Conversa.IdConversa);
-
-            return new ConversationLookupResult(
-                await _repositorio.ObterPorIdAsync(classificacao.Conversa.IdConversa) ?? classificacao.Conversa,
-                false);
+            if (string.IsNullOrWhiteSpace(telefoneE164)) return new(null, false);
+            var abertas = await _repositorio.ListarConversasAbertasPorTelefoneAsync(telefoneE164);
+            var candidata = SelecionarConversaDoCanal(abertas, loja, canal);
+            return candidata == null ? new(null, false) : await ClassificarConversaParaEntradaAsync(candidata);
         }
+
+        internal static Conversation? SelecionarConversaDoCanal(IEnumerable<Conversation> abertas, Guid loja, Guid? canal) =>
+            abertas.Where(c => c.IdEstabelecimento == loja && c.IdCanal == canal)
+                .OrderByDescending(ConversationTimestamp).FirstOrDefault()
+            ?? abertas.Where(c => c.IdEstabelecimento == loja && c.IdCanal == null)
+                .OrderByDescending(ConversationTimestamp).FirstOrDefault();
 
         private async Task<ConversationLookupResult> ClassificarConversaParaEntradaAsync(Conversation candidata)
         {

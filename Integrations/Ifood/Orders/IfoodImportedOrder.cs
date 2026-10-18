@@ -38,6 +38,9 @@ public sealed class IfoodImportedOrder
     public decimal? AmountToCollect => !CollectionAllowed || PaymentState == "requer_revisao" ? null : PendingAmount;
     public string? Observations { get; init; }
     public JsonElement Address { get; init; }
+    public JsonElement OriginalAddress { get; init; }
+    public string? LocationSource { get; init; }
+    public DateTimeOffset? LocationUpdatedAtUtc { get; init; }
     public double? Latitude { get; init; }
     public double? Longitude { get; init; }
     public JsonElement Benefits { get; init; }
@@ -138,7 +141,9 @@ public static class IfoodOrderNormalizer
             paymentReview = methods.Where(m => m.Type == "ONLINE").Sum(m => m.Value ?? 0) != prepaid ||
                 methods.Where(m => m.Type == "OFFLINE").Sum(m => m.Value ?? 0) != pending;
         }
-        var address = Field(delivery, "deliveryAddress");
+        var originalAddress = Field(delivery, "deliveryAddress");
+        var local = Field(root, IfoodDeliveryLocation.Key);
+        var address = Field(local, "address").ValueKind == JsonValueKind.Object ? Field(local, "address") : originalAddress;
         var coordinates = Field(address, "coordinates");
         static double? Coordinate(JsonElement value, string name, double limit)
         {
@@ -148,6 +153,7 @@ public static class IfoodOrderNormalizer
         }
         var latitude = Coordinate(coordinates, "latitude", 90);
         var longitude = Coordinate(coordinates, "longitude", 180);
+        if (!IfoodDeliveryLocation.ValidPoint(latitude, longitude)) latitude = longitude = null;
         var reasons = new List<string>();
         if (modalityReview) reasons.Add("IFOOD_ORDER_MODALITY_REVIEW");
         if (scheduleReview) reasons.Add("IFOOD_ORDER_SCHEDULE_REVIEW");
@@ -172,7 +178,9 @@ public static class IfoodOrderNormalizer
             DeliveryFee = Money(total, "deliveryFee"), AdditionalFees = Money(total, "additionalFees"), BenefitsAmount = Money(total, "benefits"),
             PrepaidAmount = prepaid, PendingAmount = pending, Currency = currency,
             PaymentState = paymentReview ? "requer_revisao" : pending == 0 ? "pago" : prepaid > 0 ? "parcial" : "pendente",
-            RequiresReview = review || paymentReview, Address = CloneOr(address, "null"), Latitude = latitude, Longitude = longitude, Benefits = CloneOr(Field(root, "benefits"), "[]"),
+            RequiresReview = review || paymentReview, Address = CloneOr(address, "null"),
+            OriginalAddress = CloneOr(originalAddress, "null"), LocationSource = Text(local, "source"), LocationUpdatedAtUtc = Date(local, "updatedAtUtc"),
+            Latitude = latitude, Longitude = longitude, Benefits = CloneOr(Field(root, "benefits"), "[]"),
             Observations = string.Join("\n", new[] { Text(root, "extraInfo"), Text(delivery, "observations"), Text(Field(root, "takeout"), "observations") }.Where(v => v != null)),
             Items = items, Payments = methods, PayloadJson = sanitized
         };

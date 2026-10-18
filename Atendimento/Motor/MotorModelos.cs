@@ -1,13 +1,21 @@
 using System;
 using System.Collections.Generic;
 using APIBack.Service;
+using System.Text.Json.Serialization;
 
 namespace APIBack.Atendimento.Motor
 {
     public sealed record Botao(string Id, string Titulo);
 
     /// <summary>O que o atendimento automatico decide fazer. O motor so decide; quem envia e quem grava e o executor.</summary>
-    public abstract record AcaoMotor;
+    [JsonPolymorphic(TypeDiscriminatorPropertyName = "$acao")]
+    [JsonDerivedType(typeof(AcaoResponder), "texto")]
+    [JsonDerivedType(typeof(AcaoBotoes), "botoes")]
+    [JsonDerivedType(typeof(AcaoChamarAtendente), "atendente")]
+    public abstract record AcaoMotor
+    {
+        public Guid? MensagemId { get; init; }
+    }
 
     public sealed record AcaoResponder(string Mensagem) : AcaoMotor;
 
@@ -50,7 +58,9 @@ namespace APIBack.Atendimento.Motor
         /// <summary>Textos personalizados da loja; nulo = todos os padroes.</summary>
         TextosMotor? Textos = null,
         /// <summary>A loja aceita pedido agora? Nulo = sim (nada configurado).</summary>
-        SituacaoPedidos? Pedidos = null)
+        SituacaoPedidos? Pedidos = null,
+        IReadOnlyList<PedidoDoAtendimento>? PedidosCliente = null,
+        string? TipoMensagem = null)
     {
         /// <summary>O texto escolhido pelo dono (com {loja} e {link} trocados) ou o padrao.</summary>
         public string Escolher(string? personalizado, string padrao) =>
@@ -68,6 +78,8 @@ namespace APIBack.Atendimento.Motor
         public string? Passo { get; set; }
         public Dictionary<string, string> Dados { get; set; } = new();
         public DateTime? ForaDoHorarioAvisadoEm { get; set; }
+        public int NaoEntendidas { get; set; }
+        public bool AguardandoEquipe { get; set; }
     }
 
     public sealed record ResultadoFluxo(

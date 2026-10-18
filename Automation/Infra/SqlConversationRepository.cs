@@ -1290,9 +1290,6 @@ UPDATE conversas c
             var status = CanonicalStatus(row.StatusAtendimento, row.Estado, row.IdAgenteAtribuido.HasValue ? ModoConversa.Humano : ModoConversa.Bot);
             var windowExpired = IsWindowExpired(row.Janela24hFim);
             var closed = IsClosedStatus(status);
-            var waitingInternalWithoutAgent =
-                string.Equals(status, "aguardando_interno", StringComparison.OrdinalIgnoreCase) &&
-                !row.IdAgenteAtribuido.HasValue;
             var manualReplyAllowed =
                 IsHumanStatus(status) &&
                 row.IdAgenteAtribuido.HasValue;
@@ -1307,7 +1304,7 @@ UPDATE conversas c
                 ConversationGroupId = row.IdConversaGrupo,
                 Status = status,
                 CanBotReply =
-                    (string.Equals(status, "com_bot", StringComparison.OrdinalIgnoreCase) || waitingInternalWithoutAgent) &&
+                    string.Equals(status, "com_bot", StringComparison.OrdinalIgnoreCase) &&
                     !closed &&
                     !windowExpired &&
                     !neverContacted,

@@ -34,12 +34,13 @@ namespace APIBack.Atendimento
         public string Tipo { get; set; } = string.Empty;
         public string? Mensagem { get; set; }
         public List<string>? Botoes { get; set; }
+        public IReadOnlyList<Botao>? Opcoes { get; set; }
         public string? Motivo { get; set; }
 
         public static AcaoSimulada De(AcaoMotor acao) => acao switch
         {
             AcaoResponder r => new AcaoSimulada { Tipo = "responder", Mensagem = r.Mensagem },
-            AcaoBotoes b => new AcaoSimulada { Tipo = "botoes", Mensagem = b.Mensagem, Botoes = b.Opcoes.Select(o => o.Titulo).ToList() },
+            AcaoBotoes b => new AcaoSimulada { Tipo = "botoes", Mensagem = b.Mensagem, Botoes = b.Opcoes.Select(o => o.Titulo).ToList(), Opcoes = b.Opcoes },
             AcaoChamarAtendente c => new AcaoSimulada { Tipo = "chamar_atendente", Motivo = c.Motivo },
             _ => new AcaoSimulada { Tipo = acao.GetType().Name }
         };

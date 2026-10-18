@@ -54,6 +54,10 @@ WHERE l.estabelecimento_id=@Store AND l.pedido_id=ANY(@Orders)
             identity.ScheduledEndUtc = order.ScheduledEndUtc;
             identity.ImportedByRecovery = order.ImportedByRecovery;
             identity.ReviewReasons = order.ReviewReasons;
+            identity.LocationRequired = order.ReviewReasons.Contains("IFOOD_DELIVERY_LOCATION_REQUIRED");
+            identity.LocationSource = order.LocationSource;
+            identity.LocationLookupStatus = System.Text.Json.Nodes.JsonNode.Parse(row.Payload)?[IfoodDeliveryLocation.Key]?["lookupStatus"]?.GetValue<string>();
+            identity.LocationUpdatedAtUtc = order.LocationUpdatedAtUtc;
         }
         if (await connection.ExecuteScalarAsync<bool>("SELECT to_regclass('ifood_command_attempts') IS NOT NULL", transaction: transaction))
         {

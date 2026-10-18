@@ -143,7 +143,7 @@ tipo_pagamento,observacoes,status_pagamento,codigo_entrega,id_estabelecimento,or
 VALUES(@CustomerName,@Address,NULL,{TimeSql("data_pedido")},{TimeSql("horario_pedido")},6,NULL,@Items,@OrderAmount,@District,@Latitude,@Longitude,
 @Street,@Number,@District,@City,@State,@Zip,@PaymentMethod,@Observations,@PaymentState,NULL,@EstabelecimentoId,'ifood',@Reference,NULL,NULL,@Subtotal,@Fee,@Discount)
 RETURNING id
-""", new { order.CustomerName, Address = Text("formattedAddress"), order.CreatedAtUtc,
+""", new { order.CustomerName, Address = Text("formattedAddress") ?? string.Join(", ", new[] { Text("streetName"), Text("streetNumber"), Text("neighborhood"), Text("city"), Text("state") }.Where(x => x != null)), order.CreatedAtUtc,
                 Items = JsonSerializer.Serialize(order.Items.Select(i => $"{i.Quantity.ToString(System.Globalization.CultureInfo.InvariantCulture)} {i.Unit} · {i.Name}")),
                 order.OrderAmount, order.Latitude, order.Longitude, District = Text("neighborhood") ?? Text("district"), Street = Text("streetName"), Number = Text("streetNumber"),
                 City = Text("city"), State = Text("state"), Zip = Text("postalCode") ?? Text("zipCode"),

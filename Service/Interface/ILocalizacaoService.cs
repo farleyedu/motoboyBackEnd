@@ -6,12 +6,14 @@ namespace APIBack.Service.Interface
     /// aproximado e nao serve para entrega sem o cliente confirmar no mapa.
     /// </param>
     public sealed record GeocodeResultado(string Latitude, string Longitude, bool Exata, string Provedor);
+    public sealed record GeocodeConsulta(string Status, GeocodeResultado? Resultado);
 
     /// <summary>Endereco de um ponto do mapa (para "usar minha localizacao"). Qualquer campo pode faltar.</summary>
     public sealed record EnderecoReverso(string? Logradouro, string? Numero, string? Bairro, string? Cidade, string? Uf, string? Cep);
 
     public interface ILocalizacaoService
     {
+        Task<GeocodeConsulta> ConsultarEnderecoAsync(string endereco, string? cep = null);
         /// <summary>
         /// Coordenada do endereco, exata ou nao (telas internas, onde o operador ajusta o pino). Devolve null quando
         /// nenhum servico achou o endereco.

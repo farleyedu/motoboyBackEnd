@@ -46,6 +46,7 @@ namespace APIBack.Atendimento.Motor
             if (string.IsNullOrWhiteSpace(texto)) return true;
 
             var mensagem = MessageFactory.CreateMessage(conversaId, texto, DirecaoMensagem.Saida, "bot", tipoOrigem: "text");
+            if (acao.MensagemId.HasValue) mensagem.Id = acao.MensagemId.Value;
             await _mensagens.AdicionarMensagemAsync(mensagem, canal.NumeroE164, telefone);
 
             try

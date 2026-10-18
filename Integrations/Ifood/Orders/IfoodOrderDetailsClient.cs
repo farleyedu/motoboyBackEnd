@@ -46,6 +46,7 @@ public sealed class IfoodOrderDetailsClient : IIfoodOrderDetailsClient
             var sanitized = IfoodOrderNormalizer.Sanitize(await response.Content.ReadAsStringAsync(ct), reservation.MerchantId, reservation.ExternalOrderId);
             var root = System.Text.Json.Nodes.JsonNode.Parse(sanitized)!.AsObject();
             root.Remove("zippyRecovery"); // marcador exclusivamente local, nunca aceito da API remota
+            root.Remove(IfoodDeliveryLocation.Key);
             return root.ToJsonString();
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw new OperationCanceledException(ct); }

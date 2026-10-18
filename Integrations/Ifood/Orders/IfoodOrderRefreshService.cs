@@ -11,7 +11,7 @@ namespace APIBack.Integrations.Ifood.Orders;
 
 // Reconsulta dados oficiais sem inventar estado de ciclo de vida ou dispensar eventos.
 public sealed class IfoodOrderRefreshService(NpgsqlDataSource source, IfoodOrderImportRepository repository,
-    IIfoodOrderDetailsClient details, IOptionsMonitor<IfoodOptions> options)
+    IIfoodOrderDetailsClient details, IOptionsMonitor<IfoodOptions> options, IServiceScopeFactory? scopes = null)
 {
     private sealed class Context
     {
@@ -51,10 +51,14 @@ AND c.authorized_at_utc IS NOT NULL AND c.revoked_at_utc IS NULL
             if (reservation.LeaseId != null) await repository.DetailsFailedAsync(reservation, ex.Code, TimeSpan.FromSeconds(30), ct);
             throw;
         }
+        payload = IfoodDeliveryLocation.Preserve(payload, context.Payload);
+        if (scopes != null) payload = await IfoodDeliveryLocation.TryLocateAsync(payload, context.MerchantId, context.ExternalOrderId, scopes, ct);
         var official = IfoodOrderNormalizer.Normalize(payload, context.MerchantId, context.ExternalOrderId);
         if (!options.CurrentValue.Enabled || !options.CurrentValue.ImportEnabled) throw new IfoodIntegrationException("IFOOD_DISABLED");
         await using var tx = await connection.BeginTransactionAsync(ct);
         // Sem locks durante HTTP. Revalida revisão e autorização no commit.
+        await connection.ExecuteAsync(new CommandDefinition("SELECT id FROM pedido WHERE id=@Pedido AND id_estabelecimento=@Store FOR UPDATE",
+            new { Pedido = pedido, Store = store }, tx, cancellationToken: ct));
         var revision = await connection.QuerySingleOrDefaultAsync<long?>(new CommandDefinition("""
 SELECT s.revision FROM ifood_order_snapshots s JOIN ifood_connections c USING(merchant_id,estabelecimento_id)
 WHERE s.merchant_id=@MerchantId AND s.external_order_id=@ExternalOrderId AND s.estabelecimento_id=@Store
@@ -93,7 +97,7 @@ VALUES(@MerchantId,@Store,@ExternalOrderId,'refresh_details',@User,'Dados recons
             official.OrderType, official.DeliveredBy, official.Currency, official.OrderAmount, official.PrepaidAmount, official.PendingAmount,
             ScheduledStartUtc = validSchedule ? official.ScheduledStartUtc : null, ScheduledEndUtc = validSchedule ? official.ScheduledEndUtc : null,
             Review = official.RequiresReview, Recovered = recovered, PreviousState = context.SynchronizationState, official.CustomerName, official.Observations,
-            Address = IfoodOrderNormalizer.Text(official.Address, "formattedAddress"), Street = IfoodOrderNormalizer.Text(official.Address, "streetName"),
+            Address = IfoodOrderNormalizer.Text(official.Address, "formattedAddress") ?? string.Join(", ", new[] { "streetName", "streetNumber", "neighborhood", "city", "state" }.Select(key => IfoodOrderNormalizer.Text(official.Address, key)).Where(x => x != null)), Street = IfoodOrderNormalizer.Text(official.Address, "streetName"),
             Number = IfoodOrderNormalizer.Text(official.Address, "streetNumber"), City = IfoodOrderNormalizer.Text(official.Address, "city"),
             State = IfoodOrderNormalizer.Text(official.Address, "state"), Zip = IfoodOrderNormalizer.Text(official.Address, "postalCode") ?? IfoodOrderNormalizer.Text(official.Address, "zipCode"),
             District = IfoodOrderNormalizer.Text(official.Address, "neighborhood") ?? IfoodOrderNormalizer.Text(official.Address, "district"),

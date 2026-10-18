@@ -40,23 +40,27 @@ namespace APIBack.Service
         }
 
         public async Task<GeocodeResultado?> GeocodificarAsync(string endereco, string? cep = null)
+            => (await ConsultarEnderecoAsync(endereco, cep)).Resultado;
+
+        public async Task<GeocodeConsulta> ConsultarEnderecoAsync(string endereco, string? cep = null)
         {
-            if (string.IsNullOrWhiteSpace(endereco)) return null;
+            if (string.IsNullOrWhiteSpace(endereco)) return new("not_found", null);
 
             if (string.IsNullOrWhiteSpace(_googleKey))
             {
                 _logger.LogWarning("Geocodificacao: Google:MapsApiKey nao configurada.");
-                return null;
+                return new("unavailable", null);
             }
 
             try
             {
-                return await BuscarGoogleAsync(endereco, cep);
+                var result = await BuscarGoogleAsync(endereco, cep);
+                return new(result == null ? "not_found" : result.Exata ? "found" : "approximate", result);
             }
             catch (Exception ex)
             {
                 _logger.LogWarning(ex, "Geocodificacao: Google falhou.");
-                return null;
+                return new("unavailable", null);
             }
         }
 
@@ -148,7 +152,7 @@ namespace APIBack.Service
             if (!response.IsSuccessStatusCode)
             {
                 _logger.LogWarning("Geocodificacao: Google respondeu HTTP {Status}.", (int)response.StatusCode);
-                return null;
+                throw new HttpRequestException("Serviço de localização indisponível.");
             }
 
             using var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync(cts.Token));
@@ -161,7 +165,7 @@ namespace APIBack.Service
                 // problema de configuracao e precisam aparecer no log.
                 var mensagem = root.TryGetProperty("error_message", out var m) ? m.GetString() : null;
                 if (status == "ZERO_RESULTS") _logger.LogInformation("Geocodificacao: Google nao achou o endereco.");
-                else _logger.LogError("Geocodificacao: Google respondeu {Status}: {Mensagem}", status, mensagem);
+                else { _logger.LogError("Geocodificacao: Google respondeu {Status}: {Mensagem}", status, mensagem); throw new HttpRequestException("Serviço de localização indisponível."); }
                 return null;
             }
 

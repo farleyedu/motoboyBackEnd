@@ -15,7 +15,7 @@ namespace APIBack.Atendimento.Motor
 {
     /// <summary>Uma mensagem do cliente ja gravada na conversa e pronta para o atendimento automatico.</summary>
     public sealed record MensagemRecebida(
-        Guid ConversaId, CanalWhatsapp Canal, string Telefone, string Texto, string? Interpretado, bool PrimeiraMensagem, DateTime QuandoUtc);
+        Guid ConversaId, CanalWhatsapp Canal, string Telefone, string Texto, string? Interpretado, bool PrimeiraMensagem, DateTime QuandoUtc, string? WaChave = null, string? TipoMensagem = null);
 
     public interface IExecutorDeAtendimento
     {
@@ -32,6 +32,8 @@ namespace APIBack.Atendimento.Motor
     /// </summary>
     public sealed class ExecutorDeAtendimento : IExecutorDeAtendimento
     {
+        private readonly IContextoPedidoAtendimento? _pedidos;
+        private readonly IExecucaoAtendimentoRepository? _execucoes;
         private readonly AtendimentoMotor _motor;
         private readonly IFluxoEstadoRepository _estados;
         private readonly IEnviadorDeRespostas _enviador;
@@ -45,8 +47,10 @@ namespace APIBack.Atendimento.Motor
         public ExecutorDeAtendimento(
             AtendimentoMotor motor, IFluxoEstadoRepository estados, IEnviadorDeRespostas enviador, IEstabelecimentoRepository lojas,
             IAtendimentoRepository config, IConversationRepository conversas, IChatRealtimePublisher tempoReal,
-            IConfiguration configuration, ILogger<ExecutorDeAtendimento> logger)
+            IConfiguration configuration, ILogger<ExecutorDeAtendimento> logger,
+            IContextoPedidoAtendimento? pedidos = null, IExecucaoAtendimentoRepository? execucoes = null)
         {
+            _pedidos = pedidos; _execucoes = execucoes;
             _motor = motor;
             _estados = estados;
             _enviador = enviador;
@@ -64,27 +68,41 @@ namespace APIBack.Atendimento.Motor
             var canal = mensagem.Canal;
             var loja = canal.IdEstabelecimento;
 
+            var salva = _execucoes != null && mensagem.WaChave != null ? await _execucoes.ObterAsync(mensagem.WaChave) : null;
+            if (salva?.Concluida == true) return;
             var estado = await _estados.ObterAsync(mensagem.ConversaId);
             var (entrada, aberto) = await MontarEntradaAsync(
                 mensagem.ConversaId, loja, canal.Id, canal.ModoAtendimento, canal.Servicos, mensagem.Texto, mensagem.Interpretado,
                 mensagem.PrimeiraMensagem, mensagem.QuandoUtc);
 
-            var decisao = _motor.Decidir(entrada, estado, DateTime.UtcNow);
+            entrada = entrada with { TipoMensagem = mensagem.TipoMensagem };
+            var decisao = salva?.Decisao ?? _motor.Decidir(entrada, estado, DateTime.UtcNow);
+            // Registra a passagem para humano antes da mensagem que confirma o encaminhamento.
+            decisao = decisao with { Acoes = decisao.Acoes.OrderBy(a => a is AcaoChamarAtendente ? 0 : 1).ToList() };
+            if (_execucoes != null && mensagem.WaChave != null && salva == null)
+                await _execucoes.SalvarAsync(mensagem.WaChave, mensagem.ConversaId, decisao);
 
             var enviadas = 0;
-            foreach (var acao in decisao.Acoes)
+            for (var indice = 0; indice < decisao.Acoes.Count; indice++)
             {
-                if (acao is AcaoChamarAtendente chamar)
+                var acao = decisao.Acoes[indice];
+                var controle = await _conversas.ObterControleConversaAsync(mensagem.ConversaId);
+                // Reconfere antes de cada efeito: o operador pode ter assumido durante o processamento.
+                if (controle != null && (controle.AssignedAgentId.HasValue || controle.Status is "encerrada_manual" or "encerrada_inatividade")) break;
+                if (_execucoes != null && mensagem.WaChave != null)
                 {
-                    await ChamarAtendenteAsync(mensagem, chamar);
+                    var preparada = await _execucoes.PrepararAcaoAsync(mensagem.WaChave, indice, acao is AcaoChamarAtendente);
+                    if (!preparada.Executar) { await _execucoes.ConcluirAcaoAsync(mensagem.WaChave, indice); continue; }
+                    acao = acao with { MensagemId = preparada.MensagemId };
                 }
-                else if (await _enviador.EnviarAsync(mensagem.ConversaId, canal, mensagem.Telefone, acao))
-                {
-                    enviadas++;
-                }
+                if (acao is AcaoChamarAtendente chamar) await ChamarAtendenteAsync(mensagem, chamar);
+                else if (await _enviador.EnviarAsync(mensagem.ConversaId, canal, mensagem.Telefone, acao)) enviadas++;
+                if (_execucoes != null && mensagem.WaChave != null)
+                    await _execucoes.ConcluirAcaoAsync(mensagem.WaChave, indice);
             }
 
             await _estados.SalvarAsync(mensagem.ConversaId, decisao.Estado, decisao.Fluxo);
+            if (_execucoes != null && mensagem.WaChave != null) await _execucoes.ConcluirAsync(mensagem.WaChave);
 
             _logger.LogInformation(
                 "[atend] ev=decisao conversa={Conversa} canal={Canal} loja={Loja} modo={Modo} servicos={Servicos} primeira={Primeira} aberto={Aberto} " +
@@ -121,6 +139,8 @@ namespace APIBack.Atendimento.Motor
             var entrada = new EntradaMotor(
                 conversa, loja, canal, nome, modo, servicos, texto, interpretado, primeira,
                 ForaDoHorario: !aberto, config?.MensagemForaHorario, config?.SaudacaoHumano, MontarUrlDoCardapio(loja), textos, situacao);
+            if (_pedidos != null && conversa != Guid.Empty)
+                entrada = entrada with { PedidosCliente = await _pedidos.ObterAsync(loja, canal, conversa) };
             return (entrada, aberto);
         }
 
@@ -132,6 +152,7 @@ namespace APIBack.Atendimento.Motor
             try
             {
                 var atualizado = await _conversas.AtualizarStatusAtendimentoAsync(mensagem.ConversaId, "aguardando_interno", null, null, loja);
+                if (!atualizado) throw new InvalidOperationException("Não foi possível encaminhar a conversa para a equipe.");
                 await _conversas.RegistrarEventoAsync(mensagem.ConversaId, new ConversationEventDto
                 {
                     Id = Guid.NewGuid(),
@@ -151,8 +172,9 @@ namespace APIBack.Atendimento.Motor
             }
             catch (Exception ex)
             {
-                // A resposta ao cliente ja saiu; se a fila da equipe falhar a conversa continua visivel no chat.
+                // A confirmação ao cliente ainda não saiu; o worker poderá retomar pelo checkpoint.
                 _logger.LogError(ex, "[atend] ev=erro etapa=chamar_atendente conversa={Conversa} loja={Loja}", mensagem.ConversaId, loja);
+                throw;
             }
         }
 

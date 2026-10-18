@@ -85,6 +85,17 @@ namespace APIBack.Tests.Unit
             Assert.Null(resultado);
         }
 
+        [Theory]
+        [InlineData("ZERO_RESULTS", "not_found")]
+        [InlineData("REQUEST_DENIED", "unavailable")]
+        [InlineData("OVER_QUERY_LIMIT", "unavailable")]
+        public async Task Diagnostic_distinguishes_unknown_address_from_provider_failure(string status, string expected)
+        {
+            var service = Build(new FakeHandler(_ => Json($"{{\"status\":\"{status}\",\"results\":[]}}")));
+            var result = await service.ConsultarEnderecoAsync("Rua A, 10");
+            Assert.Equal(expected, result.Status); Assert.Null(result.Resultado);
+        }
+
         [Fact]
         public async Task Reverse_geocoding_reads_street_number_neighborhood_city_state_and_cep()
         {

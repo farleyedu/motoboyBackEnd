@@ -9,9 +9,10 @@ public sealed class IfoodOrderImportService
     private readonly IfoodOrderImportRepository _orders;
     private readonly IIfoodOrderDetailsClient _details;
     private readonly IOptionsMonitor<IfoodOptions> _optionsMonitor;
+    private readonly IServiceScopeFactory? _scopes;
     private IfoodOptions _options => _optionsMonitor.CurrentValue;
-    public IfoodOrderImportService(IfoodInboxRepository inbox, IfoodOrderImportRepository orders, IIfoodOrderDetailsClient details, IOptionsMonitor<IfoodOptions> options)
-        => (_inbox, _orders, _details, _optionsMonitor) = (inbox, orders, details, options);
+    public IfoodOrderImportService(IfoodInboxRepository inbox, IfoodOrderImportRepository orders, IIfoodOrderDetailsClient details, IOptionsMonitor<IfoodOptions> options, IServiceScopeFactory? scopes = null)
+        => (_inbox, _orders, _details, _optionsMonitor, _scopes) = (inbox, orders, details, options, scopes);
 
     public async Task<int> RunOnceAsync(CancellationToken ct = default)
     {
@@ -40,6 +41,9 @@ public sealed class IfoodOrderImportService
                     // Cache durável separado da projeção: falha posterior não repete GET já salvo.
                     await _orders.StoreDetailsAsync(reservation, payload, ct);
                 }
+                if (!await _inbox.RenewEventAsync(item, _options.ImportLeaseSeconds, ct))
+                    throw new IfoodIntegrationException("IFOOD_EVENT_LEASE_LOST", retryable: true);
+                if (_scopes != null) payload = await IfoodDeliveryLocation.TryLocateAsync(payload, item.MerchantId, item.ExternalOrderId!.Value, _scopes, ct);
                 if (!await _inbox.RenewEventAsync(item, _options.ImportLeaseSeconds, ct))
                     throw new IfoodIntegrationException("IFOOD_EVENT_LEASE_LOST", retryable: true);
                 await _orders.ImportAsync(item, IfoodOrderNormalizer.Normalize(payload, item.MerchantId, item.ExternalOrderId!.Value), ct);

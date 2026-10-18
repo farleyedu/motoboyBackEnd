@@ -26,6 +26,7 @@ namespace APIBack.Atendimento
         private const string AvisoEmpresaPausada =
             "Estamos enfrentando uma instabilidade temporária no atendimento. Assim que possível, retornaremos por aqui.";
 
+        private readonly IExecucaoAtendimentoRepository? _execucoes;
         private readonly IIngressoDeConversa _ingresso;
         private readonly IConversationRepository _conversas;
         private readonly IExecutorDeAtendimento _executor;
@@ -39,8 +40,9 @@ namespace APIBack.Atendimento
             IExecutorDeAtendimento executor,
             IEnviadorDeRespostas enviador,
             ILogger<PipelineDeMensagem> logger,
-            ICardapioPedidoWebService? pedidosWeb = null)
+            ICardapioPedidoWebService? pedidosWeb = null, IExecucaoAtendimentoRepository? execucoes = null)
         {
+            _execucoes = execucoes;
             _ingresso = ingresso;
             _conversas = conversas;
             _executor = executor;
@@ -85,6 +87,15 @@ namespace APIBack.Atendimento
                 return;
             }
 
+            var execucao = _execucoes != null ? await _execucoes.ObterAsync(wa!) : null;
+            if (execucao != null)
+            {
+                if (!execucao.Concluida)
+                    await _executor.ExecutarAsync(new MensagemRecebida(idConversa, canal, telefone, input.Texto, input.TextoInterpretado,
+                        false, input.DataMensagemUtc ?? DateTime.UtcNow, wa, input.Mensagem.Tipo));
+                return;
+            }
+
             // Codigo de 4 digitos do cardapio web: confirma o pedido e nao segue para o atendimento.
             if (await TentarConfirmarPedidoAsync(idConversa, textoUsuario))
             {
@@ -115,7 +126,7 @@ namespace APIBack.Atendimento
 
             var primeira = ingresso.NovaConversa || ingresso.ReiniciadaPorExpiracao || ingresso.AposEncerramentoManualEm.HasValue;
             await _executor.ExecutarAsync(new MensagemRecebida(
-                idConversa, canal, telefone, input.Texto, input.TextoInterpretado, primeira, input.DataMensagemUtc ?? DateTime.UtcNow));
+                idConversa, canal, telefone, input.Texto, input.TextoInterpretado, primeira, input.DataMensagemUtc ?? DateTime.UtcNow, wa, input.Mensagem.Tipo));
         }
 
         /// <summary>Qualquer falha aqui (banco sem a migration, WhatsApp fora) e ignorada: a mensagem segue o fluxo normal.</summary>

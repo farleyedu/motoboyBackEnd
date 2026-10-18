@@ -295,6 +295,8 @@ builder.Services.AddScoped<APIBack.Atendimento.IWaEventoRepository, APIBack.Aten
 builder.Services.AddScoped<APIBack.Atendimento.IWaEventoProcessor, APIBack.Atendimento.WaEventoProcessor>();
 builder.Services.AddScoped<APIBack.Atendimento.IIngressoDeConversa>(sp => sp.GetRequiredService<ConversationService>());
 builder.Services.AddScoped<APIBack.Atendimento.IPipelineDeMensagem, APIBack.Atendimento.PipelineDeMensagem>();
+builder.Services.AddScoped<APIBack.Atendimento.Motor.IContextoPedidoAtendimento, APIBack.Atendimento.Motor.ContextoPedidoAtendimento>();
+builder.Services.AddScoped<APIBack.Atendimento.Motor.IExecucaoAtendimentoRepository, APIBack.Atendimento.Motor.ExecucaoAtendimentoRepository>();
 // Motor de atendimento: decisao pura (AtendimentoMotor) + fluxos por servico + executor com banco e envio.
 builder.Services.AddSingleton<APIBack.Atendimento.Motor.IFluxoDeServico, APIBack.Atendimento.Motor.FluxoCardapioWeb>();
 builder.Services.AddSingleton<APIBack.Atendimento.Motor.IFluxoDeServico, APIBack.Atendimento.Motor.FluxoDelivery>();

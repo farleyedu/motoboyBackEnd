@@ -76,6 +76,12 @@ UPDATE wa_evento e
  WHERE e.id IN (
         SELECT id FROM wa_evento
          WHERE estado = 'pendente' AND proxima_tentativa_em <= NOW()
+           AND (tipo <> 'mensagem' OR NOT EXISTS (
+               SELECT 1 FROM wa_evento anterior
+               WHERE anterior.tipo = 'mensagem' AND anterior.estado IN ('pendente', 'processando')
+                 AND anterior.phone_number_id = wa_evento.phone_number_id
+                 AND anterior.payload->'message'->>'from' = wa_evento.payload->'message'->>'from'
+                 AND (anterior.recebido_em, anterior.id) < (wa_evento.recebido_em, wa_evento.id)))
          ORDER BY recebido_em
          LIMIT @Max
          FOR UPDATE SKIP LOCKED)
