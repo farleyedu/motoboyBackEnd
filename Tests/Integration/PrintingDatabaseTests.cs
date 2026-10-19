@@ -83,6 +83,25 @@ public sealed class PrintingDatabaseTests
   Assert.Equal(0,await db.ExecuteScalarAsync<int>("SELECT count(*) FROM impressao_aceite"));
   await db.ExecuteAsync("UPDATE ifood_order_snapshots SET remote_status='CONFIRMED'");Assert.Equal(1,await db.ExecuteScalarAsync<int>("SELECT count(*) FROM impressao_aceite"));
  }
+ [DeliveryDatabaseFact] public async Task RenamingStationAndRemovingPrinterKeepRulesConsistent()
+ {
+  await using var f=await Fixture.Create();var config=await f.Configure();var printer=config.Impressoras[0];var station=printer.EstacaoId;
+  await f.Store.RenameStation(f.StoreId,station,"  Caixa da frente ");Assert.Equal("Caixa da frente",(await f.Store.Stations(f.StoreId)).Single().Nome);
+  await Assert.ThrowsAsync<APIBack.Service.DeliveryDomainException>(()=>f.Store.RenameStation(f.StoreId,station," "));
+  await Assert.ThrowsAsync<APIBack.Service.DeliveryDomainException>(()=>f.Store.RenameStation(Guid.NewGuid(),station,"Outra loja"));
+  await f.Store.Manual(f.StoreId,1,null,printer.Id,true,Guid.NewGuid().ToString());
+  await f.Store.RemovePrinter(f.StoreId,printer.Id);
+  var after=await f.Store.Config(f.StoreId);
+  Assert.Empty(after.Impressoras);Assert.Null(after.Regras[0].ImpressoraId);Assert.False(after.Automatica);Assert.True(after.Revisao>config.Revisao);
+  var job=Assert.Single(await f.Store.Jobs(f.StoreId));Assert.Equal("cancelado",job.Estado);Assert.Null(job.ImpressoraId);
+  await Assert.ThrowsAsync<APIBack.Service.DeliveryDomainException>(()=>f.Store.RemovePrinter(f.StoreId,printer.Id));
+ }
+ [DeliveryDatabaseFact] public async Task WindowsPrintersFoundByTheAgentCannotBeRemoved()
+ {
+  await using var f=await Fixture.Create();var config=await f.Configure();var printer=new PrintPrinter{EstacaoId=config.Impressoras[0].EstacaoId,Conexao="sistema",Endereco="EPSON"};
+  await using(var db=await f.Source.OpenConnectionAsync())await db.ExecuteAsync("INSERT INTO impressao_impressora(id,estabelecimento_id,estacao_id,dados) VALUES(@Id,@store,@EstacaoId,CAST(@data AS jsonb))",new{printer.Id,store=f.StoreId,printer.EstacaoId,data=System.Text.Json.JsonSerializer.Serialize(printer,PrintStore.Json)});
+  var error=await Assert.ThrowsAsync<APIBack.Service.DeliveryDomainException>(()=>f.Store.RemovePrinter(f.StoreId,printer.Id));Assert.Contains("Windows",error.Message);
+ }
  private sealed class Fixture:IAsyncDisposable
  {
   public NpgsqlDataSource Source {get;private set;}=null!;

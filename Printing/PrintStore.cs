@@ -129,6 +129,27 @@ WHERE e.estabelecimento_id=@store AND e.revogada_em IS NULL
   if(n==0) throw Error("Estação não encontrada.",404);
   await Event(db,tx,store,"print.station.updated",new{id});await tx.CommitAsync();
  }
+ public async Task RenameStation(Guid store,Guid id,string name)
+ {
+  name=name.Trim();if(name.Length is <1 or >100) throw Error("Informe um nome de até 100 caracteres para o computador.");
+  await using var db=await source.OpenConnectionAsync();await using var tx=await db.BeginTransactionAsync();
+  if(await db.ExecuteAsync("UPDATE impressao_estacao SET nome=@name WHERE id=@id AND estabelecimento_id=@store AND revogada_em IS NULL",new{name,id,store},tx)==0) throw Error("Estação não encontrada.",404);
+  await Event(db,tx,store,"print.station.updated",new{id});await tx.CommitAsync();
+ }
+ /// <summary>Remove uma impressora de rede ou do navegador. As do Windows voltam no próximo sinal do agente, então só podem ser desligadas.</summary>
+ public async Task RemovePrinter(Guid store,Guid id)
+ {
+  await using var db=await source.OpenConnectionAsync();await using var tx=await db.BeginTransactionAsync();
+  var kind=await db.QuerySingleOrDefaultAsync<string>("SELECT dados->>'conexao' FROM impressao_impressora WHERE id=@id AND estabelecimento_id=@store FOR UPDATE",new{id,store},tx)??throw Error("Impressora não encontrada.",404);
+  if(kind=="sistema") throw Error("Esta impressora está instalada no Windows do computador e o agente a encontra de novo. Desligue o uso dela aqui ou remova-a do Windows.");
+  await db.ExecuteAsync("UPDATE impressao_job SET estado='cancelado',motivo='A impressora foi removida.' WHERE estabelecimento_id=@store AND impressora_id=@id AND estado IN ('pendente','entregue')",new{id,store},tx);
+  await db.ExecuteAsync("UPDATE impressao_job SET impressora_id=NULL WHERE estabelecimento_id=@store AND impressora_id=@id",new{id,store},tx);
+  await db.ExecuteAsync("UPDATE impressao_regra SET dados=jsonb_set(dados,'{impressoraId}','null'::jsonb) WHERE estabelecimento_id=@store AND dados->>'impressoraId'=@key",new{store,key=id.ToString()},tx);
+  await db.ExecuteAsync("DELETE FROM impressao_impressora WHERE id=@id AND estabelecimento_id=@store",new{id,store},tx);
+  // Sem impressora ativa numa regra ao aceitar, a impressão automática não pode continuar ligada.
+  await db.ExecuteAsync("UPDATE impressao_config SET revisao=revisao+1,automatica=automatica AND EXISTS(SELECT 1 FROM impressao_regra r JOIN impressao_impressora p ON p.estabelecimento_id=r.estabelecimento_id AND p.id::text=r.dados->>'impressoraId' WHERE r.estabelecimento_id=@store AND (r.dados->>'ativa')::boolean AND r.dados->>'gatilho'='aceitar' AND (p.dados->>'ativa')::boolean) WHERE estabelecimento_id=@store",new{store},tx);
+  await Event(db,tx,store,"print.station.updated",new{configuration=true});await tx.CommitAsync();
+ }
  public async Task<object> PairCode(Guid store,int user,Guid station)
  {
   await using var db=await source.OpenConnectionAsync();await using var tx=await db.BeginTransactionAsync();

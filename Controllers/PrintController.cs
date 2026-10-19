@@ -37,7 +37,7 @@ public sealed class PrintController(PrintStore store,IConfiguration configuratio
  [HttpPost("estacoes"),RequirePermission("Delivery","visualizar")]
  public async Task<IActionResult> Add(StationInput input){CanConfigure();return Data(await store.CreateStation(Shop,Actor,input));}
  [HttpPut("estacoes/{id:guid}"),RequirePermission("Delivery","visualizar")]
- public async Task<IActionResult> Set(Guid id,[FromQuery]bool ativa){CanConfigure();await store.SetStation(Shop,id,ativa);return Data(true);}
+ public async Task<IActionResult> Set(Guid id,[FromQuery]bool? ativa,[FromQuery]string? nome){CanConfigure();if(nome!=null)await store.RenameStation(Shop,id,nome);if(ativa.HasValue)await store.SetStation(Shop,id,ativa.Value);return Data(true);}
  [HttpDelete("estacoes/{id:guid}"),RequirePermission("Delivery","visualizar")]
  public async Task<IActionResult> Remove(Guid id){CanConfigure();await store.SetStation(Shop,id,null);return Data(true);}
  [HttpPost("estacoes/{id:guid}/pareamento"),RequirePermission("Delivery","visualizar")]
@@ -64,6 +64,8 @@ public sealed class PrintController(PrintStore store,IConfiguration configuratio
  public async Task<IActionResult> Counts()=>Data(await store.Counts(Shop));
  [HttpPost("pedidos/{id:int}/imprimir"),RequirePermission("Delivery","visualizar")]
  public async Task<IActionResult> Manual(int id,[FromQuery]Guid? impressoraId){await store.Manual(Shop,Actor,id,impressoraId,false,Request.Headers["Idempotency-Key"].ToString());return Data(true);}
+ [HttpDelete("impressoras/{id:guid}"),RequirePermission("Delivery","visualizar")]
+ public async Task<IActionResult> RemovePrinter(Guid id){CanConfigure();await store.RemovePrinter(Shop,id);return Data(true);}
  [HttpPost("impressoras/{id:guid}/teste"),RequirePermission("Delivery","visualizar")]
  public async Task<IActionResult> Test(Guid id){CanConfigure();await store.Manual(Shop,Actor,null,id,true,Request.Headers["Idempotency-Key"].ToString());return Data(true);}
  [HttpPost("jobs/{id:guid}/{actionName}"),RequirePermission("Delivery","visualizar")]
