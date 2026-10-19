@@ -96,8 +96,14 @@ namespace APIBack.Controllers
                 return erroHierarquia!;
             }
 
+            var actorPermissions = HttpContext.GetPermissoes().ToDictionary(p => p.Key, p => p.Value.ToList());
+            if (RoleCatalog.Normalize(HttpContext.GetTipoAcesso()) is "dono" or "gerente_empresa" or "gerente_estabelecimento")
+            {
+                actorPermissions.TryAdd("Delivery", new List<string>());
+                if (!actorPermissions["Delivery"].Contains("configurar_impressao")) actorPermissions["Delivery"].Add("configurar_impressao");
+            }
             var validation = EstablishmentPermissions.Validate(request.Permissoes,
-                HttpContext.GetPermissoes(), HttpContext.IsSuperAdmin(), ParsePermissoesStored(vinculo.PermissoesCustomizadas));
+                actorPermissions, HttpContext.IsSuperAdmin(), ParsePermissoesStored(vinculo.PermissoesCustomizadas));
             if (validation != null)
                 return BadRequest(new { success = false, error = validation });
 

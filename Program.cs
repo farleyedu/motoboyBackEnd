@@ -136,6 +136,8 @@ builder.Services.AddSingleton<IDeliveryOutboxRepository, DeliveryOutboxRepositor
 builder.Services.AddScoped<IPedidoQueueRepository, PedidoQueueRepository>();
 builder.Services.AddScoped<IPedidoQueueService, PedidoQueueService>();
 builder.Services.AddScoped<IPedidoCoreService, PedidoCoreService>();
+builder.Services.AddScoped<APIBack.Printing.PrintStore>();
+builder.Services.AddScoped<APIBack.Printing.PrintDispatcher>();
 builder.Services.AddScoped<IProdutoAtendimentoRepository, ProdutoAtendimentoRepository>();
 builder.Services.AddScoped<IIngredienteRepository, IngredienteRepository>();
 builder.Services.AddScoped<IIngredienteService, IngredienteService>();
@@ -204,6 +206,9 @@ builder.Services.Configure<DeliveryTrackingOptions>(builder.Configuration.GetSec
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddPolicy("print-pairing", context => RateLimitPartition.GetFixedWindowLimiter(
+        context.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = 5, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
     options.OnRejected = async (context, cancellationToken) =>
     {
         context.HttpContext.Response.ContentType = "application/json";
@@ -253,6 +258,7 @@ builder.Services.AddRateLimiter(options =>
     });
 });
 builder.Services.AddHostedService<DeliveryMigrationHostedService>();
+builder.Services.AddHostedService<APIBack.Printing.PrintWorker>();
 builder.Services.AddHostedService<DeliveryTrackingMaintenanceWorker>();
 builder.Services.AddHostedService<DeliveryOutboxPublisher>();
 builder.Services.Configure<AsaasCheckoutOptions>(builder.Configuration.GetSection("Payments:Asaas"));
