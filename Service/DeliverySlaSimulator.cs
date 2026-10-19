@@ -19,6 +19,33 @@ namespace APIBack.Service
             SimularSlaRequest request,
             bool abertoAgora)
         {
+            if (!double.IsFinite(request.Latitude) || request.Latitude is < -90 or > 90
+                || !double.IsFinite(request.Longitude) || request.Longitude is < -180 or > 180
+                || (request.Latitude == 0 && request.Longitude == 0))
+                throw new DeliveryDomainException(422, "INVALID_SIMULATION_LOCATION", "Informe um endereço válido para simular.");
+
+            if (request.Rascunho is { } rascunho)
+            {
+                var regras = RestaurantSettingsRules.Validate(rascunho.Restaurante);
+                if (rascunho.Zonas == null)
+                    throw new DeliveryDomainException(422, "INVALID_SIMULATION_ZONES", "Informe a lista de zonas para simular.");
+                // Objeto novo: simular nao altera a configuracao carregada nem escreve no banco.
+                restaurant = new RestaurantSettingsDto
+                {
+                    EstabelecimentoId = restaurant.EstabelecimentoId, NomeFantasia = restaurant.NomeFantasia,
+                    Latitude = regras.Latitude, Longitude = regras.Longitude, AceitaPedidos = regras.AceitaPedidos,
+                    RaioEntregaKm = regras.RaioEntregaKm, PedidoMinimo = regras.PedidoMinimo,
+                    TaxaEntregaFixa = regras.TaxaEntregaFixa, TaxaEntregaPorKm = regras.TaxaEntregaPorKm,
+                    TempoPreparoMin = regras.TempoPreparoMin, EntregaGratisAcimaDe = regras.EntregaGratisAcimaDe
+                };
+                var validadas = new List<DeliveryZonaDto>();
+                foreach (var candidata in rascunho.Zonas)
+                {
+                    var z = DeliveryZonaRules.Validate(candidata);
+                    validadas.Add(new DeliveryZonaDto { Nome = z.Nome, RaioAteKm = z.RaioAteKm, Taxa = z.Taxa, Ativo = z.Ativo, Ordem = z.Ordem, Cor = z.Cor });
+                }
+                zonas = validadas;
+            }
             double? distance = null;
             var hasStore = restaurant.Latitude.HasValue && restaurant.Longitude.HasValue
                 && !(restaurant.Latitude.Value == 0 && restaurant.Longitude.Value == 0);
@@ -49,7 +76,7 @@ namespace APIBack.Service
                 TaxaEntrega = taxa,
                 PrevisaoMinMinutos = minMinutos,
                 PrevisaoMaxMinutos = maxMinutos,
-                EstabelecimentoAbertoAgora = abertoAgora,
+                EstabelecimentoAbertoAgora = abertoAgora && restaurant.AceitaPedidos,
             };
         }
     }
