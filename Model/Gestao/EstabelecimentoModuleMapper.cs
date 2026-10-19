@@ -82,6 +82,10 @@ namespace APIBack.Model.Gestao
                     case "disponivel":
                         modules.Add("DISPONIBILIDADE");
                         break;
+                    case "inteligencia":
+                    case "gestao e inteligencia":
+                        modules.Add("INTELIGENCIA");
+                        break;
                 }
             }
 
@@ -161,6 +165,10 @@ namespace APIBack.Model.Gestao
                     case "disponibilidade":
                     case "disponivel":
                         modules.Add("Disponibilidade");
+                        break;
+                    case "inteligencia":
+                    case "gestao e inteligencia":
+                        modules.Add("Inteligencia");
                         break;
                 }
             }
