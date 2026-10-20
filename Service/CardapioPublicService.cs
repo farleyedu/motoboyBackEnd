@@ -7,6 +7,7 @@ using System.Threading.Tasks;
 using APIBack.Automation.Interfaces;
 using APIBack.DTOs.Cardapio;
 using APIBack.DTOs.Clientes;
+using APIBack.DTOs.Delivery;
 using Microsoft.Extensions.Logging;
 using APIBack.Model.Cardapio;
 using APIBack.Repository.Interface;
@@ -25,6 +26,9 @@ namespace APIBack.Service
         private readonly ILogger<CardapioPublicService> _logger;
         private readonly IClienteAcessoService _acesso;
         private readonly IClienteEnderecoRepository _enderecos;
+        private readonly IRestaurantSettingsRepository? _restaurant;
+        private readonly IDeliveryZonaRepository? _zonas;
+        private readonly IPedidoQueueRepository? _delivery;
 
         public CardapioPublicService(
             ICardapioRepository repository,
@@ -34,7 +38,10 @@ namespace APIBack.Service
             IPedidosAbertosService pedidosAbertos,
             ILogger<CardapioPublicService> logger,
             IClienteAcessoService acesso,
-            IClienteEnderecoRepository enderecos)
+            IClienteEnderecoRepository enderecos,
+            IRestaurantSettingsRepository? restaurant = null,
+            IDeliveryZonaRepository? zonas = null,
+            IPedidoQueueRepository? delivery = null)
         {
             _repository = repository;
             _localizacao = localizacao;
@@ -44,6 +51,9 @@ namespace APIBack.Service
             _logger = logger;
             _acesso = acesso;
             _enderecos = enderecos;
+            _restaurant = restaurant;
+            _zonas = zonas;
+            _delivery = delivery;
         }
 
         public async Task<CardapioPublicoCatalogoDto> ObterCatalogoAsync(Guid? idEstabelecimento, string? estabelecimentoSlug, string? busca)
@@ -224,7 +234,31 @@ namespace APIBack.Service
 
             var situacaoPedidos = await _pedidosAbertos.AvaliarAsync(estabelecimento.Id, estabelecimento.AceitaPedidos);
             var basePedido = subtotalProdutos + subtotalAdicionais;
-            var taxaEntrega = tipoEntrega == "entrega" ? estabelecimento.TaxaEntregaFixa : 0;
+            var regras = await ObterRegrasEntregaAsync(estabelecimento);
+            var configuracaoDelivery = _delivery == null ? null : await _delivery.GetSettingsAsync(estabelecimento.Id);
+            var retiradaPermitida = configuracaoDelivery is { IsDefault: false }
+                ? configuracaoDelivery.RetiradaBalcaoAtiva
+                : estabelecimento.AceitaRetirada;
+            if (tipoEntrega == "retirada" && !retiradaPermitida)
+                throw new DeliveryDomainException(422, "PICKUP_DISABLED", "A retirada no balcao esta desativada para esta loja.");
+            if (tipoEntrega == "entrega" && !estabelecimento.AceitaEntrega)
+                throw new DeliveryDomainException(422, "DELIVERY_DISABLED", "A entrega esta desativada para esta loja.");
+
+            var temPonto = tipoEntrega == "entrega" && PontoValido(request.Latitude, request.Longitude);
+            var zonas = _zonas == null
+                ? Array.Empty<DeliveryZonaDto>()
+                : (await _zonas.ListAtivasOrdenadasAsync(estabelecimento.Id)).ToArray();
+            double? distancia = null;
+            if (temPonto && PontoValido(regras.Latitude, regras.Longitude))
+                distancia = OrderCoreRules.DistanceKm(regras.Latitude!.Value, regras.Longitude!.Value, request.Latitude!.Value, request.Longitude!.Value);
+            var zona = OrderCoreRules.ResolveZone(zonas, distancia);
+            var taxaEntrega = tipoEntrega == "entrega" ? OrderCoreRules.ComputeFee(regras, distancia, zonas) : 0m;
+            var freteGratis = tipoEntrega == "entrega" && regras.EntregaGratisAcimaDe is { } limite && limite > 0 && basePedido >= limite;
+            if (freteGratis) taxaEntrega = 0m;
+            var raio = regras.RaioEntregaKm ?? 0m;
+            var dentroDoRaio = !distancia.HasValue || raio <= 0 || distancia.Value <= (double)raio;
+            var exigeDistancia = zonas.Length > 0 || (regras.TaxaEntregaPorKm ?? 0m) > 0 || raio > 0;
+            var taxaCalculada = tipoEntrega != "entrega" || (temPonto && (!exigeDistancia || distancia.HasValue));
 
             return new CardapioCotacaoDto
             {
@@ -239,6 +273,11 @@ namespace APIBack.Service
                 SubtotalProdutos = subtotalProdutos,
                 SubtotalAdicionais = subtotalAdicionais,
                 TaxaEntrega = taxaEntrega,
+                TaxaEntregaCalculada = taxaCalculada,
+                DistanciaKm = distancia,
+                ZonaEntrega = zona?.Nome,
+                DentroDoRaio = dentroDoRaio,
+                FreteGratisAplicado = freteGratis,
                 Total = basePedido + taxaEntrega,
                 TempoPreparoMin = estabelecimento.TempoPreparoMin,
                 Itens = cotacaoItens
@@ -349,6 +388,17 @@ namespace APIBack.Service
             var enderecoArmazenado = cotacao.TipoEntrega == "entrega"
                 ? await LocalizarEnderecoDoPedidoAsync(request.EnderecoEntrega!, estabelecimento)
                 : null;
+
+            // O pedido persistido recebe uma segunda cotacao com o ponto validado. Assim a previa,
+            // o pedido aceito e o nucleo do delivery usam exatamente a mesma regra comercial.
+            if (enderecoArmazenado != null)
+            {
+                request.Latitude = enderecoArmazenado.Latitude;
+                request.Longitude = enderecoArmazenado.Longitude;
+                cotacao = await CalcularCotacaoAsync(request);
+                if (!cotacao.DentroDoRaio)
+                    throw new DeliveryDomainException(422, "OUT_OF_DELIVERY_RANGE", "Endereco fora da area de entrega configurada.");
+            }
 
             if (enderecoArmazenado != null)
             {
@@ -775,6 +825,33 @@ namespace APIBack.Service
             ValidationUtils.AddError(errors, "tipoEntrega", "Tipo de entrega invalido. Use 'retirada' ou 'entrega'.");
             return "retirada";
         }
+
+        private async Task<RestaurantSettingsDto> ObterRegrasEntregaAsync(CardapioEstabelecimentoPublico estabelecimento)
+        {
+            if (_restaurant != null)
+            {
+                var settings = await _restaurant.GetAsync(estabelecimento.Id);
+                if (settings != null) return settings;
+            }
+            return new RestaurantSettingsDto
+            {
+                EstabelecimentoId = estabelecimento.Id,
+                NomeFantasia = estabelecimento.NomeFantasia,
+                AceitaPedidos = estabelecimento.AceitaPedidos,
+                Latitude = estabelecimento.Latitude,
+                Longitude = estabelecimento.Longitude,
+                RaioEntregaKm = estabelecimento.RaioEntregaKm,
+                PedidoMinimo = estabelecimento.PedidoMinimo,
+                TaxaEntregaFixa = estabelecimento.TaxaEntregaFixa,
+                TempoPreparoMin = estabelecimento.TempoPreparoMin
+            };
+        }
+
+        private static bool PontoValido(double? latitude, double? longitude) =>
+            latitude.HasValue && longitude.HasValue
+            && double.IsFinite(latitude.Value) && double.IsFinite(longitude.Value)
+            && latitude.Value is >= -90 and <= 90 && longitude.Value is >= -180 and <= 180
+            && !(latitude.Value == 0 && longitude.Value == 0);
 
         private static RequestValidationException BuildValidationException(string field, string message)
         {

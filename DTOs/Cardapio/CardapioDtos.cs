@@ -210,6 +210,9 @@ namespace APIBack.DTOs.Cardapio
         public Guid? EstabelecimentoId { get; set; }
         public string? EstabelecimentoSlug { get; set; }
         public string TipoEntrega { get; set; } = "retirada";
+        /// <summary>Ponto confirmado pelo cliente. Sem ele a taxa de entrega e apenas provisoria.</summary>
+        public double? Latitude { get; set; }
+        public double? Longitude { get; set; }
         public List<CardapioPedidoPublicoItemRequest> Itens { get; set; } = new();
     }
 
@@ -344,6 +347,11 @@ namespace APIBack.DTOs.Cardapio
         public decimal SubtotalProdutos { get; set; }
         public decimal SubtotalAdicionais { get; set; }
         public decimal TaxaEntrega { get; set; }
+        public bool TaxaEntregaCalculada { get; set; }
+        public double? DistanciaKm { get; set; }
+        public string? ZonaEntrega { get; set; }
+        public bool DentroDoRaio { get; set; } = true;
+        public bool FreteGratisAplicado { get; set; }
         public decimal Total { get; set; }
         public int TempoPreparoMin { get; set; }
         public List<CardapioCotacaoItemDto> Itens { get; set; } = new();

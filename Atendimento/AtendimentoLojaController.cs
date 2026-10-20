@@ -25,6 +25,14 @@ namespace APIBack.Atendimento
         public bool PrimeiraMensagem { get; set; } = true;
         /// <summary>Estado devolvido na resposta anterior, para o teste seguir a conversa.</summary>
         public EstadoFluxo? Estado { get; set; }
+        public DateTime? QuandoUtc { get; set; }
+        public double? Latitude { get; set; }
+        public double? Longitude { get; set; }
+        public decimal Subtotal { get; set; }
+        public string? TipoMensagem { get; set; }
+        public string? Saudacao { get; set; }
+        public string? MensagemForaHorario { get; set; }
+        public Dictionary<string, string>? Mensagens { get; set; }
     }
 
     /// <summary>Acao do motor em forma serializavel (o tipo abstrato AcaoMotor sairia vazio no JSON).</summary>
@@ -132,7 +140,14 @@ namespace APIBack.Atendimento
                 var modo = ModoAtendimento.Valido(request.Modo) ? request.Modo! : ModoAtendimento.Hibrido;
                 var texto = (request.Texto ?? string.Empty).Trim();
                 if (texto.Length is 0 or > 500) throw new RequestValidationException("Mensagem invalida.", new Dictionary<string, List<string>> { ["texto"] = new() { "Escreva a mensagem do cliente (ate 500 caracteres)." } });
-                var r = await _executor.SimularAsync(estabelecimentoId, modo, servicos, texto, request.Estado, request.PrimeiraMensagem);
+                string? Txt(string chave) => request.Mensagens != null && request.Mensagens.TryGetValue(chave, out var valor) ? valor : null;
+                var textos = request.Mensagens == null ? null : new TextosMotor(
+                    Txt(MensagensDoAtendimento.Menu), Txt(MensagensDoAtendimento.Cardapio), Txt(MensagensDoAtendimento.Atendente),
+                    Txt(MensagensDoAtendimento.Agendamento), Txt(MensagensDoAtendimento.SemServico), Txt(MensagensDoAtendimento.CardapioFechado));
+                var cenario = new CenarioSimulacaoMotor(
+                    request.QuandoUtc, request.Latitude, request.Longitude, request.Subtotal,
+                    request.TipoMensagem, request.Saudacao, request.MensagemForaHorario, textos);
+                var r = await _executor.SimularAsync(estabelecimentoId, modo, servicos, texto, request.Estado, request.PrimeiraMensagem, cenario);
                 return new SimulacaoResposta { Acoes = r.Acoes.Select(AcaoSimulada.De).ToList(), Estado = r.Estado, Fluxo = r.Fluxo, Passo = r.Passo, Regra = r.Regra };
             });
 

@@ -22,7 +22,7 @@ namespace APIBack.Atendimento.Motor
         Task ExecutarAsync(MensagemRecebida mensagem);
 
         /// <summary>Roda o motor como se o cliente tivesse escrito, sem enviar nada nem gravar: serve ao "testar atendimento" do dono.</summary>
-        Task<ResultadoMotor> SimularAsync(Guid loja, string modo, IReadOnlyList<string> servicos, string texto, EstadoFluxo? estado, bool primeiraMensagem);
+        Task<ResultadoMotor> SimularAsync(Guid loja, string modo, IReadOnlyList<string> servicos, string texto, EstadoFluxo? estado, bool primeiraMensagem, CenarioSimulacaoMotor? cenario = null);
     }
 
     /// <summary>
@@ -43,12 +43,17 @@ namespace APIBack.Atendimento.Motor
         private readonly IChatRealtimePublisher _tempoReal;
         private readonly IConfiguration _configuration;
         private readonly ILogger<ExecutorDeAtendimento> _logger;
+        private readonly IRestaurantSettingsRepository? _restaurant;
+        private readonly IDeliveryZonaRepository? _zonas;
+        private readonly IPedidoQueueRepository? _delivery;
 
         public ExecutorDeAtendimento(
             AtendimentoMotor motor, IFluxoEstadoRepository estados, IEnviadorDeRespostas enviador, IEstabelecimentoRepository lojas,
             IAtendimentoRepository config, IConversationRepository conversas, IChatRealtimePublisher tempoReal,
             IConfiguration configuration, ILogger<ExecutorDeAtendimento> logger,
-            IContextoPedidoAtendimento? pedidos = null, IExecucaoAtendimentoRepository? execucoes = null)
+            IContextoPedidoAtendimento? pedidos = null, IExecucaoAtendimentoRepository? execucoes = null,
+            IRestaurantSettingsRepository? restaurant = null, IDeliveryZonaRepository? zonas = null,
+            IPedidoQueueRepository? delivery = null)
         {
             _pedidos = pedidos; _execucoes = execucoes;
             _motor = motor;
@@ -60,6 +65,7 @@ namespace APIBack.Atendimento.Motor
             _tempoReal = tempoReal;
             _configuration = configuration;
             _logger = logger;
+            _restaurant = restaurant; _zonas = zonas; _delivery = delivery;
         }
 
         public async Task ExecutarAsync(MensagemRecebida mensagem)
@@ -112,22 +118,25 @@ namespace APIBack.Atendimento.Motor
         }
 
         public async Task<ResultadoMotor> SimularAsync(
-            Guid loja, string modo, IReadOnlyList<string> servicos, string texto, EstadoFluxo? estado, bool primeiraMensagem)
+            Guid loja, string modo, IReadOnlyList<string> servicos, string texto, EstadoFluxo? estado, bool primeiraMensagem, CenarioSimulacaoMotor? cenario = null)
         {
-            var (entrada, _) = await MontarEntradaAsync(Guid.Empty, loja, Guid.Empty, modo, servicos, texto, texto, primeiraMensagem, DateTime.UtcNow);
-            var decisao = _motor.Decidir(entrada, estado, DateTime.UtcNow);
+            var quando = cenario?.QuandoUtc ?? DateTime.UtcNow;
+            var (entrada, _) = await MontarEntradaAsync(Guid.Empty, loja, Guid.Empty, modo, servicos, texto, texto, primeiraMensagem, quando, cenario);
+            entrada = entrada with { TipoMensagem = cenario?.TipoMensagem };
+            var decisao = _motor.Decidir(entrada, estado, quando);
             _logger.LogInformation("[atend] ev=simulacao loja={Loja} modo={Modo} fluxo={Fluxo} passo={Passo} regra={Regra}", loja, modo, decisao.Fluxo, decisao.Passo, decisao.Regra);
             return decisao;
         }
 
         private async Task<(EntradaMotor Entrada, bool Aberto)> MontarEntradaAsync(
             Guid conversa, Guid loja, Guid canal, string modo, IReadOnlyList<string> servicos, string texto, string? interpretado,
-            bool primeira, DateTime quandoUtc)
+            bool primeira, DateTime quandoUtc, CenarioSimulacaoMotor? cenario = null)
         {
             var nome = await _lojas.ObterNomeFantasiaAsync(loja) ?? "nossa loja";
             var config = await SafeConfigAsync(loja);
             var aceita = await _lojas.ObterAceitaPedidosAsync(loja) ?? true;
-            var situacao = PedidosAbertosRules.Avaliar(aceita, config?.HorarioAtendimento, AtendimentoConfigRules.ParaHorarioLocal(quandoUtc));
+            var delivery = _delivery == null ? null : await _delivery.GetSettingsAsync(loja);
+            var situacao = PedidosAbertosRules.Avaliar(aceita, config?.HorarioAtendimento, AtendimentoConfigRules.ParaHorarioLocal(quandoUtc), delivery?.BloquearPedidosForaHorario ?? true);
             var aberto = situacao.Aberto;
             var m = config?.Mensagens;
             string? Txt(string chave) => m != null && m.TryGetValue(chave, out var v) ? v : null;
@@ -138,10 +147,39 @@ namespace APIBack.Atendimento.Motor
 
             var entrada = new EntradaMotor(
                 conversa, loja, canal, nome, modo, servicos, texto, interpretado, primeira,
-                ForaDoHorario: !aberto, config?.MensagemForaHorario, config?.SaudacaoHumano, MontarUrlDoCardapio(loja), textos, situacao);
+                ForaDoHorario: !aberto, cenario?.MensagemForaHorario ?? config?.MensagemForaHorario,
+                cenario?.Saudacao ?? config?.SaudacaoHumano, MontarUrlDoCardapio(loja), cenario?.Textos ?? textos, situacao);
+            entrada = entrada with { Entrega = await MontarContextoEntregaAsync(loja, delivery, cenario) };
             if (_pedidos != null && conversa != Guid.Empty)
                 entrada = entrada with { PedidosCliente = await _pedidos.ObterAsync(loja, canal, conversa) };
             return (entrada, aberto);
+        }
+
+        private async Task<ContextoEntregaMotor?> MontarContextoEntregaAsync(
+            Guid loja, APIBack.DTOs.Delivery.DeliverySettingsDto? delivery, CenarioSimulacaoMotor? cenario)
+        {
+            if (_restaurant == null) return null;
+            var restaurant = await _restaurant.GetAsync(loja);
+            if (restaurant == null) return null;
+            var zonas = _zonas == null
+                ? Array.Empty<APIBack.DTOs.Delivery.DeliveryZonaDto>()
+                : (await _zonas.ListAtivasOrdenadasAsync(loja)).ToArray();
+            double? distancia = null;
+            if (cenario?.Latitude is { } latitude && cenario.Longitude is { } longitude
+                && restaurant.Latitude.HasValue && restaurant.Longitude.HasValue)
+                distancia = OrderCoreRules.DistanceKm(restaurant.Latitude.Value, restaurant.Longitude.Value, latitude, longitude);
+            var zona = OrderCoreRules.ResolveZone(zonas, distancia);
+            var taxa = distancia.HasValue ? OrderCoreRules.ComputeFee(restaurant, distancia, zonas) : (decimal?)null;
+            var gratis = distancia.HasValue && restaurant.EntregaGratisAcimaDe is { } limite && limite > 0 && cenario!.Subtotal >= limite;
+            if (gratis) taxa = 0m;
+            var raio = restaurant.RaioEntregaKm ?? 0m;
+            return new ContextoEntregaMotor(
+                restaurant.PedidoMinimo ?? 0m, restaurant.EntregaGratisAcimaDe, restaurant.RaioEntregaKm,
+                restaurant.TaxaEntregaFixa ?? 0m, restaurant.TaxaEntregaPorKm ?? 0m, restaurant.TempoPreparoMin ?? 20,
+                delivery?.RetiradaBalcaoAtiva ?? false,
+                zonas.Select(z => new ZonaEntregaMotor(z.Nome, z.RaioAteKm, z.Taxa)).ToArray(),
+                distancia.HasValue, taxa, distancia, zona?.Nome,
+                !distancia.HasValue || raio <= 0 || distancia.Value <= (double)raio, gratis);
         }
 
         // ---- passar para a equipe ------------------------------------------------------------------------------------

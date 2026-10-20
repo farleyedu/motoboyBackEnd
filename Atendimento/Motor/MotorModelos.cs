@@ -5,6 +5,35 @@ using System.Text.Json.Serialization;
 
 namespace APIBack.Atendimento.Motor
 {
+    public sealed record ZonaEntregaMotor(string Nome, decimal RaioAteKm, decimal Taxa);
+
+    /// <summary>Mesmas regras comerciais usadas pelo nucleo do pedido, em formato seguro para o motor puro.</summary>
+    public sealed record ContextoEntregaMotor(
+        decimal PedidoMinimo,
+        decimal? FreteGratisAcimaDe,
+        decimal? RaioEntregaKm,
+        decimal TaxaEntregaFixa,
+        decimal TaxaEntregaPorKm,
+        int TempoPreparoMin,
+        bool RetiradaAtiva,
+        IReadOnlyList<ZonaEntregaMotor> Zonas,
+        bool TaxaCalculada = false,
+        decimal? TaxaEntrega = null,
+        double? DistanciaKm = null,
+        string? ZonaAplicada = null,
+        bool DentroDoRaio = true,
+        bool FreteGratisAplicado = false);
+
+    public sealed record CenarioSimulacaoMotor(
+        DateTime? QuandoUtc = null,
+        double? Latitude = null,
+        double? Longitude = null,
+        decimal Subtotal = 0m,
+        string? TipoMensagem = null,
+        string? Saudacao = null,
+        string? MensagemForaHorario = null,
+        TextosMotor? Textos = null);
+
     public sealed record Botao(string Id, string Titulo);
 
     /// <summary>O que o atendimento automatico decide fazer. O motor so decide; quem envia e quem grava e o executor.</summary>
@@ -60,7 +89,8 @@ namespace APIBack.Atendimento.Motor
         /// <summary>A loja aceita pedido agora? Nulo = sim (nada configurado).</summary>
         SituacaoPedidos? Pedidos = null,
         IReadOnlyList<PedidoDoAtendimento>? PedidosCliente = null,
-        string? TipoMensagem = null)
+        string? TipoMensagem = null,
+        ContextoEntregaMotor? Entrega = null)
     {
         /// <summary>O texto escolhido pelo dono (com {loja} e {link} trocados) ou o padrao.</summary>
         public string Escolher(string? personalizado, string padrao) =>

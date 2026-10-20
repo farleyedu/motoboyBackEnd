@@ -81,7 +81,9 @@ namespace APIBack.Controllers
                 if (request == null) throw new DeliveryDomainException(400, "INVALID_REQUEST", "Corpo da requisicao obrigatorio.");
                 var settings = new NoticeSettings
                 {
-                    ReceivedEnabled = request.ReceivedEnabled,
+                    // O primeiro aviso faz parte da confirmacao segura do pedido do cardapio.
+                    // Nao e uma automacao opcional; mantemos o campo legado sempre verdadeiro.
+                    ReceivedEnabled = true,
                     AcceptedEnabled = request.AcceptedEnabled,
                     DispatchEnabled = request.DispatchEnabled,
                     ArrivingEnabled = request.ArrivingEnabled,

@@ -210,10 +210,15 @@ namespace APIBack.Service
         public const string Pausado = "pausado";
         public const string ForaDoHorario = "fora_horario";
 
-        public static SituacaoPedidos Avaliar(bool aceitaPedidos, HorarioAtendimentoDto? horario, DateTime localNow)
+        public static SituacaoPedidos Avaliar(
+            bool aceitaPedidos,
+            HorarioAtendimentoDto? horario,
+            DateTime localNow,
+            bool bloquearForaHorario = true)
         {
             if (!aceitaPedidos) return new SituacaoPedidos(false, Pausado, null);
             if (AtendimentoConfigRules.IsOpen(horario, localNow)) return SituacaoPedidos.Aberta;
+            if (!bloquearForaHorario) return SituacaoPedidos.Aberta;
             return new SituacaoPedidos(false, ForaDoHorario, AtendimentoConfigRules.ProximaAbertura(horario, localNow));
         }
 

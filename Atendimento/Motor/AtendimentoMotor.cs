@@ -55,6 +55,11 @@ namespace APIBack.Atendimento.Motor
 
             var pedidos = entrada.PedidosCliente ?? Array.Empty<PedidoDoAtendimento>();
             var permitePedido = servicos.Contains("delivery") || servicos.Contains("cardapio_web");
+            if (permitePedido && EhTaxaEntrega(texto) && (entrada.TipoMensagem is null or "text" or "interactive" or "button" or "location"))
+            {
+                acoes.Add(new AcaoResponder(DescreverEntrega(entrada.Entrega)));
+                return Finalizar(acoes, Limpo(estado), "delivery", "cotacao", entrada.Entrega?.TaxaCalculada == true ? "entrega:cotacao" : "entrega:regras");
+            }
             if (entrada.TipoMensagem is not (null or "text" or "interactive" or "button"))
                 return EncaminharOuOrientar(entrada, estado, acoes,
                     "Recebi sua mensagem, mas o atendimento automático ainda não interpreta áudio, fotos, documentos ou localização. Se puder, descreva em texto o que precisa.", "midia:" + entrada.TipoMensagem);
@@ -308,6 +313,7 @@ namespace APIBack.Atendimento.Motor
 
         private static bool EhCompra(string texto) => new[] { "cardapio", "novo pedido", "fazer pedido", "quero pedir", "fazer um pedido" }.Any(p => ContemTermo(texto, p));
         private static bool EhConsultaPedido(string texto) => new[] { "meu pedido", "onde esta", "status", "acompanhar", "demora", "atrasado", "atrasou", "nao chegou" }.Any(p => ContemTermo(texto, p));
+        private static bool EhTaxaEntrega(string texto) => new[] { "taxa", "frete", "valor da entrega", "quanto e a entrega", "quanto fica a entrega" }.Any(p => ContemTermo(texto, p));
         private static bool EhSuporte(string texto) => new[] { "cancelar", "cancelamento", "reclamacao", "reclamar", "pedido errado", "item errado", "veio errado", "faltou", "alterar", "trocar endereco", "problema" }.Any(p => ContemTermo(texto, p));
         private static string ContextoSuporte(IReadOnlyList<PedidoDoAtendimento> pedidos, string texto) =>
             "pedidos=" + string.Join(",", pedidos.Select(p => p.Numero)) + "; motivo=" + texto[..Math.Min(texto.Length, 400)];
@@ -359,6 +365,35 @@ namespace APIBack.Atendimento.Motor
             || texto.Contains("falar com alguem", StringComparison.Ordinal)
             || texto.Contains("falar com uma pessoa", StringComparison.Ordinal)
             || texto.Contains("falar com humano", StringComparison.Ordinal);
+
+        private static string DescreverEntrega(ContextoEntregaMotor? entrega)
+        {
+            if (entrega == null) return "A taxa depende do endereço. Abra o cardápio e confirme o ponto de entrega para calcular o valor exato.";
+            if (entrega.TaxaCalculada)
+            {
+                if (!entrega.DentroDoRaio) return "Esse endereço está fora da área de entrega configurada pela loja.";
+                var taxa = entrega.FreteGratisAplicado || entrega.TaxaEntrega == 0
+                    ? "grátis"
+                    : $"R$ {entrega.TaxaEntrega:0.00}".Replace('.', ',');
+                var zona = string.IsNullOrWhiteSpace(entrega.ZonaAplicada) ? string.Empty : $" ({entrega.ZonaAplicada})";
+                var distancia = entrega.DistanciaKm.HasValue ? $", a {entrega.DistanciaKm.Value:0.0} km".Replace('.', ',') : string.Empty;
+                return $"Para o endereço informado, a entrega fica {taxa}{zona}{distancia}.";
+            }
+
+            var partes = entrega.Zonas.OrderBy(z => z.RaioAteKm)
+                .Select(z => $"{z.Nome}: até {z.RaioAteKm:0.#} km por R$ {z.Taxa:0.00}".Replace('.', ','))
+                .ToList();
+            if (partes.Count == 0)
+            {
+                var baseTaxa = $"A taxa começa em R$ {entrega.TaxaEntregaFixa:0.00}".Replace('.', ',');
+                if (entrega.TaxaEntregaPorKm > 0) baseTaxa += $" mais R$ {entrega.TaxaEntregaPorKm:0.00} por km".Replace('.', ',');
+                partes.Add(baseTaxa);
+            }
+            var complemento = entrega.FreteGratisAcimaDe is { } gratis && gratis > 0
+                ? $" Frete grátis em pedidos a partir de R$ {gratis:0.00}.".Replace('.', ',')
+                : string.Empty;
+            return string.Join("\n", partes) + complemento + " O valor exato aparece após confirmar o endereço no cardápio.";
+        }
 
         /// <summary>Minusculas, sem acento, sem pontuacao nas pontas e com espacos simples: base de toda comparacao de texto.</summary>
         public static string Normalizar(string? texto)

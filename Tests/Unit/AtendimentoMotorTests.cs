@@ -316,5 +316,23 @@ namespace APIBack.Tests.Unit
 
             Assert.Contains("pausou os pedidos", Texto(Motor.Decidir(entrada, null, Agora)));
         }
+
+        [Fact]
+        public void Consulta_de_taxa_usa_a_cotacao_do_contexto_comercial()
+        {
+            var entrada = Entrada(texto: "qual a taxa de entrega?", primeira: false) with
+            {
+                Entrega = new ContextoEntregaMotor(
+                    20m, 100m, 6m, 5m, 1m, 30, true,
+                    new[] { new ZonaEntregaMotor("Zona 1", 2.5m, 8.90m) },
+                    TaxaCalculada: true, TaxaEntrega: 8.90m, DistanciaKm: 1.2, ZonaAplicada: "Zona 1")
+            };
+
+            var resultado = Motor.Decidir(entrada, null, Agora);
+
+            Assert.Contains("R$ 8,90", Texto(resultado));
+            Assert.Contains("Zona 1", Texto(resultado));
+            Assert.Equal("entrega:cotacao", resultado.Regra);
+        }
     }
 }

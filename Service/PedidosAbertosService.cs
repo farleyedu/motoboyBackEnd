@@ -18,12 +18,18 @@ namespace APIBack.Service
         private readonly IAtendimentoRepository _atendimento;
         private readonly ILogger<PedidosAbertosService> _logger;
         private readonly TimeProvider _relogio;
+        private readonly IPedidoQueueRepository? _delivery;
 
-        public PedidosAbertosService(IAtendimentoRepository atendimento, ILogger<PedidosAbertosService> logger, TimeProvider? relogio = null)
+        public PedidosAbertosService(
+            IAtendimentoRepository atendimento,
+            ILogger<PedidosAbertosService> logger,
+            TimeProvider? relogio = null,
+            IPedidoQueueRepository? delivery = null)
         {
             _atendimento = atendimento;
             _logger = logger;
             _relogio = relogio ?? TimeProvider.System;
+            _delivery = delivery;
         }
 
         public async Task<SituacaoPedidos> AvaliarAsync(Guid estabelecimentoId, bool aceitaPedidos)
@@ -39,7 +45,24 @@ namespace APIBack.Service
                 _logger.LogWarning(ex, "[cardapio] ev=sem_horario loja={Loja}", estabelecimentoId);
             }
 
-            return PedidosAbertosRules.Avaliar(aceitaPedidos, horario, AtendimentoConfigRules.ParaHorarioLocal(_relogio.GetUtcNow().UtcDateTime));
+            var bloquearForaHorario = true;
+            if (_delivery != null)
+            {
+                try
+                {
+                    bloquearForaHorario = (await _delivery.GetSettingsAsync(estabelecimentoId)).BloquearPedidosForaHorario;
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "[cardapio] ev=sem_regra_fora_horario loja={Loja}", estabelecimentoId);
+                }
+            }
+
+            return PedidosAbertosRules.Avaliar(
+                aceitaPedidos,
+                horario,
+                AtendimentoConfigRules.ParaHorarioLocal(_relogio.GetUtcNow().UtcDateTime),
+                bloquearForaHorario);
         }
     }
 }

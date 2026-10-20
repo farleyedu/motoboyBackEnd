@@ -15,11 +15,16 @@ namespace APIBack.Service
         private const string TipoAdicionalGlobal = "adicional_global";
         private readonly ICardapioRepository _repository;
         private readonly IPedidosAbertosService _pedidosAbertos;
+        private readonly IPedidoQueueRepository? _delivery;
 
-        public CardapioContractService(ICardapioRepository repository, IPedidosAbertosService pedidosAbertos)
+        public CardapioContractService(
+            ICardapioRepository repository,
+            IPedidosAbertosService pedidosAbertos,
+            IPedidoQueueRepository? delivery = null)
         {
             _repository = repository;
             _pedidosAbertos = pedidosAbertos;
+            _delivery = delivery;
         }
 
         public Task<bool> EstabelecimentoTemModuloAtivoAsync(Guid idEstabelecimento, string modulo)
@@ -270,6 +275,8 @@ namespace APIBack.Service
             var categoriaIdsAtivas = categorias.Itens.Select(item => item.Id).ToHashSet();
             var ordemCategoria = categorias.Itens.ToDictionary(item => item.Id, item => item.Ordem);
             var situacao = await _pedidosAbertos.AvaliarAsync(estabelecimento.Id, estabelecimento.AceitaPedidos);
+            var delivery = _delivery == null ? null : await _delivery.GetSettingsAsync(estabelecimento.Id);
+            var retiradaAtiva = delivery is { IsDefault: false } ? delivery.RetiradaBalcaoAtiva : estabelecimento.AceitaRetirada;
 
             return new CardapioPublicoSnapshotDto
             {
@@ -280,12 +287,12 @@ namespace APIBack.Service
                 BannerUrl = estabelecimento.BannerUrl,
                 Rating = estabelecimento.Rating,
                 ReviewCount = estabelecimento.ReviewCount,
-                DeliveryTimeLabel = estabelecimento.DeliveryTimeLabel,
-                DeliveryFeeValue = estabelecimento.DeliveryFeeValue ?? estabelecimento.TaxaEntregaFixa,
-                DeliveryFeeLabel = ResolveDeliveryFeeLabel(estabelecimento.DeliveryFeeLabel, estabelecimento.DeliveryFeeValue ?? estabelecimento.TaxaEntregaFixa),
-                ServiceFeeValue = estabelecimento.ServiceFeeValue,
+                DeliveryTimeLabel = delivery is { IsDefault: false } ? $"Até {delivery.DefaultDeliveryMinutes} min" : estabelecimento.DeliveryTimeLabel,
+                DeliveryFeeValue = 0m,
+                DeliveryFeeLabel = "Calculada no endereço",
+                ServiceFeeValue = 0m,
                 AceitaEntrega = estabelecimento.AceitaEntrega,
-                AceitaRetirada = estabelecimento.AceitaRetirada,
+                AceitaRetirada = retiradaAtiva,
                 AceitaPedidos = situacao.Aberto,
                 MotivoFechado = situacao.Motivo,
                 AbreEm = situacao.AbreEm,

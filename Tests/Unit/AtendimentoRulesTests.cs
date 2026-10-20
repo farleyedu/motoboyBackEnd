@@ -289,6 +289,15 @@ namespace APIBack.Tests.Unit
         }
 
         [Fact]
+        public void Fora_do_horario_pode_aceitar_quando_delivery_permite()
+        {
+            var situacao = PedidosAbertosRules.Avaliar(
+                true, Horario((3, "18:00", "23:00")), Quarta("12:00"), bloquearForaHorario: false);
+
+            Assert.True(situacao.Aberto);
+        }
+
+        [Fact]
         public void A_mensagem_para_o_cliente_explica_o_motivo()
         {
             Assert.Contains("pausou", PedidosAbertosRules.Mensagem(new SituacaoPedidos(false, PedidosAbertosRules.Pausado, null)));

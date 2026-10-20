@@ -12,7 +12,6 @@ using APIBack.Model.Cardapio;
 using APIBack.Repository.Interface;
 using APIBack.Service;
 using APIBack.Service.Interface;
-using APIBack.Service.Interface;
 using Moq;
 using Xunit;
 
@@ -45,6 +44,8 @@ namespace APIBack.Tests.Unit
             public Mock<IClienteAcessoService> Acesso { get; } = new();
             public Mock<IClienteEnderecoRepository> Enderecos { get; } = new();
             public Mock<IAtendimentoRepository> Atendimento { get; } = new();
+            public Mock<IRestaurantSettingsRepository> Restaurant { get; } = new();
+            public Mock<IDeliveryZonaRepository> Zonas { get; } = new();
             /// <summary>Quarta-feira, 15h no Brasil (18h UTC): ajustavel por teste.</summary>
             public DateTimeOffset Agora { get; set; } = new(2026, 10, 7, 18, 0, 0, TimeSpan.Zero);
             public HorarioAtendimentoDto? Horario { get; set; }
@@ -78,6 +79,13 @@ namespace APIBack.Tests.Unit
                 Waba.Setup(w => w.ObterDisplayPhoneParaServicoAsync(Estabelecimento, "cardapio_web")).ReturnsAsync("+55 34 3333-0000");
                 Confirmacao.Setup(c => c.IniciarConfirmacaoAsync(It.IsAny<CardapioPedidoPublico>(), It.IsAny<string>()))
                     .ReturnsAsync(new CardapioConfirmacaoDto { Modo = "codigo", Codigo = "4821" });
+                Restaurant.Setup(r => r.GetAsync(Estabelecimento)).ReturnsAsync(new APIBack.DTOs.Delivery.RestaurantSettingsDto
+                {
+                    EstabelecimentoId = Estabelecimento, NomeFantasia = "Pizza Bom", AceitaPedidos = true,
+                    Latitude = -18.9186, Longitude = -48.2772, TaxaEntregaFixa = 5m, PedidoMinimo = 0m, TempoPreparoMin = 30
+                });
+                Zonas.Setup(z => z.ListAtivasOrdenadasAsync(Estabelecimento))
+                    .ReturnsAsync(Array.Empty<APIBack.DTOs.Delivery.DeliveryZonaDto>());
             }
 
             public CardapioPublicService Build()
@@ -94,7 +102,7 @@ namespace APIBack.Tests.Unit
 
                 return new(Cardapio.Object, Localizacao.Object, Waba.Object, Confirmacao.Object,
                     new PedidosAbertosService(Atendimento.Object, NullLogger<PedidosAbertosService>.Instance, new RelogioFixo(Agora)),
-                    NullLogger<CardapioPublicService>.Instance, Acesso.Object, Enderecos.Object);
+                    NullLogger<CardapioPublicService>.Instance, Acesso.Object, Enderecos.Object, Restaurant.Object, Zonas.Object);
             }
         }
 
@@ -191,6 +199,33 @@ namespace APIBack.Tests.Unit
             Assert.Equal(9m, porItem.Itens.Single().TotalAdicionais);
             Assert.Equal(9m, porAmbos.Itens.Single().TotalAdicionais);
             Assert.Single(porAmbos.Itens.Single().AdicionaisSelecionados);
+        }
+
+        [Fact]
+        public async Task Cotacao_com_ponto_usa_zona_e_frete_gratis_do_mesmo_nucleo()
+        {
+            var fixture = new Fixture();
+            fixture.Restaurant.Setup(r => r.GetAsync(Estabelecimento)).ReturnsAsync(new APIBack.DTOs.Delivery.RestaurantSettingsDto
+            {
+                EstabelecimentoId = Estabelecimento, NomeFantasia = "Pizza Bom", AceitaPedidos = true,
+                Latitude = -18.9186, Longitude = -48.2772, TaxaEntregaFixa = 20m, TaxaEntregaPorKm = 3m,
+                EntregaGratisAcimaDe = 60m, RaioEntregaKm = 10m, TempoPreparoMin = 30
+            });
+            fixture.Zonas.Setup(z => z.ListAtivasOrdenadasAsync(Estabelecimento)).ReturnsAsync(new[]
+            {
+                new APIBack.DTOs.Delivery.DeliveryZonaDto { Nome = "Zona 1", RaioAteKm = 2.5m, Taxa = 8.90m, Ativo = true }
+            });
+            var request = Pedido();
+            request.Latitude = -18.9186;
+            request.Longitude = -48.2772;
+
+            var cotacao = await fixture.Build().CalcularCotacaoAsync(request);
+
+            Assert.True(cotacao.TaxaEntregaCalculada);
+            Assert.Equal("Zona 1", cotacao.ZonaEntrega);
+            Assert.True(cotacao.FreteGratisAplicado);
+            Assert.Equal(0m, cotacao.TaxaEntrega);
+            Assert.Equal(60m, cotacao.Total);
         }
 
         [Fact]
