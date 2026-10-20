@@ -20,6 +20,10 @@ namespace APIBack.Atendimento
         Task<CanalWhatsapp?> ObterPrimeiroUsavelAsync(Guid estabelecimentoId);
         /// <summary>Numero que atende o servico na loja (para montar o link wa.me e enviar), o mais antigo ativo.</summary>
         Task<CanalWhatsapp?> ObterParaServicoAsync(Guid estabelecimentoId, string servicoCodigo);
+        /// <summary>O numero central de testes (no maximo um), esteja ele onde estiver.</summary>
+        Task<CanalWhatsapp?> ObterCentralAsync();
+        /// <summary>Marca este canal como o central e desmarca o anterior, na mesma transacao.</summary>
+        Task DefinirCentralAsync(Guid canalId);
 
         /// <exception cref="CanalConflitoException">O numero ou o ID da Meta ja existe (em qualquer loja).</exception>
         Task CriarAsync(CanalWhatsapp canal, IReadOnlyCollection<string> servicos);
@@ -42,7 +46,7 @@ namespace APIBack.Atendimento
     {
         private const string Colunas = @"
        id AS Id, id_estabelecimento AS IdEstabelecimento, phone_number_id AS PhoneNumberId, numero_e164 AS NumeroE164,
-       nome AS Nome, token_cifrado AS TokenCifrado, status AS Status, modo_atendimento AS ModoAtendimento,
+       nome AS Nome, token_cifrado AS TokenCifrado, central AS Central, status AS Status, modo_atendimento AS ModoAtendimento,
        config::text AS ConfigJson, verificado_em AS VerificadoEm, ultimo_recebimento_em AS UltimoRecebimentoEm,
        ultimo_envio_ok_em AS UltimoEnvioOkEm, ultimo_erro AS UltimoErro, ultimo_erro_em AS UltimoErroEm";
 
@@ -101,6 +105,22 @@ namespace APIBack.Atendimento
                 new { Loja = estabelecimentoId, Servico = servicoCodigo });
         }
 
+        public async Task<CanalWhatsapp?> ObterCentralAsync()
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            return await ObterUmAsync(connection, "WHERE central", new { });
+        }
+
+        public async Task DefinirCentralAsync(Guid canalId)
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync();
+            await using var tx = await connection.BeginTransactionAsync();
+            await connection.ExecuteAsync("UPDATE canal_whatsapp SET central = FALSE WHERE central AND id <> @Id;", new { Id = canalId }, tx);
+            await connection.ExecuteAsync("UPDATE canal_whatsapp SET central = TRUE, updated_at_utc = NOW() WHERE id = @Id;", new { Id = canalId }, tx);
+            await tx.CommitAsync();
+        }
+
         public async Task CriarAsync(CanalWhatsapp canal, IReadOnlyCollection<string> servicos)
         {
             await using var connection = new NpgsqlConnection(_connectionString);
@@ -109,8 +129,8 @@ namespace APIBack.Atendimento
             try
             {
                 await connection.ExecuteAsync(@"
-INSERT INTO canal_whatsapp (id, id_estabelecimento, phone_number_id, numero_e164, nome, token_cifrado, status, modo_atendimento, config)
-VALUES (@Id, @IdEstabelecimento, @PhoneNumberId, @NumeroE164, @Nome, @TokenCifrado, @Status, @ModoAtendimento, CAST(@ConfigJson AS jsonb));",
+INSERT INTO canal_whatsapp (id, id_estabelecimento, phone_number_id, numero_e164, nome, token_cifrado, central, status, modo_atendimento, config)
+VALUES (@Id, @IdEstabelecimento, @PhoneNumberId, @NumeroE164, @Nome, @TokenCifrado, @Central, @Status, @ModoAtendimento, CAST(@ConfigJson AS jsonb));",
                     canal, tx);
                 await GravarServicosAsync(connection, tx, canal.Id, servicos);
                 await tx.CommitAsync();

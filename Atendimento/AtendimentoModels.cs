@@ -48,6 +48,8 @@ namespace APIBack.Atendimento
         public string NumeroE164 { get; set; } = string.Empty;
         public string? Nome { get; set; }
         public string? TokenCifrado { get; set; }
+        /// <summary>Numero central de testes: todas as lojas de teste usam este numero; recebe quem esta vinculado a ele agora.</summary>
+        public bool Central { get; set; }
         public bool TemToken => !string.IsNullOrWhiteSpace(TokenCifrado);
         public string Status { get; set; } = StatusCanal.Configurando;
         public string ModoAtendimento { get; set; } = Atendimento.ModoAtendimento.Hibrido;

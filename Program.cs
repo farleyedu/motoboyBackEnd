@@ -278,6 +278,7 @@ builder.Services.AddScoped<APIBack.Atendimento.IServicosDaLojaService, APIBack.A
 builder.Services.AddScoped<APIBack.Atendimento.IChatRealtimePublisher, APIBack.Atendimento.ChatRealtimePublisher>();
 builder.Services.AddScoped<APIBack.Atendimento.ICanalVerificador, APIBack.Atendimento.CanalVerificador>();
 builder.Services.AddScoped<APIBack.Atendimento.ICanaisWhatsappService, APIBack.Atendimento.CanaisWhatsappService>();
+builder.Services.AddScoped<APIBack.Atendimento.ICanalCentralService, APIBack.Atendimento.CanalCentralService>();
 builder.Services.AddScoped<IEstabelecimentoRepository, SqlEstabelecimentoRepository>();
 builder.Services.AddScoped<IClienteRepository, SqlClienteRepository>();
 builder.Services.AddScoped<IWebhookSignatureValidator, WebhookSignatureValidator>();

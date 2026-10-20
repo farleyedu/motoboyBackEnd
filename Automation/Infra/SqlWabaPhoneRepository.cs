@@ -58,10 +58,18 @@ namespace APIBack.Automation.Infra
         public async Task<string?> ObterDisplayPhonePorEstabelecimentoAsync(Guid idEstabelecimento) =>
             idEstabelecimento == Guid.Empty ? null : (await _canais.ObterPrimeiroUsavelAsync(idEstabelecimento))?.NumeroE164;
 
-        public async Task<string?> ObterDisplayPhoneParaServicoAsync(Guid idEstabelecimento, string servicoCodigo) =>
-            idEstabelecimento == Guid.Empty || string.IsNullOrWhiteSpace(servicoCodigo)
-                ? null
-                : (await _canais.ObterParaServicoAsync(idEstabelecimento, servicoCodigo))?.NumeroE164;
+        public async Task<string?> ObterDisplayPhoneParaServicoAsync(Guid idEstabelecimento, string servicoCodigo)
+        {
+            if (idEstabelecimento == Guid.Empty || string.IsNullOrWhiteSpace(servicoCodigo)) return null;
+
+            var proprio = (await _canais.ObterParaServicoAsync(idEstabelecimento, servicoCodigo))?.NumeroE164;
+            if (proprio != null) return proprio;
+
+            // Loja de teste (criada com "numero de teste") nao tem numero proprio: o link do cardapio abre o numero central.
+            // So vale para loja sem nenhum numero; uma loja com numero proprio que nao atende o servico continua sem link.
+            if ((await _canais.ListarPorLojaAsync(idEstabelecimento)).Count > 0) return null;
+            return (await _canais.ObterCentralAsync())?.NumeroE164;
+        }
 
         public async Task<string?> ObterPhoneNumberIdPorDisplayPhoneAsync(string displayPhoneNumber)
         {
