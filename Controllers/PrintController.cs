@@ -86,11 +86,24 @@ public sealed class PrintController(PrintStore store,IConfiguration configuratio
  [AllowAnonymous,HttpGet("agente/versao")]
  public IActionResult Version()
  {
+  // Produção: o instalador fica no GitHub Releases (Printing:InstallerUrl). Sem isso, usa o arquivo local (desenvolvimento).
+  if(PublishedInstaller() is { } published)return Data(new{disponivel=true,versao=configuration["Printing:AgentVersion"]??"1.0.0",tamanho=published.Size,sha256=published.Sha256,download="/api/v2/delivery/impressao/agente/instalador"});
   var path=Path.Combine(environment.ContentRootPath,"PrintAgent","ZippyPrintSetup.exe");
   if(!System.IO.File.Exists(path))return Data(new{disponivel=false});
   using var stream=System.IO.File.OpenRead(path);var hash=Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(stream));
   return Data(new{disponivel=true,versao=configuration["Printing:AgentVersion"]??"1.0.0",tamanho=new FileInfo(path).Length,sha256=hash,download="/api/v2/delivery/impressao/agente/instalador"});
  }
  [AllowAnonymous,HttpGet("agente/instalador")]
- public IActionResult Installer(){var path=Path.Combine(environment.ContentRootPath,"PrintAgent","ZippyPrintSetup.exe");return System.IO.File.Exists(path)?PhysicalFile(path,"application/octet-stream","ZippyPrintSetup.exe"):NotFound(new{success=false,error="Instalador ainda não disponível."});}
+ public IActionResult Installer()
+ {
+  if(PublishedInstaller() is { } published)return Redirect(published.Url);
+  var path=Path.Combine(environment.ContentRootPath,"PrintAgent","ZippyPrintSetup.exe");
+  return System.IO.File.Exists(path)?PhysicalFile(path,"application/octet-stream","ZippyPrintSetup.exe"):NotFound(new{success=false,error="Instalador ainda não disponível."});
+ }
+ private (string Url,string Sha256,long Size)? PublishedInstaller()
+ {
+  var url=configuration["Printing:InstallerUrl"];var sha=configuration["Printing:InstallerSha256"];
+  if(!Uri.TryCreate(url,UriKind.Absolute,out var uri)||uri.Scheme!="https"||sha is not { Length: 64 }||!long.TryParse(configuration["Printing:InstallerSize"],out var size)||size<=0)return null;
+  return (uri.ToString(),sha.ToUpperInvariant(),size);
+ }
 }
