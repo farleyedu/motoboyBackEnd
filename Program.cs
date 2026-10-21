@@ -118,6 +118,8 @@ builder.Services.AddScoped<ICrmService, CrmService>();
 builder.Services.AddScoped<IAdminUsuariosRepository, AdminUsuariosRepository>();
 builder.Services.AddScoped<IAdminUsuariosService, AdminUsuariosService>();
 builder.Services.AddScoped<APIBack.Service.IAcessoService, APIBack.Service.AcessoService>();
+builder.Services.AddScoped<IGestaoOperacaoRepository, GestaoOperacaoRepository>();
+builder.Services.AddScoped<IGestaoOperacaoService, GestaoOperacaoService>();
 builder.Services.AddScoped<IGestaoRepository, GestaoRepository>();
 builder.Services.AddScoped<IGestaoService, GestaoService>();
 builder.Services.AddScoped<IExperienceRepository, ExperienceRepository>();

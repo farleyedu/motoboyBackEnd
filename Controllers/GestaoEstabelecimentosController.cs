@@ -102,6 +102,12 @@ namespace APIBack.Controllers
             {
                 return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ex.Message));
             }
+            catch (Npgsql.PostgresException ex) when (ex.SqlState == Npgsql.PostgresErrorCodes.UniqueViolation)
+            {
+                // Um unico (CNPJ, slug...) ja cadastrado: o operador precisa saber que e duplicidade, nao falha do sistema.
+                _logger.LogWarning("Estabelecimento duplicado ao criar. UserId={UserId} Constraint={Constraint}", CurrentUserId.Value, ex.ConstraintName);
+                return Conflict(ApiResponse<object>.Fail("Ja existe um estabelecimento com estes dados (CNPJ ou identificador).", "ESTABELECIMENTO_DUPLICADO"));
+            }
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Erro ao criar estabelecimento de gestao para UserId={UserId}", CurrentUserId.Value);
@@ -156,6 +162,11 @@ namespace APIBack.Controllers
             catch (UnauthorizedAccessException ex)
             {
                 return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ex.Message));
+            }
+            catch (Npgsql.PostgresException ex) when (ex.SqlState == Npgsql.PostgresErrorCodes.UniqueViolation)
+            {
+                _logger.LogWarning("Estabelecimento duplicado ao atualizar {EstabelecimentoId}. UserId={UserId} Constraint={Constraint}", estabelecimentoId, CurrentUserId.Value, ex.ConstraintName);
+                return Conflict(ApiResponse<object>.Fail("Ja existe um estabelecimento com estes dados (CNPJ ou identificador).", "ESTABELECIMENTO_DUPLICADO"));
             }
             catch (Exception ex)
             {
