@@ -1378,9 +1378,11 @@ SELECT DISTINCT uemp.id_usuario
                 }
             }
 
+            // A loja que esta nascendo vem primeiro: o primeiro da lista vira o ultimo estabelecimento acessado, e o gerente
+            // precisa entrar na loja que o admin acabou de criar, nao na mais antiga da empresa.
             var lojas = (await connection.QueryAsync<Guid>(
-                "SELECT id FROM estabelecimentos WHERE id_empresa = @EmpresaId AND COALESCE(ativo, TRUE) = TRUE ORDER BY created_at, id;",
-                new { EmpresaId = empresaId }, transaction)).ToArray();
+                "SELECT id FROM estabelecimentos WHERE id_empresa = @EmpresaId AND COALESCE(ativo, TRUE) = TRUE ORDER BY (id = @Loja) DESC, created_at, id;",
+                new { EmpresaId = empresaId, Loja = estabelecimentoId }, transaction)).ToArray();
 
             var criadoId = await SalvarUsuarioAsync(connection, transaction, new GestaoPersistenciaUsuarioCommand
             {
