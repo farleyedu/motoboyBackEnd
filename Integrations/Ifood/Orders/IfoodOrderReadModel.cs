@@ -18,9 +18,9 @@ to_jsonb(s)->>'cancellation_state' AS CancellationState,to_jsonb(s)->>'delivery_
 COALESCE((to_jsonb(s)->>'data_is_current')::boolean,TRUE) AS DataIsCurrent,
 s.payload::text AS Payload, (to_jsonb(s)->>'status_occurred_at_utc')::timestamptz AS StatusOccurredAtUtc,
 l.created_at_utc AS LinkedAtUtc
-,(CASE WHEN COALESCE((to_jsonb(s)->>'data_is_current')::boolean,TRUE) THEN s.payload->'total'->>'subTotal' END)::numeric AS Subtotal
-,(CASE WHEN COALESCE((to_jsonb(s)->>'data_is_current')::boolean,TRUE) THEN s.payload->'total'->>'deliveryFee' END)::numeric AS DeliveryFee
-,jsonb_array_length(s.payload->'items') AS ItemCount
+,(CASE WHEN COALESCE((to_jsonb(s)->>'data_is_current')::boolean,TRUE) AND s.payload->'total'->>'subTotal' ~ '^-?[0-9]+(\.[0-9]+)?$' THEN s.payload->'total'->>'subTotal' END)::numeric AS Subtotal
+,(CASE WHEN COALESCE((to_jsonb(s)->>'data_is_current')::boolean,TRUE) AND s.payload->'total'->>'deliveryFee' ~ '^-?[0-9]+(\.[0-9]+)?$' THEN s.payload->'total'->>'deliveryFee' END)::numeric AS DeliveryFee
+,CASE WHEN jsonb_typeof(s.payload->'items')='array' THEN jsonb_array_length(s.payload->'items') ELSE 0 END AS ItemCount
 FROM ifood_order_links l JOIN ifood_order_snapshots s USING(merchant_id,external_order_id,estabelecimento_id)
 WHERE l.estabelecimento_id=@Store AND l.pedido_id=ANY(@Orders)
 """, new { Store = store, Orders = orders }, transaction);
@@ -111,7 +111,11 @@ COALESCE((to_jsonb(s)->>'data_is_current')::boolean,TRUE) AS DataIsCurrent,
 FROM ifood_order_links l JOIN ifood_order_snapshots s USING(merchant_id,external_order_id,estabelecimento_id)
 WHERE l.estabelecimento_id=@Store AND l.pedido_id=@Pedido
 """, new { Store = store, Pedido = pedido }, transaction);
-        return row == null || !row.DataIsCurrent ? null : IfoodOrderNormalizer.Normalize(row.Payload, row.MerchantId, row.ExternalOrderId, row.CollectionAllowed && collectionAllowed);
+        if (row == null || !row.DataIsCurrent) return null;
+        // Um snapshot que a normalização atual recusa (itens vazios, valor inválido) não pode derrubar a fila nem o detalhe:
+        // IdentitiesAsync já o trata como "em revisão" e quem chama recebe null.
+        try { return IfoodOrderNormalizer.Normalize(row.Payload, row.MerchantId, row.ExternalOrderId, row.CollectionAllowed && collectionAllowed); }
+        catch (IfoodIntegrationException) { return null; }
     }
     private sealed class Row : IfoodPedidoIdentityBase { public int PedidoId { get; set; } }
     public static async Task<IReadOnlyList<IfoodDisputeSummaryDto>> DisputesAsync(NpgsqlConnection connection, Guid store, int pedido, NpgsqlTransaction? transaction = null)

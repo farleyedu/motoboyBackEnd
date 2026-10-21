@@ -7,6 +7,8 @@ namespace APIBack.Service;
 
 public static class DeliveryChecklistRules
 {
+    public const int MinManualReasonLength = 10;
+
     public static DeliveryChecklist BuildIfood(APIBack.Integrations.Ifood.Orders.IfoodImportedOrder order)
     {
         var items = new List<DeliveryChecklistItem>();
@@ -28,6 +30,12 @@ public static class DeliveryChecklistRules
         }
         return new() { Items = items, Version = Digest(JsonSerializer.Serialize(items)), DetailsUnavailable = items.Count == 0 };
     }
+
+    /// <summary>Pedido iFood cujo detalhe oficial não pôde ser lido: só a conferência manual justificada libera a coleta.</summary>
+    public static DeliveryChecklist IfoodUnavailable() => new()
+    {
+        Items = new(), Version = Digest("ifood:details-unavailable"), DetailsUnavailable = true, RequiresManualReason = true
+    };
 
     public static DeliveryChecklist Build(IReadOnlyList<PedidoItemDto> products)
     {
@@ -56,6 +64,10 @@ public static class DeliveryChecklistRules
     {
         // Contratos legados sem detalhamento permanecem operáveis. O app apresenta
         // conferência manual explícita; nunca descreve itens inexistentes.
+        if (expected.RequiresManualReason &&
+            (confirmation == null || (confirmation.ManualReason ?? string.Empty).Trim().Length < MinManualReasonLength))
+            throw new DeliveryDomainException(422, "CHECKLIST_MANUAL_REASON_REQUIRED",
+                "Os itens oficiais do iFood não estão disponíveis. Informe o motivo da conferência manual (mínimo " + MinManualReasonLength + " caracteres).");
         if (confirmation == null && expected.DetailsUnavailable) return;
         if (confirmation == null || confirmation.PedidoId != pedido || confirmation.Version != expected.Version)
             throw new DeliveryDomainException(409, "CHECKLIST_CHANGED", "Os itens do pedido mudaram. Confira novamente antes de continuar.");

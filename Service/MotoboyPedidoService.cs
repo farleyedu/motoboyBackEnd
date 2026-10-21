@@ -34,7 +34,7 @@ namespace APIBack.Service
             if (pedido == null || pedido.MotoboyId != motoboyId) throw NotInQueue();
             return new MotoboyPedidoDetalheDto
             {
-                Checklist = DeliveryChecklistRules.Build(pedido.Itens),
+                Checklist = BuildChecklist(pedido),
                 Id = pedido.Id, QueueVersion = queue.Version, Position = stop.Position,
                 StopStatus = stop.Status, IsCurrent = queue.Current?.PedidoId == pedidoId,
                 IsOffer = queue.Offer?.Stops.Any(item => item.PedidoId == pedidoId) == true,
@@ -49,6 +49,16 @@ namespace APIBack.Service
                 PrevisaoEntrega = pedido.PrevisaoEntrega, CapaImagemUrl = pedido.CapaImagemUrl, Itens = pedido.Itens,
                 RequerCodigoEntrega = stop.Pedido?.RequerCodigoEntrega == true || !string.IsNullOrWhiteSpace(pedido.CodigoEntrega)
             };
+        }
+
+        // A retirada valida contra o checklist oficial do iFood (chaves "ifood:N"); o detalhe legado tem os itens limpos,
+        // então o app precisa receber o mesmo manifesto que o servidor vai conferir.
+        private static DeliveryChecklist BuildChecklist(PedidoDetalheDto pedido)
+        {
+            if (!string.Equals(pedido.Origem, "ifood", StringComparison.OrdinalIgnoreCase)) return DeliveryChecklistRules.Build(pedido.Itens);
+            if (pedido.PedidoIfood == null) return DeliveryChecklistRules.IfoodUnavailable();
+            try { return DeliveryChecklistRules.BuildIfood(pedido.PedidoIfood); }
+            catch (DeliveryDomainException) { return DeliveryChecklistRules.IfoodUnavailable(); }
         }
 
         private static DeliveryDomainException NotInQueue() =>

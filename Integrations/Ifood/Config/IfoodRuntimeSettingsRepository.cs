@@ -94,11 +94,23 @@ ORDER BY (revoked_at_utc IS NULL) DESC, created_at_utc DESC LIMIT 1
             new { MerchantId = merchantId }, tx, cancellationToken: ct));
         if (existing is { } current && current != estabelecimentoId)
             throw new IfoodIntegrationException("IFOOD_CONNECTION_MERCHANT_LINKED_ELSEWHERE");
-        await connection.ExecuteAsync(new CommandDefinition("""
+        int affected;
+        try
+        {
+            // O FOR UPDATE acima não trava merchant ainda inexistente: numa corrida entre duas lojas a segunda cai no
+            // ON CONFLICT. O WHERE impede que ela reative o merchant da primeira e responda sucesso.
+            affected = await connection.ExecuteAsync(new CommandDefinition("""
 INSERT INTO ifood_connections(merchant_id, estabelecimento_id, status, authorized_at_utc, revoked_at_utc)
 VALUES (@MerchantId, @EstabelecimentoId, 'authorized', NOW(), NULL)
 ON CONFLICT (merchant_id) DO UPDATE SET status='authorized', authorized_at_utc=NOW(), revoked_at_utc=NULL, updated_at_utc=NOW()
+WHERE ifood_connections.estabelecimento_id = EXCLUDED.estabelecimento_id
 """, new { MerchantId = merchantId, EstabelecimentoId = estabelecimentoId }, tx, cancellationToken: ct));
+        }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.ForeignKeyViolation)
+        {
+            throw new IfoodIntegrationException("IFOOD_CONNECTION_INVALID_INPUT");
+        }
+        if (affected == 0) throw new IfoodIntegrationException("IFOOD_CONNECTION_MERCHANT_LINKED_ELSEWHERE");
         await tx.CommitAsync(ct);
     }
 

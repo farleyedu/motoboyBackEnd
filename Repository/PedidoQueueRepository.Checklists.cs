@@ -23,8 +23,9 @@ INSERT INTO delivery_order_item_checks(stop_id,estabelecimento_id,motoboy_id,sta
         {
             await EnsureIfoodRoutingAsync(connection, transaction, store, pedido, false);
             var official = await APIBack.Integrations.Ifood.Orders.IfoodOrderReadModel.DetailsAsync(connection, store, pedido, transaction: transaction);
-            if (official == null) throw new DeliveryDomainException(409, "IFOOD_DELIVERY_REVIEW_REQUIRED", "Itens oficiais indisponíveis para conferência.");
-            return DeliveryChecklistRules.BuildIfood(official);
+            // O bloqueio real (revisão, dado desatualizado) já foi recusado acima. Aqui o detalhe só está ilegível:
+            // o pedido comum cairia na conferência manual, e o iFood também, mas com justificativa registrada.
+            return official == null ? DeliveryChecklistRules.IfoodUnavailable() : DeliveryChecklistRules.BuildIfood(official);
         }
         List<PedidoItemDto> items = new();
         if (await PedidoColumnTypes.HasCoreSchemaAsync(connection, transaction))

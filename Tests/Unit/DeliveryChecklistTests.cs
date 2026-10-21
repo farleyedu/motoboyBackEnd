@@ -50,6 +50,24 @@ public sealed class DeliveryChecklistTests
         var manifest = DeliveryChecklistRules.Build(Array.Empty<PedidoItemDto>());
         DeliveryChecklistRules.Validate(23,manifest,new() { PedidoId=23,Version=manifest.Version,ConfirmedKeys=new(){"manual"} });
     }
+    [Fact] public void IfoodWithoutOfficialDetailsRequiresAJustifiedManualConfirmation()
+    {
+        var manifest = DeliveryChecklistRules.IfoodUnavailable();
+        Assert.True(manifest.DetailsUnavailable);
+        Assert.True(manifest.RequiresManualReason);
+        var withoutReason = Assert.Throws<DeliveryDomainException>(() => DeliveryChecklistRules.Validate(23, manifest, null));
+        Assert.Equal("CHECKLIST_MANUAL_REASON_REQUIRED", withoutReason.Code);
+        var shortReason = new DeliveryChecklistConfirmation { PedidoId = 23, Version = manifest.Version, ConfirmedKeys = new() { "manual" }, ManualReason = " curto " };
+        Assert.Equal("CHECKLIST_MANUAL_REASON_REQUIRED", Assert.Throws<DeliveryDomainException>(() => DeliveryChecklistRules.Validate(23, manifest, shortReason)).Code);
+        shortReason.ManualReason = "Itens conferidos com o cliente no balcão";
+        DeliveryChecklistRules.Validate(23, manifest, shortReason);
+    }
+    [Fact] public void CommonOrdersKeepManualConfirmationWithoutAReason()
+    {
+        var manifest = DeliveryChecklistRules.Build(Array.Empty<PedidoItemDto>());
+        Assert.False(manifest.RequiresManualReason);
+        DeliveryChecklistRules.Validate(23, manifest, null);
+    }
     [Fact] public void ChangedQuantityInvalidatesConfirmationButCatalogPhotoDoesNot()
     {
         var item=new PedidoItemDto { ItemId="item-1",Nome="Brownie",Quantidade=1,ImagemUrl="foto-a.jpg" };

@@ -55,6 +55,33 @@ namespace APIBack.Tests.Unit
         }
 
         [Fact]
+        public async Task ChecklistDeRetiradaIfoodUsaOManifestoOficialQueOServidorConfere()
+        {
+            _queue.Setup(q => q.GetQueueAsync(_est, 7, default)).ReturnsAsync(new MotoboyQueueDto
+            { Current = new RouteStopDto { PedidoId = 23 } });
+            var official = new APIBack.Integrations.Ifood.Orders.IfoodImportedOrder
+            {
+                Items = new[] { new APIBack.Integrations.Ifood.Orders.IfoodImportedItem(null, "X-Burger", 2, null, null, null, null, null, null, default) }
+            };
+            _consulta.Setup(q => q.GetAsync(_est, 23)).ReturnsAsync(new PedidoDetalheDto { Id = 23, MotoboyId = 7, Origem = "ifood", PedidoIfood = official });
+            var result = await Service.GetAsync(_est, 7, 23);
+            var expected = DeliveryChecklistRules.BuildIfood(official);
+            Assert.Equal(expected.Version, result.Checklist.Version);
+            Assert.Equal("ifood:0", Assert.Single(result.Checklist.Items).Key);
+        }
+
+        [Fact]
+        public async Task ChecklistDeRetiradaIfoodSemDetalheOficialPedeJustificativa()
+        {
+            _queue.Setup(q => q.GetQueueAsync(_est, 7, default)).ReturnsAsync(new MotoboyQueueDto
+            { Current = new RouteStopDto { PedidoId = 23 } });
+            _consulta.Setup(q => q.GetAsync(_est, 23)).ReturnsAsync(new PedidoDetalheDto { Id = 23, MotoboyId = 7, Origem = "ifood" });
+            var result = await Service.GetAsync(_est, 7, 23);
+            Assert.True(result.Checklist.DetailsUnavailable);
+            Assert.True(result.Checklist.RequiresManualReason);
+        }
+
+        [Fact]
         public async Task PermitePedidoNaOfertaDoProprioMotoboy()
         {
             _queue.Setup(q => q.GetQueueAsync(_est, 7, default)).ReturnsAsync(new MotoboyQueueDto

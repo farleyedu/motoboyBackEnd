@@ -16,6 +16,8 @@ public sealed class DeliveryChecklist
 {
     public string Version { get; set; } = "";
     public bool DetailsUnavailable { get; set; }
+    /// <summary>Pedido iFood sem detalhe oficial legível: a conferência manual exige justificativa do motoboy.</summary>
+    public bool RequiresManualReason { get; set; }
     public List<DeliveryChecklistItem> Items { get; set; } = new();
 }
 
@@ -25,4 +27,5 @@ public sealed class DeliveryChecklistConfirmation
     public string Version { get; set; } = "";
     public List<string> ConfirmedKeys { get; set; } = new();
     public List<string> RecheckedExtraKeys { get; set; } = new();
+    public string? ManualReason { get; set; }
 }
