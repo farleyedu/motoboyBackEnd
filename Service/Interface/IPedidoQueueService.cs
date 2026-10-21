@@ -10,8 +10,11 @@ namespace APIBack.Service.Interface
         // Atendente
         Task<MotoboyQueueDto> AssignAsync(Guid estabelecimentoId, int actorUserId, int motoboyId, int pedidoId);
         Task<MotoboyQueueDto> RemoveAsync(Guid estabelecimentoId, int actorUserId, int pedidoId);
+        Task<MotoboyQueueDto> RemoveForSimulatorAsync(Guid estabelecimentoId, int actorUserId, int pedidoId);
         Task<MotoboyQueueDto> ReorderAsync(Guid estabelecimentoId, int actorUserId, int motoboyId, long expectedVersion, IReadOnlyList<int> pedidoIdsOrdenados);
         Task<MotoboyQueueDto> CompleteCurrentAsync(Guid estabelecimentoId, int actorUserId, int motoboyId);
+        Task<MotoboyQueueDto> CompleteStopAsync(Guid estabelecimentoId, int actorUserId, int pedidoId);
+        Task<RouteTransferResultDto> TransferRouteByOperatorAsync(Guid estabelecimentoId, int operatorUserId, int fromMotoboyId, int toMotoboyId, string? motivo);
         Task<MotoboyQueueDto> ResumeAsync(Guid estabelecimentoId, int actorUserId, int motoboyId);
         Task<MotoboyQueueDto> CancelAsync(Guid estabelecimentoId, int actorUserId, int pedidoId, string? motivo);
         Task<string> MarcarSaiuManualAsync(Guid estabelecimentoId, int actorUserId, int pedidoId, string? entregadorNome);

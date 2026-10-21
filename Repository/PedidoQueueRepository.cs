@@ -181,7 +181,18 @@ SELECT m.id
             await EmitQueueEventAsync(connection, transaction, estabelecimentoId, motoboyId, pedidoId, offerId.HasValue ? "offered" : "assigned", version, eligibility.SessionId);
         }
 
-        public async Task<MotoboyQueueDto> RemoveAsync(Guid estabelecimentoId, int actorUserId, int pedidoId)
+        public Task<MotoboyQueueDto> RemoveAsync(Guid estabelecimentoId, int actorUserId, int pedidoId) =>
+            RemoveCoreAsync(estabelecimentoId, pedidoId, operatorRules: true);
+
+        public Task<MotoboyQueueDto> RemoveForSimulatorAsync(Guid estabelecimentoId, int actorUserId, int pedidoId) =>
+            RemoveCoreAsync(estabelecimentoId, pedidoId, operatorRules: false);
+
+        /// <summary>
+        /// Operador: devolve o pedido a pendente. Vale para parada atribuida e para a atual (em rota) enquanto nao foi coletada
+        /// (a proxima assume); coletado nao volta para a fila (o pedido esta com o motoboy). Pedido iFood passa pela checagem de
+        /// roteamento oficial e recebe um 409 com o motivo em vez da recusa seca do banco. O simulador mantem a regra antiga.
+        /// </summary>
+        private async Task<MotoboyQueueDto> RemoveCoreAsync(Guid estabelecimentoId, int pedidoId, bool operatorRules)
         {
             await using var connection = await _dataSource.OpenConnectionAsync();
             await using var transaction = await connection.BeginTransactionAsync();
@@ -190,13 +201,23 @@ SELECT m.id
                 ?? throw new DeliveryDomainException(404, "PEDIDO_NOT_IN_QUEUE", "Pedido nao esta na fila de nenhum motoboy.");
             var motoboyId = preview.MotoboyId;
             await LockQueuesAsync(connection, transaction, estabelecimentoId, motoboyId);
+            if (operatorRules)
+            {
+                _ = await GetPedidoAsync(connection, transaction, estabelecimentoId, pedidoId, forUpdate: true, allowIfoodRouting: true)
+                    ?? throw new DeliveryDomainException(404, "PEDIDO_NOT_FOUND", "Pedido nao encontrado neste estabelecimento.");
+            }
 
             var stop = await GetActiveStopForPedidoAsync(connection, transaction, estabelecimentoId, pedidoId, forUpdate: true);
             if (stop == null || stop.MotoboyId != motoboyId)
             {
                 throw new DeliveryDomainException(409, "QUEUE_CHANGED", "A fila do pedido mudou. Recarregue e tente novamente.");
             }
-            if (stop.StopStatus == "en_route")
+            if (operatorRules && stop.PickedUpAtUtc.HasValue)
+            {
+                throw new DeliveryDomainException(409, "STOP_ALREADY_PICKED_UP",
+                    "O pedido ja foi coletado pelo motoboy e nao pode voltar para a fila. Use transferir, concluir ou cancelar.");
+            }
+            if (!operatorRules && stop.StopStatus == "en_route")
             {
                 throw new DeliveryDomainException(409, "STOP_NOT_REMOVABLE",
                     "A entrega atual (em rota) nao pode ser removida diretamente; use concluir, cancelar ou transferir.");
@@ -208,6 +229,15 @@ SELECT m.id
             await ReturnPedidoToPendingAsync(connection, transaction, pedidoId);
             await CancelPendingTransfersForPedidoAsync(connection, transaction, estabelecimentoId, pedidoId,
                 "Pedido removido da fila pelo atendente.");
+
+            if (stop.StopStatus == "en_route")
+            {
+                // Era a entrega atual: promove a proxima, renumera e, se a rota esvaziou, segue o retorno a loja.
+                var afterCurrent = await FinishStopRemovalAsync(connection, transaction, estabelecimentoId, motoboyId,
+                    pedidoId, "removed", promoteNext: true);
+                await transaction.CommitAsync();
+                return afterCurrent;
+            }
 
             await RenumberActiveStopsAsync(connection, transaction, estabelecimentoId, motoboyId);
             var version = await BumpRouteVersionAsync(connection, transaction, estabelecimentoId, motoboyId);
@@ -376,11 +406,27 @@ SELECT m.id
 
         private static async Task<MotoboyQueueDto> CompleteCurrentInternalAsync(
             NpgsqlConnection connection, NpgsqlTransaction transaction,
-            Guid estabelecimentoId, int motoboyId, string completedBy, string? providedCode, bool enforceCode, bool officialCompletion = false)
+            Guid estabelecimentoId, int motoboyId, string completedBy, string? providedCode, bool enforceCode, bool officialCompletion = false, int? targetPedidoId = null)
         {
             await LockQueuesAsync(connection, transaction, estabelecimentoId, motoboyId);
-            var current = await GetCurrentStopAsync(connection, transaction, estabelecimentoId, motoboyId, forUpdate: true)
-                ?? throw new DeliveryDomainException(409, "NO_CURRENT_DELIVERY", "Este motoboy nao possui entrega atual em rota.");
+            StopRow current;
+            if (targetPedidoId.HasValue)
+            {
+                // Conclusao de uma parada especifica (operador): a entrega atual continua em andamento quando o alvo e outro pedido.
+                var target = await GetActiveStopForPedidoAsync(connection, transaction, estabelecimentoId, targetPedidoId.Value, forUpdate: true)
+                    ?? throw new DeliveryDomainException(404, "PEDIDO_NOT_IN_QUEUE", "Pedido nao esta na fila de nenhum motoboy.");
+                if (target.MotoboyId != motoboyId)
+                    throw new DeliveryDomainException(409, "QUEUE_CHANGED", "A fila do pedido mudou. Recarregue e tente novamente.");
+                if (target.StopStatus != "en_route" && await IsOfferPendingAsync(connection, transaction, target.Id))
+                    throw new DeliveryDomainException(409, "OFFER_PENDING", "O motoboy ainda nao aceitou este pedido. Remova-o da fila ou espere a resposta.");
+                current = target;
+            }
+            else
+            {
+                current = await GetCurrentStopAsync(connection, transaction, estabelecimentoId, motoboyId, forUpdate: true)
+                    ?? throw new DeliveryDomainException(409, "NO_CURRENT_DELIVERY", "Este motoboy nao possui entrega atual em rota.");
+            }
+            var wasCurrent = current.StopStatus == "en_route";
             var bloqueadoEm = await connection.ExecuteScalarAsync<DateTimeOffset?>(
                 "SELECT CASE WHEN situacao_comercial='bloqueado' THEN bloqueado_em END FROM estabelecimentos WHERE id=@Id FOR SHARE",
                 new { Id = estabelecimentoId }, transaction);
@@ -423,7 +469,8 @@ SELECT m.id
             await CancelPendingTransfersForPedidoAsync(connection, transaction, estabelecimentoId, current.PedidoId, "Pedido entregue.");
 
             var eligibility = await GetEligibilityAsync(connection, transaction, motoboyId, estabelecimentoId);
-            if (eligibility.SessionId.HasValue)
+            // So a entrega atual abre vaga para a proxima; concluir um pedido do meio da fila nao mexe em quem esta em rota.
+            if (wasCurrent && eligibility.SessionId.HasValue)
             {
                 await TryPromoteNextAsync(connection, transaction, estabelecimentoId, motoboyId);
             }

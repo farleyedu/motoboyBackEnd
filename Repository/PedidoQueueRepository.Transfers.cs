@@ -364,6 +364,9 @@ SELECT s.motoboy_id AS MotoboyId,
             }
 
             await LockQueuesAsync(connection, transaction, estabelecimentoId, fromMotoboyId, toMotoboyId);
+            // Pedido iFood bloqueado (revisao, dado desatualizado) volta com o motivo em vez da recusa seca do banco.
+            _ = await GetPedidoAsync(connection, transaction, estabelecimentoId, pedidoId, forUpdate: true, allowIfoodRouting: true)
+                ?? throw new DeliveryDomainException(404, "PEDIDO_NOT_FOUND", "Pedido nao encontrado neste estabelecimento.");
             var stop = await GetActiveStopForPedidoAsync(connection, transaction, estabelecimentoId, pedidoId, forUpdate: true);
             if (stop == null || stop.MotoboyId != fromMotoboyId)
             {

@@ -472,6 +472,23 @@ namespace APIBack.Controllers
             }
         }
 
+        /// <summary>
+        /// Conclui uma entrega especifica da fila (nao precisa ser a atual), por exemplo quando o motoboy esqueceu de marcar.
+        /// Mesma conclusao do concluir-atual; pedido iFood continua pelo fluxo oficial (409 IFOOD_ORDER_MANAGED_EXTERNALLY).
+        /// </summary>
+        [HttpPost("pedidos/{pedidoId:int}/concluir")]
+        [RequireModule("Delivery")]
+        [RequirePermission("Delivery", "atribuir_motoboy")]
+        public Task<IActionResult> CompletePedido(int pedidoId) =>
+            ExecuteAsync((est, userId) => _queueService.CompleteStopAsync(est, userId, pedidoId));
+
+        /// <summary>Passa a rota inteira do motoboy para outro (uma oferta so, tudo ou nada). O pedido ja coletado leva a coleta junto.</summary>
+        [HttpPost("motoboys/{motoboyId:int}/fila/transferir")]
+        [RequireModule("Delivery")]
+        [RequirePermission("Delivery", "atribuir_motoboy")]
+        public Task<IActionResult> TransferRoute(int motoboyId, [FromBody] TransferRouteRequest request) =>
+            ExecuteAsync((est, userId) => _queueService.TransferRouteByOperatorAsync(est, userId, motoboyId, request.ParaMotoboyId, request.Motivo));
+
         /// <summary>Trava pedidos da fila: viram ancoras e o motoboy nao pode move-los, recusa-los nem transferi-los.</summary>
         [HttpPost("pedidos/travar")]
         [RequireModule("Delivery")]

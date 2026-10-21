@@ -19,9 +19,16 @@ namespace APIBack.Repository.Interface
         /// <summary>Para autoatribuicao: so devolve um motoboy quando ha EXATAMENTE um disponivel (online,
         /// sem parada assigned/en_route) - com 0 ou mais de 1, devolve null e o pedido fica na fila normal.</summary>
         Task<int?> FindSingleAvailableMotoboyAsync(Guid estabelecimentoId);
+        /// <summary>Devolve o pedido a pendente (operador): aceita parada atribuida ou em rota ainda nao coletada; coletado e recusado.</summary>
         Task<MotoboyQueueDto> RemoveAsync(Guid estabelecimentoId, int actorUserId, int pedidoId);
+        /// <summary>Remocao com a regra antiga (sem checar coleta nem iFood), usada so pelo simulador.</summary>
+        Task<MotoboyQueueDto> RemoveForSimulatorAsync(Guid estabelecimentoId, int actorUserId, int pedidoId);
         Task<MotoboyQueueDto> ReorderAsync(Guid estabelecimentoId, int actorUserId, int motoboyId, long expectedVersion, IReadOnlyList<int> pedidoIdsOrdenados);
         Task<MotoboyQueueDto> CompleteCurrentAsync(Guid estabelecimentoId, int actorUserId, int motoboyId);
+        /// <summary>Conclui uma entrega especifica da fila (nao precisa ser a atual), pelo operador.</summary>
+        Task<MotoboyQueueDto> CompleteStopAsync(Guid estabelecimentoId, int actorUserId, int pedidoId);
+        /// <summary>Passa a rota inteira de um motoboy para outro, atomicamente (vira uma oferta para o destino).</summary>
+        Task<RouteTransferResultDto> TransferRouteByOperatorAsync(Guid estabelecimentoId, int operatorUserId, int fromMotoboyId, int toMotoboyId, string? motivo);
         Task<MotoboyQueueDto> ResumeAsync(Guid estabelecimentoId, int actorUserId, int motoboyId);
         Task<MotoboyQueueDto> CancelAsync(Guid estabelecimentoId, int actorUserId, int pedidoId, string? motivo);
         /// <summary>Entrega manual (sem app do motoboy): a loja marca a saida. Devolve o status novo.</summary>

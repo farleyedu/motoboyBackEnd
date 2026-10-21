@@ -66,6 +66,28 @@ namespace APIBack.Service
             return _repository.RemoveAsync(estabelecimentoId, actorUserId, pedidoId);
         }
 
+        public Task<MotoboyQueueDto> RemoveForSimulatorAsync(Guid estabelecimentoId, int actorUserId, int pedidoId)
+        {
+            EnsurePositive(pedidoId, "pedidoId");
+            return _repository.RemoveForSimulatorAsync(estabelecimentoId, actorUserId, pedidoId);
+        }
+
+        public Task<MotoboyQueueDto> CompleteStopAsync(Guid estabelecimentoId, int actorUserId, int pedidoId)
+        {
+            EnsurePositive(pedidoId, "pedidoId");
+            return _repository.CompleteStopAsync(estabelecimentoId, actorUserId, pedidoId);
+        }
+
+        public Task<RouteTransferResultDto> TransferRouteByOperatorAsync(Guid estabelecimentoId, int operatorUserId, int fromMotoboyId, int toMotoboyId, string? motivo)
+        {
+            EnsurePositive(fromMotoboyId, "motoboyId");
+            EnsurePositive(toMotoboyId, "paraMotoboyId");
+            if (fromMotoboyId == toMotoboyId)
+                throw new DeliveryDomainException(422, "TRANSFER_SAME_MOTOBOY", "A rota ja esta com este motoboy.");
+            return _repository.TransferRouteByOperatorAsync(estabelecimentoId, operatorUserId, fromMotoboyId, toMotoboyId,
+                DeliveryRules.NormalizeReason(motivo, required: false));
+        }
+
         public Task<MotoboyQueueDto> ReorderAsync(Guid estabelecimentoId, int actorUserId, int motoboyId, long expectedVersion, IReadOnlyList<int> pedidoIdsOrdenados)
         {
             EnsurePositive(motoboyId, "motoboyId");

@@ -376,7 +376,7 @@ SELECT id FROM conversas WHERE id_cliente = @Id AND id_estabelecimento = @Est OR
                 catch (DeliveryDomainException)
                 {
                     // Nao deixa um pedido "meio criado" no painel quando o status pedido nao pode ser alcancado.
-                    try { await _queue.RemoveAsync(est, userId, created.Id); } catch (DeliveryDomainException) { /* ja estava pendente */ }
+                    try { await _queue.RemoveForSimulatorAsync(est, userId, created.Id); } catch (DeliveryDomainException) { /* ja estava pendente */ }
                     await using var cleanup = await _dataSource.OpenConnectionAsync();
                     await cleanup.ExecuteAsync("DELETE FROM pedido_item WHERE pedido_id = @Id; DELETE FROM pedido WHERE id = @Id AND id_estabelecimento = @Est;", new { Id = created.Id, Est = est });
                     throw;
@@ -590,7 +590,7 @@ SELECT m.id
             }
             else if (status is StatusPedido.Atribuido or StatusPedido.EmRota or StatusPedido.AguardandoMotoboy && !SimuladorPedidoRules.RequiresMotoboy(alvo))
             {
-                await _queue.RemoveAsync(est, userId, pedidoId);
+                await _queue.RemoveForSimulatorAsync(est, userId, pedidoId);
                 await LogAsync(est, userId, "pedido", pedidoId, "pedido_removido_fila", "Pedido saiu da fila", "Voltou a pendente", "atencao");
             }
 

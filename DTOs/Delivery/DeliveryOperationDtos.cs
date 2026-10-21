@@ -204,6 +204,20 @@ namespace APIBack.DTOs.Delivery
         public MotoboyQueueDto? TargetQueue { get; set; }
     }
 
+    public sealed class TransferRouteRequest
+    {
+        public int ParaMotoboyId { get; set; }
+        public string? Motivo { get; set; }
+    }
+
+    /// <summary>Resultado de passar a rota inteira: uma transferencia por pedido (na ordem da fila) e as duas filas depois da operacao.</summary>
+    public sealed class RouteTransferResultDto
+    {
+        public List<TransferRequestDto> Transfers { get; set; } = new();
+        public MotoboyQueueDto? SourceQueue { get; set; }
+        public MotoboyQueueDto? TargetQueue { get; set; }
+    }
+
     public sealed class TransferTargetDto
     {
         public int MotoboyId { get; set; }
