@@ -46,7 +46,8 @@ namespace APIBack.Repository
             // O schema nao muda em runtime: depois do primeiro true a sonda sai do caminho de cada request.
             var externalSchema = _externalSchemaKnown || await connection.ExecuteScalarAsync<bool>("SELECT to_regclass('ifood_order_links') IS NOT NULL AND to_regclass('ifood_order_snapshots') IS NOT NULL");
             if (externalSchema) _externalSchemaKnown = true;
-            var (where, parameters) = BuildWhere(estabelecimentoId, filtro, origemExpr, externalSchema);
+            var nativeDate = await PedidoColumnTypes.IsNativeDateAsync(connection, null, "data_pedido");
+            var (where, parameters) = BuildWhere(estabelecimentoId, filtro, origemExpr, externalSchema, nativeDate);
             if (filtro.ConversaId.HasValue)
             {
                 // Pedidos da conversa: os ligados a ela (coluna do nucleo) e os feitos pelo telefone do cliente dela.
@@ -242,7 +243,7 @@ SELECT i.id::text AS ItemId, i.produto_id AS ProdutoId, i.nome AS Nome, i.quanti
             return detail;
         }
 
-        private static (string Where, DynamicParameters Parameters) BuildWhere(Guid estabelecimentoId, PedidoFiltro filtro, string origemExpr, bool externalSchema)
+        internal static (string Where, DynamicParameters Parameters) BuildWhere(Guid estabelecimentoId, PedidoFiltro filtro, string origemExpr, bool externalSchema, bool nativeDate = false)
         {
             var clauses = new List<string> { "p.id_estabelecimento = @EstabelecimentoId" };
             var parameters = new DynamicParameters();
@@ -271,16 +272,17 @@ AND (cardinality(@Preparo::text[])=0 OR iss.preparation_state=ANY(@Preparo)))
                 clauses.Add($"{origemExpr} = ANY(@Origem)");
                 parameters.Add("Origem", filtro.Origem);
             }
-            // Comparacao textual em AAAA-MM-DD: vale para as colunas date/timestamp; datas legadas em
-            // texto dd/MM/AAAA nao casam com o periodo (ficam de fora quando ele e informado).
+            // Coluna date/timestamp: comparacao direta em faixa [De, Ate+1), que usa o indice (id_estabelecimento, data_pedido)
+            // e mantem a mesma semantica do texto AAAA-MM-DD no fuso da sessao. Coluna de texto (legado): comparacao textual
+            // em AAAA-MM-DD; datas legadas dd/MM/AAAA nao casam com o periodo (ficam de fora quando ele e informado).
             if (filtro.De != null)
             {
-                clauses.Add("LEFT(p.data_pedido::text, 10) >= @De");
+                clauses.Add(nativeDate ? "p.data_pedido >= CAST(@De AS date)" : "LEFT(p.data_pedido::text, 10) >= @De");
                 parameters.Add("De", filtro.De);
             }
             if (filtro.Ate != null)
             {
-                clauses.Add("LEFT(p.data_pedido::text, 10) <= @Ate");
+                clauses.Add(nativeDate ? "p.data_pedido < CAST(@Ate AS date) + 1" : "LEFT(p.data_pedido::text, 10) <= @Ate");
                 parameters.Add("Ate", filtro.Ate);
             }
             if (filtro.BuscaLike != null)

@@ -15,8 +15,8 @@ namespace APIBack.Repository
     {
         private static readonly ConcurrentDictionary<string, (string DataType, int? MaxLength)> Cache = new();
 
-        public static async Task<string> LocalNowSqlAsync(
-            NpgsqlConnection connection, NpgsqlTransaction? transaction, string column, string? minutesParameter = null)
+        private static async Task<(string DataType, int? MaxLength)> InfoAsync(
+            NpgsqlConnection connection, NpgsqlTransaction? transaction, string column)
         {
             if (!Cache.TryGetValue(column, out var info))
             {
@@ -29,8 +29,24 @@ SELECT data_type AS DataType, character_maximum_length AS MaxLength
                 info = (row.DataType ?? "text", row.MaxLength);
                 Cache[column] = info;
             }
+            return info;
+        }
 
+        public static async Task<string> LocalNowSqlAsync(
+            NpgsqlConnection connection, NpgsqlTransaction? transaction, string column, string? minutesParameter = null)
+        {
+            var info = await InfoAsync(connection, transaction, column);
             return DeliveryRules.LocalNowSql(info.DataType, minutesParameter, info.MaxLength);
+        }
+
+        /// <summary>
+        /// True quando a coluna é date/timestamp: o filtro de período pode comparar a coluna direto (e usar índice).
+        /// Em colunas de texto (legado dd/MM/AAAA ou AAAA-MM-DD) o filtro continua textual.
+        /// </summary>
+        public static async Task<bool> IsNativeDateAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction, string column)
+        {
+            var info = await InfoAsync(connection, transaction, column);
+            return info.DataType is "date" or "timestamp without time zone" or "timestamp with time zone";
         }
 
         private static volatile bool _routeRulesKnown;
