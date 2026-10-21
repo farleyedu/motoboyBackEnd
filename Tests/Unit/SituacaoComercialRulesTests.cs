@@ -64,18 +64,32 @@ namespace APIBack.Tests.Unit
         public void Implantacao_permite_configuracao(string path, string method) =>
             Assert.False(SituacaoComercialRules.OperacaoExigeInicio(path, method));
 
+        // Planos v2: vagas = motoboys contratados; vinculos = contratados + 7, ate 30. Sem motoboy, sem vinculo.
         [Theory]
-        [InlineData(1, 3, 10)]
-        [InlineData(2, 6, 15)]
-        [InlineData(3, 9, 20)]
-        [InlineData(4, 12, 25)]
-        [InlineData(5, 15, 30)]
-        [InlineData(8, 24, 30)]
-        [InlineData(0, 3, 10)]
-        public void Limites_de_motoboy_seguem_a_tabela(int pacotes, int vagas, int vinculados)
+        [InlineData(0, 0, 0)]
+        [InlineData(3, 3, 10)]
+        [InlineData(5, 5, 12)]
+        [InlineData(10, 10, 17)]
+        [InlineData(23, 23, 30)]
+        [InlineData(40, 40, 30)]
+        public void Limites_de_motoboy_seguem_os_contratados(int contratados, int vagas, int vinculados)
         {
-            Assert.Equal(vagas, MotoboyLimites.VagasPorDia(pacotes));
-            Assert.Equal(vinculados, MotoboyLimites.Vinculados(pacotes));
+            Assert.Equal(vagas, MotoboyLimites.VagasPorDia(contratados));
+            Assert.Equal(vinculados, MotoboyLimites.Vinculados(contratados));
         }
+
+        [Theory]
+        [InlineData(3, true)]
+        [InlineData(7, true)]
+        [InlineData(5, false)]
+        [InlineData(0, false)]
+        public void Pacote_de_motoboy_e_de_3_ou_7(int quantidade, bool valido) =>
+            Assert.Equal(valido, MotoboyLimites.QuantidadeValida(quantidade));
+
+        [Theory]
+        [InlineData("mensal", 30)]
+        [InlineData("anual", 365)]
+        public void Pacote_mensal_vale_30_dias_e_anual_365(string periodicidade, int dias) =>
+            Assert.Equal(dias, MotoboyLimites.DiasDoPacote(periodicidade));
     }
 }

@@ -247,7 +247,8 @@ SELECT p.id AS PedidoId, p.id_estabelecimento AS EstabelecimentoId,
        p.nome_cliente::text AS NomeCliente,
        CASE WHEN p.latitude::text ~ {Numeric} THEN p.latitude::text::DOUBLE PRECISION END AS DestLat,
        CASE WHEN p.longitude::text ~ {Numeric} THEN p.longitude::text::DOUBLE PRECISION END AS DestLon,
-       m.id AS MotoboyId, m.nome::text AS MotoboyNome,
+       COALESCE(m.id, 0) AS MotoboyId, COALESCE(m.nome::text, p.entregador_nome) AS MotoboyNome,
+       (m.id IS NULL) AS SemMotoboy,
        COALESCE(m.compartilhar_localizacao_cliente, FALSE) AS Shares,
        e.nome_fantasia::text AS Loja,
        EXISTS (SELECT 1 FROM pedido_notificacao n WHERE n.pedido_id = p.id AND n.tipo = 'saiu_da_loja') AS DispatchDone,
@@ -260,7 +261,8 @@ SELECT p.id AS PedidoId, p.id_estabelecimento AS EstabelecimentoId,
        lc.latitude AS MotoLat, lc.longitude AS MotoLon, lc.speed_mps AS SpeedMps,
        EXTRACT(EPOCH FROM (NOW() - lc.received_at_utc))::double precision AS AgeSeconds
   FROM pedido p
-  JOIN motoboy m ON m.id = p.motoboy_responsavel
+  -- Sem motoboy = entrega manual (planos Partida e Rota): so o aviso de saida vale, sem link e sem o aviso de chegada.
+  LEFT JOIN motoboy m ON m.id = p.motoboy_responsavel
   JOIN estabelecimentos e ON e.id = p.id_estabelecimento
   LEFT JOIN delivery_settings s ON s.estabelecimento_id = p.id_estabelecimento
   LEFT JOIN LATERAL (
@@ -270,8 +272,10 @@ SELECT p.id AS PedidoId, p.id_estabelecimento AS EstabelecimentoId,
        ORDER BY c.received_at_utc DESC LIMIT 1
   ) lc ON TRUE
  WHERE p.status_pedido = 2 AND p.rastreio_opt_in = TRUE
+   AND (m.id IS NOT NULL OR p.entrega_manual_saiu_utc IS NOT NULL)
    AND NOT (EXISTS (SELECT 1 FROM pedido_notificacao n WHERE n.pedido_id = p.id AND n.tipo = 'saiu_da_loja')
-        AND EXISTS (SELECT 1 FROM pedido_notificacao n WHERE n.pedido_id = p.id AND n.tipo = 'motoboy_chegando'))
+        AND (m.id IS NULL
+             OR EXISTS (SELECT 1 FROM pedido_notificacao n WHERE n.pedido_id = p.id AND n.tipo = 'motoboy_chegando')))
  ORDER BY p.id
  LIMIT 500;");
 
@@ -283,6 +287,7 @@ SELECT p.id AS PedidoId, p.id_estabelecimento AS EstabelecimentoId,
                 Loja = row.Loja,
                 MotoboyId = row.MotoboyId,
                 MotoboyNome = row.MotoboyNome,
+                SemMotoboy = row.SemMotoboy,
                 MotoboyShares = row.Shares,
                 DispatchDone = row.DispatchDone,
                 ArrivingDone = row.ArrivingDone,
@@ -309,6 +314,7 @@ SELECT p.id AS PedidoId, p.id_estabelecimento AS EstabelecimentoId,
             public double? DestLon { get; set; }
             public int MotoboyId { get; set; }
             public string? MotoboyNome { get; set; }
+            public bool SemMotoboy { get; set; }
             public bool Shares { get; set; }
             public string? Loja { get; set; }
             public bool DispatchDone { get; set; }

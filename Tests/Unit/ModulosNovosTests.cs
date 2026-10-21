@@ -1,3 +1,4 @@
+using System;
 using System.Linq;
 using APIBack.Model.Gestao;
 using APIBack.Security;
@@ -63,6 +64,41 @@ namespace APIBack.Tests.Unit
 
             var comModulos = EstablishmentPermissions.Resolve(json, new[] { "DELIVERY", "PEDIDOS", "IFOOD", "IMPRESSAO" });
             Assert.Equal(new[] { "visualizar", "integracao_ifood", "configurar_impressao" }, comModulos["Delivery"]);
+        }
+
+        [Fact]
+        public void Mapa_fica_entre_Pedidos_e_Delivery()
+        {
+            Assert.Equal(new[] { "MAPA", "PEDIDOS" }, ModuleDependencies.Close(new[] { "MAPA" }).OrderBy(m => m));
+            Assert.Contains("MAPA", ModuleDependencies.Close(new[] { "DELIVERY" }));
+            Assert.DoesNotContain("DELIVERY", ModuleDependencies.Close(new[] { "MAPA" }));
+        }
+
+        [Fact]
+        public void Loja_so_com_Pedidos_opera_pedidos_mas_nao_gerencia_motoboy()
+        {
+            const string json = "{\"Delivery\":[\"visualizar\",\"criar_pedido\",\"editar_pedido\",\"atribuir_motoboy\",\"gestao_motoboy\"]}";
+
+            var partida = EstablishmentPermissions.Resolve(json, new[] { "PEDIDOS", "CARDAPIO", "CARDAPIOWEB" });
+            Assert.Equal(new[] { "visualizar", "criar_pedido", "editar_pedido", "atribuir_motoboy" }, partida["Delivery"]);
+
+            var turbo = EstablishmentPermissions.Resolve(json, new[] { "PEDIDOS", "MAPA", "DELIVERY" });
+            Assert.Contains("gestao_motoboy", turbo["Delivery"]);
+
+            var semPedidos = EstablishmentPermissions.Resolve(json, new[] { "CARDAPIO" });
+            Assert.False(semPedidos.ContainsKey("Delivery"));
+        }
+
+        [Fact]
+        public void Rotas_de_motoboy_exigem_o_modulo_Delivery()
+        {
+            static bool Exige(Type controller, string acao) =>
+                controller.GetMethod(acao)!.GetCustomAttributes(typeof(RequireModuleAttribute), true)
+                    .Any(attribute => ((RequireModuleAttribute)attribute).Modulo == "Delivery");
+            Assert.True(Exige(typeof(DeliveryOrdersV2Controller), nameof(DeliveryOrdersV2Controller.AssignRoute)));
+            Assert.False(Exige(typeof(DeliveryOrdersV2Controller), nameof(DeliveryOrdersV2Controller.Cancel)));
+            Assert.False(Exige(typeof(DeliveryOrdersV2Controller), nameof(DeliveryOrdersV2Controller.SaiuManual)));
+            Assert.False(Exige(typeof(DeliveryOrdersV2Controller), nameof(DeliveryOrdersV2Controller.EntregueManual)));
         }
 
         [Fact]

@@ -61,6 +61,7 @@ namespace APIBack.Controllers
 
         /// <summary>Disparo manual: quem acompanha a rota avisa que o motoboy chegou (sem app do motoboy integrado ainda).</summary>
         [HttpPost("pedidos/{pedidoId:int}/avisos/chegou/enviar")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "atribuir_motoboy")]
         public Task<IActionResult> EnviarChegou(int pedidoId) =>
             Run(async (est, _) =>

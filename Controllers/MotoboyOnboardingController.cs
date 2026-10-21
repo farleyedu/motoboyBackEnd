@@ -303,6 +303,7 @@ RETURNING id AS Id,
         }
 
         [HttpGet("convites/candidatos")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "gestao_motoboy")]
         public async Task<IActionResult> ListarCandidatosParaConvite()
         {
@@ -439,6 +440,7 @@ UPDATE motoboy_link_requests r
         }
 
         [HttpPost("convites")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "gestao_motoboy")]
         public async Task<IActionResult> ConvidarMotoboy([FromBody] ConvidarMotoboyRequest? request)
         {
@@ -526,6 +528,7 @@ RETURNING id AS Id,
         }
 
         [HttpGet("solicitacoes")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "gestao_motoboy")]
         public async Task<IActionResult> ListarSolicitacoesDoRestaurante()
         {
@@ -557,6 +560,7 @@ SELECT r.id AS Id,
         }
 
         [HttpPost("solicitacoes/{requestId:guid}/aprovar")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "gestao_motoboy")]
         public async Task<IActionResult> AprovarSolicitacao(Guid requestId)
         {
@@ -630,6 +634,7 @@ UPDATE motoboy_link_requests
         }
 
         [HttpPost("solicitacoes/{requestId:guid}/recusar")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "gestao_motoboy")]
         public async Task<IActionResult> RecusarSolicitacao(Guid requestId, [FromBody] RecusarVinculoMotoboyRequest? request)
         {
@@ -663,6 +668,7 @@ UPDATE motoboy_link_requests
         public sealed record EncerrarVinculoRequest(string? Motivo);
 
         [HttpGet("vinculos/resumo")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "visualizar")]
         public async Task<IActionResult> ResumoDeVinculos()
         {
@@ -671,7 +677,7 @@ UPDATE motoboy_link_requests
                 return BadRequest(ApiResponse<object>.Fail("Selecione um restaurante."));
             await using var connection = await _dataSource.OpenConnectionAsync();
             var config = await connection.QuerySingleOrDefaultAsync<ResumoConfiguracaoRow>(@"
-SELECT e.pacotes_motoboy AS PacotesMotoboy, d.order_window::text AS JanelaAtual,
+SELECT " + MotoboyLimites.SqlContratados + @" AS MotoboysContratados, d.order_window::text AS JanelaAtual,
        d.order_window_pending::text AS JanelaPendente,
        d.order_window_effective_from_utc AS VigoraEm
   FROM estabelecimentos e
@@ -694,12 +700,20 @@ SELECT DISTINCT COALESCE(m.canonical_motoboy_id,m.id)
   JOIN motoboy m ON m.id=me.motoboy_id
  WHERE me.estabelecimento_id=@EstabelecimentoId AND me.ativo=TRUE AND m.is_simulated=FALSE;",
                 new { EstabelecimentoId = estabelecimentoId.Value })).ToArray();
-            var maxVagas = MotoboyLimites.VagasPorDia(config.PacotesMotoboy);
+            var maxVagas = MotoboyLimites.VagasPorDia(config.MotoboysContratados);
+            // Pacotes extras vigentes: o atendente ve ate quando cada um vale ("+3 motoboys ate 20/11").
+            var pacotesVigentes = (await connection.QueryAsync<(int Quantidade, DateTime FimUtc)>(@"
+SELECT quantidade, fim_utc FROM motoboy_pacotes
+ WHERE estabelecimento_id=@EstabelecimentoId AND cancelado_em IS NULL AND inicio_utc <= NOW() AND fim_utc > NOW()
+ ORDER BY fim_utc;", new { EstabelecimentoId = estabelecimentoId.Value }))
+                .Select(p => new { quantidade = p.Quantidade, fimUtc = new DateTimeOffset(DateTime.SpecifyKind(p.FimUtc, DateTimeKind.Utc)) })
+                .ToArray();
             return Ok(ApiResponse<object>.Ok(new {
                 vagasUsadas = ocupados.Count, vagasLimite = maxVagas,
                 vinculosUsados = vinculados.Length,
-                vinculosLimite = MotoboyLimites.Vinculados(config.PacotesMotoboy),
+                vinculosLimite = MotoboyLimites.Vinculados(config.MotoboysContratados),
                 proximoResetEmUtc = proximo,
+                pacotesVigentes,
                 motoboys = vinculados.Select(id => new {
                     motoboyId = id, ocupaVaga = ocupados.Contains(id),
                     podeOcupar = ocupados.Contains(id) || ocupados.Count < maxVagas
@@ -708,6 +722,7 @@ SELECT DISTINCT COALESCE(m.canonical_motoboy_id,m.id)
         }
 
         [HttpPost("vinculos/{motoboyId:int}/encerrar")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "gestao_motoboy")]
         public async Task<IActionResult> EncerrarVinculo(int motoboyId, [FromBody] EncerrarVinculoRequest? request)
         {
@@ -792,7 +807,7 @@ VALUES (@EstabelecimentoId, @MotoboyId, @Actor, @Motivo);",
 
         private sealed class ResumoConfiguracaoRow
         {
-            public int PacotesMotoboy { get; set; }
+            public int MotoboysContratados { get; set; }
             public string? JanelaAtual { get; set; }
             public string? JanelaPendente { get; set; }
             public DateTimeOffset? VigoraEm { get; set; }

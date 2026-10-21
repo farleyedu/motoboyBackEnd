@@ -70,7 +70,7 @@ namespace APIBack.Service
                         }
                     }
 
-                    if (!candidate.ArrivingDone)
+                    if (!candidate.ArrivingDone && !candidate.SemMotoboy)
                     {
                         var (verdict, reason) = ArrivingRules.Evaluate(new ArrivingInput(
                             candidate.MotoboyShares, candidate.DistanceMeters, candidate.LocationAgeSeconds, candidate.SpeedMps, candidate.Settings));
@@ -194,13 +194,16 @@ namespace APIBack.Service
                 var baseUrl = _configuration["Rastreio:PublicBaseUrl"]?.Trim().TrimEnd('/');
                 string? link = null;
                 // Valor de marcador ("__SET_IN_ENV__") ou sem http(s) conta como nao configurado.
-                if (!string.IsNullOrEmpty(baseUrl) && baseUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+                if (!candidate.SemMotoboy && !string.IsNullOrEmpty(baseUrl) && baseUrl.StartsWith("http", StringComparison.OrdinalIgnoreCase))
                 {
                     link = $"{baseUrl}/rastreio/{await _rastreio.EnsureTokenAsync(candidate.PedidoId)}";
                 }
 
                 var template = type == NoticeTypes.Dispatch ? candidate.Settings.DispatchText : candidate.Settings.ArrivingText;
                 var rendered = QuickReplyRenderer.Render(template, BuildValues(candidate, minutes, link));
+                // Entrega manual: o texto da loja pode pedir link ou minutos, que nao existem sem o app do motoboy.
+                if (candidate.SemMotoboy && rendered.Pendentes.Count > 0)
+                    rendered = QuickReplyRenderer.Render(ManualDispatchTemplate, BuildValues(candidate, minutes, null));
                 if (rendered.Pendentes.Count > 0)
                 {
                     await _rastreio.MarkAsync(reserved.Value, NoticeStatuses.Failed, "variavel_sem_valor:" + string.Join(",", rendered.Pendentes), null);
@@ -217,6 +220,8 @@ namespace APIBack.Service
                 return 0;
             }
         }
+
+        internal const string ManualDispatchTemplate = "Oi {cliente}! Seu pedido #{numero} da {loja} saiu para entrega.";
 
         internal static IReadOnlyDictionary<string, string?> BuildValues(NoticeCandidate candidate, int? minutes, string? link) =>
             new Dictionary<string, string?>

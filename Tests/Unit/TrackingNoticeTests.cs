@@ -478,7 +478,7 @@ namespace APIBack.Tests.Unit
             var situacoes = new Mock<ISituacaoComercialService>();
             situacoes.Setup(s => s.ObterAsync(store, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new SituacaoComercialDto(store, SituacoesComerciais.Bloqueado, null, null,
-                    null, 1, 3, 10, bloqueadoEm, "teste"));
+                    null, 3, 3, 3, 10, bloqueadoEm, "teste"));
             var config = new ConfigurationBuilder().Build();
             var service = new TrackingNoticeService(_rastreio.Object, _atendimento.Object, _sender.Object,
                 config, NullLogger<TrackingNoticeService>.Instance, situacoes.Object);

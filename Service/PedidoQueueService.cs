@@ -104,6 +104,18 @@ namespace APIBack.Service
                 DeliveryRules.NormalizeReason(motivo, required: false));
         }
 
+        public Task<string> MarcarSaiuManualAsync(Guid estabelecimentoId, int actorUserId, int pedidoId, string? entregadorNome)
+        {
+            EnsurePositive(pedidoId, "pedidoId");
+            return _repository.MarcarSaiuManualAsync(estabelecimentoId, actorUserId, pedidoId, entregadorNome);
+        }
+
+        public Task<string> MarcarEntregueManualAsync(Guid estabelecimentoId, int actorUserId, int pedidoId)
+        {
+            EnsurePositive(pedidoId, "pedidoId");
+            return _repository.MarcarEntregueManualAsync(estabelecimentoId, actorUserId, pedidoId);
+        }
+
         public Task<MotoboyQueueDto> GetQueueAsync(Guid estabelecimentoId, int motoboyId, CancellationToken cancellationToken = default)
         {
             EnsurePositive(motoboyId, "motoboyId");

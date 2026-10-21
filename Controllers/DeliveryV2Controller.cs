@@ -25,6 +25,7 @@ namespace APIBack.Controllers
         }
 
         [HttpGet("simulator/candidates")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "gestao_motoboy")]
         public async Task<IActionResult> GetSimulatorCandidates()
         {
@@ -45,6 +46,7 @@ namespace APIBack.Controllers
         }
 
         [HttpPost("simulator/sessions/auto-start")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "gestao_motoboy")]
         public async Task<IActionResult> AutoStartSimulator([FromBody] StartSimulatorSessionRequest request)
         {
@@ -61,6 +63,7 @@ namespace APIBack.Controllers
         }
 
         [HttpPost("simulator/motoboys")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "gestao_motoboy")]
         public async Task<IActionResult> CreateSimulatorMotoboy([FromBody] CreateSimulatorMotoboyRequest request)
         {
@@ -79,6 +82,7 @@ namespace APIBack.Controllers
 
         /// <summary>Edita nome e telefone de um motoboy de teste.</summary>
         [HttpPut("simulator/motoboys/{motoboyId:int}")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "gestao_motoboy")]
         public async Task<IActionResult> UpdateSimulatorMotoboy(int motoboyId, [FromBody] UpdateSimulatorMotoboyRequest request)
         {
@@ -96,6 +100,7 @@ namespace APIBack.Controllers
 
         /// <summary>Remove um motoboy de teste do estabelecimento (recusa se ainda tem pedido ativo).</summary>
         [HttpDelete("simulator/motoboys/{motoboyId:int}")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "gestao_motoboy")]
         public async Task<IActionResult> RemoveSimulatorMotoboy(int motoboyId)
         {
@@ -113,6 +118,7 @@ namespace APIBack.Controllers
 
         /// <summary>Clientes de TESTE do estabelecimento que o simulador pode encarnar.</summary>
         [HttpGet("simulator/clientes")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "gestao_motoboy")]
         public async Task<IActionResult> GetSimulatorClientes()
         {
@@ -129,6 +135,7 @@ namespace APIBack.Controllers
 
         /// <summary>O cliente de teste manda uma mensagem: entra pelo mesmo POST /wa/webhook do WhatsApp.</summary>
         [HttpPost("simulator/clientes/{clienteId:guid}/mensagens")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "gestao_motoboy")]
         public async Task<IActionResult> SendSimulatorClienteMessage(Guid clienteId, [FromBody] SimulatorClienteMessageRequest request)
         {
@@ -146,6 +153,7 @@ namespace APIBack.Controllers
 
         /// <summary>Conversa do cliente de teste (o que ele mandou e o que o atendimento respondeu).</summary>
         [HttpGet("simulator/clientes/{clienteId:guid}/mensagens")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "gestao_motoboy")]
         public async Task<IActionResult> GetSimulatorClienteMessages(Guid clienteId, [FromQuery] int limit = 100)
         {
@@ -161,6 +169,7 @@ namespace APIBack.Controllers
         }
 
         [HttpGet("tracking-snapshot")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "visualizar")]
         public async Task<IActionResult> GetTrackingSnapshot()
         {

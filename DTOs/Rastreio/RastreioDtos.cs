@@ -93,6 +93,8 @@ namespace APIBack.DTOs.Rastreio
         public string? Loja { get; set; }
         public int MotoboyId { get; set; }
         public string? MotoboyNome { get; set; }
+        /// <summary>Entrega manual (sem app do motoboy): so o aviso de saida, sem link de rastreio e sem "chegando".</summary>
+        public bool SemMotoboy { get; set; }
         public bool MotoboyShares { get; set; }
         public bool DispatchDone { get; set; }
         public bool ArrivingDone { get; set; }

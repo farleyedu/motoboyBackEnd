@@ -52,7 +52,7 @@ public class SituacaoComercialMiddlewareTests
         var middleware = new SituacaoComercialMiddleware(_ => { nextCalled = true; return Task.CompletedTask; });
         var service = new Mock<ISituacaoComercialService>();
         service.Setup(s => s.ObterAsync(Store, context.RequestAborted))
-            .ReturnsAsync(new SituacaoComercialDto(Store, situacao, null, null, null, 1, 3, 10, null, null));
+            .ReturnsAsync(new SituacaoComercialDto(Store, situacao, null, null, null, 3, 3, 3, 10, null, null));
         await middleware.InvokeAsync(context, service.Object);
         return (context, nextCalled);
     }

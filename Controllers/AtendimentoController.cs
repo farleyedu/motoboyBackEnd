@@ -103,37 +103,44 @@ namespace APIBack.Controllers
         // ---- mensagens atendente <-> motoboy -----------------------------------
 
         [HttpGet("motoboy-atalhos")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "visualizar")]
         public IActionResult OperatorShortcuts() => Ok(ApiResponse<object>.Ok(AtendimentoService.Shortcuts(operatorSide: true)));
 
         [HttpGet("motoboys/mensagens")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "visualizar")]
         public Task<IActionResult> ListMessages([FromQuery] int? motoboyId, [FromQuery] int? pedidoId, [FromQuery] int limit = 50) =>
             Run((est, _) => _service.ListMessagesAsync(est, motoboyId, pedidoId, limit));
 
         [HttpPost("motoboys/{motoboyId:int}/mensagens")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "atribuir_motoboy")]
         public Task<IActionResult> SendToMotoboy(int motoboyId, [FromBody] SendMotoboyMessageRequest? request) =>
             Run((est, user) => _service.SendToMotoboyAsync(est, user, motoboyId, request));
 
         [HttpPost("motoboys/{motoboyId:int}/mensagens/lidas")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "visualizar")]
         public Task<IActionResult> MarkRead(int motoboyId) =>
             Run(async (est, _) => new { marcadas = await _service.MarkReadAsync(est, motoboyId, readerIsMotoboy: false) });
 
         /// <summary>Lista de motoboys vinculados a esta loja (contatos), online primeiro.</summary>
         [HttpGet("motoboys")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "visualizar")]
         public Task<IActionResult> ListMotoboys() => Run((est, _) => _service.ListMotoboysAsync(est));
 
         // ---- grupo de motoboys da loja (Fase E) --------------------------------
 
         [HttpGet("motoboy-grupo/mensagens")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "visualizar")]
         public Task<IActionResult> ListGroupMessages([FromQuery] int limit = 50) =>
             Run((est, _) => _service.ListGroupMessagesAsync(est, limit));
 
         [HttpPost("motoboy-grupo/mensagens")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "atribuir_motoboy")]
         public Task<IActionResult> SendGroupMessage([FromBody] SendMotoboyGroupMessageRequest? request) =>
             Run((est, user) => _service.SendGroupMessageFromOperatorAsync(est, user, request));

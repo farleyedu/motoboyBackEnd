@@ -23,6 +23,7 @@ namespace APIBack.Controllers
 
         // GET: api/motoboys
         [HttpGet]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "visualizar")]
         public ActionResult<IEnumerable<Motoboy>> GetMotoboys()
         {
@@ -32,6 +33,7 @@ namespace APIBack.Controllers
 
         // GET: api/motoboys/com-pedidos
         [HttpGet("com-pedidos")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "visualizar")]
         public ActionResult<MotoboyComPedidosDTO> GetMotoboysOnline()
         {
@@ -52,6 +54,7 @@ namespace APIBack.Controllers
 
         // GET: api/motoboys/convidar
         [HttpGet("convidar")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "visualizar")]
         public ActionResult<IEnumerable<Motoboy>> ConvidarMotoboys()
         {
@@ -60,6 +63,7 @@ namespace APIBack.Controllers
         }
 
         [HttpPost("{id}/upload-avatar")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "gestao_motoboy")]
         public async Task<IActionResult> UploadAvatar(int id, IFormFile avatar)
         {

@@ -17,7 +17,9 @@ namespace APIBack.Model.Gestao
         private static readonly IReadOnlyDictionary<string, string[]> Requires =
             new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
             {
-                ["DELIVERY"] = new[] { "PEDIDOS" },
+                // Mapa = tela do mapa sem motoboy (plano Rota); Delivery = app do motoboy, despacho e rastreio (Turbo).
+                ["MAPA"] = new[] { "PEDIDOS" },
+                ["DELIVERY"] = new[] { "MAPA", "PEDIDOS" },
                 ["CARDAPIOWEB"] = new[] { "CARDAPIO", "PEDIDOS" },
                 // iFood tem tela propria fora do mapa: exige so os pedidos (decisao do dono, 20/10).
                 ["IFOOD"] = new[] { "PEDIDOS" },

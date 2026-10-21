@@ -13,10 +13,13 @@ public static class MotoboyVinculoLimites
     public static async Task<bool> PodeAtivarAsync(
         NpgsqlConnection connection, NpgsqlTransaction transaction, Guid estabelecimentoId, int motoboyId)
     {
-        var pacotes = await connection.ExecuteScalarAsync<int?>(@"
-SELECT pacotes_motoboy FROM estabelecimentos WHERE id=@EstabelecimentoId FOR UPDATE;",
+        var existe = await connection.ExecuteScalarAsync<bool>(@"
+SELECT EXISTS (SELECT 1 FROM estabelecimentos WHERE id=@EstabelecimentoId FOR UPDATE);",
             new { EstabelecimentoId = estabelecimentoId }, transaction);
-        if (!pacotes.HasValue) return false;
+        if (!existe) return false;
+        var contratados = await connection.ExecuteScalarAsync<int>(
+            "SELECT " + MotoboyLimites.SqlContratados + " FROM estabelecimentos e WHERE e.id=@EstabelecimentoId;",
+            new { EstabelecimentoId = estabelecimentoId }, transaction);
 
         var atual = await connection.ExecuteScalarAsync<bool>(@"
 SELECT EXISTS (
@@ -35,6 +38,6 @@ SELECT COUNT(DISTINCT COALESCE(m.canonical_motoboy_id,m.id))
  WHERE me.estabelecimento_id=@EstabelecimentoId AND me.ativo=TRUE
    AND m.is_simulated=FALSE;",
             new { EstabelecimentoId = estabelecimentoId }, transaction);
-        return quantidade < MotoboyLimites.Vinculados(pacotes.Value);
+        return quantidade < MotoboyLimites.Vinculados(contratados);
     }
 }

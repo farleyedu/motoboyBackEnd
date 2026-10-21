@@ -135,21 +135,25 @@ namespace APIBack.Controllers
 
         /// <summary>Atendente move o pedido para outro motoboy (sempre direto, sem aprovacao).</summary>
         [HttpPost("pedidos/{pedidoId:int}/transferir")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "atribuir_motoboy")]
         public Task<IActionResult> TransferPedido(int pedidoId, [FromBody] TransferPedidoRequest request) =>
             ExecuteAsync((est, userId) => _queueService.TransferByOperatorAsync(est, userId, pedidoId, request.ParaMotoboyId, request.Motivo));
 
         [HttpGet("transferencias")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "visualizar")]
         public Task<IActionResult> ListTransfers([FromQuery] string? status, [FromQuery] int limit = 50) =>
             ExecuteAsync((est, _) => _queueService.ListTransfersAsync(est, status, limit));
 
         [HttpPost("transferencias/{transferId:long}/aprovar")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "atribuir_motoboy")]
         public Task<IActionResult> ApproveTransfer(long transferId, [FromBody] TransferDecisionRequest? request) =>
             ExecuteAsync((est, userId) => _queueService.ApproveTransferAsync(est, userId, transferId, request?.Observacao));
 
         [HttpPost("transferencias/{transferId:long}/rejeitar")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "atribuir_motoboy")]
         public Task<IActionResult> RejectTransfer(long transferId, [FromBody] TransferDecisionRequest? request) =>
             ExecuteAsync((est, userId) => _queueService.RejectTransferAsync(est, userId, transferId, request?.Observacao));
@@ -157,6 +161,7 @@ namespace APIBack.Controllers
         // ---- Trajeto do dia -----------------------------------------------------
 
         [HttpGet("motoboys/{motoboyId:int}/trajeto")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "visualizar")]
         public async Task<IActionResult> GetTrajectory(int motoboyId, [FromQuery] string? date)
         {
@@ -266,6 +271,7 @@ namespace APIBack.Controllers
             ExecuteAsync((est, _) => _historicoRepository.ObterImpactoOperacionalAsync(est));
 
         [HttpPost("pedidos/{pedidoId:int}/atribuir")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "atribuir_motoboy")]
         public async Task<IActionResult> Assign(int pedidoId, [FromBody] AssignPedidoRequest request)
         {
@@ -283,6 +289,7 @@ namespace APIBack.Controllers
 
         /// <summary>Envia a rota inteira ao motoboy numa transacao so (tudo ou nada). Com a confirmacao ligada, vira oferta.</summary>
         [HttpPost("rotas/atribuir")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "atribuir_motoboy")]
         public async Task<IActionResult> AssignRoute([FromBody] AssignRouteRequest request)
         {
@@ -299,6 +306,7 @@ namespace APIBack.Controllers
         }
 
         [HttpDelete("pedidos/{pedidoId:int}/fila")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "atribuir_motoboy")]
         public async Task<IActionResult> Remove(int pedidoId)
         {
@@ -348,6 +356,42 @@ namespace APIBack.Controllers
             }
         }
 
+        public sealed record SaiuManualRequest(string? Entregador);
+
+        /// <summary>Entrega manual (planos sem app do motoboy): a loja marca que o pedido saiu. Nao exige o modulo Delivery.</summary>
+        [HttpPost("pedidos/{pedidoId:int}/saiu")]
+        [RequirePermission("Delivery", "editar_pedido")]
+        public async Task<IActionResult> SaiuManual(int pedidoId, [FromBody] SaiuManualRequest? request)
+        {
+            if (!TryGetActor(out var actorUserId, out var estabelecimentoId, out var error)) return error!;
+            try
+            {
+                var status = await _queueService.MarcarSaiuManualAsync(estabelecimentoId, actorUserId, pedidoId, request?.Entregador);
+                return Ok(ApiResponse<object>.Ok(new { pedidoId, status }));
+            }
+            catch (DeliveryDomainException ex)
+            {
+                return DomainError(ex);
+            }
+        }
+
+        /// <summary>Entrega manual: a loja marca como entregue (tambem pedido retirado no balcao).</summary>
+        [HttpPost("pedidos/{pedidoId:int}/entregue")]
+        [RequirePermission("Delivery", "editar_pedido")]
+        public async Task<IActionResult> EntregueManual(int pedidoId)
+        {
+            if (!TryGetActor(out var actorUserId, out var estabelecimentoId, out var error)) return error!;
+            try
+            {
+                var status = await _queueService.MarcarEntregueManualAsync(estabelecimentoId, actorUserId, pedidoId);
+                return Ok(ApiResponse<object>.Ok(new { pedidoId, status }));
+            }
+            catch (DeliveryDomainException ex)
+            {
+                return DomainError(ex);
+            }
+        }
+
         [HttpPost("pedidos/{pedidoId:int}/cancelar")]
         [RequirePermission("Delivery", "atribuir_motoboy")]
         public async Task<IActionResult> Cancel(int pedidoId, [FromBody] CancelPedidoRequest request)
@@ -365,6 +409,7 @@ namespace APIBack.Controllers
         }
 
         [HttpGet("motoboys/{motoboyId:int}/fila")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "visualizar")]
         public async Task<IActionResult> GetQueue(int motoboyId)
         {
@@ -381,6 +426,7 @@ namespace APIBack.Controllers
         }
 
         [HttpPut("motoboys/{motoboyId:int}/fila/reordenar")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "atribuir_motoboy")]
         public async Task<IActionResult> Reorder(int motoboyId, [FromBody] ReorderQueueRequest request)
         {
@@ -398,6 +444,7 @@ namespace APIBack.Controllers
         }
 
         [HttpPost("motoboys/{motoboyId:int}/fila/concluir-atual")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "atribuir_motoboy")]
         public async Task<IActionResult> CompleteCurrent(int motoboyId)
         {
@@ -415,6 +462,7 @@ namespace APIBack.Controllers
 
         /// <summary>Trava pedidos da fila: viram ancoras e o motoboy nao pode move-los, recusa-los nem transferi-los.</summary>
         [HttpPost("pedidos/travar")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "atribuir_motoboy")]
         public async Task<IActionResult> LockPedidos([FromBody] LockPedidosRequest? request)
         {
@@ -430,6 +478,7 @@ namespace APIBack.Controllers
         }
 
         [HttpPost("pedidos/destravar")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "atribuir_motoboy")]
         public async Task<IActionResult> UnlockPedidos([FromBody] LockPedidosRequest? request)
         {
@@ -449,6 +498,7 @@ namespace APIBack.Controllers
         /// atual e validado para nunca anunciar uma rota parcial ou uma trava ausente.
         /// </summary>
         [HttpPost("rotas/notificar")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "atribuir_motoboy")]
         public async Task<IActionResult> NotifyRouteAssigned([FromBody] NotifyRouteAssignedRequest? request)
         {
@@ -507,6 +557,7 @@ namespace APIBack.Controllers
         }
 
         [HttpPost("simulator/motoboys/{motoboyId:int}/rota/aceitar")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "gestao_motoboy")]
         public async Task<IActionResult> AcceptSimulatorRoute(int motoboyId, [FromBody] ReorderQueueRequest request)
         {
@@ -524,6 +575,7 @@ namespace APIBack.Controllers
         }
 
         [HttpPost("simulator/motoboys/{motoboyId:int}/rota/recusar")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "gestao_motoboy")]
         public async Task<IActionResult> RefuseSimulatorRoute(int motoboyId, [FromBody] RefuseRouteRequest request)
         {
@@ -542,6 +594,7 @@ namespace APIBack.Controllers
 
         /// <summary>Encerra o retorno a loja do motoboy (acao manual do atendente).</summary>
         [HttpPost("motoboys/{motoboyId:int}/fila/chegou-loja")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "atribuir_motoboy")]
         public async Task<IActionResult> ArriveAtStore(int motoboyId)
         {
@@ -557,6 +610,7 @@ namespace APIBack.Controllers
         }
 
         [HttpPost("motoboys/{motoboyId:int}/fila/retomar")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "atribuir_motoboy")]
         public async Task<IActionResult> Resume(int motoboyId)
         {

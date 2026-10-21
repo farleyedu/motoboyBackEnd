@@ -437,7 +437,7 @@ SELECT
     -- (dado legado/inconsistente), vale a parada. Sem isto o painel dizia sem motoboy num pedido que
     -- esta na fila de alguem.
     COALESCE(p.motoboy_responsavel, rs.motoboy_id) AS AssignedDriver,
-    adm.nome::text AS AssignedDriverNome,
+    COALESCE(adm.nome::text, p.entregador_nome) AS AssignedDriverNome,
     CASE WHEN p.latitude::text ~ {numeric} THEN p.latitude::text::DOUBLE PRECISION END AS Latitude,
     CASE WHEN p.longitude::text ~ {numeric} THEN p.longitude::text::DOUBLE PRECISION END AS Longitude,
     p.horario_pedido::text AS HorarioPedidoRaw,
@@ -458,7 +458,8 @@ SELECT
     p.entrega_cep::text AS EntregaCep,
     rs.position AS RoutePosition,
     rs.stop_status AS RouteStopStatus,
-    rs.picked_up_at_utc AS PickedUpAtUtc,
+    -- Entrega manual (sem motoboy): a saida marcada pela loja conta como retirada, e o pedido aparece a caminho.
+    COALESCE(rs.picked_up_at_utc, p.entrega_manual_saiu_utc) AS PickedUpAtUtc,
     rs.arrived_at_utc AS ArrivedAtUtc,
     FALSE AS Locked,
     lf.reason AS LastFailureReason,
@@ -467,7 +468,7 @@ SELECT
     lf.motoboy_id AS LastFailureMotoboyId,
     lf.motoboy_nome AS LastFailureMotoboyNome,
     COALESCE(tries.total, 0) AS AttemptCount,
-    dn.at_utc AS CompletedAtUtc,
+    COALESCE(dn.at_utc, p.entrega_manual_entregue_utc) AS CompletedAtUtc,
     dn.motoboy_id AS CompletedByMotoboyId,
     dn.motoboy_nome AS CompletedByMotoboyNome,
     cn.at_utc AS CanceledAtUtc,
@@ -537,7 +538,7 @@ LEFT JOIN LATERAL (
    -- as colunas de horario do pedido sao legadas e de tipos misturados.
    AND (
         COALESCE(p.status_pedido, 1) IN (1, 2, 5, 8)
-        OR (COALESCE(p.status_pedido, 1) = 3 AND dn.at_utc >= @WindowFromUtc)
+        OR (COALESCE(p.status_pedido, 1) = 3 AND COALESCE(dn.at_utc, p.entrega_manual_entregue_utc) >= @WindowFromUtc)
         OR (COALESCE(p.status_pedido, 1) = 4 AND cn.at_utc >= @WindowFromUtc)
         OR (COALESCE(p.status_pedido, 1) = 7 AND __ENC_AT__ >= @WindowFromUtc)
    )

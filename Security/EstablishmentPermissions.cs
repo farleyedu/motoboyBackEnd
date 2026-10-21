@@ -24,14 +24,20 @@ public static class EstablishmentPermissions
         var active = EstabelecimentoModuleMapper.ToUiModules(string.Empty, modules)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         return CardapioPermissionBridge.Apply(permissions, active.ToArray())
-            .Where(p => Administrative.Contains(p.Key) || active.Contains(p.Key))
+            .Where(p => Administrative.Contains(p.Key) || active.Contains(p.Key) || IsOrderOperation(p.Key, active))
             .ToDictionary(p => p.Key, p => StripActionsOfInactiveModules(p.Key, p.Value, active), StringComparer.OrdinalIgnoreCase);
     }
+
+    // A permissao "Delivery" e a da operacao de pedidos (ver, criar, editar, imprimir, cancelar): vale para toda loja com
+    // Pedidos, mesmo sem o modulo Delivery (planos Partida e Rota). O que e de motoboy fica travado por [RequireModule("Delivery")].
+    private static bool IsOrderOperation(string modulo, HashSet<string> active) =>
+        string.Equals(modulo, "Delivery", StringComparison.OrdinalIgnoreCase) && active.Contains("Pedidos");
 
     // Acoes que moram sob a permissao "Delivery", mas pertencem a um modulo comercial proprio (plano de modulos, 3.3):
     // com o modulo desligado, a acao some e os [RequirePermission] respondem 403.
     private static readonly (string Modulo, string Acao, string ModuloExigido)[] ActionModules =
     {
+        ("Delivery", "gestao_motoboy", "Delivery"),
         ("Delivery", "integracao_ifood", "iFood"),
         ("Delivery", "configurar_impressao", "Impressao"),
     };

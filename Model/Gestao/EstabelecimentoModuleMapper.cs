@@ -22,6 +22,9 @@ namespace APIBack.Model.Gestao
                     case "pedido":
                         modules.Add("PEDIDOS");
                         break;
+                    case "mapa":
+                        modules.Add("MAPA");
+                        break;
                     case "clientes":
                     case "cliente":
                         modules.Add("CLIENTES");
@@ -108,6 +111,9 @@ namespace APIBack.Model.Gestao
                     case "pedidos":
                     case "pedido":
                         modules.Add("Pedidos");
+                        break;
+                    case "mapa":
+                        modules.Add("Mapa");
                         break;
                     case "clientes":
                     case "cliente":

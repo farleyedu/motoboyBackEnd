@@ -437,7 +437,9 @@ UPDATE estabelecimentos
             AND NOT (modulos_ativos @> @ModulosAtivos::modulo_enum[]
                  AND @ModulosAtivos::modulo_enum[] @> modulos_ativos)
            THEN 'personalizado' ELSE plano_comercial END,
-       pacotes_motoboy = GREATEST(pacotes_motoboy, @PacotesMotoboyBase),
+       -- A base de motoboys so muda quando o plano muda (nao apaga um ajuste manual a cada edicao).
+       motoboys_base = CASE WHEN @MotoboysBase IS NOT NULL AND plano_comercial IS DISTINCT FROM @PlanoComercial
+                            THEN @MotoboysBase ELSE motoboys_base END,
        modulos_ativos = @ModulosAtivos::modulo_enum[],
        id_tipo_estabelecimento = @TipoEstabelecimentoId,
        slug = @Slug,
@@ -475,7 +477,7 @@ UPDATE estabelecimentos
                 TempoPreparoMin = request.TempoPreparoMin ?? 20,
                 ModulosAtivos = modulos,
                 PlanoComercial = request.PlanoComercial,
-                PacotesMotoboyBase = modulosPlano?.PacotesMotoboyBase ?? 1,
+                MotoboysBase = modulosPlano?.MotoboysBase,
                 TipoEstabelecimentoId = tipoEstabelecimentoId,
                 Slug = slug
             }, transaction);
@@ -1211,12 +1213,12 @@ INSERT INTO estabelecimentos (
     id_empresa, tipo_unidade, nome_fantasia, cnpj_loja, inscricao_estadual, inscricao_municipal,
     telefone, whatsapp_e164, email, logradouro, numero, complemento, bairro, cidade, uf, cep,
     latitude, longitude, url_logo, ativo, aceita_pedidos, timezone_iana, raio_entrega_km, pedido_minimo,
-    taxa_entrega_fixa, taxa_entrega_por_km, tempo_preparo_min, modulos_ativos, plano_comercial, pacotes_motoboy, id_tipo_estabelecimento, slug, status)
+    taxa_entrega_fixa, taxa_entrega_por_km, tempo_preparo_min, modulos_ativos, plano_comercial, motoboys_base, id_tipo_estabelecimento, slug, status)
 VALUES (
     @EmpresaId, @TipoUnidade::tipo_unidade_enum, @NomeFantasia, @CnpjLoja, @InscricaoEstadual, @InscricaoMunicipal,
     @Telefone, @WhatsappE164, @Email, @Logradouro, @Numero, @Complemento, @Bairro, @Cidade, @Uf, @Cep,
     @Latitude, @Longitude, @UrlLogo, TRUE, @AceitaPedidos, @TimezoneIana, @RaioEntregaKm, @PedidoMinimo,
-    @TaxaEntregaFixa, @TaxaEntregaPorKm, @TempoPreparoMin, @ModulosAtivos::modulo_enum[], @PlanoComercial, @PacotesMotoboyBase, @TipoEstabelecimentoId, @Slug, 'ativo')
+    @TaxaEntregaFixa, @TaxaEntregaPorKm, @TempoPreparoMin, @ModulosAtivos::modulo_enum[], @PlanoComercial, @MotoboysBase, @TipoEstabelecimentoId, @Slug, 'ativo')
 RETURNING id;";
 
             return await connection.ExecuteScalarAsync<Guid>(sql, new
@@ -1249,7 +1251,7 @@ RETURNING id;";
                 TempoPreparoMin = request.TempoPreparoMin ?? 20,
                 ModulosAtivos = modulos,
                 PlanoComercial = request.PlanoComercial,
-                PacotesMotoboyBase = modulosPlano?.PacotesMotoboyBase ?? 1,
+                MotoboysBase = modulosPlano?.MotoboysBase ?? MotoboyLimites.BaseTeste,
                 TipoEstabelecimentoId = tipoEstabelecimentoId,
                 Slug = slug
             }, transaction);
@@ -1414,14 +1416,14 @@ SELECT EXISTS(
         private sealed class PacoteSelecionado
         {
             public string[] ModulosAtivos { get; set; } = Array.Empty<string>();
-            public int PacotesMotoboyBase { get; set; }
+            public int MotoboysBase { get; set; }
         }
 
         private static async Task<PacoteSelecionado?> ResolverModulosPlanoAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, string? plano)
         {
             if (string.IsNullOrWhiteSpace(plano) || string.Equals(plano, "personalizado", StringComparison.OrdinalIgnoreCase)) return null;
             var pacote = await connection.QuerySingleOrDefaultAsync<PacoteSelecionado>(
-                "SELECT modulos_ativos::text[] AS ModulosAtivos, pacotes_motoboy_base AS PacotesMotoboyBase FROM pacotes_comerciais WHERE chave=@Plano FOR SHARE;",
+                "SELECT modulos_ativos::text[] AS ModulosAtivos, motoboys_base AS MotoboysBase FROM pacotes_comerciais WHERE chave=@Plano FOR SHARE;",
                 new { Plano = plano.Trim().ToLowerInvariant() }, transaction);
             return pacote ?? throw new InvalidOperationException("Pacote comercial inválido ou migração pendente.");
         }

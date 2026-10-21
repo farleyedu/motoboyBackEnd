@@ -62,7 +62,49 @@ namespace APIBack.Controllers
             return Ok(ApiResponse<System.Collections.Generic.IReadOnlyList<SituacaoComercialHistoricoDto>>.Ok(lista));
         }
 
-        /// <summary>acao: iniciar_operacao | ativar (plano, pacotesMotoboy) | bloquear (motivo) | desbloquear. Tudo manual.</summary>
+        /// <summary>Pacotes de motoboy da loja (vigentes primeiro). Vencido ou cancelado so deixa de contar.</summary>
+        [HttpGet("api/gestao/estabelecimentos/{id:guid}/motoboy-pacotes")]
+        public async Task<IActionResult> MotoboyPacotes(Guid id)
+        {
+            if (!CurrentUserId.HasValue) return UnauthorizedResponse();
+            if (!CurrentIsSuperAdmin) return ForbiddenResponse();
+            var lista = await _service.ListarMotoboyPacotesAsync(id, HttpContext.RequestAborted);
+            return Ok(ApiResponse<System.Collections.Generic.IReadOnlyList<MotoboyPacoteDto>>.Ok(lista));
+        }
+
+        /// <summary>Lanca um pacote de 3 ou 7 motoboys, mensal (30 dias) ou anual (365 dias). Manual ate o pagamento ser integrado.</summary>
+        [HttpPost("api/gestao/estabelecimentos/{id:guid}/motoboy-pacotes")]
+        public async Task<IActionResult> LancarMotoboyPacote(Guid id, [FromBody] LancarMotoboyPacoteRequest request)
+        {
+            if (!CurrentUserId.HasValue) return UnauthorizedResponse();
+            if (!CurrentIsSuperAdmin) return ForbiddenResponse();
+            try
+            {
+                return Ok(ApiResponse<MotoboyPacoteDto>.Ok(await _service.LancarMotoboyPacoteAsync(id, request, CurrentUserId, HttpContext.RequestAborted)));
+            }
+            catch (SituacaoComercialException ex)
+            {
+                return StatusCode(ex.Status, ApiResponse<object>.Fail(ex.Message, ex.Code));
+            }
+        }
+
+        [HttpDelete("api/gestao/estabelecimentos/{id:guid}/motoboy-pacotes/{pacoteId:long}")]
+        public async Task<IActionResult> CancelarMotoboyPacote(Guid id, long pacoteId)
+        {
+            if (!CurrentUserId.HasValue) return UnauthorizedResponse();
+            if (!CurrentIsSuperAdmin) return ForbiddenResponse();
+            try
+            {
+                await _service.CancelarMotoboyPacoteAsync(id, pacoteId, CurrentUserId, HttpContext.RequestAborted);
+                return Ok(ApiResponse<object>.Ok(new { pacoteId, status = "cancelado" }));
+            }
+            catch (SituacaoComercialException ex)
+            {
+                return StatusCode(ex.Status, ApiResponse<object>.Fail(ex.Message, ex.Code));
+            }
+        }
+
+        /// <summary>acao: iniciar_operacao | ativar (plano, motoboysBase) | bloquear (motivo) | desbloquear. Tudo manual.</summary>
         [HttpPost("api/gestao/estabelecimentos/{id:guid}/situacao")]
         public async Task<IActionResult> Aplicar(Guid id, [FromBody] AcaoSituacaoRequest request)
         {

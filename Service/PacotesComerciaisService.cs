@@ -10,7 +10,7 @@ using Npgsql;
 namespace APIBack.Service;
 
 public sealed record PacoteComercialDto(string Chave, string Nome, IReadOnlyList<string> Modulos,
-    int PacotesMotoboyBase, int LojasAfetadas);
+    int MotoboysBase, int LojasAfetadas);
 
 public sealed record EditarPacoteComercialRequest(IReadOnlyList<string>? Modulos, int? LojasAfetadasConfirmadas);
 
@@ -24,7 +24,7 @@ public sealed class PacotesComerciaisService(NpgsqlDataSource source) : IPacotes
 {
     private static readonly HashSet<string> ModulosPermitidos = new(StringComparer.OrdinalIgnoreCase)
     {
-        "Pedidos", "Delivery", "iFood", "Impressao", "Remuneracao", "WhatsApp", "Clientes",
+        "Pedidos", "Mapa", "Delivery", "iFood", "Impressao", "Remuneracao", "WhatsApp", "Clientes",
         "Cardapio", "CardapioWeb", "Inteligencia", "Financeiro", "Experience", "Simulador",
         "Servicos", "FAQ", "Disponibilidade"
     };
@@ -34,13 +34,13 @@ public sealed class PacotesComerciaisService(NpgsqlDataSource source) : IPacotes
         public string Chave { get; set; } = string.Empty;
         public string Nome { get; set; } = string.Empty;
         public string[] ModulosAtivos { get; set; } = Array.Empty<string>();
-        public int PacotesMotoboyBase { get; set; }
+        public int MotoboysBase { get; set; }
         public int LojasAfetadas { get; set; }
     }
 
     private const string SelectSql = @"
 SELECT p.chave AS Chave, p.nome AS Nome, p.modulos_ativos::text[] AS ModulosAtivos,
-       p.pacotes_motoboy_base AS PacotesMotoboyBase,
+       p.motoboys_base AS MotoboysBase,
        (SELECT COUNT(*) FROM estabelecimentos e WHERE e.plano_comercial = p.chave) AS LojasAfetadas
   FROM pacotes_comerciais p";
 
@@ -96,5 +96,5 @@ UPDATE estabelecimentos
 
     private static PacoteComercialDto ToDto(Row row) => new(row.Chave, row.Nome,
         EstabelecimentoModuleMapper.ToUiModules(string.Empty, row.ModulosAtivos),
-        row.PacotesMotoboyBase, row.LojasAfetadas);
+        row.MotoboysBase, row.LojasAfetadas);
 }

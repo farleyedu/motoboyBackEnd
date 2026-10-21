@@ -66,6 +66,7 @@ namespace APIBack.Controllers
         }
 
         [HttpGet("motoboys/{motoboyId:int}/location-history")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "visualizar")]
         public async Task<IActionResult> GetLocationHistory([FromRoute] int motoboyId, [FromQuery] string? date)
         {

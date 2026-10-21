@@ -89,6 +89,7 @@ namespace APIBack.Controllers
         /// <param name="id">ID do pedido</param>
         /// <returns>Dados completos do pedido</returns>
         [HttpGet("{id}/riderlink")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "visualizar")]
         public async Task<IActionResult> GetPedidoCompleto(int id)
         {
@@ -143,6 +144,7 @@ namespace APIBack.Controllers
         /// </summary>
         /// <returns>Lista de dados completos dos pedidos</returns>
         [HttpGet("motoboy")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "visualizar")]
         public async Task<IActionResult> GetPedidosCompletos()
         {
@@ -201,6 +203,7 @@ namespace APIBack.Controllers
         /// Novas integracoes devem usar POST /api/v2/delivery/pedidos/{id}/atribuir.
         /// </summary>
         [HttpPut("AtribuirMotoboy")]
+        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "atribuir_motoboy")]
         public async Task<IActionResult> AtribuirMotoboy([FromBody] EnviarPedidosParaRotaDTO dto)
         {

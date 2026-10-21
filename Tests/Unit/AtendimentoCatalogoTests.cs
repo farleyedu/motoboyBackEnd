@@ -15,7 +15,7 @@ namespace APIBack.Tests.Unit
     {
         private static readonly ServicoCatalogoItem[] Catalogo =
         {
-            new("delivery", "Delivery", null, new[] { "DELIVERY", "PEDIDOS" }, 10, true),
+            new("delivery", "Delivery", null, new[] { "DELIVERY", "MAPA", "PEDIDOS" }, 10, true),
             new("cardapio_web", "Cardapio web", null, new[] { "CARDAPIO", "CARDAPIOWEB", "PEDIDOS" }, 20, true),
             new("agendamento", "Agendamento", null, new[] { "AGENDAMENTOS" }, 30, true),
             new("antigo", "Antigo", null, Array.Empty<string>(), 40, false),
@@ -143,7 +143,7 @@ namespace APIBack.Tests.Unit
             repo.Setup(r => r.ObterTipoDaLojaAsync(Loja)).ReturnsAsync(Tipo);
             repo.Setup(r => r.ListarCatalogoAsync()).ReturnsAsync(new[]
             {
-                new ServicoCatalogoItem("delivery", "Delivery", null, new[] { "DELIVERY", "PEDIDOS" }, 10, true),
+                new ServicoCatalogoItem("delivery", "Delivery", null, new[] { "DELIVERY", "MAPA", "PEDIDOS" }, 10, true),
                 new ServicoCatalogoItem("agendamento", "Agendamento", null, new[] { "AGENDAMENTOS" }, 30, true),
             });
             repo.Setup(r => r.ListarServicosDoTipoAsync(Tipo)).ReturnsAsync(new[] { new ServicoDoTipo("delivery", true) });
@@ -161,7 +161,7 @@ namespace APIBack.Tests.Unit
             repo.Verify(r => r.DefinirServicosDaLojaAsync(
                 Loja,
                 It.Is<IReadOnlyCollection<string>>(a => a.SequenceEqual(new[] { "delivery" })),
-                It.Is<IReadOnlyCollection<string>>(m => m.OrderBy(x => x).SequenceEqual(new[] { "DELIVERY", "PEDIDOS" })),
+                It.Is<IReadOnlyCollection<string>>(m => m.OrderBy(x => x).SequenceEqual(new[] { "DELIVERY", "MAPA", "PEDIDOS" })),
                 1), Times.Once);
             Assert.True(view.PodeEditar);
         }

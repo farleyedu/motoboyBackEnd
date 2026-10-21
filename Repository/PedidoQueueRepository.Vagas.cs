@@ -10,7 +10,7 @@ public sealed partial class PedidoQueueRepository
 {
     private sealed class VagaConfiguracaoRow
     {
-        public int PacotesMotoboy { get; set; }
+        public int MotoboysContratados { get; set; }
         public string? JanelaAtual { get; set; }
         public string? JanelaPendente { get; set; }
         public DateTimeOffset? VigoraEm { get; set; }
@@ -25,7 +25,7 @@ public sealed partial class PedidoQueueRepository
     {
         if (await PedidoIsentoDeVagaAsync(connection, transaction, pedidoId)) return;
         var config = await connection.QuerySingleAsync<VagaConfiguracaoRow>(@"
-SELECT e.pacotes_motoboy AS PacotesMotoboy,
+SELECT " + MotoboyLimites.SqlContratados + @" AS MotoboysContratados,
        d.order_window::text AS JanelaAtual,
        d.order_window_pending::text AS JanelaPendente,
        d.order_window_effective_from_utc AS VigoraEm
@@ -49,7 +49,7 @@ SELECT EXISTS (SELECT 1 FROM motoboy_vaga_periodo
 SELECT COUNT(*) FROM motoboy_vaga_periodo
  WHERE estabelecimento_id=@EstabelecimentoId AND periodo_inicio_utc=@Periodo;",
             new { EstabelecimentoId = estabelecimentoId, Periodo = periodo }, transaction);
-        var maximo = MotoboyLimites.VagasPorDia(config.PacotesMotoboy);
+        var maximo = MotoboyLimites.VagasPorDia(config.MotoboysContratados);
         if (usadas >= maximo)
             throw new DeliveryDomainException(409, "VAGAS_MOTOBOY_ESGOTADAS",
                 $"Vagas de motoboy esgotadas neste dia operacional ({usadas} de {maximo}). Peça mais motoboys à Zippy.");

@@ -96,16 +96,30 @@ namespace APIBack.Service
     }
 
     /// <summary>
-    /// Limites de motoboy por pacotes de 3 comprados (tabela 1.5 do plano): vagas por dia operacional = 3 x pacotes;
-    /// vinculados = 10, 15, 20, 25 e para em 30.
+    /// Limites de motoboy (planos v2): contratados = base do plano (Turbo 3, Frota 5) + pacotes de 3 ou 7 vigentes
+    /// (mensal = 30 dias, anual = 365). Vagas por dia operacional = contratados; vinculados = contratados + 7, ate 30.
+    /// No teste a loja tem ao menos 3, porque tudo fica liberado. Pacote vencido so deixa de contar: nada roda sozinho.
     /// </summary>
     public static class MotoboyLimites
     {
         public const int VinculadosTeto = 30;
+        public const int VinculosFolga = 7;
+        public const int BaseTeste = 3;
 
-        public static int VagasPorDia(int pacotes) => 3 * Math.Max(1, pacotes);
+        public static int VagasPorDia(int contratados) => Math.Max(0, contratados);
 
-        public static int Vinculados(int pacotes) => Math.Min(VinculadosTeto, 5 + 5 * Math.Max(1, pacotes));
+        public static int Vinculados(int contratados) =>
+            contratados <= 0 ? 0 : Math.Min(VinculadosTeto, contratados + VinculosFolga);
+
+        public static bool QuantidadeValida(int quantidade) => quantidade is 3 or 7;
+
+        public static int DiasDoPacote(string periodicidade) => periodicidade == "anual" ? 365 : 30;
+
+        /// <summary>Motoboys contratados agora, em SQL. Exige a tabela estabelecimentos com o alias "e".</summary>
+        public const string SqlContratados = @"(CASE WHEN e.situacao_comercial = 'teste' THEN GREATEST(e.motoboys_base, 3) ELSE e.motoboys_base END
+ + COALESCE((SELECT SUM(mp.quantidade) FROM motoboy_pacotes mp
+             WHERE mp.estabelecimento_id = e.id AND mp.cancelado_em IS NULL
+               AND mp.inicio_utc <= NOW() AND mp.fim_utc > NOW()), 0))::int";
     }
 
     public sealed record SituacaoComercialDto(
@@ -114,14 +128,22 @@ namespace APIBack.Service
         DateTimeOffset? OperacaoIniciadaEm,
         DateTimeOffset? TesteTerminaEm,
         string? Plano,
-        int PacotesMotoboy,
+        int MotoboysBase,
+        int MotoboysContratados,
         int VagasPorDia,
         int VinculadosMaximo,
         DateTimeOffset? BloqueadoEm,
         string? BloqueadoMotivo);
 
     /// <summary>acao: iniciar_operacao | ativar | bloquear | desbloquear.</summary>
-    public sealed record AcaoSituacaoRequest(string? Acao, string? Motivo, string? Plano, int? PacotesMotoboy);
+    public sealed record AcaoSituacaoRequest(string? Acao, string? Motivo, string? Plano, int? MotoboysBase);
+
+    public sealed record MotoboyPacoteDto(
+        long Id, int Quantidade, string Periodicidade, DateTimeOffset InicioUtc, DateTimeOffset FimUtc,
+        bool Vigente, DateTimeOffset? CanceladoEm);
+
+    /// <summary>periodicidade: mensal (30 dias) | anual (365 dias). Sem inicio, vale a partir de agora.</summary>
+    public sealed record LancarMotoboyPacoteRequest(int Quantidade, string? Periodicidade, DateTimeOffset? InicioUtc);
 
     public sealed class SituacaoComercialException : Exception
     {
@@ -148,6 +170,9 @@ namespace APIBack.Service
         Task<IReadOnlyList<TesteVencidoDto>> ListarTestesVencidosAsync(CancellationToken ct = default);
         Task<IReadOnlyList<SituacaoComercialHistoricoDto>> ListarHistoricoAsync(Guid estabelecimentoId, CancellationToken ct = default);
         Task<bool> TemModuloAsync(Guid estabelecimentoId, string modulo, CancellationToken ct = default);
+        Task<IReadOnlyList<MotoboyPacoteDto>> ListarMotoboyPacotesAsync(Guid estabelecimentoId, CancellationToken ct = default);
+        Task<MotoboyPacoteDto> LancarMotoboyPacoteAsync(Guid estabelecimentoId, LancarMotoboyPacoteRequest request, int? usuarioId, CancellationToken ct = default);
+        Task CancelarMotoboyPacoteAsync(Guid estabelecimentoId, long pacoteId, int? usuarioId, CancellationToken ct = default);
     }
 
     public sealed class SituacaoComercialService : ISituacaoComercialService
@@ -155,7 +180,7 @@ namespace APIBack.Service
         private sealed class PacoteRow
         {
             public string[] ModulosAtivos { get; set; } = Array.Empty<string>();
-            public int PacotesMotoboyBase { get; set; }
+            public int MotoboysBase { get; set; }
         }
         // Curto o bastante para um bloqueio valer rapido; a Gestao invalida na hora ao mudar.
         private static readonly TimeSpan CacheTtl = TimeSpan.FromSeconds(30);
@@ -211,7 +236,7 @@ SELECT e.situacao_comercial = 'teste'
             if (acao == "ativar" && planoSolicitado != "personalizado")
             {
                 pacote = await connection.QuerySingleOrDefaultAsync<PacoteRow>(new CommandDefinition(@"
-SELECT modulos_ativos::text[] AS ModulosAtivos, pacotes_motoboy_base AS PacotesMotoboyBase
+SELECT modulos_ativos::text[] AS ModulosAtivos, motoboys_base AS MotoboysBase
   FROM pacotes_comerciais WHERE chave=@Chave FOR SHARE;",
                     new { Chave = planoSolicitado }, tx, cancellationToken: ct));
                 if (pacote == null)
@@ -242,17 +267,18 @@ UPDATE estabelecimentos
                     var plano = planoSolicitado;
                     if (!SituacoesComerciais.Planos.Contains(plano))
                         throw new SituacaoComercialException(422, "PLANO_INVALIDO", "Escolha o plano: partida, rota, turbo, frota ou personalizado.");
-                    var pacotes = request.PacotesMotoboy ?? Math.Max(atual.PacotesMotoboy, pacote?.PacotesMotoboyBase ?? 1);
-                    if (pacotes < (pacote?.PacotesMotoboyBase ?? 1))
-                        throw new SituacaoComercialException(422, "PACOTES_INVALIDOS", "Informe ao menos os pacotes de motoboy incluídos no plano.");
+                    // Sem valor informado vale a base do plano escolhido (Turbo 3, Frota 5); "personalizado" mantem a atual.
+                    var motoboysBase = request.MotoboysBase ?? pacote?.MotoboysBase ?? atual.MotoboysBase;
+                    if (motoboysBase < 0)
+                        throw new SituacaoComercialException(422, "MOTOBOYS_INVALIDOS", "A base de motoboys não pode ser negativa.");
                     depois = SituacoesComerciais.Ativo;
                     await connection.ExecuteAsync(new CommandDefinition(@"
 UPDATE estabelecimentos
-   SET situacao_comercial = 'ativo', plano_comercial = @Plano, pacotes_motoboy = @Pacotes,
+   SET situacao_comercial = 'ativo', plano_comercial = @Plano, motoboys_base = @MotoboysBase,
        modulos_ativos = COALESCE(@Modulos::modulo_enum[], modulos_ativos),
        operacao_iniciada_em = COALESCE(operacao_iniciada_em, NOW()),
        bloqueado_em = NULL, bloqueado_por = NULL, bloqueado_motivo = NULL
- WHERE id = @Id;", new { Id = estabelecimentoId, Plano = plano, Pacotes = pacotes, Modulos = pacote?.ModulosAtivos }, tx, cancellationToken: ct));
+ WHERE id = @Id;", new { Id = estabelecimentoId, Plano = plano, MotoboysBase = motoboysBase, Modulos = pacote?.ModulosAtivos }, tx, cancellationToken: ct));
                     break;
 
                 case "bloquear":
@@ -292,7 +318,7 @@ VALUES (@Id, @Acao, @Antes, @Depois, @Motivo, @Usuario, CAST(@Detalhes AS jsonb)
                 new
                 {
                     Id = estabelecimentoId, Acao = acao, Antes = antes, Depois = depois, Motivo = motivo, Usuario = usuarioId,
-                    Detalhes = JsonSerializer.Serialize(new { request.Plano, request.PacotesMotoboy })
+                    Detalhes = JsonSerializer.Serialize(new { request.Plano, request.MotoboysBase })
                 }, tx, cancellationToken: ct));
 
             var resultado = await LerAsync(connection, tx, estabelecimentoId, ct)
@@ -355,31 +381,106 @@ SELECT id, acao, situacao_antes AS SituacaoAntes, situacao_depois AS SituacaoDep
             public DateTime? OperacaoIniciadaEm { get; set; }
             public DateTime? TesteTerminaEm { get; set; }
             public string? PlanoComercial { get; set; }
-            public int PacotesMotoboy { get; set; }
+            public int MotoboysBase { get; set; }
+            public int MotoboysContratados { get; set; }
             public DateTime? BloqueadoEm { get; set; }
             public string? BloqueadoMotivo { get; set; }
         }
 
         private static async Task<SituacaoComercialDto?> LerAsync(NpgsqlConnection connection, NpgsqlTransaction? tx, Guid id, CancellationToken ct, bool forUpdate = false)
         {
+            // A trava vem antes, separada: a leitura tem a soma dos pacotes numa subconsulta.
+            if (forUpdate)
+                await connection.ExecuteAsync(new CommandDefinition(
+                    "SELECT 1 FROM estabelecimentos WHERE id = @Id FOR UPDATE;", new { Id = id }, tx, cancellationToken: ct));
             var sql = @"
-SELECT id, situacao_comercial AS SituacaoComercial, operacao_iniciada_em AS OperacaoIniciadaEm, teste_termina_em AS TesteTerminaEm,
-       plano_comercial AS PlanoComercial, pacotes_motoboy AS PacotesMotoboy, bloqueado_em AS BloqueadoEm, bloqueado_motivo AS BloqueadoMotivo
-  FROM estabelecimentos WHERE id = @Id" + (forUpdate ? " FOR UPDATE" : string.Empty) + ";";
+SELECT e.id, e.situacao_comercial AS SituacaoComercial, e.operacao_iniciada_em AS OperacaoIniciadaEm, e.teste_termina_em AS TesteTerminaEm,
+       e.plano_comercial AS PlanoComercial, e.motoboys_base AS MotoboysBase, " + MotoboyLimites.SqlContratados + @" AS MotoboysContratados,
+       e.bloqueado_em AS BloqueadoEm, e.bloqueado_motivo AS BloqueadoMotivo
+  FROM estabelecimentos e WHERE e.id = @Id;";
             var row = await connection.QuerySingleOrDefaultAsync<Row>(new CommandDefinition(sql, new { Id = id }, tx, cancellationToken: ct));
             if (row == null) return null;
-            var pacotes = Math.Max(1, row.PacotesMotoboy);
             return new SituacaoComercialDto(
                 row.Id,
                 string.IsNullOrWhiteSpace(row.SituacaoComercial) ? SituacoesComerciais.Ativo : row.SituacaoComercial,
                 Utc(row.OperacaoIniciadaEm),
                 Utc(row.TesteTerminaEm),
                 row.PlanoComercial,
-                pacotes,
-                MotoboyLimites.VagasPorDia(pacotes),
-                MotoboyLimites.Vinculados(pacotes),
+                row.MotoboysBase,
+                row.MotoboysContratados,
+                MotoboyLimites.VagasPorDia(row.MotoboysContratados),
+                MotoboyLimites.Vinculados(row.MotoboysContratados),
                 Utc(row.BloqueadoEm),
                 row.BloqueadoMotivo);
+        }
+
+        public async Task<IReadOnlyList<MotoboyPacoteDto>> ListarMotoboyPacotesAsync(Guid estabelecimentoId, CancellationToken ct = default)
+        {
+            await using var connection = await _dataSource.OpenConnectionAsync(ct);
+            var rows = await connection.QueryAsync<MotoboyPacoteRow>(new CommandDefinition(MotoboyPacoteSelect + @"
+ WHERE estabelecimento_id = @EstabelecimentoId
+ ORDER BY (cancelado_em IS NULL AND fim_utc > NOW()) DESC, fim_utc DESC
+ LIMIT 50;", new { EstabelecimentoId = estabelecimentoId }, cancellationToken: ct));
+            return rows.Select(ToDto).ToList();
+        }
+
+        public async Task<MotoboyPacoteDto> LancarMotoboyPacoteAsync(Guid estabelecimentoId, LancarMotoboyPacoteRequest request, int? usuarioId, CancellationToken ct = default)
+        {
+            if (!MotoboyLimites.QuantidadeValida(request.Quantidade))
+                throw new SituacaoComercialException(422, "PACOTE_INVALIDO", "O pacote de motoboys é de 3 ou de 7.");
+            var periodicidade = (request.Periodicidade ?? "mensal").Trim().ToLowerInvariant();
+            if (periodicidade is not ("mensal" or "anual"))
+                throw new SituacaoComercialException(422, "PERIODICIDADE_INVALIDA", "Escolha mensal ou anual.");
+            var inicio = request.InicioUtc ?? DateTimeOffset.UtcNow;
+            var fim = inicio.AddDays(MotoboyLimites.DiasDoPacote(periodicidade));
+
+            await using var connection = await _dataSource.OpenConnectionAsync(ct);
+            var existe = await connection.ExecuteScalarAsync<bool>(new CommandDefinition(
+                "SELECT EXISTS (SELECT 1 FROM estabelecimentos WHERE id = @Id);", new { Id = estabelecimentoId }, cancellationToken: ct));
+            if (!existe) throw new SituacaoComercialException(404, "ESTABELECIMENTO_NAO_ENCONTRADO", "Estabelecimento nao encontrado.");
+            var row = await connection.QuerySingleAsync<MotoboyPacoteRow>(new CommandDefinition(@"
+INSERT INTO motoboy_pacotes (estabelecimento_id, quantidade, periodicidade, inicio_utc, fim_utc, lancado_por)
+VALUES (@EstabelecimentoId, @Quantidade, @Periodicidade, @Inicio, @Fim, @Usuario)
+RETURNING " + MotoboyPacoteColumns + ";",
+                new { EstabelecimentoId = estabelecimentoId, request.Quantidade, Periodicidade = periodicidade, Inicio = inicio, Fim = fim, Usuario = usuarioId },
+                cancellationToken: ct));
+            _cache.Remove(Key(estabelecimentoId));
+            return ToDto(row);
+        }
+
+        public async Task CancelarMotoboyPacoteAsync(Guid estabelecimentoId, long pacoteId, int? usuarioId, CancellationToken ct = default)
+        {
+            await using var connection = await _dataSource.OpenConnectionAsync(ct);
+            var updated = await connection.ExecuteAsync(new CommandDefinition(@"
+UPDATE motoboy_pacotes SET cancelado_em = NOW(), cancelado_por = @Usuario
+ WHERE id = @Id AND estabelecimento_id = @EstabelecimentoId AND cancelado_em IS NULL;",
+                new { Id = pacoteId, EstabelecimentoId = estabelecimentoId, Usuario = usuarioId }, cancellationToken: ct));
+            if (updated == 0)
+                throw new SituacaoComercialException(404, "PACOTE_NAO_ENCONTRADO", "Pacote de motoboys não encontrado ou já cancelado.");
+            _cache.Remove(Key(estabelecimentoId));
+        }
+
+        private const string MotoboyPacoteColumns =
+            "id, quantidade, periodicidade, inicio_utc AS InicioUtc, fim_utc AS FimUtc, cancelado_em AS CanceladoEm";
+        private const string MotoboyPacoteSelect = "SELECT " + MotoboyPacoteColumns + " FROM motoboy_pacotes";
+
+        private sealed class MotoboyPacoteRow
+        {
+            public long Id { get; set; }
+            public int Quantidade { get; set; }
+            public string Periodicidade { get; set; } = string.Empty;
+            public DateTime InicioUtc { get; set; }
+            public DateTime FimUtc { get; set; }
+            public DateTime? CanceladoEm { get; set; }
+        }
+
+        private static MotoboyPacoteDto ToDto(MotoboyPacoteRow row)
+        {
+            var inicio = Utc(row.InicioUtc)!.Value;
+            var fim = Utc(row.FimUtc)!.Value;
+            var agora = DateTimeOffset.UtcNow;
+            return new MotoboyPacoteDto(row.Id, row.Quantidade, row.Periodicidade, inicio, fim,
+                row.CanceladoEm == null && inicio <= agora && fim > agora, Utc(row.CanceladoEm));
         }
 
         private static DateTimeOffset? Utc(DateTime? value) =>
