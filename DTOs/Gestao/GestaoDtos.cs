@@ -82,6 +82,9 @@ namespace APIBack.DTOs.Gestao
         public string? Endereco { get; set; }
         public string? WabaPhoneNumberId { get; set; }
         public string? WabaDisplayPhone { get; set; }
+        /// <summary>So na criacao, quando a empresa ainda nao tinha gerente: o link de primeiro acesso do gerente padrao.</summary>
+        public AcessoLinkDto? AcessoGerente { get; set; }
+        public string? AcessoGerenteErro { get; set; }
     }
 
     public class GestaoUsuarioEmpresaDto
@@ -143,6 +146,8 @@ namespace APIBack.DTOs.Gestao
         public string Nome { get; set; } = string.Empty;
         public string Email { get; set; } = string.Empty;
         public string? Telefone { get; set; }
+        /// <summary>"empresa" (padrao): transita entre todas as lojas da empresa. "estabelecimento": so a loja do modal.</summary>
+        public string? Tipo { get; set; }
     }
 
     public class SalvarEstabelecimentoRequest

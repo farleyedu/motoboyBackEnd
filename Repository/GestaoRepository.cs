@@ -90,19 +90,22 @@ SELECT  emp.id                    AS Id,
             return empresaId;
         }
 
-        public async Task<Guid> CriarEmpresaComEstabelecimentoAsync(
+        public async Task<GestaoProvisionamentoResultado> CriarEmpresaComEstabelecimentoAsync(
             SalvarEmpresaRequest request,
-            SalvarEstabelecimentoRequest estabelecimentoRequest)
+            SalvarEstabelecimentoRequest estabelecimentoRequest,
+            GestaoGerentePadraoCommand? gerente)
         {
             await using var connection = new NpgsqlConnection(_connectionString);
             await connection.OpenAsync();
             await using var transaction = await connection.BeginTransactionAsync();
 
             var empresaId = await InserirEmpresaAsync(connection, transaction, request);
-            var estabelecimentoId = await InserirEstabelecimentoAsync(connection, transaction, estabelecimentoRequest, empresaId, "initialEstablishment.tipoEstabelecimentoSlug");
+            var estabelecimentoId = await InserirEstabelecimentoAsync(connection, transaction, estabelecimentoRequest, empresaId, "initialEstablishment.tipoEstabelecimentoSlug", exigirTipo: true);
+            var acesso = await GarantirGerenteAsync(connection, transaction, empresaId, estabelecimentoId, gerente);
 
             await transaction.CommitAsync();
-            return empresaId;
+            InvalidarAcessoDosGerentes(acesso);
+            return new GestaoProvisionamentoResultado(empresaId, estabelecimentoId, acesso.CriadoUserId, acesso.CriadoEmail, acesso.Vinculados.Count);
         }
 
         public async Task AtualizarEmpresaAsync(Guid empresaId, SalvarEmpresaRequest request)
@@ -364,17 +367,19 @@ SELECT  e.id                      AS Id,
             return rows.ToArray();
         }
 
-        public async Task<Guid> CriarEstabelecimentoAsync(SalvarEstabelecimentoRequest request, Guid? empresaIdOverride = null)
+        public async Task<GestaoProvisionamentoResultado> CriarEstabelecimentoAsync(SalvarEstabelecimentoRequest request, GestaoGerentePadraoCommand? gerente)
         {
             request.PlanoComercial = NormalizarPlano(request.PlanoComercial);
             await using var connection = new NpgsqlConnection(_connectionString);
             await connection.OpenAsync();
             await using var transaction = await connection.BeginTransactionAsync();
 
-            var id = await InserirEstabelecimentoAsync(connection, transaction, request, empresaIdOverride, "tipoEstabelecimentoSlug");
+            var id = await InserirEstabelecimentoAsync(connection, transaction, request, null, "tipoEstabelecimentoSlug", exigirTipo: true);
+            var acesso = await GarantirGerenteAsync(connection, transaction, request.EmpresaId!.Value, id, gerente);
 
             await transaction.CommitAsync();
-            return id;
+            InvalidarAcessoDosGerentes(acesso);
+            return new GestaoProvisionamentoResultado(request.EmpresaId.Value, id, acesso.CriadoUserId, acesso.CriadoEmail, acesso.Vinculados.Count);
         }
 
         public async Task AtualizarEstabelecimentoAsync(Guid estabelecimentoId, SalvarEstabelecimentoRequest request)
@@ -791,6 +796,16 @@ SELECT  ue.id                     AS VinculoId,
             await connection.OpenAsync();
             await using var transaction = await connection.BeginTransactionAsync();
 
+            var userId = await SalvarUsuarioAsync(connection, transaction, command);
+
+            await transaction.CommitAsync();
+            _authCache?.InvalidateUser(userId);
+            return userId;
+        }
+
+        private static async Task<int> SalvarUsuarioAsync(
+            NpgsqlConnection connection, NpgsqlTransaction transaction, GestaoPersistenciaUsuarioCommand command)
+        {
             int userId;
             if (command.UsuarioId.HasValue)
             {
@@ -933,8 +948,6 @@ SET tipo_acesso              = EXCLUDED.tipo_acesso,
                 }
             }
 
-            await transaction.CommitAsync();
-            _authCache?.InvalidateUser(userId);
             return userId;
         }
 
@@ -1193,7 +1206,8 @@ RETURNING id;";
             NpgsqlTransaction transaction,
             SalvarEstabelecimentoRequest request,
             Guid? empresaIdOverride,
-            string tipoEstabelecimentoField)
+            string tipoEstabelecimentoField,
+            bool exigirTipo = false)
         {
             request.PlanoComercial = NormalizarPlano(request.PlanoComercial);
             var empresaId = empresaIdOverride ?? request.EmpresaId;
@@ -1202,7 +1216,7 @@ RETURNING id;";
                 throw new InvalidOperationException("Empresa obrigatoria para salvar estabelecimento.");
             }
 
-            var tipoEstabelecimentoId = await ResolverTipoEstabelecimentoIdAsync(connection, transaction, request, tipoEstabelecimentoField);
+            var tipoEstabelecimentoId = await ResolverTipoEstabelecimentoIdAsync(connection, transaction, request, tipoEstabelecimentoField, exigirTipo);
             var tipoEstabelecimentoSlug = await ObterTipoEstabelecimentoSlugAsync(connection, transaction, tipoEstabelecimentoId)
                 ?? NormalizeTypeSlug(request.TipoEstabelecimentoSlug, request.TipoEstabelecimentoNome);
             var modulosPlano = await ResolverModulosPlanoAsync(connection, transaction, request.PlanoComercial);
@@ -1224,7 +1238,7 @@ VALUES (
     @TaxaEntregaFixa, @TaxaEntregaPorKm, @TempoPreparoMin, @ModulosAtivos::modulo_enum[], @PlanoComercial, @MotoboysBase, @TipoEstabelecimentoId, @Slug, 'ativo')
 RETURNING id;";
 
-            return await connection.ExecuteScalarAsync<Guid>(sql, new
+            var novoId = await connection.ExecuteScalarAsync<Guid>(sql, new
             {
                 EmpresaId = empresaId.Value,
                 TipoUnidade = tipoUnidade,
@@ -1258,13 +1272,130 @@ RETURNING id;";
                 TipoEstabelecimentoId = tipoEstabelecimentoId,
                 Slug = slug
             }, transaction);
+
+            await LigarServicosPadraoAsync(connection, transaction, novoId, tipoEstabelecimentoId, modulos);
+            return novoId;
+        }
+
+        /// <summary>
+        /// Servicos que o tipo traz ligados por padrao (tipo_servico.padrao) e cujos modulos a loja tem. Sem isso a loja nasce sem
+        /// servico nenhum e o numero de WhatsApp e o cardapio web nao tem o que atender. Tolera banco sem o catalogo de servicos.
+        /// </summary>
+        private static async Task LigarServicosPadraoAsync(
+            NpgsqlConnection connection, NpgsqlTransaction transaction, Guid estabelecimentoId, Guid tipoEstabelecimentoId, string[] modulos)
+        {
+            var catalogoExiste = await connection.ExecuteScalarAsync<bool>(@"
+SELECT to_regclass('estabelecimento_servico') IS NOT NULL
+   AND to_regclass('tipo_servico') IS NOT NULL
+   AND to_regclass('servico_catalogo') IS NOT NULL;", transaction: transaction);
+            if (!catalogoExiste) return;
+
+            await connection.ExecuteAsync(@"
+INSERT INTO estabelecimento_servico (id_estabelecimento, servico_codigo)
+SELECT @Loja, ts.servico_codigo
+  FROM tipo_servico ts
+  JOIN servico_catalogo sc ON sc.codigo = ts.servico_codigo AND sc.ativo
+ WHERE ts.id_tipo_estabelecimento = @Tipo
+   AND ts.padrao
+   AND NOT EXISTS (SELECT 1 FROM unnest(sc.modulos_exigidos) AS m(nome) WHERE upper(m.nome) <> ALL(@Modulos::text[]))
+ON CONFLICT DO NOTHING;",
+                new { Loja = estabelecimentoId, Tipo = tipoEstabelecimentoId, Modulos = modulos.Select(m => m.ToUpperInvariant()).ToArray() }, transaction);
+        }
+
+        private sealed class AcessoGarantido
+        {
+            public int? CriadoUserId { get; init; }
+            public string? CriadoEmail { get; init; }
+            public IReadOnlyList<int> Vinculados { get; init; } = Array.Empty<int>();
+        }
+
+        /// <summary>
+        /// Toda loja nasce com alguem que consegue entrar. Se a empresa ja tem gerente (da empresa ou dono), a loja nova e vinculada
+        /// a todos eles; se nao tem, o gerente padrao e criado agora, com acesso a todas as lojas da empresa.
+        /// </summary>
+        private static async Task<AcessoGarantido> GarantirGerenteAsync(
+            NpgsqlConnection connection, NpgsqlTransaction transaction, Guid empresaId, Guid estabelecimentoId, GestaoGerentePadraoCommand? gerente)
+        {
+            var existentes = (await connection.QueryAsync<int>(@"
+SELECT DISTINCT uemp.id_usuario
+  FROM usuario_empresas uemp
+  JOIN usuario u ON u.id = uemp.id_usuario
+ WHERE uemp.id_empresa = @EmpresaId
+   AND uemp.ativo = TRUE AND uemp.status = 'ativo'
+   AND uemp.tipo_acesso IN ('gerente_empresa', 'dono')
+   AND COALESCE(u.is_super_admin, FALSE) = FALSE
+   AND u.deleted_at IS NULL;", new { EmpresaId = empresaId }, transaction)).ToList();
+
+            if (existentes.Count > 0)
+            {
+                foreach (var userId in existentes)
+                {
+                    await VincularGerenteALojaAsync(connection, transaction, userId, estabelecimentoId, gerente?.PermissoesJson, gerente?.ActorUserId);
+                }
+
+                return new AcessoGarantido { Vinculados = existentes };
+            }
+
+            if (gerente == null || !gerente.CriarSePreciso) return new AcessoGarantido();
+
+            var email = gerente.Email;
+            if (string.IsNullOrWhiteSpace(email))
+            {
+                var slug = await connection.ExecuteScalarAsync<string?>("SELECT slug FROM estabelecimentos WHERE id = @Id;", new { Id = estabelecimentoId }, transaction);
+                for (var tentativa = 1; ; tentativa++)
+                {
+                    email = GerentePadraoRules.Email(slug, tentativa);
+                    var existe = await connection.ExecuteScalarAsync<bool>(
+                        "SELECT EXISTS(SELECT 1 FROM usuario WHERE lower(email) = lower(@Email));", new { Email = email }, transaction);
+                    if (!existe) break;
+                }
+            }
+
+            var lojas = (await connection.QueryAsync<Guid>(
+                "SELECT id FROM estabelecimentos WHERE id_empresa = @EmpresaId AND COALESCE(ativo, TRUE) = TRUE ORDER BY created_at, id;",
+                new { EmpresaId = empresaId }, transaction)).ToArray();
+
+            var criadoId = await SalvarUsuarioAsync(connection, transaction, new GestaoPersistenciaUsuarioCommand
+            {
+                Nome = gerente.Nome.Trim(),
+                Email = email!.Trim(),
+                SenhaHash = gerente.SenhaHash,
+                SenhaPendente = true,
+                EmpresaId = empresaId,
+                CompanyRole = "gerente_empresa",
+                EstablishmentRole = "gerente_estabelecimento",
+                EstabelecimentoIds = lojas,
+                PermissoesCustomizadasJson = gerente.PermissoesJson,
+                ActorUserId = gerente.ActorUserId
+            });
+
+            return new AcessoGarantido { CriadoUserId = criadoId, CriadoEmail = email.Trim(), Vinculados = new[] { criadoId } };
+        }
+
+        private static Task VincularGerenteALojaAsync(
+            NpgsqlConnection connection, NpgsqlTransaction transaction, int userId, Guid estabelecimentoId, string? permissoesJson, int? actorUserId) =>
+            connection.ExecuteAsync(@"
+INSERT INTO usuario_estabelecimentos (
+    id, id_usuario, id_estabelecimento, tipo_acesso, status, convidado_por, aprovado_por,
+    data_convite, data_aprovacao, permissoes_customizadas, ativo, created_at, updated_at)
+VALUES (
+    @Id, @UserId, @EstabelecimentoId, 'gerente_estabelecimento', 'ativo', @Actor, @Actor,
+    NOW(), NOW(), @Permissoes::jsonb, TRUE, NOW(), NOW())
+ON CONFLICT (id_usuario, id_estabelecimento) DO UPDATE
+SET status = 'ativo', ativo = TRUE, data_remocao = NULL, updated_at = NOW();",
+                new { Id = Guid.NewGuid(), UserId = userId, EstabelecimentoId = estabelecimentoId, Permissoes = permissoesJson, Actor = actorUserId }, transaction);
+
+        private void InvalidarAcessoDosGerentes(AcessoGarantido acesso)
+        {
+            foreach (var userId in acesso.Vinculados) _authCache?.InvalidateUser(userId);
         }
 
         private async Task<Guid> ResolverTipoEstabelecimentoIdAsync(
             NpgsqlConnection connection,
             NpgsqlTransaction transaction,
             SalvarEstabelecimentoRequest request,
-            string fieldName)
+            string fieldName,
+            bool exigirTipo = false)
         {
             var requestedType =
                 (request.TipoEstabelecimentoId.HasValue && request.TipoEstabelecimentoId.Value != Guid.Empty) ||
@@ -1330,6 +1461,12 @@ SELECT id
                     : $"Tipo de estabelecimento informado nao existe: {requestedValue}.";
 
                 throw BuildValidationException(fieldName, message);
+            }
+
+            // Na criacao o tipo define papeis e servicos da loja: nao se chuta o primeiro do banco.
+            if (exigirTipo)
+            {
+                throw BuildValidationException(fieldName, "Escolha o tipo de estabelecimento.");
             }
 
             var fallback = await connection.ExecuteScalarAsync<Guid?>(@"

@@ -11,7 +11,9 @@ namespace APIBack.Repository.Interface
         Task<IReadOnlyCollection<GestaoEmpresaRow>> ListarEmpresasAsync(Guid? empresaId);
         Task<GestaoEmpresaRow?> ObterEmpresaAsync(Guid empresaId);
         Task<Guid> CriarEmpresaAsync(SalvarEmpresaRequest request);
-        Task<Guid> CriarEmpresaComEstabelecimentoAsync(SalvarEmpresaRequest request, SalvarEstabelecimentoRequest estabelecimentoRequest);
+        /// <summary>Empresa, loja, servicos padrao e gerente na mesma transacao: se algo falhar, nada fica criado.</summary>
+        Task<GestaoProvisionamentoResultado> CriarEmpresaComEstabelecimentoAsync(
+            SalvarEmpresaRequest request, SalvarEstabelecimentoRequest estabelecimentoRequest, GestaoGerentePadraoCommand? gerente);
         Task AtualizarEmpresaAsync(Guid empresaId, SalvarEmpresaRequest request);
         Task AtualizarStatusEmpresaAsync(Guid empresaId, bool ativa);
         Task AtualizarPausaEmpresaAsync(Guid empresaId, bool pausada);
@@ -20,7 +22,8 @@ namespace APIBack.Repository.Interface
         Task<IReadOnlyCollection<GestaoEstabelecimentoRow>> ListarEstabelecimentosAsync(Guid? empresaId, Guid? estabelecimentoId);
         Task<GestaoEstabelecimentoRow?> ObterEstabelecimentoAsync(Guid estabelecimentoId);
         Task<IReadOnlyCollection<GestaoTargetEstabelecimento>> ListarEstabelecimentosPorIdsAsync(IReadOnlyCollection<Guid> estabelecimentoIds);
-        Task<Guid> CriarEstabelecimentoAsync(SalvarEstabelecimentoRequest request, Guid? empresaIdOverride = null);
+        /// <summary>Loja, servicos padrao e acesso dos gerentes da empresa na mesma transacao.</summary>
+        Task<GestaoProvisionamentoResultado> CriarEstabelecimentoAsync(SalvarEstabelecimentoRequest request, GestaoGerentePadraoCommand? gerente);
         Task AtualizarEstabelecimentoAsync(Guid estabelecimentoId, SalvarEstabelecimentoRequest request);
         Task AtualizarStatusEstabelecimentoAsync(Guid estabelecimentoId, bool ativa);
 

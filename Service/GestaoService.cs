@@ -76,33 +76,75 @@ namespace APIBack.Service
                 ThrowIfValidationErrors(errors);
             }
 
-            var createdId = request.InitialEstablishment != null
-                ? await _repository.CriarEmpresaComEstabelecimentoAsync(request, request.InitialEstablishment)
-                : await _repository.CriarEmpresaAsync(request);
+            // Toda empresa com loja nasce com gerente: o informado ou, sem ele, o padrao (gerente.<loja>@zippy.com). Tudo na mesma transacao.
+            GestaoProvisionamentoResultado? provisionamento = null;
+            Guid createdId;
+            GestaoGerentePadraoCommand? gerente = null;
+            if (request.InitialEstablishment != null)
+            {
+                gerente = await MontarGerentePadraoAsync(userId, request.NomeFantasia, responsavel, podeCriar: true);
+                provisionamento = await _repository.CriarEmpresaComEstabelecimentoAsync(request, request.InitialEstablishment, gerente);
+                createdId = provisionamento.EmpresaId;
+            }
+            else
+            {
+                createdId = await _repository.CriarEmpresaAsync(request);
+            }
 
             var created = await _repository.ObterEmpresaAsync(createdId)
                 ?? throw new InvalidOperationException("Empresa criada mas nao encontrada na consulta de retorno.");
 
             var dto = MapEmpresa(created);
-            if (responsavel != null)
+            if (provisionamento?.GerenteUserId is int gerenteUserId)
             {
-                try
-                {
-                    var lojas = await _repository.ListarEstabelecimentosAsync(createdId, null);
-                    dto.AcessoResponsavel = await CriarResponsavelCoreAsync(
-                        scope, userId, createdId, lojas.Select(item => item.Id).ToArray(), responsavel);
-                }
-                catch (Exception ex)
-                {
-                    // A empresa ja existe: o erro vira aviso e o acesso se cria depois, pelo modal da loja.
-                    _logger.LogWarning(ex, "Empresa {EmpresaId} criada, mas o acesso do responsavel falhou.", createdId);
-                    dto.AcessoResponsavelErro = ex is RequestValidationException
-                        ? "A empresa foi criada, mas o acesso do responsavel nao: confira nome e e-mail e crie pelo modal da loja."
-                        : "A empresa foi criada, mas nao foi possivel criar o acesso do responsavel. Crie pelo modal da loja.";
-                }
+                var (link, erro) = await GerarLinkDoGerenteAsync(userId, provisionamento.EstabelecimentoId, gerenteUserId, gerente!);
+                dto.AcessoResponsavel = link;
+                dto.AcessoResponsavelErro = erro;
             }
 
             return dto;
+        }
+
+        /// <summary>
+        /// Gerente que a criacao garante. Com responsavel informado usa o nome e o e-mail dele; sem, o nome e "Gerente &lt;empresa&gt;" e o
+        /// e-mail e gerado depois, a partir do slug da loja (so o login: nada e enviado para ele, o acesso e pelo link).
+        /// </summary>
+        private async Task<GestaoGerentePadraoCommand> MontarGerentePadraoAsync(int actorUserId, string? empresaNome, ResponsavelRequest? responsavel, bool podeCriar)
+        {
+            const string cargo = "gerente_estabelecimento";
+            var padrao = await _repository.ListarPermissoesPadraoPorTipoAsync(new[] { cargo });
+            var permissoes = padrao.TryGetValue(cargo, out var porModulo) && porModulo.Count > 0 ? JsonSerializer.Serialize(porModulo) : null;
+
+            return new GestaoGerentePadraoCommand
+            {
+                Nome = string.IsNullOrWhiteSpace(responsavel?.Nome) ? GerentePadraoRules.Nome(empresaNome) : responsavel!.Nome.Trim(),
+                Email = string.IsNullOrWhiteSpace(responsavel?.Email) ? null : responsavel!.Email.Trim(),
+                SenhaHash = PasswordSecurity.Hash(Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(24))),
+                PermissoesJson = permissoes,
+                ActorUserId = actorUserId,
+                CriarSePreciso = podeCriar
+            };
+        }
+
+        /// <summary>Gera o link de primeiro acesso do gerente recem-criado. Se falhar, o gerente existe e o link se gera depois em "Acesso ao painel".</summary>
+        private async Task<(AcessoLinkDto? Link, string? Erro)> GerarLinkDoGerenteAsync(
+            int actorUserId, Guid estabelecimentoId, int gerenteUserId, GestaoGerentePadraoCommand gerente)
+        {
+            await TryEnsureAgenteAsync(
+                new GestaoPersistenciaUsuarioCommand { EstablishmentRole = "gerente_estabelecimento", PermissoesCustomizadasJson = gerente.PermissoesJson },
+                gerenteUserId);
+
+            if (_acessoService == null) return (null, "O gerente foi criado, mas o servico de acesso esta indisponivel. Gere o link em Acesso ao painel, no modal da loja.");
+
+            try
+            {
+                return (await _acessoService.GerarLinkAsync(estabelecimentoId, gerenteUserId, actorUserId), null);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Gerente {UsuarioId} criado, mas o link de primeiro acesso falhou.", gerenteUserId);
+                return (null, "O gerente foi criado, mas nao foi possivel gerar o link. Gere em Acesso ao painel, no modal da loja.");
+            }
         }
 
         public async Task<AcessoLinkDto> CriarResponsavelAsync(
@@ -123,11 +165,18 @@ namespace APIBack.Service
 
             var loja = await _repository.ObterEstabelecimentoAsync(targetEstabelecimentoId)
                 ?? throw new KeyNotFoundException("Estabelecimento nao encontrado.");
-            // Todas as lojas da empresa: o gerente da empresa precisa enxergar todas, nao so a que abriu o modal.
+            var soDestaLoja = string.Equals(request.Tipo, "estabelecimento", StringComparison.OrdinalIgnoreCase);
+            if (soDestaLoja)
+            {
+                // Gerente do estabelecimento: so ve esta loja.
+                return await CriarResponsavelCoreAsync(scope, userId, loja.EmpresaId, new[] { loja.Id }, request, "gerente_estabelecimento");
+            }
+
+            // Gerente da empresa: precisa enxergar todas as lojas, nao so a que abriu o modal.
             var lojas = await _repository.ListarEstabelecimentosAsync(loja.EmpresaId, null);
             var ids = lojas.Where(item => item.Ativo).Select(item => item.Id).ToArray();
             if (ids.Length == 0) ids = new[] { loja.Id };
-            return await CriarResponsavelCoreAsync(scope, userId, loja.EmpresaId, ids, request);
+            return await CriarResponsavelCoreAsync(scope, userId, loja.EmpresaId, ids, request, "gerente_empresa");
         }
 
         private static bool HasResponsavel(ResponsavelRequest? value) =>
@@ -138,7 +187,7 @@ namespace APIBack.Service
         /// A senha nunca e mostrada: o unico caminho para entrar e o link.
         /// </summary>
         private async Task<AcessoLinkDto> CriarResponsavelCoreAsync(
-            GestaoEmpresaScope scope, int actorUserId, Guid empresaId, Guid[] estabelecimentoIds, ResponsavelRequest request)
+            GestaoEmpresaScope scope, int actorUserId, Guid empresaId, Guid[] estabelecimentoIds, ResponsavelRequest request, string tipoUsuario)
         {
             if (_acessoService == null)
             {
@@ -151,7 +200,7 @@ namespace APIBack.Service
                 Email = request.Email,
                 Telefone = request.Telefone,
                 SenhaInicial = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(24)),
-                TipoUsuario = "gerente_empresa",
+                TipoUsuario = tipoUsuario,
                 EmpresaId = empresaId,
                 EstabelecimentoIds = estabelecimentoIds.ToList()
             };
@@ -278,7 +327,12 @@ namespace APIBack.Service
             }
             ValidateSalvarEstabelecimentoRequest(request, requireEmpresaId: true);
 
-            var createdId = await _repository.CriarEstabelecimentoAsync(request);
+            // A loja nova ja nasce acessivel: vinculada aos gerentes da empresa ou, se a empresa nao tem nenhum, com o gerente padrao.
+            var empresa = await _repository.ObterEmpresaAsync(request.EmpresaId!.Value)
+                ?? throw new KeyNotFoundException("Empresa nao encontrada.");
+            var gerente = await MontarGerentePadraoAsync(userId, empresa.NomeFantasia, null, podeCriar: scope.IsSuperAdmin);
+            var provisionamento = await _repository.CriarEstabelecimentoAsync(request, gerente);
+            var createdId = provisionamento.EstabelecimentoId;
 
             if (_wabaPhoneRepository != null && HasWabaData(request))
             {
@@ -301,7 +355,15 @@ namespace APIBack.Service
                 ? await _wabaPhoneRepository.ObterDisplayPhonePorEstabelecimentoAsync(createdId)
                 : null;
 
-            return MapEstabelecimento(created, createdWabaId, createdWabaDisplay);
+            var dto = MapEstabelecimento(created, createdWabaId, createdWabaDisplay);
+            if (provisionamento.GerenteUserId is int gerenteUserId)
+            {
+                var (link, erro) = await GerarLinkDoGerenteAsync(userId, createdId, gerenteUserId, gerente);
+                dto.AcessoGerente = link;
+                dto.AcessoGerenteErro = erro;
+            }
+
+            return dto;
         }
 
         public async Task<GestaoEstabelecimentoDto> AtualizarEstabelecimentoAsync(

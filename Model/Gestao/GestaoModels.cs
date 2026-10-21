@@ -154,4 +154,24 @@ namespace APIBack.Model.Gestao
         public string? PermissoesCustomizadasJson { get; set; }
         public int ActorUserId { get; set; }
     }
+
+    /// <summary>
+    /// Gerente que a criacao da empresa/loja garante dentro da mesma transacao. Email nulo = gerado a partir do slug da loja.
+    /// So e usado quando a empresa ainda nao tem gerente; se ja tem, a loja nova so e vinculada a ele(s).
+    /// </summary>
+    public sealed class GestaoGerentePadraoCommand
+    {
+        public string Nome { get; set; } = string.Empty;
+        public string? Email { get; set; }
+        public string SenhaHash { get; set; } = string.Empty;
+        /// <summary>Permissoes padrao do cargo gerente_estabelecimento (o login filtra pelos modulos ativos da loja).</summary>
+        public string? PermissoesJson { get; set; }
+        public int ActorUserId { get; set; }
+        /// <summary>Falso quando quem cria nao pode criar gerente (so a Gestao cria): a loja so e vinculada aos que ja existem.</summary>
+        public bool CriarSePreciso { get; set; } = true;
+    }
+
+    /// <param name="GerenteUserId">Gerente criado agora; nulo quando a empresa ja tinha gerente e so houve vinculo.</param>
+    public sealed record GestaoProvisionamentoResultado(
+        Guid EmpresaId, Guid EstabelecimentoId, int? GerenteUserId, string? GerenteEmail, int GerentesVinculados);
 }
