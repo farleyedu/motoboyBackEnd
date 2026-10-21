@@ -447,6 +447,8 @@ app.UseStaticFiles();
 app.UseMiddleware<JwtAuthenticationMiddleware>();
 // Loja bloqueada pela Gestao: 403 em tudo, menos login e o fim das entregas em rota (docs do plano, secao 3.2).
 app.UseMiddleware<APIBack.Middleware.SituacaoComercialMiddleware>();
+// Modulo comercial valendo no servidor para as rotas sem [RequireModule] (ModuleEnforcement: warn por padrao, enforce, off).
+app.UseMiddleware<APIBack.Middleware.ModuloPorRotaMiddleware>();
 app.UseRateLimiter();
 app.UseAuthorization();
 
