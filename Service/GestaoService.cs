@@ -147,6 +147,39 @@ namespace APIBack.Service
             }
         }
 
+        public async Task<GestaoCompletarCadastroDto> CompletarCadastroAsync(
+            int userId,
+            Guid? empresaId,
+            Guid? estabelecimentoId,
+            string? companyRole,
+            string? establishmentRole,
+            bool isSuperAdmin,
+            Guid targetEstabelecimentoId)
+        {
+            var scope = BuildScope(empresaId, estabelecimentoId, companyRole, establishmentRole, isSuperAdmin);
+            if (!scope.IsSuperAdmin)
+            {
+                throw new UnauthorizedAccessException("Somente a Gestão completa o cadastro de uma loja.");
+            }
+
+            var loja = await _repository.ObterEstabelecimentoAsync(targetEstabelecimentoId)
+                ?? throw new KeyNotFoundException("Estabelecimento nao encontrado.");
+            var empresa = await _repository.ObterEmpresaAsync(loja.EmpresaId);
+            var gerente = await MontarGerentePadraoAsync(userId, empresa?.NomeFantasia ?? loja.NomeFantasia, null, podeCriar: true);
+
+            var resultado = await _repository.CompletarCadastroAsync(targetEstabelecimentoId, gerente);
+
+            var dto = new GestaoCompletarCadastroDto { GerentesVinculados = resultado.GerentesVinculados };
+            if (resultado.GerenteUserId is int gerenteUserId)
+            {
+                var (link, erro) = await GerarLinkDoGerenteAsync(userId, targetEstabelecimentoId, gerenteUserId, gerente);
+                dto.AcessoGerente = link;
+                dto.AcessoGerenteErro = erro;
+            }
+
+            return dto;
+        }
+
         public async Task<AcessoLinkDto> CriarResponsavelAsync(
             int userId,
             Guid? empresaId,

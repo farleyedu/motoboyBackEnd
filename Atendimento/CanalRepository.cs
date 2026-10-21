@@ -16,6 +16,8 @@ namespace APIBack.Atendimento
         Task<CanalWhatsapp?> ObterAtivoPorPhoneNumberIdAsync(string phoneNumberId);
         /// <summary>Canal pelo telefone (so digitos, com DDI). Inclui numeros inativos: o cadastro precisa enxergar o dono.</summary>
         Task<CanalWhatsapp?> ObterPorNumeroAsync(string digitos);
+        /// <summary>Canal pelo ID da Meta, em qualquer status: o cadastro precisa enxergar o dono.</summary>
+        Task<CanalWhatsapp?> ObterPorPhoneNumberIdAsync(string phoneNumberId);
         /// <summary>Primeiro numero em uso da loja (ativo ou ainda configurando), o mais antigo.</summary>
         Task<CanalWhatsapp?> ObterPrimeiroUsavelAsync(Guid estabelecimentoId);
         /// <summary>Numero que atende o servico na loja (para montar o link wa.me e enviar), o mais antigo ativo.</summary>
@@ -85,6 +87,12 @@ namespace APIBack.Atendimento
         {
             await using var connection = new NpgsqlConnection(_connectionString);
             return await ObterUmAsync(connection, "WHERE numero_e164 = @Numero", new { Numero = "+" + digitos });
+        }
+
+        public async Task<CanalWhatsapp?> ObterPorPhoneNumberIdAsync(string phoneNumberId)
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            return await ObterUmAsync(connection, "WHERE phone_number_id = @Id", new { Id = phoneNumberId.Trim() });
         }
 
         public async Task<CanalWhatsapp?> ObterPrimeiroUsavelAsync(Guid estabelecimentoId)

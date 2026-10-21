@@ -24,6 +24,9 @@ namespace APIBack.Repository.Interface
         Task<IReadOnlyCollection<GestaoTargetEstabelecimento>> ListarEstabelecimentosPorIdsAsync(IReadOnlyCollection<Guid> estabelecimentoIds);
         /// <summary>Loja, servicos padrao e acesso dos gerentes da empresa na mesma transacao.</summary>
         Task<GestaoProvisionamentoResultado> CriarEstabelecimentoAsync(SalvarEstabelecimentoRequest request, GestaoGerentePadraoCommand? gerente);
+        /// <summary>Loja antiga: liga os servicos padrao que faltam e garante que ha gerente com acesso (vincula ou cria o padrao).</summary>
+        /// <exception cref="KeyNotFoundException">A loja nao existe.</exception>
+        Task<GestaoProvisionamentoResultado> CompletarCadastroAsync(Guid estabelecimentoId, GestaoGerentePadraoCommand gerente);
         Task AtualizarEstabelecimentoAsync(Guid estabelecimentoId, SalvarEstabelecimentoRequest request);
         Task AtualizarStatusEstabelecimentoAsync(Guid estabelecimentoId, bool ativa);
 

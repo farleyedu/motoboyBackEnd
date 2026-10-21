@@ -382,6 +382,33 @@ SELECT  e.id                      AS Id,
             return new GestaoProvisionamentoResultado(request.EmpresaId.Value, id, acesso.CriadoUserId, acesso.CriadoEmail, acesso.Vinculados.Count);
         }
 
+        private sealed class LojaParaCompletar
+        {
+            public Guid EmpresaId { get; set; }
+            public Guid TipoId { get; set; }
+            public string[] Modulos { get; set; } = Array.Empty<string>();
+        }
+
+        public async Task<GestaoProvisionamentoResultado> CompletarCadastroAsync(Guid estabelecimentoId, GestaoGerentePadraoCommand gerente)
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+
+            var loja = await connection.QuerySingleOrDefaultAsync<LojaParaCompletar>(@"
+SELECT id_empresa AS EmpresaId, id_tipo_estabelecimento AS TipoId, modulos_ativos::text[] AS Modulos
+  FROM estabelecimentos WHERE id = @Id FOR UPDATE;", new { Id = estabelecimentoId }, transaction)
+                ?? throw new KeyNotFoundException("Estabelecimento nao encontrado.");
+
+            // So preenche o que falta: servico ja ligado ou desligado de proposito e vinculo ja existente ficam como estao.
+            await LigarServicosPadraoAsync(connection, transaction, estabelecimentoId, loja.TipoId, loja.Modulos);
+            var acesso = await GarantirGerenteAsync(connection, transaction, loja.EmpresaId, estabelecimentoId, gerente);
+
+            await transaction.CommitAsync();
+            InvalidarAcessoDosGerentes(acesso);
+            return new GestaoProvisionamentoResultado(loja.EmpresaId, estabelecimentoId, acesso.CriadoUserId, acesso.CriadoEmail, acesso.Vinculados.Count);
+        }
+
         public async Task AtualizarEstabelecimentoAsync(Guid estabelecimentoId, SalvarEstabelecimentoRequest request)
         {
             request.PlanoComercial = NormalizarPlano(request.PlanoComercial);
@@ -1381,8 +1408,7 @@ INSERT INTO usuario_estabelecimentos (
 VALUES (
     @Id, @UserId, @EstabelecimentoId, 'gerente_estabelecimento', 'ativo', @Actor, @Actor,
     NOW(), NOW(), @Permissoes::jsonb, TRUE, NOW(), NOW())
-ON CONFLICT (id_usuario, id_estabelecimento) DO UPDATE
-SET status = 'ativo', ativo = TRUE, data_remocao = NULL, updated_at = NOW();",
+ON CONFLICT (id_usuario, id_estabelecimento) DO NOTHING;",
                 new { Id = Guid.NewGuid(), UserId = userId, EstabelecimentoId = estabelecimentoId, Permissoes = permissoesJson, Actor = actorUserId }, transaction);
 
         private void InvalidarAcessoDosGerentes(AcessoGarantido acesso)

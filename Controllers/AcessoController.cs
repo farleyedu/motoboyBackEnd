@@ -75,6 +75,29 @@ namespace APIBack.Controllers
             }
         }
 
+        /// <summary>Loja antiga sem gerente ou sem servicos: cria o gerente padrao (ou vincula os existentes) e liga os servicos padrao do tipo.</summary>
+        [HttpPost("api/gestao/estabelecimentos/{id:guid}/acesso/completar")]
+        public async Task<IActionResult> Completar(Guid id)
+        {
+            if (!CurrentUserId.HasValue) return UnauthorizedResponse();
+            if (!CurrentIsSuperAdmin) return ForbiddenResponse();
+            try
+            {
+                var resultado = await _gestao.CompletarCadastroAsync(
+                    CurrentUserId.Value, CurrentEmpresaId, CurrentEstabelecimentoId, CurrentCompanyRole,
+                    CurrentEstablishmentRole, CurrentIsSuperAdmin, id);
+                return Ok(ApiResponse<GestaoCompletarCadastroDto>.Ok(resultado));
+            }
+            catch (KeyNotFoundException ex)
+            {
+                return NotFound(ApiResponse<object>.Fail(ex.Message));
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ex.Message));
+            }
+        }
+
         /// <summary>Gera um link novo (primeiro acesso se a senha ainda esta pendente, senao redefinicao). O link anterior deixa de valer.</summary>
         [HttpPost("api/gestao/estabelecimentos/{id:guid}/acesso/{usuarioId:int}/link")]
         public async Task<IActionResult> GerarLink(Guid id, int usuarioId)

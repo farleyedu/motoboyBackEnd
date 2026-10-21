@@ -60,17 +60,42 @@ namespace APIBack.Atendimento
                 });
             }
 
-            var erros = AtendimentoRegras.ValidarCanal(request.PhoneNumberId, request.Numero, null);
+            // Trocar quem atende nao exige redigitar o numero: sem numero nem ID, vale o central que ja existe.
+            var informouIdentidade = !string.IsNullOrWhiteSpace(request.PhoneNumberId) || !string.IsNullOrWhiteSpace(request.Numero);
+            var erros = informouIdentidade
+                ? AtendimentoRegras.ValidarCanal(request.PhoneNumberId, request.Numero, null)
+                : new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
             var novoToken = CifrarToken(request.Token, erros);
             if (erros.Count > 0) throw new RequestValidationException("Dados invalidos.", erros);
 
-            var phoneNumberId = request.PhoneNumberId!.Trim();
-            var numero = AtendimentoRegras.NormalizarNumero(request.Numero)!;
+            var phoneNumberId = request.PhoneNumberId?.Trim() ?? string.Empty;
+            var numero = informouIdentidade ? AtendimentoRegras.NormalizarNumero(request.Numero)! : string.Empty;
 
             try
             {
-                // Ja ha um central? Altera. Senao, se o numero ja esta cadastrado numa loja (o do restaurante de hoje), adota ele.
-                var canal = await _canais.ObterCentralAsync() ?? await _canais.ObterPorNumeroAsync(numero.TrimStart('+'));
+                CanalWhatsapp? canal;
+                if (informouIdentidade)
+                {
+                    // O numero ja pode estar cadastrado (em qualquer loja): adota, em vez de tentar criar outro e bater na unicidade.
+                    var porId = await _canais.ObterPorPhoneNumberIdAsync(phoneNumberId);
+                    var porNumero = await _canais.ObterPorNumeroAsync(numero.TrimStart('+'));
+                    if (porId != null && porNumero != null && porId.Id != porNumero.Id)
+                    {
+                        throw new CanalConflitoException("numero",
+                            "Este numero e este Phone Number ID ja estao cadastrados em canais diferentes. Confira os dois valores.");
+                    }
+
+                    canal = porId ?? porNumero ?? await _canais.ObterCentralAsync();
+                }
+                else
+                {
+                    canal = await _canais.ObterCentralAsync()
+                        ?? throw new RequestValidationException("Dados invalidos.", new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase)
+                        {
+                            ["phoneNumberId"] = new List<string> { "Ainda nao ha numero compartilhado: informe o numero e o Phone Number ID uma vez." }
+                        });
+                }
+
                 var criado = false;
 
                 if (canal == null)
@@ -86,17 +111,20 @@ namespace APIBack.Atendimento
                 }
                 else
                 {
-                    var identidadeMudou = phoneNumberId != canal.PhoneNumberId || numero != canal.NumeroE164;
-                    canal.PhoneNumberId = phoneNumberId;
-                    canal.NumeroE164 = numero;
+                    var identidadeMudou = informouIdentidade && (phoneNumberId != canal.PhoneNumberId || numero != canal.NumeroE164);
+                    if (informouIdentidade)
+                    {
+                        canal.PhoneNumberId = phoneNumberId;
+                        canal.NumeroE164 = numero;
+                    }
+
                     if (novoToken != null) canal.TokenCifrado = novoToken;
                     if (identidadeMudou || novoToken != null)
                     {
                         canal.Status = StatusCanal.Configurando;
                         canal.UltimoErro = null;
+                        await _canais.AtualizarDadosAsync(canal);
                     }
-
-                    await _canais.AtualizarDadosAsync(canal);
                 }
 
                 var origem = canal.IdEstabelecimento;

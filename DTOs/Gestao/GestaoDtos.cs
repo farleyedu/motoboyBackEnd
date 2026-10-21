@@ -87,6 +87,15 @@ namespace APIBack.DTOs.Gestao
         public string? AcessoGerenteErro { get; set; }
     }
 
+    /// <summary>Resultado de "Completar cadastro" de uma loja antiga.</summary>
+    public class GestaoCompletarCadastroDto
+    {
+        /// <summary>Gerente padrao criado agora (a empresa nao tinha nenhum); nulo quando so houve vinculo.</summary>
+        public AcessoLinkDto? AcessoGerente { get; set; }
+        public string? AcessoGerenteErro { get; set; }
+        public int GerentesVinculados { get; set; }
+    }
+
     public class GestaoUsuarioEmpresaDto
     {
         public Guid Id { get; set; }

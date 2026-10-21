@@ -149,6 +149,45 @@ namespace APIBack.Tests.Unit
                 service.CriarEstabelecimentoAsync(2, Empresa, null, "gerente_empresa", null, false, NovaLoja()));
         }
 
+        [Fact]
+        public async Task Completar_cadastro_de_loja_antiga_sem_gerente_cria_o_padrao_e_devolve_o_link()
+        {
+            var (service, repo, acesso) = Montar();
+            repo.Setup(r => r.ObterEstabelecimentoAsync(Loja)).ReturnsAsync(new GestaoEstabelecimentoRow { Id = Loja, EmpresaId = Empresa, NomeFantasia = "Empresa01" });
+            repo.Setup(r => r.CompletarCadastroAsync(Loja, It.IsAny<GestaoGerentePadraoCommand>()))
+                .ReturnsAsync(new GestaoProvisionamentoResultado(Empresa, Loja, 55, "gerente.empresa01@zippy.com", 1));
+
+            var dto = await service.CompletarCadastroAsync(1, null, null, null, null, true, Loja);
+
+            Assert.NotNull(dto.AcessoGerente);
+            Assert.Equal(1, dto.GerentesVinculados);
+            acesso.Verify(a => a.GerarLinkAsync(Loja, 55, 1, It.IsAny<CancellationToken>()), Times.Once);
+        }
+
+        [Fact]
+        public async Task Completar_cadastro_com_gerente_existente_so_vincula_e_nao_gera_link()
+        {
+            var (service, repo, acesso) = Montar();
+            repo.Setup(r => r.ObterEstabelecimentoAsync(Loja)).ReturnsAsync(new GestaoEstabelecimentoRow { Id = Loja, EmpresaId = Empresa, NomeFantasia = "Empresa01" });
+            repo.Setup(r => r.CompletarCadastroAsync(Loja, It.IsAny<GestaoGerentePadraoCommand>()))
+                .ReturnsAsync(new GestaoProvisionamentoResultado(Empresa, Loja, null, null, 2));
+
+            var dto = await service.CompletarCadastroAsync(1, null, null, null, null, true, Loja);
+
+            Assert.Null(dto.AcessoGerente);
+            Assert.Equal(2, dto.GerentesVinculados);
+            acesso.Verify(a => a.GerarLinkAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<int?>(), It.IsAny<CancellationToken>()), Times.Never);
+        }
+
+        [Fact]
+        public async Task Completar_cadastro_e_so_da_gestao()
+        {
+            var (service, _, _) = Montar();
+
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+                service.CompletarCadastroAsync(2, Empresa, null, "gerente_empresa", null, false, Loja));
+        }
+
         // ---- apoio ---------------------------------------------------------------------------------------------
 
         private static (GestaoService Service, Mock<IGestaoRepository> Repo, Mock<IAcessoService> Acesso) Montar()
