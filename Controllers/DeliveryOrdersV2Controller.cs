@@ -70,6 +70,18 @@ namespace APIBack.Controllers
         public Task<IActionResult> ListPedidos([FromQuery] PedidoFiltroRequest filtro) =>
             ExecuteAsync((est, _) => _consulta.ListAsync(est, PedidoFiltro.From(filtro)));
 
+        /// <summary>
+        /// Checagem barata para o painel: devolve o contador de mudanças da lista; o painel só busca a lista quando ele muda.
+        /// <c>versao</c> nulo = schema ainda sem suporte, buscar sempre.
+        /// </summary>
+        [HttpGet("pedidos/versao")]
+        [RequirePermission("Delivery", "visualizar")]
+        public Task<IActionResult> GetPedidosVersao()
+        {
+            Response.Headers.CacheControl = "no-store";
+            return ExecuteAsync(async (est, _) => new { versao = await _consulta.GetListVersionAsync(est) });
+        }
+
         /// <summary>Detalhe do pedido com itens (estruturados ou lidos do texto legado).</summary>
         [HttpGet("pedidos/{pedidoId:int}")]
         [RequirePermission("Delivery", "visualizar")]

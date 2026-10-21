@@ -12,5 +12,11 @@ namespace APIBack.Repository.Interface
 
         /// <summary>Null quando o pedido nao existe neste estabelecimento.</summary>
         Task<PedidoDetalheDto?> GetAsync(Guid estabelecimentoId, int pedidoId);
+
+        /// <summary>
+        /// Contador que sobe a cada mudança na lista de pedidos da loja (0 = nada ainda). Null quando o schema da versão
+        /// ainda não foi migrado: quem consulta deve tratar como "sem suporte" e buscar a lista sempre.
+        /// </summary>
+        Task<long?> GetListVersionAsync(Guid estabelecimentoId);
     }
 }

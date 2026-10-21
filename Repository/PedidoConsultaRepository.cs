@@ -128,6 +128,21 @@ SELECT p.id AS Id,
             };
         }
 
+        private static volatile bool _versionSchemaKnown;
+
+        public async Task<long?> GetListVersionAsync(Guid estabelecimentoId)
+        {
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            if (!_versionSchemaKnown)
+            {
+                if (!await connection.ExecuteScalarAsync<bool>("SELECT to_regclass('pedido_lista_versao') IS NOT NULL")) return null;
+                _versionSchemaKnown = true;
+            }
+            return await connection.ExecuteScalarAsync<long?>(
+                "SELECT COALESCE((SELECT versao FROM pedido_lista_versao WHERE estabelecimento_id = @EstabelecimentoId), 0)",
+                new { EstabelecimentoId = estabelecimentoId });
+        }
+
         public async Task<PedidoDetalheDto?> GetAsync(Guid estabelecimentoId, int pedidoId)
         {
             await using var connection = await _dataSource.OpenConnectionAsync();

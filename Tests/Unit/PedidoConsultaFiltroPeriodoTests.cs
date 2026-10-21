@@ -27,6 +27,16 @@ public sealed class PedidoConsultaFiltroPeriodoTests
     }
 
     [Fact]
+    public void Versao_da_lista_sobe_no_commit_e_cobre_pedido_e_snapshot_ifood()
+    {
+        var sql = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Migrations", "Delivery", "20261023_03_pedido_lista_versao.sql"));
+        Assert.Contains("CREATE CONSTRAINT TRIGGER trg_pedido_lista_versao", sql);
+        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(sql, "DEFERRABLE INITIALLY DEFERRED").Count);
+        Assert.Contains("ON ifood_order_snapshots", sql);
+        Assert.DoesNotContain("DROP TABLE", sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Sem_periodo_nao_filtra_por_data()
     {
         var where = PedidoConsultaRepository.BuildWhere(Guid.NewGuid(), new PedidoFiltro(), "p.origem", false, true).Where;
