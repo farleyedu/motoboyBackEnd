@@ -8,6 +8,25 @@ public sealed class RiderPayPlanRequest
     public string Mode { get; set; } = "delivery";
     public decimal Rate { get; set; }
 }
+/// <summary>Mesma regra para vários motoboys: cada item vira um plano próprio, com o id derivado de OperationId + motoboyId (reenvio idempotente).</summary>
+public sealed class RiderPayPlanBatchRequest
+{
+    public Guid OperationId { get; set; }
+    public string Mode { get; set; } = "delivery";
+    public decimal Rate { get; set; }
+    public List<RiderPayPlanBatchItem> Items { get; set; } = new();
+}
+public sealed class RiderPayPlanBatchItem
+{
+    public int MotoboyId { get; set; }
+    public Guid? ExpectedPlanId { get; set; }
+}
+public sealed record RiderPayPlanBatchResult(int MotoboyId, bool Ok, RiderPayPlan? Plan, string? Code, string? Message);
+public sealed record RiderSummaryBalance(decimal Outstanding, decimal CashToReturn);
+/// <summary>Uma linha por motoboy vinculado: totais do período (entregas, km, minutos, valor) e saldo/recebimentos de todo o histórico.</summary>
+public sealed record RiderSummaryRow(int MotoboyId, string Nome, RiderPayPlan? Plan, RiderSummaryBalance Balance, int UnconfirmedReceipts,
+    int Entregas, decimal Km, int MinutosTrabalhados, decimal ValorGanho);
+public sealed record RiderWorkSummary(DateTimeOffset From, DateTimeOffset To, IReadOnlyList<RiderSummaryRow> Riders);
 public sealed record RiderPayQuote(Guid PlanId, string Mode, decimal Rate, decimal? DistanceKm, decimal? Amount);
 public sealed record RiderPeriodQuote(decimal Amount, long? TotalSeconds, long? WorkedSeconds);
 public sealed class RiderPeriodRequest

@@ -205,4 +205,31 @@ UPDATE motoboy_active_sessions SET expires_at_utc=NOW()+interval '1 hour';
         await Assert.ThrowsAsync<Npgsql.PostgresException>(()=>db.Execute(rollback));
         Assert.Equal(1,await db.Scalar<int>("SELECT COUNT(*)::int FROM delivery_rider_pay_plans"));
     }
+    [DeliveryDatabaseFact] public async Task WorkSummaryReturnsOneRowPerLinkedRiderWithPeriodTotalsAndFullHistoryBalance()
+    {
+        await using var db=await WorkDatabase();var plan=await WorkPlan(db,"delivery",9.50m);await CaptureWork(db);
+        await new PedidoQueueRepository(db.Source).CompleteDeliveryAsync(db.StoreId,1,7,db.SessionId,4,CompletionRequest(),default);
+        var service=new MotoboyWorkService(db.Source);
+        var current=await service.Summary(db.StoreId,null,null,default);
+        var rider=Assert.Single(current.Riders,r=>r.MotoboyId==1);
+        Assert.Equal(plan.Id,rider.Plan!.Id);Assert.Equal(1,rider.Entregas);Assert.Equal(9.50m,rider.ValorGanho);
+        Assert.Equal(9.50m,rider.Balance.Outstanding);Assert.Equal(0,rider.UnconfirmedReceipts);
+        // Fora do período os totais zeram, mas o saldo é do histórico todo (igual ao detalhe do motoboy).
+        var past=await service.Summary(db.StoreId,DateTimeOffset.UtcNow.AddDays(-60),DateTimeOffset.UtcNow.AddDays(-30),default);
+        var old=Assert.Single(past.Riders,r=>r.MotoboyId==1);
+        Assert.Equal(0,old.Entregas);Assert.Equal(0m,old.ValorGanho);Assert.Equal(9.50m,old.Balance.Outstanding);
+    }
+    [DeliveryDatabaseFact] public async Task WorkPlansBatchIsIdempotentAndReportsConflictsPerRider()
+    {
+        await using var db=await WorkDatabase();var service=new MotoboyWorkService(db.Source);
+        var original=await WorkPlan(db,"delivery",5m);
+        var request=new RiderPayPlanBatchRequest{OperationId=Guid.NewGuid(),Mode="delivery",Rate=7m,Items=new(){new(){MotoboyId=1,ExpectedPlanId=original.Id},new(){MotoboyId=999}}};
+        var first=await service.SavePlans(db.StoreId,9,request,default);
+        Assert.True(first.Single(r=>r.MotoboyId==1).Ok);Assert.Equal(7m,first.Single(r=>r.MotoboyId==1).Plan!.Rate);
+        Assert.Equal("RIDER_LINK_NOT_FOUND",first.Single(r=>r.MotoboyId==999).Code);
+        // Reenviar o mesmo lote devolve o mesmo plano em vez de criar outro.
+        var again=await service.SavePlans(db.StoreId,9,request,default);
+        Assert.Equal(first.Single(r=>r.MotoboyId==1).Plan!.Id,again.Single(r=>r.MotoboyId==1).Plan!.Id);
+        Assert.Equal(2,await db.Scalar<int>("SELECT COUNT(*)::int FROM delivery_rider_pay_plans"));
+    }
 }

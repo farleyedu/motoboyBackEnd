@@ -31,6 +31,12 @@ public sealed class MotoboyWorkController(MotoboyWorkService service) : Controll
 [ApiController,Route("api/v2/delivery/rider-work"),APIBack.Attributes.RequireModule("Remuneracao")]
 public sealed class RiderWorkAdminController(MotoboyWorkService service) : ControllerBase
 {
+    /// <summary>Resumo da loja: uma linha por motoboy vinculado (plano, saldo, recebimentos pendentes e totais do período). Sem from/to: últimos 30 dias.</summary>
+    [HttpGet("resumo"),RequirePermission("Delivery","gestao_motoboy")]
+    public Task<IActionResult> Summary(DateTimeOffset? from,DateTimeOffset? to,CancellationToken ct) => Run(async(s,u)=>await service.Summary(s,from,to,ct));
+    /// <summary>Mesma regra de remuneração para vários motoboys numa chamada; devolve o resultado por motoboy.</summary>
+    [HttpPost("plans"),RequirePermission("Delivery","gestao_motoboy")]
+    public Task<IActionResult> Plans(RiderPayPlanBatchRequest request,CancellationToken ct) => Run(async(s,u)=>await service.SavePlans(s,u,request,ct));
     [HttpGet("{rider:int}"),RequirePermission("Delivery","gestao_motoboy")]
     public Task<IActionResult> Read(int rider,DateTimeOffset from,DateTimeOffset to,CancellationToken ct) => Run((s,u)=>service.Read(s,rider,from,to,ct));
     [HttpPost("{rider:int}/plans"),RequirePermission("Delivery","gestao_motoboy")]

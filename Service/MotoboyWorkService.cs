@@ -105,6 +105,54 @@ SELECT s.id AS "stopId",s.pedido_id AS "pedidoId",s.stop_status AS "status",s.as
         var unconfirmedReceipts=await c.ExecuteScalarAsync<int>(new CommandDefinition("SELECT COUNT(*)::int FROM delivery_rider_work_entries WHERE estabelecimento_id=@Store AND motoboy_id=@Rider AND kind='delivery' AND cash_confirmed=FALSE",new { Store=store,Rider=rider },cancellationToken:ct));
         return new { Plan=await Plan(c,null,store,rider,ct),Plans=plans,Entries=entries,SettlementEntries=settlementEntries,Settlements=settlements,Balance=balance,History=history,Support=support,Earnings=entries.Sum(e=>e.Amount??0),UnpricedDeliveries=entries.Count(e=>e.Kind=="delivery"&&e.Amount==null),UnconfirmedReceipts=unconfirmedReceipts };
     }
+    public const int DefaultSummaryDays = 30;
+    /// <summary>Sem from/to: últimos 30 dias até agora (o admin chamava 90 dias por motoboy). Mesmo teto de 93 dias do detalhe.</summary>
+    public static (DateTimeOffset From, DateTimeOffset To) SummaryWindow(DateTimeOffset? from,DateTimeOffset? to,DateTimeOffset now)
+    {
+        var end=to??now;
+        var start=from??end.AddDays(-DefaultSummaryDays);
+        if(start>=end || (end-start).TotalDays>93) throw new ArgumentException("Escolha um período de até 93 dias.");
+        return (start,end);
+    }
+    private sealed class SummaryRaw
+    {
+        public int MotoboyId { get; set; } public string? Nome { get; set; }
+        public Guid? PlanId { get; set; } public string? PlanMode { get; set; } public decimal? PlanRate { get; set; } public DateTimeOffset? PlanCreatedAtUtc { get; set; }
+        public int Entregas { get; set; } public decimal Km { get; set; } public int Minutos { get; set; } public decimal Valor { get; set; }
+        public decimal Outstanding { get; set; } public decimal CashToReturn { get; set; } public int Unconfirmed { get; set; }
+    }
+    /// <summary>
+    /// Resumo da loja inteira em uma consulta: uma linha por motoboy vinculado. Totais do período por to_utc (mesma base do detalhe);
+    /// saldo e recebimentos não confirmados são do histórico todo, como em <see cref="Read"/>.
+    /// </summary>
+    public async Task<RiderWorkSummary> Summary(Guid store,DateTimeOffset? from,DateTimeOffset? to,CancellationToken ct)
+    {
+        var (start,end)=SummaryWindow(from,to,DateTimeOffset.UtcNow);
+        await using var c=await Open(ct);
+        var rows=await c.QueryAsync<SummaryRaw>(new CommandDefinition("""
+SELECT m.id AS MotoboyId,m.nome::text AS Nome,
+ p.id AS PlanId,p.mode AS PlanMode,p.rate AS PlanRate,p.created_at_utc AS PlanCreatedAtUtc,
+ COALESCE(pe.entregas,0)::int AS Entregas,COALESCE(pe.km,0) AS Km,COALESCE(pe.minutos,0)::int AS Minutos,COALESCE(pe.valor,0) AS Valor,
+ COALESCE(b.earned,0)-COALESCE(s.paid,0) AS Outstanding,
+ COALESCE(b.cash,0)-COALESCE(s.cash_returned,0) AS CashToReturn,
+ COALESCE(b.unconfirmed,0)::int AS Unconfirmed
+ FROM motoboy_estabelecimento me
+ JOIN motoboy m ON m.id=me.motoboy_id
+ LEFT JOIN LATERAL(SELECT id,mode,rate,created_at_utc FROM delivery_rider_pay_plans WHERE estabelecimento_id=@Store AND motoboy_id=me.motoboy_id ORDER BY created_at_utc DESC,id DESC LIMIT 1) p ON TRUE
+ LEFT JOIN(SELECT motoboy_id,COUNT(*) FILTER(WHERE kind='delivery') AS entregas,SUM(distance_km) AS km,SUM(worked_minutes) AS minutos,SUM(amount) AS valor
+   FROM delivery_rider_work_entries WHERE estabelecimento_id=@Store AND to_utc>=@From AND to_utc<@To GROUP BY motoboy_id) pe ON pe.motoboy_id=me.motoboy_id
+ LEFT JOIN(SELECT motoboy_id,SUM(amount) AS earned,SUM(store_cash) AS cash,COUNT(*) FILTER(WHERE kind='delivery' AND cash_confirmed=FALSE) AS unconfirmed
+   FROM delivery_rider_work_entries WHERE estabelecimento_id=@Store GROUP BY motoboy_id) b ON b.motoboy_id=me.motoboy_id
+ LEFT JOIN(SELECT motoboy_id,SUM(earnings) FILTER(WHERE status IN('paid','received')) AS paid,
+   SUM(store_cash) FILTER(WHERE cash_returned=TRUE AND status<>'cancelled') AS cash_returned
+   FROM delivery_rider_settlements WHERE estabelecimento_id=@Store GROUP BY motoboy_id) s ON s.motoboy_id=me.motoboy_id
+ WHERE me.estabelecimento_id=@Store AND me.ativo=TRUE AND COALESCE(m.is_simulated,FALSE)=FALSE
+ ORDER BY COALESCE(pe.valor,0) DESC,m.nome,m.id
+""",new { Store=store,From=start,To=end },cancellationToken:ct));
+        return new RiderWorkSummary(start,end,rows.Select(r=>new RiderSummaryRow(r.MotoboyId,r.Nome??"",
+            r.PlanId is { } id ? new RiderPayPlan(id,r.PlanMode!,r.PlanRate??0,r.PlanCreatedAtUtc??default) : null,
+            new RiderSummaryBalance(r.Outstanding,r.CashToReturn),r.Unconfirmed,r.Entregas,r.Km,r.Minutos,r.Valor)).ToList());
+    }
     public async Task<Guid> Support(Guid store,int rider,RiderSupportRequest request,CancellationToken ct)
     {
         if(request.OperationId==Guid.Empty||!new[]{"delivery","payment","account","location","security"}.Contains(request.Category)||string.IsNullOrWhiteSpace(request.Message)||request.Message.Length>2000) throw new ArgumentException("Escolha um assunto e descreva o problema em até 2000 caracteres.");
@@ -129,6 +177,32 @@ SELECT s.id AS "stopId",s.pedido_id AS "pedidoId",s.stop_status AS "status",s.as
             throw new DeliveryDomainException(409,"PAY_MODE_ACTIVE_ROUTE","Conclua ou retire as entregas e ofertas ativas antes de trocar a modalidade de remuneração. A rota não pode misturar pagamento por entrega e por período.");
         var result=await c.QuerySingleAsync<RiderPayPlan>(new CommandDefinition("INSERT INTO delivery_rider_pay_plans(id,estabelecimento_id,motoboy_id,mode,rate,created_by) VALUES(@Id,@Store,@Rider,@Mode,@Rate,@User) RETURNING id,mode,rate,created_at_utc AS CreatedAtUtc",new { Id=request.OperationId,Store=store,Rider=rider,request.Mode,request.Rate,User=user },tx,cancellationToken:ct));
         await tx.CommitAsync(ct);return result;
+    }
+    /// <summary>Id do plano de cada motoboy no lote: determinístico por (operação, motoboy), então reenviar o lote não duplica planos.</summary>
+    public static Guid BatchPlanId(Guid operationId,int rider) =>
+        new(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes($"{operationId:N}:{rider}")).AsSpan(0,16));
+    /// <summary>
+    /// Salva a mesma regra para vários motoboys. Cada motoboy é uma transação própria (como as chamadas individuais de hoje):
+    /// quem conflitar (regra mudou, modalidade com rota ativa, sem vínculo) volta com o código, sem desfazer os demais.
+    /// </summary>
+    public async Task<IReadOnlyList<RiderPayPlanBatchResult>> SavePlans(Guid store,int user,RiderPayPlanBatchRequest request,CancellationToken ct)
+    {
+        RiderPayRules.ValidatePlan(request.Mode,request.Rate);
+        if(request.OperationId==Guid.Empty) throw new ArgumentException("Identificação ausente.");
+        if(request.Items.Count is 0 or >200) throw new ArgumentException("Informe de 1 a 200 motoboys.");
+        if(request.Items.Select(i=>i.MotoboyId).Distinct().Count()!=request.Items.Count) throw new ArgumentException("Motoboy repetido na lista.");
+        var results=new List<RiderPayPlanBatchResult>();
+        foreach(var item in request.Items)
+        {
+            try
+            {
+                var plan=await SavePlan(store,item.MotoboyId,user,new RiderPayPlanRequest{ OperationId=BatchPlanId(request.OperationId,item.MotoboyId),ExpectedPlanId=item.ExpectedPlanId,Mode=request.Mode,Rate=request.Rate },ct);
+                results.Add(new(item.MotoboyId,true,plan,null,null));
+            }
+            catch(DeliveryDomainException ex){ results.Add(new(item.MotoboyId,false,null,ex.Code,ex.Message)); }
+            catch(ArgumentException ex){ results.Add(new(item.MotoboyId,false,null,"VALIDATION_ERROR",ex.Message)); }
+        }
+        return results;
     }
     public async Task<Guid> AddPeriod(Guid store,int rider,int user,RiderPeriodRequest request,CancellationToken ct)
     {
