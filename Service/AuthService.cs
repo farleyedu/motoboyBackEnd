@@ -889,10 +889,36 @@ SELECT id,
 
             if (!estabelecimentoId.HasValue)
             {
-                throw new UnauthorizedAccessException("Usuario nao possui vinculo ativo com estabelecimentos.");
+                throw new UnauthorizedAccessException(await ObterMotivoSemLojaAsync(connection, userId));
             }
 
             return estabelecimentoId.Value;
+        }
+
+        // O login recusado por falta de loja precisa dizer o que fazer: sem vinculo, empresa suspensa ou loja inativa.
+        private static async Task<string> ObterMotivoSemLojaAsync(NpgsqlConnection connection, int userId)
+        {
+            var vinculo = await connection.QueryFirstOrDefaultAsync<MotivoSemLojaRow>(@"
+SELECT (COALESCE(emp.ativo, TRUE) = TRUE AND COALESCE(emp.pausada, FALSE) = FALSE) AS EmpresaOk,
+       (COALESCE(e.ativo, TRUE) = TRUE AND COALESCE(e.status, 'ativo') IN ('ativo', 'trial')) AS LojaOk
+  FROM usuario_estabelecimentos ue
+  JOIN estabelecimentos e ON e.id = ue.id_estabelecimento
+  JOIN empresas emp ON emp.id = e.id_empresa
+ WHERE ue.id_usuario = @UserId AND ue.ativo = TRUE AND ue.status = 'ativo'
+ ORDER BY ue.id
+ LIMIT 1;", new { UserId = userId });
+
+            if (vinculo is null)
+                return "Seu acesso ainda não foi liberado para nenhuma loja. Fale com a Zippy.";
+            if (!vinculo.EmpresaOk)
+                return "A empresa está suspensa. Fale com a Zippy.";
+            return "A loja está inativa. Fale com a Zippy.";
+        }
+
+        private sealed class MotivoSemLojaRow
+        {
+            public bool EmpresaOk { get; set; }
+            public bool LojaOk { get; set; }
         }
 
         private async Task<Guid?> ResolverEstabelecimentoParaTokenAsync(
@@ -1137,9 +1163,14 @@ SELECT  e.id                    AS EstabelecimentoId,
                 throw new UnauthorizedAccessException("Estabelecimento não encontrado.");
             }
 
-            if (!isSuperAdmin && (!contexto.EmpresaAtiva || contexto.EmpresaPausada || !contexto.EstabelecimentoAtivo || !IsActiveEstablishmentStatus(contexto.EstabelecimentoStatus)))
+            if (!isSuperAdmin && (!contexto.EmpresaAtiva || contexto.EmpresaPausada))
             {
-                throw new UnauthorizedAccessException("Empresa ou estabelecimento indisponivel.");
+                throw new UnauthorizedAccessException("A empresa está suspensa. Fale com a Zippy.");
+            }
+
+            if (!isSuperAdmin && (!contexto.EstabelecimentoAtivo || !IsActiveEstablishmentStatus(contexto.EstabelecimentoStatus)))
+            {
+                throw new UnauthorizedAccessException("A loja está inativa. Fale com a Zippy.");
             }
 
             if (!isSuperAdmin && contexto.VinculoId == null)

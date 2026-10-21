@@ -21,6 +21,8 @@ namespace APIBack.Service.Interface
         Task AtualizarStatusEstabelecimentoAsync(int userId, Guid? empresaId, Guid? estabelecimentoId, string? companyRole, string? establishmentRole, bool isSuperAdmin, Guid targetEstabelecimentoId, bool ativa);
 
         Task<IReadOnlyCollection<GestaoUsuarioDto>> ListarUsuariosAsync(int userId, Guid? empresaId, Guid? estabelecimentoId, string? companyRole, string? establishmentRole, bool isSuperAdmin);
+        /// <summary>Cria o gerente da empresa para uma loja que ainda nao tem acesso e devolve o link de primeiro acesso. So super admin.</summary>
+        Task<AcessoLinkDto> CriarResponsavelAsync(int userId, Guid? empresaId, Guid? estabelecimentoId, string? companyRole, string? establishmentRole, bool isSuperAdmin, Guid targetEstabelecimentoId, ResponsavelRequest request);
         Task<GestaoUsuarioDto> CriarUsuarioAsync(int userId, Guid? empresaId, Guid? estabelecimentoId, string? companyRole, string? establishmentRole, bool isSuperAdmin, SalvarUsuarioRequest request);
         Task<GestaoUsuarioDto> AtualizarUsuarioAsync(int userId, Guid? empresaId, Guid? estabelecimentoId, string? companyRole, string? establishmentRole, bool isSuperAdmin, int targetUserId, SalvarUsuarioRequest request);
         Task AtualizarStatusUsuarioAsync(int userId, Guid? empresaId, Guid? estabelecimentoId, string? companyRole, string? establishmentRole, bool isSuperAdmin, int targetUserId, string status);

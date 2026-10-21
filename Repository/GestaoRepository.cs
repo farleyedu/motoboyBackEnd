@@ -799,6 +799,7 @@ UPDATE usuario
    SET nome = @Nome,
        email = @Email,
        senha = COALESCE(@SenhaHash, senha),
+       senha_pendente = CASE WHEN @SenhaHash IS NULL THEN senha_pendente ELSE @SenhaPendente END,
        is_super_admin = @IsSuperAdmin,
        ultimo_estabelecimento_acessado = @UltimoEstabelecimentoAcessado,
        deleted_at = NULL,
@@ -811,6 +812,7 @@ UPDATE usuario
                     command.Nome,
                     command.Email,
                     command.SenhaHash,
+                    command.SenhaPendente,
                     command.IsSuperAdmin,
                     UltimoEstabelecimentoAcessado = command.EstabelecimentoIds.FirstOrDefault() == Guid.Empty
                         ? (Guid?)null
@@ -850,8 +852,8 @@ UPDATE usuario_estabelecimentos
             else
             {
                 const string sqlInsert = @"
-INSERT INTO usuario (nome, email, senha, is_super_admin, ultimo_estabelecimento_acessado, provider, created_at, updated_at)
-VALUES (@Nome, @Email, @SenhaHash, @IsSuperAdmin, @UltimoEstabelecimentoAcessado, 'local', NOW(), NOW())
+INSERT INTO usuario (nome, email, senha, senha_pendente, is_super_admin, ultimo_estabelecimento_acessado, provider, created_at, updated_at)
+VALUES (@Nome, @Email, @SenhaHash, @SenhaPendente, @IsSuperAdmin, @UltimoEstabelecimentoAcessado, 'local', NOW(), NOW())
 RETURNING id;";
 
                 userId = await connection.ExecuteScalarAsync<int>(sqlInsert, new
@@ -859,6 +861,7 @@ RETURNING id;";
                     command.Nome,
                     command.Email,
                     command.SenhaHash,
+                    command.SenhaPendente,
                     command.IsSuperAdmin,
                     UltimoEstabelecimentoAcessado = command.EstabelecimentoIds.FirstOrDefault() == Guid.Empty
                         ? (Guid?)null

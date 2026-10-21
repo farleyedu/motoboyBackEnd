@@ -144,6 +144,8 @@ namespace APIBack.Model.Gestao
         public string Nome { get; set; } = string.Empty;
         public string Email { get; set; } = string.Empty;
         public string? SenhaHash { get; set; }
+        /// <summary>A senha e aleatoria: o usuario ainda vai definir a propria pelo link de convite.</summary>
+        public bool SenhaPendente { get; set; }
         public bool IsSuperAdmin { get; set; }
         public Guid EmpresaId { get; set; }
         public string CompanyRole { get; set; } = "colaborador";

@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
 using APIBack.Infrastructure;
+using APIBack.Service;
 
 namespace APIBack.DTOs.Gestao
 {
@@ -33,6 +34,10 @@ namespace APIBack.DTOs.Gestao
         public DateTime? CreatedAt { get; set; }
         public DateTime? UpdatedAt { get; set; }
         public GestaoPlanoDto? Plano { get; set; }
+        /// <summary>So na criacao: o link de primeiro acesso do responsavel, para a Gestao copiar e enviar.</summary>
+        public AcessoLinkDto? AcessoResponsavel { get; set; }
+        /// <summary>So na criacao: a empresa foi criada, mas o acesso do responsavel nao; o texto explica o que fazer.</summary>
+        public string? AcessoResponsavelErro { get; set; }
     }
 
     public class GestaoEstabelecimentoDto
@@ -129,6 +134,15 @@ namespace APIBack.DTOs.Gestao
         public string? TipoOrganizacao { get; set; }
         public GestaoPlanoDto? Plano { get; set; }
         public SalvarEstabelecimentoRequest? InitialEstablishment { get; set; }
+        /// <summary>Opcional: cria o gerente da empresa ja vinculado as lojas e devolve o link de primeiro acesso.</summary>
+        public ResponsavelRequest? Responsavel { get; set; }
+    }
+
+    public class ResponsavelRequest
+    {
+        public string Nome { get; set; } = string.Empty;
+        public string Email { get; set; } = string.Empty;
+        public string? Telefone { get; set; }
     }
 
     public class SalvarEstabelecimentoRequest

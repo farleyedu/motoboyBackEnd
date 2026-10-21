@@ -23,13 +23,15 @@ namespace APIBack.Service
         private readonly ILogger<GestaoService> _logger;
         private readonly IWabaPhoneRepository? _wabaPhoneRepository;
         private readonly IAgenteRepository? _agenteRepository;
+        private readonly IAcessoService? _acessoService;
 
-        public GestaoService(IGestaoRepository repository, ILogger<GestaoService> logger, IWabaPhoneRepository? wabaPhoneRepository = null, IAgenteRepository? agenteRepository = null)
+        public GestaoService(IGestaoRepository repository, ILogger<GestaoService> logger, IWabaPhoneRepository? wabaPhoneRepository = null, IAgenteRepository? agenteRepository = null, IAcessoService? acessoService = null)
         {
             _repository = repository;
             _logger = logger;
             _wabaPhoneRepository = wabaPhoneRepository;
             _agenteRepository = agenteRepository;
+            _acessoService = acessoService;
         }
 
         public async Task<IReadOnlyCollection<GestaoEmpresaDto>> ListarEmpresasAsync(
@@ -59,6 +61,20 @@ namespace APIBack.Service
             var scope = BuildScope(empresaId, estabelecimentoId, companyRole, establishmentRole, isSuperAdmin);
             EnsureCanCreateCompany(scope);
             ValidateSalvarEmpresaRequest(request);
+            var responsavel = HasResponsavel(request.Responsavel) ? request.Responsavel : null;
+            if (responsavel != null)
+            {
+                // Falha antes de criar a empresa: e-mail repetido ou invalido nao deixa a empresa pela metade.
+                var errors = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+                ValidateRequired(responsavel.Nome, "responsavel.nome", "Nome do responsavel obrigatorio.", errors);
+                ValidateRequired(responsavel.Email, "responsavel.email", "E-mail do responsavel obrigatorio.", errors);
+                ValidateOptionalEmail(responsavel.Email, "responsavel.email", "E-mail do responsavel invalido.", errors);
+                if (errors.Count == 0 && await _repository.EmailExisteAsync(responsavel.Email.Trim(), null))
+                    AddError(errors, "responsavel.email", "E-mail do responsavel ja cadastrado.");
+                if (request.InitialEstablishment == null)
+                    AddError(errors, "responsavel.nome", "O responsavel precisa de uma loja: preencha a loja inicial.");
+                ThrowIfValidationErrors(errors);
+            }
 
             var createdId = request.InitialEstablishment != null
                 ? await _repository.CriarEmpresaComEstabelecimentoAsync(request, request.InitialEstablishment)
@@ -67,7 +83,84 @@ namespace APIBack.Service
             var created = await _repository.ObterEmpresaAsync(createdId)
                 ?? throw new InvalidOperationException("Empresa criada mas nao encontrada na consulta de retorno.");
 
-            return MapEmpresa(created);
+            var dto = MapEmpresa(created);
+            if (responsavel != null)
+            {
+                try
+                {
+                    var lojas = await _repository.ListarEstabelecimentosAsync(createdId, null);
+                    dto.AcessoResponsavel = await CriarResponsavelCoreAsync(
+                        scope, userId, createdId, lojas.Select(item => item.Id).ToArray(), responsavel);
+                }
+                catch (Exception ex)
+                {
+                    // A empresa ja existe: o erro vira aviso e o acesso se cria depois, pelo modal da loja.
+                    _logger.LogWarning(ex, "Empresa {EmpresaId} criada, mas o acesso do responsavel falhou.", createdId);
+                    dto.AcessoResponsavelErro = ex is RequestValidationException
+                        ? "A empresa foi criada, mas o acesso do responsavel nao: confira nome e e-mail e crie pelo modal da loja."
+                        : "A empresa foi criada, mas nao foi possivel criar o acesso do responsavel. Crie pelo modal da loja.";
+                }
+            }
+
+            return dto;
+        }
+
+        public async Task<AcessoLinkDto> CriarResponsavelAsync(
+            int userId,
+            Guid? empresaId,
+            Guid? estabelecimentoId,
+            string? companyRole,
+            string? establishmentRole,
+            bool isSuperAdmin,
+            Guid targetEstabelecimentoId,
+            ResponsavelRequest request)
+        {
+            var scope = BuildScope(empresaId, estabelecimentoId, companyRole, establishmentRole, isSuperAdmin);
+            if (!scope.IsSuperAdmin)
+            {
+                throw new UnauthorizedAccessException("Somente a Gestão cria o acesso do responsável.");
+            }
+
+            var loja = await _repository.ObterEstabelecimentoAsync(targetEstabelecimentoId)
+                ?? throw new KeyNotFoundException("Estabelecimento nao encontrado.");
+            // Todas as lojas da empresa: o gerente da empresa precisa enxergar todas, nao so a que abriu o modal.
+            var lojas = await _repository.ListarEstabelecimentosAsync(loja.EmpresaId, null);
+            var ids = lojas.Where(item => item.Ativo).Select(item => item.Id).ToArray();
+            if (ids.Length == 0) ids = new[] { loja.Id };
+            return await CriarResponsavelCoreAsync(scope, userId, loja.EmpresaId, ids, request);
+        }
+
+        private static bool HasResponsavel(ResponsavelRequest? value) =>
+            value != null && (!string.IsNullOrWhiteSpace(value.Nome) || !string.IsNullOrWhiteSpace(value.Email));
+
+        /// <summary>
+        /// Cria o gerente da empresa com senha aleatoria (marcada como pendente) e gera o link em que ele define a propria.
+        /// A senha nunca e mostrada: o unico caminho para entrar e o link.
+        /// </summary>
+        private async Task<AcessoLinkDto> CriarResponsavelCoreAsync(
+            GestaoEmpresaScope scope, int actorUserId, Guid empresaId, Guid[] estabelecimentoIds, ResponsavelRequest request)
+        {
+            if (_acessoService == null)
+            {
+                throw new InvalidOperationException("Servico de acesso indisponivel.");
+            }
+
+            var input = new SalvarUsuarioRequest
+            {
+                Nome = request.Nome,
+                Email = request.Email,
+                Telefone = request.Telefone,
+                SenhaInicial = Convert.ToBase64String(System.Security.Cryptography.RandomNumberGenerator.GetBytes(24)),
+                TipoUsuario = "gerente_empresa",
+                EmpresaId = empresaId,
+                EstabelecimentoIds = estabelecimentoIds.ToList()
+            };
+
+            var command = await BuildSaveUsuarioCommandAsync(scope, actorUserId, input, null);
+            command.SenhaPendente = true;
+            var createdUserId = await _repository.SalvarUsuarioAsync(command);
+            await TryEnsureAgenteAsync(command, createdUserId);
+            return await _acessoService.GerarLinkAsync(estabelecimentoIds[0], createdUserId, actorUserId);
         }
 
         public async Task<GestaoEmpresaDto> AtualizarEmpresaAsync(
