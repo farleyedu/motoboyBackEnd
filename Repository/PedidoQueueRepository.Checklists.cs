@@ -18,7 +18,7 @@ INSERT INTO delivery_order_item_checks(stop_id,estabelecimento_id,motoboy_id,sta
     }
     private static async Task<DeliveryChecklist> ReadChecklistAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, Guid store, int pedido, CancellationToken ct = default)
     {
-        if (await connection.ExecuteScalarAsync<bool>("SELECT to_regclass('ifood_order_links') IS NOT NULL", transaction: transaction) &&
+        if (await APIBack.Integrations.Ifood.Orders.IfoodSchemaProbe.OrdersAsync(connection, transaction) &&
             await connection.ExecuteScalarAsync<bool>("SELECT EXISTS(SELECT 1 FROM ifood_order_links WHERE pedido_id=@Pedido AND estabelecimento_id=@Store)", new { Pedido = pedido, Store = store }, transaction))
         {
             await EnsureIfoodRoutingAsync(connection, transaction, store, pedido, false);

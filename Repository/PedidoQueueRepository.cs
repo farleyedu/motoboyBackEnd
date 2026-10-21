@@ -844,15 +844,11 @@ SELECT s.id AS Id, s.pedido_id AS PedidoId, s.position AS Position, s.stop_statu
 
             var settings = await GetSettingsInternalAsync(connection, transaction, estabelecimentoId, cancellationToken);
 
-            var identities = await APIBack.Integrations.Ifood.Orders.IfoodOrderReadModel.IdentitiesAsync(connection, estabelecimentoId, rows.Select(r => r.PedidoId).ToArray(), transaction);
-            var officialOrders = new Dictionary<int, APIBack.Integrations.Ifood.Orders.IfoodImportedOrder>();
-            foreach (var (pedido, identity) in identities)
-            {
-                // IdentitiesAsync já marcou como desatualizado o que a normalização recusa: não lê o detalhe de novo.
-                if (!identity.DataIsCurrent) continue;
-                var official = await APIBack.Integrations.Ifood.Orders.IfoodOrderReadModel.DetailsAsync(connection, estabelecimentoId, pedido, identity.CanAssignDelivery, transaction);
-                if (official != null) officialOrders[pedido] = official;
-            }
+            // Identidade e pedido oficial saem do mesmo passe em lote; pedido que a normalização recusa vira "desatualizado"
+            // e fica sem versão oficial, em vez de derrubar a fila.
+            var view = await APIBack.Integrations.Ifood.Orders.IfoodOrderReadModel.QueueViewsAsync(connection, estabelecimentoId, rows.Select(r => r.PedidoId).ToArray(), transaction);
+            var identities = view.Identities;
+            var officialOrders = view.Officials;
 
             var quotes = new Dictionary<long, RiderPayQuote>();
             if (await MotoboyWorkService.Available(connection, transaction, cancellationToken))

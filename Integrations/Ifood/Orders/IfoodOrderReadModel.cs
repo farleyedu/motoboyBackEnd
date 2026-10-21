@@ -4,12 +4,28 @@ using Npgsql;
 
 namespace APIBack.Integrations.Ifood.Orders;
 
+/// <summary>Identidades e pedidos oficiais de um conjunto de pedidos, lidos juntos (o oficial só existe para dado atual e legível).</summary>
+public sealed record IfoodQueueView(IReadOnlyDictionary<int, IfoodPedidoIdentityDto> Identities, IReadOnlyDictionary<int, IfoodImportedOrder> Officials);
+
 public static class IfoodOrderReadModel
 {
-    public static async Task<IReadOnlyDictionary<int, IfoodPedidoIdentityDto>> IdentitiesAsync(NpgsqlConnection connection, Guid store, int[] orders, NpgsqlTransaction? transaction = null)
+    public static async Task<IReadOnlyDictionary<int, IfoodPedidoIdentityDto>> IdentitiesAsync(NpgsqlConnection connection, Guid store, int[] orders, NpgsqlTransaction? transaction = null) =>
+        (await LoadAsync(connection, store, orders, transaction)).Identities;
+
+    /// <summary>
+    /// Leitura em lote para a fila: um único passe sobre os snapshots (payload lido e normalizado uma vez por pedido) em vez de
+    /// <see cref="IdentitiesAsync"/> mais um <see cref="DetailsAsync"/> por parada.
+    /// </summary>
+    public static Task<IfoodQueueView> QueueViewsAsync(NpgsqlConnection connection, Guid store, int[] orders, NpgsqlTransaction? transaction = null) =>
+        LoadAsync(connection, store, orders, transaction);
+
+    private sealed class BlockedRow { public int Pedido { get; set; } public string? Delivery { get; set; } public string? Departure { get; set; } }
+
+    private static async Task<IfoodQueueView> LoadAsync(NpgsqlConnection connection, Guid store, int[] orders, NpgsqlTransaction? transaction)
     {
-        if (orders.Length == 0 || !await connection.ExecuteScalarAsync<bool>("SELECT to_regclass('ifood_order_links') IS NOT NULL AND to_regclass('ifood_order_snapshots') IS NOT NULL", transaction: transaction))
-            return new Dictionary<int, IfoodPedidoIdentityDto>();
+        var noOfficials = new Dictionary<int, IfoodImportedOrder>();
+        if (orders.Length == 0 || !await IfoodSchemaProbe.OrdersAsync(connection, transaction))
+            return new IfoodQueueView(new Dictionary<int, IfoodPedidoIdentityDto>(), noOfficials);
         var rows = await connection.QueryAsync<Row>("""
 SELECT l.pedido_id AS PedidoId,l.merchant_id AS MerchantId,l.external_order_id AS ExternalOrderId,l.display_number AS DisplayNumber,
 s.order_type AS OrderType,s.delivered_by AS DeliveredBy,s.order_amount AS OrderAmount,s.prepaid_amount AS PrepaidAmount,s.pending_amount AS PendingAmount,
@@ -33,6 +49,8 @@ WHERE l.estabelecimento_id=@Store AND l.pedido_id=ANY(@Orders)
             PreparationState = r.PreparationState, SynchronizationState = r.SynchronizationState,
             CancellationState = r.CancellationState, DeliveryState = r.DeliveryState, DataIsCurrent = r.DataIsCurrent
         });
+        var normalized = new Dictionary<int, IfoodImportedOrder>();
+        var collectable = new HashSet<int>();
         foreach (var row in rows)
         {
             var identity = identities[row.PedidoId];
@@ -45,6 +63,9 @@ WHERE l.estabelecimento_id=@Store AND l.pedido_id=ANY(@Orders)
                 identity.DataIsCurrent = false; identity.SynchronizationState = "review";
                 identity.ReviewReasons = new[] { "IFOOD_ORDER_DATA_REVIEW" }; continue;
             }
+            normalized[row.PedidoId] = order;
+            // Mesma regra do detalhe oficial: só cobra no destino enquanto o snapshot está sincronizado e o pedido aberto.
+            if (row.SynchronizationState == "synced" && row.RemoteStatus is not ("CANCELLED" or "CONCLUDED")) collectable.Add(row.PedidoId);
             identity.IsTest = order.IsTest;
             identity.CreatedAtUtc = order.CreatedAtUtc;
             identity.StatusOccurredAtUtc = row.StatusOccurredAtUtc ?? row.LinkedAtUtc;
@@ -59,7 +80,7 @@ WHERE l.estabelecimento_id=@Store AND l.pedido_id=ANY(@Orders)
             identity.LocationLookupStatus = System.Text.Json.Nodes.JsonNode.Parse(row.Payload)?[IfoodDeliveryLocation.Key]?["lookupStatus"]?.GetValue<string>();
             identity.LocationUpdatedAtUtc = order.LocationUpdatedAtUtc;
         }
-        if (await connection.ExecuteScalarAsync<bool>("SELECT to_regclass('ifood_command_attempts') IS NOT NULL", transaction: transaction))
+        if (await IfoodSchemaProbe.CommandsAsync(connection, transaction))
         {
             var commands = await connection.QueryAsync<IfoodCommandDto>("""
 SELECT l.pedido_id AS PedidoId,o.operation_id AS OperationId,o.command_type AS Command,o.state AS State,
@@ -78,18 +99,24 @@ AND o.command_type IN('confirm','start_preparation','ready_to_pickup','dispatch'
                         identity.SynchronizationState=command.State switch { "queued" or "processing"=>"pending","uncertain"=>"uncertain",_=>"review" };
                 }
         }
-        if (await connection.ExecuteScalarAsync<bool>("SELECT to_regprocedure('ifood_delivery_blocked_code(uuid,integer,boolean)') IS NOT NULL", transaction: transaction))
+        if (await IfoodSchemaProbe.BlockedCodeAsync(connection, transaction))
         {
-            foreach (var (pedido, identity) in identities)
+            // Uma ida ao banco para todos os pedidos (antes eram duas por pedido).
+            var blocked = await connection.QueryAsync<BlockedRow>("""
+SELECT p AS Pedido,ifood_delivery_blocked_code(@Store,p,FALSE) AS Delivery,ifood_delivery_blocked_code(@Store,p,TRUE) AS Departure
+FROM unnest(@Orders) AS p
+""", new { Store = store, Orders = identities.Keys.ToArray() }, transaction);
+            foreach (var row in blocked)
             {
-                identity.DeliveryBlockedCode = await connection.ExecuteScalarAsync<string?>("SELECT ifood_delivery_blocked_code(@Store,@Pedido,FALSE)", new { Store = store, Pedido = pedido }, transaction);
-                identity.DepartureBlockedCode = await connection.ExecuteScalarAsync<string?>("SELECT ifood_delivery_blocked_code(@Store,@Pedido,TRUE)", new { Store = store, Pedido = pedido }, transaction);
+                var identity = identities[row.Pedido];
+                identity.DeliveryBlockedCode = row.Delivery;
+                identity.DepartureBlockedCode = row.Departure;
                 identity.CanAssignDelivery = identity.DeliveryBlockedCode == null;
                 identity.CanDepartDelivery = identity.DepartureBlockedCode == null;
             }
         }
         else foreach (var identity in identities.Values) identity.DeliveryBlockedCode = identity.DepartureBlockedCode = "IFOOD_DELIVERY_DISABLED";
-        if (await connection.ExecuteScalarAsync<bool>("SELECT to_regclass('ifood_delivery_completions') IS NOT NULL", transaction: transaction))
+        if (await IfoodSchemaProbe.CompletionsAsync(connection, transaction))
         {
             var completing = await connection.QueryAsync<int>("SELECT pedido_id FROM ifood_delivery_completions WHERE estabelecimento_id=@Store AND pedido_id=ANY(@Orders) AND state<>'rejected'", new { Store = store, Orders = orders }, transaction);
             foreach (var pedido in completing)
@@ -99,11 +126,19 @@ AND o.command_type IN('confirm','start_preparation','ready_to_pickup','dispatch'
                     identity.DeliveryBlockedCode = identity.DepartureBlockedCode = "IFOOD_COMPLETION_ACTIVE_OPERATION";
                 }
         }
-        return identities;
+        var officials = new Dictionary<int, IfoodImportedOrder>();
+        if (normalized.Count > 0 && await IfoodSchemaProbe.ItemsAsync(connection, transaction))
+            foreach (var (pedido, order) in normalized)
+            {
+                var identity = identities[pedido];
+                // Dado desatualizado não tem versão oficial (a fila mostra só a identidade e o bloqueio).
+                if (identity.DataIsCurrent) officials[pedido] = order.WithCollectionAllowed(collectable.Contains(pedido) && identity.CanAssignDelivery);
+            }
+        return new IfoodQueueView(identities, officials);
     }
     public static async Task<IfoodImportedOrder?> DetailsAsync(NpgsqlConnection connection, Guid store, int pedido, bool collectionAllowed=true, NpgsqlTransaction? transaction = null)
     {
-        if (!await connection.ExecuteScalarAsync<bool>("SELECT to_regclass('ifood_order_items') IS NOT NULL", transaction: transaction)) return null;
+        if (!await IfoodSchemaProbe.ItemsAsync(connection, transaction)) return null;
         var row = await connection.QuerySingleOrDefaultAsync<Detail>("""
 SELECT l.merchant_id AS MerchantId,l.external_order_id AS ExternalOrderId,s.payload::text AS Payload,
 COALESCE((to_jsonb(s)->>'data_is_current')::boolean,TRUE) AS DataIsCurrent,

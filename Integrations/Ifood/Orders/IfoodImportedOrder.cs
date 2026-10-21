@@ -34,7 +34,15 @@ public sealed class IfoodImportedOrder
     public bool RequiresReview { get; init; }
     public bool ImportedByRecovery { get; init; }
     public IReadOnlyList<string> ReviewReasons { get; init; } = Array.Empty<string>();
-    [JsonIgnore] public bool CollectionAllowed { get; init; } = true;
+    [JsonIgnore] public bool CollectionAllowed { get; internal set; } = true;
+    /// <summary>Mesma ordem, com outra permissão de cobrança: evita normalizar o mesmo JSON de novo só para trocar a flag.</summary>
+    public IfoodImportedOrder WithCollectionAllowed(bool allowed)
+    {
+        if (CollectionAllowed == allowed) return this;
+        var copy = (IfoodImportedOrder)MemberwiseClone();
+        copy.CollectionAllowed = allowed;
+        return copy;
+    }
     public decimal? AmountToCollect => !CollectionAllowed || PaymentState == "requer_revisao" ? null : PendingAmount;
     public string? Observations { get; init; }
     public JsonElement Address { get; init; }
