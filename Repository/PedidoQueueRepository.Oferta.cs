@@ -158,6 +158,7 @@ SELECT s.id AS Id, s.pedido_id AS PedidoId
             await using var transaction = await connection.BeginTransactionAsync();
 
             var currentVersion = await LockQueuesAsync(connection, transaction, estabelecimentoId, motoboyId);
+            await EnsureStoreOperationalAsync(connection, transaction, estabelecimentoId);
             var stops = await ListOfferedStopsAsync(connection, transaction, estabelecimentoId, motoboyId);
             var before = await BuildSnapshotAsync(connection, transaction, estabelecimentoId, motoboyId, currentVersion);
             if (before.Offer?.Stops.Any(s => s.Earnings != null) == true && expectedVersion != currentVersion)
@@ -190,6 +191,8 @@ SELECT s.id AS Id, s.pedido_id AS PedidoId
                 }
                 stops = stops.Where(s => acceptedPedidoIds.Contains(s.PedidoId)).ToList();
             }
+            foreach (var stop in stops)
+                await GarantirVagaAsync(connection, transaction, estabelecimentoId, motoboyId, stop.PedidoId, ocupar: true);
             await connection.ExecuteAsync(
                 "UPDATE delivery_route_stops SET offered_at_utc = NULL, updated_at_utc = NOW() WHERE id = ANY(@Ids);",
                 new { Ids = stops.Select(s => s.Id).ToArray() }, transaction);
@@ -277,8 +280,10 @@ SELECT s.id AS Id, s.pedido_id AS PedidoId
                 expired = (await peek.QueryAsync<ExpiredOfferRow>(@"
 SELECT DISTINCT s.estabelecimento_id AS EstabelecimentoId, s.motoboy_id AS MotoboyId
   FROM delivery_route_stops s
+  JOIN estabelecimentos e ON e.id = s.estabelecimento_id
   LEFT JOIN delivery_settings ds ON ds.estabelecimento_id = s.estabelecimento_id
  WHERE s.stop_status = 'assigned' AND s.offered_at_utc IS NOT NULL
+   AND e.situacao_comercial IN ('teste', 'ativo')
    AND s.offered_at_utc <= @Now - make_interval(mins => COALESCE(ds.offer_timeout_minutes, @DefaultMinutes));",
                     new { Now = agoraUtc, DefaultMinutes = OfertaRotaRules.PrazoPadraoMinutos })).ToList();
             }

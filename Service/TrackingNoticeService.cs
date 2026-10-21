@@ -29,19 +29,22 @@ namespace APIBack.Service
         private readonly ITrackingNoticeSender _sender;
         private readonly IConfiguration _configuration;
         private readonly ILogger<TrackingNoticeService> _logger;
+        private readonly ISituacaoComercialService? _situacoes;
 
         public TrackingNoticeService(
             IRastreioRepository rastreio,
             IAtendimentoRepository atendimento,
             ITrackingNoticeSender sender,
             IConfiguration configuration,
-            ILogger<TrackingNoticeService> logger)
+            ILogger<TrackingNoticeService> logger,
+            ISituacaoComercialService? situacoes = null)
         {
             _rastreio = rastreio;
             _atendimento = atendimento;
             _sender = sender;
             _configuration = configuration;
             _logger = logger;
+            _situacoes = situacoes;
         }
 
         /// <summary>Uma passada: olha os pedidos em rota com opt-in e dispara o que estiver na hora. Devolve quantos avisos tentou enviar.</summary>
@@ -53,6 +56,8 @@ namespace APIBack.Service
             {
                 try
                 {
+                    var situacao = _situacoes == null ? null : await _situacoes.ObterAsync(candidate.EstabelecimentoId);
+                    if (situacao?.Situacao is SituacoesComerciais.Bloqueado or SituacoesComerciais.Implantacao) continue;
                     if (!candidate.DispatchDone)
                     {
                         if (candidate.Settings.DispatchEnabled)
@@ -242,6 +247,16 @@ namespace APIBack.Service
             }
             var source = await _rastreio.GetPublicSourceAsync(token)
                 ?? throw new DeliveryDomainException(404, "TRACKING_NOT_FOUND", "Link de rastreio nao encontrado.");
+            if (_situacoes != null)
+            {
+                var situacao = await _situacoes.ObterAsync(source.EstabelecimentoId);
+                if (situacao?.Situacao == SituacoesComerciais.Bloqueado &&
+                    (source.StatusPedido != 2 || !source.RotaIniciadaEmUtc.HasValue ||
+                     !situacao.BloqueadoEm.HasValue || source.RotaIniciadaEmUtc.Value > situacao.BloqueadoEm.Value.UtcDateTime))
+                    throw new DeliveryDomainException(404, "TRACKING_UNAVAILABLE", "Rastreio indisponivel no momento.");
+                if (situacao?.Situacao == SituacoesComerciais.Implantacao)
+                    throw new DeliveryDomainException(404, "TRACKING_UNAVAILABLE", "Rastreio indisponivel no momento.");
+            }
             var (status, label, final) = PublicTrackingRules.StatusOf(source.StatusPedido);
 
             if (source.Expired && !final)

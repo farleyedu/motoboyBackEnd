@@ -19,6 +19,7 @@ namespace APIBack.Service
     {
         private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web);
         private readonly ICardapioRepository _repository;
+        private readonly ISituacaoComercialService? _situacoes;
         private readonly ILocalizacaoService _localizacao;
         private readonly IWabaPhoneRepository _waba;
         private readonly ICardapioPedidoWebService _confirmacao;
@@ -41,8 +42,10 @@ namespace APIBack.Service
             IClienteEnderecoRepository enderecos,
             IRestaurantSettingsRepository? restaurant = null,
             IDeliveryZonaRepository? zonas = null,
-            IPedidoQueueRepository? delivery = null)
+            IPedidoQueueRepository? delivery = null,
+            ISituacaoComercialService? situacoes = null)
         {
+            _situacoes = situacoes;
             _repository = repository;
             _localizacao = localizacao;
             _waba = waba;
@@ -728,12 +731,24 @@ namespace APIBack.Service
                 throw new KeyNotFoundException("Estabelecimento nao encontrado.");
             }
 
+            // Loja bloqueada pela Gestao ou ainda em implantacao: o cardapio publico nao abre nem recebe pedido.
+            var todosModulosNoTeste = false;
+            if (_situacoes != null)
+            {
+                var situacao = await _situacoes.ObterAsync(estabelecimento.Id);
+                if (situacao?.Situacao is SituacoesComerciais.Bloqueado or SituacoesComerciais.Implantacao)
+                {
+                    throw new KeyNotFoundException("Cardapio indisponivel no momento.");
+                }
+                todosModulosNoTeste = situacao?.Situacao == SituacoesComerciais.Teste;
+            }
+
             var modulos = (estabelecimento.ModulosAtivosRaw ?? Array.Empty<string>())
                 .Where(item => !string.IsNullOrWhiteSpace(item))
                 .Select(ValidationUtils.NormalizeToken)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-            if (!modulos.Contains("cardapio") || !modulos.Contains("cardapioweb"))
+            if (!todosModulosNoTeste && (!modulos.Contains("cardapio") || !modulos.Contains("cardapioweb")))
             {
                 throw new KeyNotFoundException("Cardapio nao disponivel para este estabelecimento.");
             }

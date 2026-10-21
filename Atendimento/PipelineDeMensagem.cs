@@ -27,6 +27,7 @@ namespace APIBack.Atendimento
             "Estamos enfrentando uma instabilidade temporária no atendimento. Assim que possível, retornaremos por aqui.";
 
         private readonly IExecucaoAtendimentoRepository? _execucoes;
+        private readonly APIBack.Service.ISituacaoComercialService? _situacoes;
         private readonly IIngressoDeConversa _ingresso;
         private readonly IConversationRepository _conversas;
         private readonly IExecutorDeAtendimento _executor;
@@ -40,8 +41,10 @@ namespace APIBack.Atendimento
             IExecutorDeAtendimento executor,
             IEnviadorDeRespostas enviador,
             ILogger<PipelineDeMensagem> logger,
-            ICardapioPedidoWebService? pedidosWeb = null, IExecucaoAtendimentoRepository? execucoes = null)
+            ICardapioPedidoWebService? pedidosWeb = null, IExecucaoAtendimentoRepository? execucoes = null,
+            APIBack.Service.ISituacaoComercialService? situacoes = null)
         {
+            _situacoes = situacoes;
             _execucoes = execucoes;
             _ingresso = ingresso;
             _conversas = conversas;
@@ -79,6 +82,23 @@ namespace APIBack.Atendimento
 
             var idConversa = ingresso.Mensagem.IdConversa;
             _logger.LogInformation("[atend] ev=gravada wa={Wa} conversa={Conversa} canal={Canal} loja={Loja} nova={Nova}", wa, idConversa, canal.Id, canal.IdEstabelecimento, ingresso.NovaConversa);
+
+            // Loja bloqueada pela Gestao ou ainda em implantacao: a mensagem fica gravada, mas o bot nao responde.
+            // O webhook continua devolvendo 200 a Meta (quem chama este pipeline nao muda).
+            if (_situacoes != null)
+            {
+                var situacao = await _situacoes.ObterAsync(canal.IdEstabelecimento);
+                if (situacao?.Situacao is APIBack.Service.SituacoesComerciais.Bloqueado or APIBack.Service.SituacoesComerciais.Implantacao)
+                {
+                    _logger.LogInformation("[atend] ev=sem_resposta conversa={Conversa} loja={Loja} motivo=loja_{Situacao}", idConversa, canal.IdEstabelecimento, situacao.Situacao);
+                    return;
+                }
+                if (!await _situacoes.TemModuloAsync(canal.IdEstabelecimento, "WHATSAPP"))
+                {
+                    _logger.LogInformation("[atend] ev=sem_resposta conversa={Conversa} loja={Loja} motivo=modulo_whatsapp_inativo", idConversa, canal.IdEstabelecimento);
+                    return;
+                }
+            }
 
             if (ingresso.EmpresaPausada)
             {

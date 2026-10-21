@@ -104,6 +104,10 @@ builder.Services.AddHttpClient("chat-media").ConfigurePrimaryHttpMessageHandler(
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<IAuthDecisionCache, AuthDecisionCache>();
+builder.Services.AddScoped<APIBack.Service.ISituacaoComercialService, APIBack.Service.SituacaoComercialService>();
+builder.Services.AddScoped<APIBack.Service.IPacotesComerciaisService, APIBack.Service.PacotesComerciaisService>();
+builder.Services.AddSingleton<APIBack.Hubs.DeliveryHubConnections>();
+builder.Services.AddHostedService<APIBack.Hubs.DeliveryHubBlockWorker>();
 builder.Services.AddOptions<AuthCacheOptions>().Bind(builder.Configuration.GetSection("AuthCache"))
     .Validate(o => o.TtlSeconds is >= 0 and <= 300, "AuthCache:TtlSeconds deve estar entre 0 e 300.")
     .ValidateOnStart();
@@ -440,6 +444,8 @@ app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseStaticFiles();
 
 app.UseMiddleware<JwtAuthenticationMiddleware>();
+// Loja bloqueada pela Gestao: 403 em tudo, menos login e o fim das entregas em rota (docs do plano, secao 3.2).
+app.UseMiddleware<APIBack.Middleware.SituacaoComercialMiddleware>();
 app.UseRateLimiter();
 app.UseAuthorization();
 

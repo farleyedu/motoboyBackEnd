@@ -37,6 +37,7 @@ namespace APIBack.Repository
        s.position AS Position,
        s.stop_status AS StopStatus,
        s.assigned_at_utc AS AssignedAtUtc,
+       s.started_at_utc AS StartedAtUtc,
        s.picked_up_at_utc AS PickedUpAtUtc,
        s.arrived_at_utc AS ArrivedAtUtc";
 
@@ -72,6 +73,7 @@ namespace APIBack.Repository
             public int Position { get; set; }
             public string StopStatus { get; set; } = "assigned";
             public DateTimeOffset AssignedAtUtc { get; set; }
+            public DateTimeOffset? StartedAtUtc { get; set; }
             public DateTimeOffset? PickedUpAtUtc { get; set; }
             public DateTimeOffset? ArrivedAtUtc { get; set; }
         }
@@ -123,6 +125,7 @@ SELECT m.id
                 ? preview.MotoboyResponsavel
                 : null;
             await LockQueuesAsync(connection, transaction, estabelecimentoId, motoboyId, previousOwner);
+            await EnsureStoreOperationalAsync(connection, transaction, estabelecimentoId);
 
             var pedido = await GetPedidoAsync(connection, transaction, estabelecimentoId, pedidoId, forUpdate: true, allowIfoodRouting: true)
                 ?? throw new DeliveryDomainException(404, "PEDIDO_NOT_FOUND", "Pedido nao encontrado neste estabelecimento.");
@@ -172,6 +175,7 @@ SELECT m.id
             var eligibility = await EnsureEligibleAsync(connection, transaction, motoboyId, estabelecimentoId);
             // Motoboy ocupado: ainda nao respondeu a uma rota enviada antes (outra oferta).
             await EnsureNoOtherPendingOfferAsync(connection, transaction, estabelecimentoId, motoboyId, offerId);
+            await GarantirVagaAsync(connection, transaction, estabelecimentoId, motoboyId, pedidoId, ocupar: !offerId.HasValue);
             var version = await AppendStopAsync(connection, transaction, estabelecimentoId, motoboyId, pedidoId, actorUserId,
                 pickedUpAtUtc: null, transferRequestId: null, offerId: offerId);
             await EmitQueueEventAsync(connection, transaction, estabelecimentoId, motoboyId, pedidoId, offerId.HasValue ? "offered" : "assigned", version, eligibility.SessionId);
@@ -377,6 +381,11 @@ SELECT m.id
             await LockQueuesAsync(connection, transaction, estabelecimentoId, motoboyId);
             var current = await GetCurrentStopAsync(connection, transaction, estabelecimentoId, motoboyId, forUpdate: true)
                 ?? throw new DeliveryDomainException(409, "NO_CURRENT_DELIVERY", "Este motoboy nao possui entrega atual em rota.");
+            var bloqueadoEm = await connection.ExecuteScalarAsync<DateTimeOffset?>(
+                "SELECT CASE WHEN situacao_comercial='bloqueado' THEN bloqueado_em END FROM estabelecimentos WHERE id=@Id FOR SHARE",
+                new { Id = estabelecimentoId }, transaction);
+            if (bloqueadoEm.HasValue && (!current.StartedAtUtc.HasValue || current.StartedAtUtc > bloqueadoEm))
+                throw new DeliveryDomainException(403, "ESTABELECIMENTO_BLOQUEADO", "Somente entregas ja em rota podem ser concluidas.");
 
             if (officialCompletion)
                 await connection.ExecuteScalarAsync<int>("SELECT id FROM pedido WHERE id=@Pedido AND id_estabelecimento=@Store FOR UPDATE", new { Pedido = current.PedidoId, Store = estabelecimentoId }, transaction);
@@ -664,6 +673,10 @@ UPDATE delivery_route_stops s
         private static async Task TryPromoteNextAsync(
             NpgsqlConnection connection, NpgsqlTransaction transaction, Guid estabelecimentoId, int motoboyId)
         {
+            var operando = await connection.ExecuteScalarAsync<bool>(
+                "SELECT situacao_comercial IN ('teste','ativo') FROM estabelecimentos WHERE id=@Id FOR SHARE",
+                new { Id = estabelecimentoId }, transaction);
+            if (!operando) return;
             if (await HasEnRouteAnywhereAsync(connection, transaction, motoboyId)) return;
 
             // Parada oferecida ainda espera o aceite do motoboy: nao vira entrega atual.
@@ -690,6 +703,18 @@ UPDATE delivery_route_stops s
         // =====================================================================
         // Elegibilidade
         // =====================================================================
+
+        private static async Task EnsureStoreOperationalAsync(
+            NpgsqlConnection connection, NpgsqlTransaction transaction, Guid estabelecimentoId)
+        {
+            var situacao = await connection.ExecuteScalarAsync<string?>(
+                "SELECT situacao_comercial FROM estabelecimentos WHERE id=@Id FOR UPDATE",
+                new { Id = estabelecimentoId }, transaction);
+            if (situacao is SituacoesComerciais.Bloqueado or SituacoesComerciais.Implantacao)
+                throw new DeliveryDomainException(403,
+                    situacao == SituacoesComerciais.Bloqueado ? SituacaoComercialRules.CodigoBloqueado : SituacaoComercialRules.CodigoOperacaoNaoIniciada,
+                    "A operacao desta loja nao esta disponivel.");
+        }
 
         private static async Task<EligibilityRow> GetEligibilityAsync(
             NpgsqlConnection connection, NpgsqlTransaction transaction, int motoboyId, Guid estabelecimentoId, CancellationToken cancellationToken = default)

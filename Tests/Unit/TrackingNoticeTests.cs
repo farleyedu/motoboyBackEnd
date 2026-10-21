@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
 using APIBack.DTOs.Atendimento;
 using APIBack.DTOs.Rastreio;
@@ -467,6 +468,37 @@ namespace APIBack.Tests.Unit
             Assert.Equal(404, (await Assert.ThrowsAsync<DeliveryDomainException>(() => service.GetPublicViewAsync("x"))).StatusCode);
             Assert.Equal(404, (await Assert.ThrowsAsync<DeliveryDomainException>(() => service.GetPublicViewAsync(RastreioToken.Generate()))).StatusCode);
             Assert.Equal(410, (await Assert.ThrowsAsync<DeliveryDomainException>(() => service.GetPublicViewAsync(expired))).StatusCode);
+        }
+
+        [Fact]
+        public async Task Bloqueio_mantem_rastreio_apenas_da_entrega_ja_em_rota()
+        {
+            var store = Guid.NewGuid();
+            var bloqueadoEm = DateTimeOffset.UtcNow.AddMinutes(-5);
+            var situacoes = new Mock<ISituacaoComercialService>();
+            situacoes.Setup(s => s.ObterAsync(store, It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new SituacaoComercialDto(store, SituacoesComerciais.Bloqueado, null, null,
+                    null, 1, 3, 10, bloqueadoEm, "teste"));
+            var config = new ConfigurationBuilder().Build();
+            var service = new TrackingNoticeService(_rastreio.Object, _atendimento.Object, _sender.Object,
+                config, NullLogger<TrackingNoticeService>.Instance, situacoes.Object);
+
+            var emRota = RastreioToken.Generate();
+            _rastreio.Setup(r => r.GetPublicSourceAsync(emRota)).ReturnsAsync(new PublicTrackingSource
+            {
+                PedidoId = 10, EstabelecimentoId = store, StatusPedido = 2,
+                RotaIniciadaEmUtc = bloqueadoEm.AddMinutes(-10).UtcDateTime
+            });
+            Assert.Equal("em_rota", (await service.GetPublicViewAsync(emRota)).Status);
+
+            var novo = RastreioToken.Generate();
+            _rastreio.Setup(r => r.GetPublicSourceAsync(novo)).ReturnsAsync(new PublicTrackingSource
+            {
+                PedidoId = 11, EstabelecimentoId = store, StatusPedido = 2,
+                RotaIniciadaEmUtc = bloqueadoEm.AddMinutes(1).UtcDateTime
+            });
+            Assert.Equal("TRACKING_UNAVAILABLE",
+                (await Assert.ThrowsAsync<DeliveryDomainException>(() => service.GetPublicViewAsync(novo))).Code);
         }
 
         [Fact]

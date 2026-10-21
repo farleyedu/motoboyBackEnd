@@ -25,7 +25,24 @@ public static class EstablishmentPermissions
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         return CardapioPermissionBridge.Apply(permissions, active.ToArray())
             .Where(p => Administrative.Contains(p.Key) || active.Contains(p.Key))
-            .ToDictionary(p => p.Key, p => p.Value, StringComparer.OrdinalIgnoreCase);
+            .ToDictionary(p => p.Key, p => StripActionsOfInactiveModules(p.Key, p.Value, active), StringComparer.OrdinalIgnoreCase);
+    }
+
+    // Acoes que moram sob a permissao "Delivery", mas pertencem a um modulo comercial proprio (plano de modulos, 3.3):
+    // com o modulo desligado, a acao some e os [RequirePermission] respondem 403.
+    private static readonly (string Modulo, string Acao, string ModuloExigido)[] ActionModules =
+    {
+        ("Delivery", "integracao_ifood", "iFood"),
+        ("Delivery", "configurar_impressao", "Impressao"),
+    };
+
+    private static List<string> StripActionsOfInactiveModules(string modulo, List<string> acoes, HashSet<string> active)
+    {
+        var blocked = ActionModules
+            .Where(r => string.Equals(r.Modulo, modulo, StringComparison.OrdinalIgnoreCase) && !active.Contains(r.ModuloExigido))
+            .Select(r => r.Acao)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return blocked.Count == 0 ? acoes : acoes.Where(a => !blocked.Contains(a)).ToList();
     }
 
     public static Dictionary<string, string[]> Catalog()

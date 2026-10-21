@@ -11,8 +11,11 @@ public sealed class PrintDispatcher(NpgsqlDataSource source, PrintStore store, I
  {
   await using var db=await source.OpenConnectionAsync(ct);await using var tx=await db.BeginTransactionAsync(ct);
   var acceptance=await db.QuerySingleOrDefaultAsync<Acceptance>("""
-SELECT estabelecimento_id AS EstabelecimentoId,pedido_id AS PedidoId,criado_em AS CriadoEm FROM impressao_aceite
-WHERE processado_em IS NULL AND proxima_em<=now() ORDER BY criado_em FOR UPDATE SKIP LOCKED LIMIT 1
+SELECT a.estabelecimento_id AS EstabelecimentoId,a.pedido_id AS PedidoId,a.criado_em AS CriadoEm
+FROM impressao_aceite a JOIN estabelecimentos e ON e.id=a.estabelecimento_id
+WHERE a.processado_em IS NULL AND a.proxima_em<=now() AND e.situacao_comercial IN ('teste','ativo')
+  AND (e.situacao_comercial='teste' OR 'IMPRESSAO'::modulo_enum = ANY (COALESCE(e.modulos_ativos, '{}'::modulo_enum[])))
+ORDER BY a.criado_em FOR UPDATE OF a SKIP LOCKED LIMIT 1
 """,transaction:tx);
   if(acceptance==null)return false;
   var config=await store.Config(acceptance.EstabelecimentoId);

@@ -35,13 +35,26 @@ namespace APIBack.Repository
             try
             {
                 var raw = await connection.ExecuteScalarAsync<string?>(
-                    "SELECT order_window::text FROM delivery_settings WHERE estabelecimento_id = @EstabelecimentoId;",
+                    @"SELECT CASE WHEN order_window_effective_from_utc <= NOW() AND order_window_pending IS NOT NULL
+                                   THEN order_window_pending::text ELSE order_window::text END
+                         FROM delivery_settings WHERE estabelecimento_id = @EstabelecimentoId;",
                     new { EstabelecimentoId = estabelecimentoId });
                 return OrderWindowRules.Parse(raw);
             }
             catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedColumn)
             {
-                return OrderWindowRules.Default();
+                // Migração da agenda pendente ainda não aplicada: preserve a janela anterior.
+                try
+                {
+                    var anterior = await connection.ExecuteScalarAsync<string?>(
+                        "SELECT order_window::text FROM delivery_settings WHERE estabelecimento_id = @EstabelecimentoId;",
+                        new { EstabelecimentoId = estabelecimentoId });
+                    return OrderWindowRules.Parse(anterior);
+                }
+                catch (PostgresException antigo) when (antigo.SqlState == PostgresErrorCodes.UndefinedColumn)
+                {
+                    return OrderWindowRules.Default();
+                }
             }
         }
     }

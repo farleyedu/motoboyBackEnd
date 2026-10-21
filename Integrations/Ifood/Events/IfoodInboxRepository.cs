@@ -193,10 +193,13 @@ AND (CAST(@ExcludedCodes AS text[]) IS NULL OR NOT event_code=ANY(CAST(@Excluded
         var rows = await connection.QueryAsync<IfoodInboxReservation>(new CommandDefinition("""
 WITH picked AS (
     SELECT e.id FROM ifood_events_inbox e JOIN ifood_connections c USING(merchant_id,estabelecimento_id)
+    JOIN estabelecimentos loja ON loja.id=e.estabelecimento_id
     WHERE e.state='queued' AND e.next_attempt_at_utc<=NOW() AND e.attempts<@MaxAttempts
     AND (CAST(@Codes AS text[]) IS NULL OR e.event_code=ANY(CAST(@Codes AS text[])))
     AND (CAST(@ExcludedCodes AS text[]) IS NULL OR NOT e.event_code=ANY(CAST(@ExcludedCodes AS text[])))
     AND c.status='authorized' AND c.authorized_at_utc IS NOT NULL AND c.revoked_at_utc IS NULL
+    AND loja.situacao_comercial IN ('teste','ativo')
+    AND (loja.situacao_comercial='teste' OR 'IFOOD'::modulo_enum = ANY (COALESCE(loja.modulos_ativos, '{}'::modulo_enum[])))
     AND (NOT @ImportCandidates OR e.event_code IN ('PLC','PLACED') OR (e.external_order_id IS NOT NULL AND NOT EXISTS
         (SELECT 1 FROM ifood_order_snapshots sn WHERE sn.merchant_id=e.merchant_id AND sn.external_order_id=e.external_order_id AND sn.estabelecimento_id=e.estabelecimento_id)))
     AND (NOT @RequireOrder OR e.external_order_id IS NULL OR EXISTS
@@ -221,6 +224,9 @@ RETURNING e.id AS Id,e.merchant_id AS MerchantId,e.estabelecimento_id AS Estabel
 UPDATE ifood_events_inbox SET lease_until_utc=NOW()+make_interval(secs=>@Seconds)
 WHERE id=@Id AND merchant_id=@MerchantId AND estabelecimento_id=@EstabelecimentoId AND state='processing'
 AND lease_id=@LeaseId AND lease_until_utc>NOW()
+AND EXISTS(SELECT 1 FROM estabelecimentos loja WHERE loja.id=@EstabelecimentoId
+ AND loja.situacao_comercial IN ('teste','ativo')
+ AND (loja.situacao_comercial='teste' OR 'IFOOD'::modulo_enum = ANY (COALESCE(loja.modulos_ativos, '{}'::modulo_enum[]))))
 """, new { item.Id, item.MerchantId, item.EstabelecimentoId, item.LeaseId, Seconds = seconds }, cancellationToken: ct)) == 1;
     });
 

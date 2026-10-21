@@ -14,6 +14,7 @@ namespace APIBack.Controllers
     [Route("api/delivery/simulator")]
     [ApiController]
     [RequirePermission("Delivery", "gestao_motoboy")]
+    [RequireModule("Simulador")]
     public class DeliverySimulatorController : ControllerBase
     {
         private readonly IOperationalSessionService _operationalSessionService;

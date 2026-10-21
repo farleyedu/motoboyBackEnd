@@ -84,11 +84,11 @@ namespace APIBack.Tests.Unit
             _jwtServiceMock.Verify(j => j.GenerateRefreshToken(), Times.Never);
             Assert.Equal(estabelecimento.Id, response.EstabelecimentoSelecionado.Id);
             Assert.Contains("WhatsApp", response.EstabelecimentoSelecionado.ModulosAtivos);
-            Assert.Contains("Leads", response.EstabelecimentoSelecionado.ModulosAtivos);
+            Assert.Contains("Clientes", response.EstabelecimentoSelecionado.ModulosAtivos);
             Assert.NotNull(payloadCapturado);
             Assert.Equal(motoboyLegado ? (Guid?)null : vinculo.Id, payloadCapturado!.VinculoId);
             Assert.Contains("WhatsApp", payloadCapturado!.EstabelecimentoModulosAtivos);
-            Assert.Contains("Leads", payloadCapturado.EstabelecimentoModulosAtivos);
+            Assert.Contains("Clientes", payloadCapturado.EstabelecimentoModulosAtivos);
             _repositoryMock.Verify(r => r.AtualizarUltimoEstabelecimentoAsync(usuario.Id, estabelecimento.Id), Times.Once);
         }
 
@@ -116,7 +116,7 @@ namespace APIBack.Tests.Unit
             Assert.Equal("admin-token", response.Token);
             Assert.Equal(estabelecimento.Id, response.EstabelecimentoSelecionado.Id);
             Assert.NotNull(payloadCapturado);
-            Assert.Contains("Leads", payloadCapturado!.EstabelecimentoModulosAtivos);
+            Assert.Contains("Clientes", payloadCapturado!.EstabelecimentoModulosAtivos);
         }
 
         [Fact]
@@ -140,8 +140,8 @@ namespace APIBack.Tests.Unit
                         EstabelecimentoAtivo = true,
                         VinculoAtivo = true,
                         TipoAcesso = "gerente_estabelecimento",
-                        // Desde 62cf79f o painel de leads da nautica usa o modulo "Leads" (Leads.visualizar).
-                        ModulosAtivosRaw = new[] { "GERAL", "WHATSAPP", "LEADS" }
+                        // Leads/Estoque/Vitrine/Agendamentos foram removidos do produto (20/10); o mapeamento usa um modulo vigente.
+                        ModulosAtivosRaw = new[] { "GERAL", "WHATSAPP", "CLIENTES" }
                     }
                 });
 
@@ -149,7 +149,7 @@ namespace APIBack.Tests.Unit
 
             var estabelecimento = Assert.Single(response);
             Assert.Contains("WhatsApp", estabelecimento.ModulosAtivos);
-            Assert.Contains("Leads", estabelecimento.ModulosAtivos);
+            Assert.Contains("Clientes", estabelecimento.ModulosAtivos);
         }
 
         [Fact]
@@ -194,7 +194,7 @@ namespace APIBack.Tests.Unit
                 Plano = "premium",
                 Status = "ativo",
                 Ativo = true,
-                ModulosAtivosRaw = new[] { "GERAL", "WHATSAPP", "LEADS" }
+                ModulosAtivosRaw = new[] { "GERAL", "WHATSAPP", "CLIENTES" }
             };
         }
     }

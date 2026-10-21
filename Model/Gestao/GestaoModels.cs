@@ -74,6 +74,7 @@ namespace APIBack.Model.Gestao
         public string? TipoEstabelecimentoNome { get; set; }
         public string? Slug { get; set; }
         public string[]? ModulosAtivosRaw { get; set; }
+        public string? PlanoComercial { get; set; }
         public bool Ativo { get; set; }
         public string Status { get; set; } = "ativo";
         public string? WabaPhoneNumberId { get; set; }

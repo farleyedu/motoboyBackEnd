@@ -71,6 +71,7 @@ namespace APIBack.DTOs.Gestao
         public string? TipoEstabelecimentoNome { get; set; }
         public string? Slug { get; set; }
         public List<string> ModulosAtivos { get; set; } = new();
+        public string? PlanoComercial { get; set; }
         public bool Ativo { get; set; } = true;
         public string Status { get; set; } = "ativo";
         public string? Endereco { get; set; }
@@ -165,6 +166,7 @@ namespace APIBack.DTOs.Gestao
         public string? TipoEstabelecimentoNome { get; set; }
         public string? Slug { get; set; }
         public List<string> ModulosAtivos { get; set; } = new();
+        public string? PlanoComercial { get; set; }
         /// <summary>ID do numero na Meta (WhatsApp Business Manager), usado para enviar mensagens.</summary>
         public string? WabaPhoneNumberId { get; set; }
         /// <summary>Telefone da loja no WhatsApp (o que o cliente ve); o cardapio web monta o link wa.me com ele.</summary>

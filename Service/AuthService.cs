@@ -1090,7 +1090,8 @@ SELECT  e.id                    AS EstabelecimentoId,
         COALESCE(e.ativo, TRUE) AS EstabelecimentoAtivo,
         COALESCE(e.status, 'ativo') AS EstabelecimentoStatus,
         te.nome                 AS TipoEstabelecimento,
-        e.modulos_ativos::text[] AS ModulosAtivosRaw,
+        CASE WHEN e.situacao_comercial = 'teste' THEN enum_range(NULL::modulo_enum)::text[]
+             ELSE e.modulos_ativos::text[] END AS ModulosAtivosRaw,
         ue.id                   AS VinculoId,
         ue.tipo_acesso          AS TipoAcesso,
         ue.permissoes_customizadas::text AS PermissoesCustomizadas,
@@ -1178,7 +1179,8 @@ SELECT  e.id                    AS EstabelecimentoId,
         COALESCE(e.ativo, TRUE) AS EstabelecimentoAtivo,
         COALESCE(e.status, 'ativo') AS EstabelecimentoStatus,
         te.nome                 AS TipoEstabelecimento,
-        e.modulos_ativos::text[] AS ModulosAtivosRaw,
+        CASE WHEN e.situacao_comercial = 'teste' THEN enum_range(NULL::modulo_enum)::text[]
+             ELSE e.modulos_ativos::text[] END AS ModulosAtivosRaw,
         ue.id                   AS VinculoId,
         ue.tipo_acesso          AS TipoAcesso,
         ue.permissoes_customizadas::text AS PermissoesCustomizadas,
@@ -1276,7 +1278,8 @@ SELECT  e.id                    AS EstabelecimentoId,
         private async Task<HashSet<string>> ObterModulosAtivosAsync(NpgsqlConnection connection, Guid estabelecimentoId)
         {
             const string sql = @"
-SELECT unnest(modulos_ativos)::text
+SELECT unnest(CASE WHEN situacao_comercial = 'teste' THEN enum_range(NULL::modulo_enum)
+                   ELSE modulos_ativos END)::text
   FROM estabelecimentos
  WHERE id = @EstabelecimentoId
    AND (ativo IS NULL OR ativo = TRUE)";

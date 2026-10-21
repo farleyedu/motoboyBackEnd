@@ -115,6 +115,7 @@ WHERE l.estabelecimento_id=@Store AND l.pedido_id=@Pedido FOR SHARE OF l,s
         await RequireCompletionSession(c, tx, store, rider, user, session, epoch);
         var current = await GetCurrentStopAsync(c, tx, store, rider, true);
         if (current?.PedidoId != request.ExpectedPedidoId) throw new DeliveryDomainException(409, "CURRENT_DELIVERY_CHANGED", "Esta não é sua entrega atual.");
+        await EnsureCompletionPredatesBlockAsync(c, tx, store, current);
         var official = await RequireOfficialCompletionOrder(c, tx, store, request.ExpectedPedidoId, options);
         var row = RequireCompletionOrder(await ReadCompletionOrder(c, tx, store, rider, request.ExpectedPedidoId, ct, true));
         var manifest = await ReadChecklistAsync(c, tx, store, row.PedidoId, ct);
@@ -207,6 +208,7 @@ FROM ifood_delivery_completions WHERE operation_id=@Operation AND user_id=@User
     {
         if (op.Kind == "takeout")
         {
+            await EnsureCompletionPredatesBlockAsync(c, tx, op.Store, null);
             var pickup = await RequireOfficialPickupOrder(c, tx, op.Store, op.Pedido, options);
             if (pickup.Revision != op.Revision) throw new DeliveryDomainException(409, "IFOOD_COMPLETION_STALE_REVISION", "O pedido oficial mudou. Confira novamente.");
             return;
@@ -214,8 +216,27 @@ FROM ifood_delivery_completions WHERE operation_id=@Operation AND user_id=@User
         await RequireCompletionSession(c, tx, op.Store, op.Rider, op.User, op.Session, op.Epoch);
         var current = await GetCurrentStopAsync(c, tx, op.Store, op.Rider, true);
         if (current?.Id != op.Stop) throw new DeliveryDomainException(409, "CURRENT_DELIVERY_CHANGED", "A entrega atual mudou.");
+        await EnsureCompletionPredatesBlockAsync(c, tx, op.Store, current);
         var official = await RequireOfficialCompletionOrder(c, tx, op.Store, op.Pedido, options);
         if (official.Revision != op.Revision) throw new DeliveryDomainException(409, "IFOOD_COMPLETION_STALE_REVISION", "O pedido oficial mudou. Confira novamente.");
+    }
+
+    private sealed class CompletionCommercialState
+    {
+        public string Situacao { get; set; } = "";
+        public DateTimeOffset? BloqueadoEm { get; set; }
+    }
+
+    private static async Task EnsureCompletionPredatesBlockAsync(NpgsqlConnection c, NpgsqlTransaction tx, Guid store, StopRow? current)
+    {
+        var state = await c.QuerySingleAsync<CompletionCommercialState>(
+            "SELECT situacao_comercial AS Situacao, bloqueado_em AS BloqueadoEm FROM estabelecimentos WHERE id=@Store FOR SHARE",
+            new { Store = store }, tx);
+        if (state.Situacao == SituacoesComerciais.Implantacao ||
+            (state.Situacao == SituacoesComerciais.Bloqueado &&
+             (current?.StartedAtUtc == null || !state.BloqueadoEm.HasValue || current.StartedAtUtc > state.BloqueadoEm)))
+            throw new DeliveryDomainException(403, SituacaoComercialRules.CodigoBloqueado,
+                "Somente entregas ja em rota podem ser concluidas.");
     }
 
     internal async Task<IfoodCompletionReservation?> ClaimIfoodCompletionAsync(Guid operation, IfoodOptions options, CancellationToken ct)

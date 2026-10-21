@@ -172,6 +172,8 @@ WHERE e.estabelecimento_id=@store AND e.revogada_em IS NULL
 UPDATE impressao_pareamento SET usado_em=now() WHERE codigo_hash=@hash AND usado_em IS NULL AND expira_em>now()
 RETURNING estabelecimento_id AS EstabelecimentoId,estacao_id AS Id
 """,new{hash=Hash(input.Codigo)},tx) ?? throw Error("Código inválido ou expirado.",401);
+  var disponivel=await db.ExecuteScalarAsync<bool>("SELECT situacao_comercial IN ('teste','ativo') AND (situacao_comercial='teste' OR 'IMPRESSAO'::modulo_enum = ANY (COALESCE(modulos_ativos, '{}'::modulo_enum[]))) FROM estabelecimentos WHERE id=@Id",new{Id=pair.EstabelecimentoId},tx);
+  if(!disponivel)throw Error("Impressão indisponível para esta loja.",403);
   var token=Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
   if(await db.ExecuteAsync("UPDATE impressao_estacao SET token_hash=@hash,computador=@Computador WHERE id=@Id AND estabelecimento_id=@EstabelecimentoId AND revogada_em IS NULL AND token_hash IS NULL",new{pair.Id,pair.EstabelecimentoId,hash=Hash(token),input.Computador},tx)==0) throw Error("Estação revogada ou já pareada.",409);
   await Event(db,tx,pair.EstabelecimentoId,"print.station.updated",new{pair.Id});await tx.CommitAsync();return new{token,estacaoId=pair.Id};
@@ -179,7 +181,12 @@ RETURNING estabelecimento_id AS EstabelecimentoId,estacao_id AS Id
  public async Task<AgentIdentity?> Agent(string token)
  {
   if(token.Length!=64)return null;
-  await using var db=await source.OpenConnectionAsync();return await db.QuerySingleOrDefaultAsync<AgentIdentity>("SELECT estabelecimento_id AS EstabelecimentoId,id FROM impressao_estacao WHERE token_hash=@hash AND tipo='agente' AND ativa AND revogada_em IS NULL",new{hash=Hash(token)});
+  await using var db=await source.OpenConnectionAsync();return await db.QuerySingleOrDefaultAsync<AgentIdentity>(@"
+SELECT s.estabelecimento_id AS EstabelecimentoId,s.id
+FROM impressao_estacao s JOIN estabelecimentos e ON e.id=s.estabelecimento_id
+WHERE s.token_hash=@hash AND s.tipo='agente' AND s.ativa AND s.revogada_em IS NULL
+AND e.situacao_comercial IN ('teste','ativo')
+AND (e.situacao_comercial='teste' OR 'IMPRESSAO'::modulo_enum = ANY (COALESCE(e.modulos_ativos, '{}'::modulo_enum[])))",new{hash=Hash(token)});
  }
  public async Task<bool> Signal(Guid store,Guid station,int user,Heartbeat beat,bool agent=false)
  {

@@ -19,6 +19,7 @@ namespace APIBack.Controllers
     [Route("api/v2/simulador")]
     [ApiController]
     [RequirePermission("Delivery", "gestao_motoboy")]
+    [RequireModule("Simulador")]
     public sealed class SimuladorController : ControllerBase
     {
         private readonly ISimuladorRepository _repo;

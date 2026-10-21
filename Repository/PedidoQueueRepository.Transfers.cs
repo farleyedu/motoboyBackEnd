@@ -68,6 +68,14 @@ SELECT t.id AS Id,
         // Parametros
         // =====================================================================
 
+        private sealed class DiaOperacionalAgendadoRow
+        {
+            public string? Atual { get; set; }
+            public string? Pendente { get; set; }
+            public DateTimeOffset? VigoraEm { get; set; }
+            public DateTimeOffset? UltimaMudancaEm { get; set; }
+        }
+
         public async Task<DeliverySettingsDto> GetSettingsAsync(Guid estabelecimentoId)
         {
             await using var connection = await _dataSource.OpenConnectionAsync();
@@ -108,10 +116,44 @@ ON CONFLICT (estabelecimento_id) DO UPDATE SET
                 }, transaction);
             if (request.OrderWindow != null)
             {
-                // Sem janela no pedido, a que estava salva continua valendo.
-                await connection.ExecuteAsync(
-                    "UPDATE delivery_settings SET order_window = @OrderWindow::jsonb WHERE estabelecimento_id = @EstabelecimentoId;",
-                    new { OrderWindow = OrderWindowRules.Serialize(request.OrderWindow), EstabelecimentoId = estabelecimentoId }, transaction);
+                var agora = DateTimeOffset.UtcNow;
+                var row = await connection.QuerySingleAsync<DiaOperacionalAgendadoRow>(@"
+SELECT order_window::text AS Atual, order_window_pending::text AS Pendente,
+       order_window_effective_from_utc AS VigoraEm,
+       order_window_last_change_utc AS UltimaMudancaEm
+  FROM delivery_settings WHERE estabelecimento_id=@EstabelecimentoId FOR UPDATE;",
+                    new { EstabelecimentoId = estabelecimentoId }, transaction);
+                var solicitada = OrderWindowRules.Serialize(request.OrderWindow);
+                var vigente = row.Pendente != null && row.VigoraEm <= agora ? row.Pendente : row.Atual;
+                var ultimaSolicitada = row.Pendente != null && row.VigoraEm > agora ? row.Pendente : vigente;
+                if (OrderWindowRules.Serialize(OrderWindowRules.Parse(ultimaSolicitada)) != solicitada)
+                {
+                    request.OrderWindow = DiaOperacionalRules.ValidarNovaConfiguracao(request.OrderWindow);
+                var admin = await connection.ExecuteScalarAsync<bool>(
+                    "SELECT COALESCE(is_super_admin,FALSE) FROM usuario WHERE id=@ActorUserId;",
+                    new { ActorUserId = actorUserId }, transaction);
+                if (!admin && row.VigoraEm > agora && row.Pendente != null)
+                    throw new DeliveryDomainException(409, "DIA_OPERACIONAL_PENDENTE", "Aguarde a mudança agendada entrar em vigor.");
+                if (!admin && row.UltimaMudancaEm is { } ultima &&
+                    agora - ultima < DiaOperacionalRules.IntervaloMinimoEntreMudancas)
+                    throw new DeliveryDomainException(409, "DIA_OPERACIONAL_FREQUENCIA", "O dia operacional só pode mudar uma vez por semana.");
+                var atual = OrderWindowRules.Parse(vigente);
+                var proximoInicioAntigo = DiaOperacionalRules.ProximoInicio(atual, agora);
+                // A troca só acontece em um início da configuração nova, depois do próximo
+                // início da antiga. Isso impede reset intermediário de vagas ou do mapa.
+                var proximoInicio = DiaOperacionalRules.ProximoInicio(
+                    request.OrderWindow, proximoInicioAntigo.AddTicks(-1));
+                await connection.ExecuteAsync(@"
+UPDATE delivery_settings
+   SET order_window=CASE WHEN order_window_effective_from_utc <= @Agora AND order_window_pending IS NOT NULL
+                         THEN order_window_pending ELSE order_window END,
+       order_window_pending=@Pendente::jsonb,
+       order_window_effective_from_utc=@VigoraEm,
+       order_window_last_change_utc=@Agora
+ WHERE estabelecimento_id=@EstabelecimentoId;",
+                    new { EstabelecimentoId = estabelecimentoId, Pendente = OrderWindowRules.Serialize(request.OrderWindow),
+                          VigoraEm = proximoInicio, Agora = agora }, transaction);
+                }
             }
             if (request.RequireDeliveryProof.HasValue)
                 await connection.ExecuteAsync("UPDATE delivery_settings SET require_delivery_proof=@Required WHERE estabelecimento_id=@Store", new { Required=request.RequireDeliveryProof.Value,Store=estabelecimentoId },transaction);
@@ -143,6 +185,18 @@ ON CONFLICT (estabelecimento_id) DO UPDATE SET
             await ApplyEncerramentoSettingsAsync(settings, extrasConnection, estabelecimentoId);
             await ApplyOfferSettingsAsync(settings, extrasConnection, estabelecimentoId);
             settings.OrderWindow = await OrderWindowStore.ReadAsync(extrasConnection, estabelecimentoId);
+            DiaOperacionalAgendadoRow? agendada = null;
+            try { agendada = await extrasConnection.QuerySingleOrDefaultAsync<DiaOperacionalAgendadoRow>(@"
+SELECT order_window_pending::text AS Pendente,
+       order_window_effective_from_utc AS VigoraEm
+  FROM delivery_settings WHERE estabelecimento_id=@EstabelecimentoId;",
+                new { EstabelecimentoId = estabelecimentoId }); }
+            catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedColumn) { }
+            if (agendada?.Pendente != null && agendada.VigoraEm > DateTimeOffset.UtcNow)
+            {
+                settings.OrderWindowPending = OrderWindowRules.Parse(agendada.Pendente);
+                settings.OrderWindowPendingEffectiveFromUtc = agendada.VigoraEm;
+            }
             settings.DefaultDeliveryMinutes = await OrderWindowStore.ReadDefaultDeliveryMinutesAsync(extrasConnection, estabelecimentoId)
                 ?? ManualOrderRules.DefaultPrevisaoMinutos;
             var range = OrderWindowRules.Resolve(settings.OrderWindow, DateTimeOffset.UtcNow);

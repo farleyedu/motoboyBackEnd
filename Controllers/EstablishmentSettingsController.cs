@@ -81,8 +81,8 @@ SELECT dia_semana, fechado, abre_as, fecha_as FROM estabelecimento_horario
         foreach (var dia in request.Dias)
         {
             if (dia.Fechado) continue;
-            if (!TimeSpan.TryParse(dia.AbreAs, out var abre) || !TimeSpan.TryParse(dia.FechaAs, out var fecha) || fecha <= abre)
-                return BadRequest(new { error = $"Horario invalido no dia {dia.DiaSemana}: informe abertura e fechamento, com fechamento depois da abertura." });
+            if (!TimeSpan.TryParse(dia.AbreAs, out var abre) || !TimeSpan.TryParse(dia.FechaAs, out var fecha) || fecha == abre)
+                return BadRequest(new { error = $"Horario invalido no dia {dia.DiaSemana}: informe abertura e fechamento em horários diferentes." });
         }
 
         await using var connection = await dataSource.OpenConnectionAsync();

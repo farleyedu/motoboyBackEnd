@@ -354,7 +354,11 @@ ON CONFLICT (pedido_id) DO UPDATE SET token = EXCLUDED.token, criado_em = NOW(),
             if (!await HasSchemaAsync(connection)) return null;
 
             var row = await connection.QuerySingleOrDefaultAsync<PublicRow>($@"
-SELECT t.pedido_id AS PedidoId, (t.expira_em <= NOW() OR t.invalidado_em IS NOT NULL) AS Expirado,
+SELECT t.pedido_id AS PedidoId, p.id_estabelecimento AS EstabelecimentoId,
+       (SELECT MIN(s.started_at_utc) FROM delivery_route_stops s
+         WHERE s.pedido_id = p.id AND s.estabelecimento_id = p.id_estabelecimento
+           AND s.stop_status = 'en_route') AS RotaIniciadaEmUtc,
+       (t.expira_em <= NOW() OR t.invalidado_em IS NOT NULL) AS Expirado,
        COALESCE(p.status_pedido, 1) AS StatusPedido, p.previsao_entrega::text AS PrevisaoRaw, p.data_pedido::text AS DataPedidoRaw,
        CASE WHEN p.latitude::text ~ {Numeric} THEN p.latitude::text::DOUBLE PRECISION END AS DestLat,
        CASE WHEN p.longitude::text ~ {Numeric} THEN p.longitude::text::DOUBLE PRECISION END AS DestLon,
@@ -377,6 +381,8 @@ SELECT t.pedido_id AS PedidoId, (t.expira_em <= NOW() OR t.invalidado_em IS NOT 
             return new PublicTrackingSource
             {
                 PedidoId = row.PedidoId,
+                EstabelecimentoId = row.EstabelecimentoId,
+                RotaIniciadaEmUtc = row.RotaIniciadaEmUtc,
                 Expired = row.Expirado,
                 StatusPedido = row.StatusPedido,
                 Previsao = DeliveryRules.ParseStoredDateTime(row.PrevisaoRaw, DeliveryRules.ParseStoredDateTime(row.DataPedidoRaw)),
@@ -398,6 +404,8 @@ SELECT t.pedido_id AS PedidoId, (t.expira_em <= NOW() OR t.invalidado_em IS NOT 
         private sealed class PublicRow
         {
             public int PedidoId { get; set; }
+            public Guid EstabelecimentoId { get; set; }
+            public DateTime? RotaIniciadaEmUtc { get; set; }
             public bool Expirado { get; set; }
             public int StatusPedido { get; set; }
             public string? PrevisaoRaw { get; set; }

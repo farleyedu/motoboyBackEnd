@@ -236,6 +236,10 @@ namespace APIBack.Controllers
             {
                 return StatusCode(ex.StatusCode, ApiResponse<object>.Fail(ex.Message, ex.Code));
             }
+            catch (KeyNotFoundException ex)
+            {
+                return NotFoundErrorResponse(ex.Message);
+            }
         }
 
         /// <summary>Codigo novo para quem deixou o anterior vencer (o codigo vale poucos minutos).</summary>

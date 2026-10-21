@@ -180,6 +180,8 @@ namespace APIBack.Service
             if (!scope.IsSuperAdmin)
             {
                 request.EmpresaId = scope.EmpresaId;
+                if (!string.IsNullOrWhiteSpace(request.PlanoComercial))
+                    throw new UnauthorizedAccessException("Somente a Gestão pode escolher um pacote comercial.");
             }
             ValidateSalvarEstabelecimentoRequest(request, requireEmpresaId: true);
 
@@ -228,6 +230,9 @@ namespace APIBack.Service
             if (!scope.IsSuperAdmin)
             {
                 request.EmpresaId = current.EmpresaId;
+                if (!string.IsNullOrWhiteSpace(request.PlanoComercial) &&
+                    !string.Equals(request.PlanoComercial, current.PlanoComercial, StringComparison.OrdinalIgnoreCase))
+                    throw new UnauthorizedAccessException("Somente a Gestão pode alterar o pacote comercial.");
             }
             ValidateSalvarEstabelecimentoRequest(request, requireEmpresaId: true);
 
@@ -1195,6 +1200,7 @@ namespace APIBack.Service
                 TipoEstabelecimentoNome = row.TipoEstabelecimentoNome,
                 Slug = row.Slug,
                 ModulosAtivos = EstabelecimentoModuleMapper.ToUiModules(row.NomeFantasia, row.ModulosAtivosRaw),
+                PlanoComercial = row.PlanoComercial,
                 Ativo = row.Ativo,
                 Status = !row.Ativo && (normalizedStatus == "ativo" || normalizedStatus == "trial")
                     ? "inativo"

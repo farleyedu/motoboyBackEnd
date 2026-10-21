@@ -52,6 +52,9 @@ namespace APIBack.DTOs.Delivery
         /// <summary>Inicio e fim (UTC) que a janela salva resolve AGORA; so leitura, para a tela mostrar o efeito.</summary>
         public DateTimeOffset? OrderWindowFromUtc { get; set; }
         public DateTimeOffset? OrderWindowToUtc { get; set; }
+        /// <summary>Mudança solicitada que passa a valer no próximo dia operacional.</summary>
+        public OrderWindowDto? OrderWindowPending { get; set; }
+        public DateTimeOffset? OrderWindowPendingEffectiveFromUtc { get; set; }
         /// <summary>Prazo de entrega, em minutos, dos pedidos criados sem previsao informada.</summary>
         public int DefaultDeliveryMinutes { get; set; } = APIBack.Service.ManualOrderRules.DefaultPrevisaoMinutos;
         /// <summary>true quando o estabelecimento nunca salvou parametros (valem os padroes).</summary>

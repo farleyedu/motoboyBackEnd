@@ -57,13 +57,34 @@ public sealed class IfoodDatabaseConfigurationProvider : ConfigurationProvider, 
         var settings = await connection.QuerySingleOrDefaultAsync<SettingsRow>(
             "SELECT client_id, client_secret_cifrado, enabled, polling_enabled, import_enabled, projection_enabled, commands_enabled, exceptions_enabled, completion_enabled, dine_in_enabled, retention_enabled, retention_days FROM ifood_app_settings WHERE id=1");
         if (settings == null) return null;
-        var connections = (await connection.QueryAsync<ConnectionRow>(
-            "SELECT merchant_id, estabelecimento_id FROM ifood_connections WHERE status='authorized' AND authorized_at_utc IS NOT NULL AND revoked_at_utc IS NULL ORDER BY merchant_id")).AsList();
+        // Mantem a credencial do merchant para concluir entregas ja em rota. Polling e comandos
+        // novos sao filtrados separadamente, no snapshot e nas filas do banco.
+        List<ConnectionRow> connections;
+        try
+        {
+            connections = (await connection.QueryAsync<ConnectionRow>(@"
+SELECT c.merchant_id, c.estabelecimento_id, e.situacao_comercial,
+       ('IFOOD'::modulo_enum = ANY (COALESCE(e.modulos_ativos, '{}'::modulo_enum[]))) AS ifood_active
+  FROM ifood_connections c
+  JOIN estabelecimentos e ON e.id = c.estabelecimento_id
+ WHERE c.status='authorized' AND c.authorized_at_utc IS NOT NULL AND c.revoked_at_utc IS NULL
+ ORDER BY c.merchant_id")).AsList();
+        }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedColumn)
+        {
+            // Antes da migracao 20261020_02 a coluna nao existe: mantem o comportamento antigo.
+            connections = (await connection.QueryAsync<ConnectionRow>(
+                "SELECT merchant_id, estabelecimento_id FROM ifood_connections WHERE status='authorized' AND authorized_at_utc IS NOT NULL AND revoked_at_utc IS NULL ORDER BY merchant_id")).AsList();
+        }
 
         // Nunca emite uma combinação que o IfoodOptionsValidator rejeitaria: sem credenciais, "enabled"
         // nunca sobe; sem nenhuma loja autorizada, polling, comandos, cancelamento e conclusão nunca sobem
         // mesmo que a tela peça. As listas de merchants e de ações vêm das conexões e das regras, não do ambiente.
         var merchants = connections.Take(MaxMerchants).ToList();
+        var pollingMerchants = connections
+            .Where(c => c.situacao_comercial is not ("bloqueado" or "implantacao") &&
+                        (c.situacao_comercial == "teste" || c.ifood_active))
+            .Take(MaxMerchants).ToList();
         var credentialsPresent = !string.IsNullOrWhiteSpace(settings.client_id) && !string.IsNullOrWhiteSpace(settings.client_secret_cifrado);
         var enabled = settings.enabled && credentialsPresent;
         var commandsOn = enabled && settings.commands_enabled && merchants.Count > 0;
@@ -73,7 +94,7 @@ public sealed class IfoodDatabaseConfigurationProvider : ConfigurationProvider, 
             ["Ifood:Enabled"] = enabled ? "true" : "false",
             ["Ifood:ClientId"] = settings.client_id,
             ["Ifood:ClientSecretCifrado"] = settings.client_secret_cifrado,
-            ["Ifood:PollingEnabled"] = (enabled && settings.polling_enabled && merchants.Count > 0) ? "true" : "false",
+            ["Ifood:PollingEnabled"] = (enabled && settings.polling_enabled && pollingMerchants.Count > 0) ? "true" : "false",
             ["Ifood:ImportEnabled"] = (enabled && settings.import_enabled) ? "true" : "false",
             ["Ifood:ProjectionEnabled"] = (enabled && settings.projection_enabled) ? "true" : "false",
             ["Ifood:CommandsEnabled"] = commandsOn ? "true" : "false",
@@ -86,8 +107,6 @@ public sealed class IfoodDatabaseConfigurationProvider : ConfigurationProvider, 
         for (var i = 0; i < merchants.Count; i++)
         {
             var id = merchants[i].merchant_id.ToString(); var store = merchants[i].estabelecimento_id.ToString();
-            result[$"Ifood:PollingMerchants:{i}:MerchantId"] = id;
-            result[$"Ifood:PollingMerchants:{i}:EstabelecimentoId"] = store;
             if (commandsOn)
             {
                 result[$"Ifood:CommandMerchants:{i}:MerchantId"] = id;
@@ -98,6 +117,11 @@ public sealed class IfoodDatabaseConfigurationProvider : ConfigurationProvider, 
                 result[$"Ifood:ExceptionMerchants:{i}:MerchantId"] = id;
                 result[$"Ifood:ExceptionMerchants:{i}:EstabelecimentoId"] = store;
             }
+        }
+        for (var i = 0; i < pollingMerchants.Count; i++)
+        {
+            result[$"Ifood:PollingMerchants:{i}:MerchantId"] = pollingMerchants[i].merchant_id.ToString();
+            result[$"Ifood:PollingMerchants:{i}:EstabelecimentoId"] = pollingMerchants[i].estabelecimento_id.ToString();
         }
         if (commandsOn)
             for (var i = 0; i < Commands.IfoodCommandRules.All.Length; i++) result[$"Ifood:AllowedCommands:{i}"] = Commands.IfoodCommandRules.All[i];
@@ -127,6 +151,8 @@ public sealed class IfoodDatabaseConfigurationProvider : ConfigurationProvider, 
     {
         public Guid merchant_id { get; set; }
         public Guid estabelecimento_id { get; set; }
+        public string? situacao_comercial { get; set; }
+        public bool ifood_active { get; set; }
     }
 }
 

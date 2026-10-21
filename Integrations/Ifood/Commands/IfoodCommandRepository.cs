@@ -101,9 +101,12 @@ SELECT operation_id,attempts,CASE WHEN state='queued' THEN 'retry' ELSE state EN
         var row=await c.QuerySingleOrDefaultAsync<IfoodCommandReservation>(new CommandDefinition($"""
 WITH picked AS (
 SELECT o.operation_id FROM ifood_outbound_commands o JOIN ifood_connections c USING(merchant_id,estabelecimento_id)
+JOIN estabelecimentos loja ON loja.id=o.estabelecimento_id
 WHERE o.state='queued' AND o.attempts<@Max AND o.next_attempt_at_utc<=clock_timestamp() AND o.not_before_utc<=@Now
 AND o.command_type=ANY(@Commands) AND o.merchant_id=ANY(@Merchants)
 AND c.status='authorized' AND c.authorized_at_utc IS NOT NULL AND c.revoked_at_utc IS NULL
+AND loja.situacao_comercial IN ('teste','ativo')
+AND (loja.situacao_comercial='teste' OR 'IFOOD'::modulo_enum = ANY (COALESCE(loja.modulos_ativos, ARRAY[]::modulo_enum[])))
 ORDER BY o.deadline_at_utc NULLS LAST,o.created_at_utc LIMIT 1 FOR UPDATE OF o SKIP LOCKED)
 UPDATE ifood_outbound_commands o SET state='processing',attempts=attempts+1,lease_id=@Lease,lease_until_utc=clock_timestamp()+make_interval(secs=>@Seconds),updated_at_utc=NOW()
 FROM picked WHERE o.operation_id=picked.operation_id RETURNING {string.Join(",",ReservationColumns.Split(',').Select(s=>"o."+s.Trim()))}
@@ -116,6 +119,10 @@ FROM picked WHERE o.operation_id=picked.operation_id RETURNING {string.Join(",",
     {
         await using var c=await _source.OpenConnectionAsync(ct);await using var tx=await c.BeginTransactionAsync(ct);
         await LockOrder(c,tx,item.MerchantId,item.ExternalOrderId,ct);
+        var operando=await c.ExecuteScalarAsync<bool>(new CommandDefinition(
+            "SELECT situacao_comercial IN ('teste','ativo') AND (situacao_comercial='teste' OR 'IFOOD'::modulo_enum = ANY (COALESCE(modulos_ativos, '{}'::modulo_enum[]))) FROM estabelecimentos WHERE id=@Id FOR SHARE",
+            new { Id=item.EstabelecimentoId },tx,cancellationToken:ct));
+        if(!operando) throw new IfoodIntegrationException("IFOOD_STORE_UNAVAILABLE",retryable:true);
         var current=await Owned(c,tx,item,ct);
         if(current.SendStartedAtUtc!=null) throw new IfoodIntegrationException("IFOOD_COMMAND_ALREADY_SENT");
         await Authorize(c,tx,item.EstabelecimentoId,item.MerchantId,ct);

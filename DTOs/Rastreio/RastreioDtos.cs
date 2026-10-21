@@ -106,6 +106,8 @@ namespace APIBack.DTOs.Rastreio
     public class PublicTrackingSource
     {
         public int PedidoId { get; set; }
+        public Guid EstabelecimentoId { get; set; }
+        public DateTime? RotaIniciadaEmUtc { get; set; }
         public bool Expired { get; set; }
         public int StatusPedido { get; set; }
         public DateTime? Previsao { get; set; }

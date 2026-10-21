@@ -35,6 +35,7 @@ namespace APIBack.Service
         private readonly IRastreioRepository _rastreio;
         private readonly IMemoryCache _cache;
         private readonly ILogger<CardapioPedidoWebService> _logger;
+        private readonly ISituacaoComercialService? _situacoes;
 
         public CardapioPedidoWebService(
             ICardapioPedidoWebRepository repository,
@@ -47,7 +48,8 @@ namespace APIBack.Service
             IPedidoCoreService core,
             IRastreioRepository rastreio,
             IMemoryCache cache,
-            ILogger<CardapioPedidoWebService> logger)
+            ILogger<CardapioPedidoWebService> logger,
+            ISituacaoComercialService? situacoes = null)
         {
             _repository = repository;
             _cardapio = cardapio;
@@ -60,6 +62,17 @@ namespace APIBack.Service
             _rastreio = rastreio;
             _cache = cache;
             _logger = logger;
+            _situacoes = situacoes;
+        }
+
+        private async Task ExigirCardapioDisponivelAsync(Guid estabelecimentoId)
+        {
+            if (_situacoes == null) return;
+            var situacao = await _situacoes.ObterAsync(estabelecimentoId);
+            if (situacao?.Situacao is SituacoesComerciais.Bloqueado or SituacoesComerciais.Implantacao)
+                throw new KeyNotFoundException("Cardapio indisponivel no momento.");
+            if (!await _situacoes.TemModuloAsync(estabelecimentoId, "CARDAPIOWEB"))
+                throw new KeyNotFoundException("Cardapio indisponivel no momento.");
         }
 
         public async Task<CardapioClienteIdentificadoDto> IdentificarClienteRecenteAsync(Guid estabelecimentoId, string? telefoneBruto)
@@ -137,12 +150,16 @@ namespace APIBack.Service
         {
             var pedido = await _repository.ObterAsync(id)
                 ?? throw new KeyNotFoundException("Pedido nao encontrado.");
+            await ExigirCardapioDisponivelAsync(pedido.IdEstabelecimento);
             await _repository.ExpirarCodigosVencidosAsync(pedido.IdEstabelecimento);
             return await GerarCodigoAsync(id);
         }
 
         public async Task<CardapioConfirmacaoDto> TrocarTelefoneAsync(Guid id, string telefoneBruto)
         {
+            var pedido = await _repository.ObterAsync(id)
+                ?? throw new KeyNotFoundException("Pedido nao encontrado.");
+            await ExigirCardapioDisponivelAsync(pedido.IdEstabelecimento);
             var telefone = PhoneKey.ToE164(telefoneBruto);
             if (telefone == null)
             {
@@ -190,6 +207,7 @@ namespace APIBack.Service
         {
             var pedido = await _repository.ObterAsync(id);
             if (pedido == null) return null;
+            await ExigirCardapioDisponivelAsync(pedido.IdEstabelecimento);
 
             var vencido = pedido.Status == CardapioPedidoStatus.AguardandoCodigo
                 && (!pedido.CodigoExpiraEm.HasValue || pedido.CodigoExpiraEm.Value <= DateTimeOffset.UtcNow);

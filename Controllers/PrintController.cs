@@ -7,7 +7,7 @@ using Microsoft.AspNetCore.RateLimiting;
 
 namespace APIBack.Controllers;
 
-[ApiController,Route("api/v2/delivery/impressao")]
+[ApiController,Route("api/v2/delivery/impressao"),RequireModule("Impressao")]
 public sealed class PrintController(PrintStore store,IConfiguration configuration,IHostEnvironment environment):ControllerBase, Microsoft.AspNetCore.Mvc.Filters.IExceptionFilter
 {
  public void OnException(Microsoft.AspNetCore.Mvc.Filters.ExceptionContext context)

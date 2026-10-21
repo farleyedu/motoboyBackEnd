@@ -23,17 +23,20 @@ namespace APIBack.Service
         private readonly IHorarioOperacaoRepository _horarios;
         private readonly ITrackingRepository _tracking;
         private readonly ILogger<EncerramentoService> _logger;
+        private readonly ISituacaoComercialService? _situacoes;
 
         public EncerramentoService(
             IPedidoQueueRepository queue,
             IHorarioOperacaoRepository horarios,
             ITrackingRepository tracking,
-            ILogger<EncerramentoService> logger)
+            ILogger<EncerramentoService> logger,
+            ISituacaoComercialService? situacoes = null)
         {
             _queue = queue;
             _horarios = horarios;
             _tracking = tracking;
             _logger = logger;
+            _situacoes = situacoes;
         }
 
         /// <summary>Uma passada do worker: todos os estabelecimentos com pedido em aberto.</summary>
@@ -44,6 +47,8 @@ namespace APIBack.Service
             {
                 try
                 {
+                    var situacao = _situacoes == null ? null : await _situacoes.ObterAsync(estabelecimentoId);
+                    if (situacao?.Situacao is SituacoesComerciais.Bloqueado or SituacoesComerciais.Implantacao) continue;
                     var result = await EncerrarExpedienteAnteriorAsync(estabelecimentoId, agoraUtc);
                     total.Encerrados += result.Encerrados;
                     total.Falhas += result.Falhas;

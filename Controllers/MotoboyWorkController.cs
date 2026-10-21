@@ -28,7 +28,7 @@ public sealed class MotoboyWorkController(MotoboyWorkService service) : Controll
     }
 }
 
-[ApiController,Route("api/v2/delivery/rider-work")]
+[ApiController,Route("api/v2/delivery/rider-work"),APIBack.Attributes.RequireModule("Remuneracao")]
 public sealed class RiderWorkAdminController(MotoboyWorkService service) : ControllerBase
 {
     [HttpGet("{rider:int}"),RequirePermission("Delivery","gestao_motoboy")]

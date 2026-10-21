@@ -53,31 +53,12 @@ namespace APIBack.Repository
 
             var tz = ResolveTimeZone(timezoneIana);
             var local = TimeZoneInfo.ConvertTimeFromUtc(agoraUtc.UtcDateTime, tz);
-            var horaAtual = local.TimeOfDay;
-
-            var especial = await connection.QuerySingleOrDefaultAsync<HorarioRow>(@"
-SELECT fechado AS Fechado, abre_as AS Abre, fecha_as AS Fecha
-  FROM estabelecimento_horario_especial
- WHERE estabelecimento_id = @Id AND data = @Data;",
-                new { Id = estabelecimentoId, Data = DateOnly.FromDateTime(local) });
-            if (especial != null)
-            {
-                return !especial.Fechado && especial.Abre.HasValue && especial.Fecha.HasValue
-                    && horaAtual >= especial.Abre.Value && horaAtual < especial.Fecha.Value;
-            }
-
-            var diaSemana = ((int)local.DayOfWeek + 6) % 7; // .NET: 0=domingo -> nosso indice 0=segunda
-            var dia = await connection.QuerySingleOrDefaultAsync<HorarioRow>(@"
-SELECT fechado AS Fechado, abre_as AS Abre, fecha_as AS Fecha
-  FROM estabelecimento_horario
- WHERE estabelecimento_id = @Id AND dia_semana = @Dia;",
-                new { Id = estabelecimentoId, Dia = diaSemana });
+            var data = DateOnly.FromDateTime(local);
+            var dia = await LerHorarioAsync(connection, estabelecimentoId, data);
+            var anterior = await LerHorarioAsync(connection, estabelecimentoId, data.AddDays(-1));
             // Sem horario configurado ainda: nao bloqueia (o estabelecimento so passa a ter esse
             // controle depois de preencher a aba Horarios, igual ao checklist de completude do perfil).
-            if (dia == null) return true;
-
-            return !dia.Fechado && dia.Abre.HasValue && dia.Fecha.HasValue
-                && horaAtual >= dia.Abre.Value && horaAtual < dia.Fecha.Value;
+            return dia == null || HorarioAbertoEm(dia, anterior, local.TimeOfDay);
         }
 
         public async Task<StoreOperationDto> ObterEstadoAsync(Guid estabelecimentoId, CancellationToken cancellationToken = default)
@@ -100,23 +81,46 @@ SELECT fechado AS Fechado, abre_as AS Abre, fecha_as AS Fecha
             };
             var tables = await TabelasExistemAsync(connection, transaction, cancellationToken);
             HorarioRow? row = null;
+            HorarioRow? anterior = null;
             if (tables)
             {
-                row = await connection.QuerySingleOrDefaultAsync<HorarioRow>(new CommandDefinition(@"
+                var data = DateOnly.FromDateTime(local);
+                row = await LerHorarioAsync(connection, id, data, transaction, cancellationToken);
+                anterior = await LerHorarioAsync(connection, id, data.AddDays(-1), transaction, cancellationToken);
+            }
+            var abertoAnterior = ContinuaAposMeiaNoite(anterior, local.TimeOfDay);
+            var exibido = abertoAnterior ? anterior : row;
+            state.Origem = exibido?.Origem ?? "sem_horario";
+            state.AbreAs = exibido?.Abre?.ToString(@"hh\:mm");
+            state.FechaAs = exibido?.Fecha?.ToString(@"hh\:mm");
+            state.DentroDoHorario = row == null || HorarioAbertoEm(row, anterior, local.TimeOfDay);
+            state.AbertoAgora = state.AceitaPedidos && state.DentroDoHorario;
+            return state;
+        }
+
+        private static async Task<HorarioRow?> LerHorarioAsync(NpgsqlConnection connection, Guid id, DateOnly data,
+            NpgsqlTransaction? transaction = null, CancellationToken cancellationToken = default) =>
+            await connection.QuerySingleOrDefaultAsync<HorarioRow>(new CommandDefinition(@"
 SELECT fechado AS Fechado, abre_as AS Abre, fecha_as AS Fecha, origem AS Origem
 FROM (
  SELECT fechado, abre_as, fecha_as, 'especial' AS origem, 0 AS prioridade FROM estabelecimento_horario_especial WHERE estabelecimento_id = @Id AND data = @Data
  UNION ALL
  SELECT fechado, abre_as, fecha_as, 'semanal' AS origem, 1 AS prioridade FROM estabelecimento_horario WHERE estabelecimento_id = @Id AND dia_semana = @Dia
-) h ORDER BY prioridade LIMIT 1;", new { Id = id, Data = DateOnly.FromDateTime(local), Dia = ((int)local.DayOfWeek + 6) % 7 }, transaction, cancellationToken: cancellationToken));
-            }
-            state.Origem = row?.Origem ?? "sem_horario";
-            state.AbreAs = row?.Abre?.ToString(@"hh\:mm");
-            state.FechaAs = row?.Fecha?.ToString(@"hh\:mm");
-            state.DentroDoHorario = row == null || (!row.Fechado && row.Abre.HasValue && row.Fecha.HasValue && local.TimeOfDay >= row.Abre.Value && local.TimeOfDay < row.Fecha.Value);
-            state.AbertoAgora = state.AceitaPedidos && state.DentroDoHorario;
-            return state;
-        }
+) h ORDER BY prioridade LIMIT 1;", new { Id = id, Data = data, Dia = ((int)data.DayOfWeek + 6) % 7 }, transaction, cancellationToken: cancellationToken));
+
+        public static bool HorarioAbertoEm(TimeSpan? abreHoje, TimeSpan? fechaHoje, bool fechadoHoje,
+            TimeSpan? abreOntem, TimeSpan? fechaOntem, bool fechadoOntem, TimeSpan hora) =>
+            (!fechadoHoje && abreHoje.HasValue && fechaHoje.HasValue &&
+             hora >= abreHoje && (fechaHoje <= abreHoje || hora < fechaHoje)) ||
+            (!fechadoOntem && abreOntem.HasValue && fechaOntem.HasValue &&
+             fechaOntem < abreOntem && hora < fechaOntem);
+
+        private static bool HorarioAbertoEm(HorarioRow? hoje, HorarioRow? ontem, TimeSpan hora) =>
+            HorarioAbertoEm(hoje?.Abre, hoje?.Fecha, hoje?.Fechado ?? true,
+                ontem?.Abre, ontem?.Fecha, ontem?.Fechado ?? true, hora);
+
+        private static bool ContinuaAposMeiaNoite(HorarioRow? ontem, TimeSpan hora) =>
+            ontem is { Fechado: false, Abre: { } abre, Fecha: { } fecha } && fecha < abre && hora < fecha;
 
         public async Task<StoreOperationDto> AbrirHojeAsync(Guid estabelecimentoId, int actorUserId, OpenStoreTodayRequest request, CancellationToken cancellationToken = default)
         {
@@ -130,8 +134,8 @@ FROM (
             var local = TimeZoneInfo.ConvertTimeFromUtc(state.AgoraUtc.UtcDateTime, ResolveTimeZone(state.Timezone));
             if (request.DataLocal != state.DataLocal)
                 throw new DeliveryDomainException(409, "DAY_CHANGED", "O dia mudou. Atualize o horário de fechamento para hoje.");
-            if (!TimeOnly.TryParseExact(request.FechaAs, "HH:mm", CultureInfo.InvariantCulture, DateTimeStyles.None, out var close) || close.ToTimeSpan() <= local.TimeOfDay)
-                throw new DeliveryDomainException(422, "INVALID_CLOSING_TIME", "Escolha um horário de fechamento depois de agora, ainda hoje.");
+            if (!TimeOnly.TryParseExact(request.FechaAs, "HH:mm", CultureInfo.InvariantCulture, DateTimeStyles.None, out var close) || close.ToTimeSpan() == local.TimeOfDay)
+                throw new DeliveryDomainException(422, "INVALID_CLOSING_TIME", "Escolha um horário de fechamento diferente de agora.");
             if (state.AbertoAgora)
             {
                 await transaction.CommitAsync(cancellationToken);
@@ -199,9 +203,9 @@ SELECT id, data, fechado, abre_as, fecha_as, motivo FROM estabelecimento_horario
             TimeSpan? abre = null, fecha = null;
             if (!request.Fechado)
             {
-                if (!TimeSpan.TryParse(request.AbreAs, out var abreValue) || !TimeSpan.TryParse(request.FechaAs, out var fechaValue) || fechaValue <= abreValue)
+                if (!TimeSpan.TryParse(request.AbreAs, out var abreValue) || !TimeSpan.TryParse(request.FechaAs, out var fechaValue) || fechaValue == abreValue)
                 {
-                    throw new DeliveryDomainException(422, "INVALID_REQUEST", "Informe abertura e fechamento, com fechamento depois da abertura.");
+                    throw new DeliveryDomainException(422, "INVALID_REQUEST", "Informe abertura e fechamento em horários diferentes.");
                 }
                 abre = abreValue;
                 fecha = fechaValue;

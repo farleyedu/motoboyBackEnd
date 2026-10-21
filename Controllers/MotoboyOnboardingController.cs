@@ -9,6 +9,7 @@ using APIBack.Extensions;
 using APIBack.Hubs;
 using APIBack.Model.Gestao;
 using APIBack.Security;
+using APIBack.Service;
 using Dapper;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
@@ -363,6 +364,9 @@ SELECT r.motoboy_id AS MotoboyId,
             if (row == null)
                 return NotFound(ApiResponse<object>.Fail("Convite pendente nao encontrado."));
 
+            if (!await MotoboyVinculoLimites.PodeAtivarAsync(connection, transaction, row.EstabelecimentoId, row.MotoboyId))
+                return Conflict(ApiResponse<object>.Fail(MotoboyVinculoLimites.MensagemLimite, "LIMITE_VINCULOS"));
+
             await connection.ExecuteAsync(@"
 INSERT INTO usuario_empresas (
     id, id_usuario, id_empresa, tipo_acesso, status, convidado_por, aprovado_por,
@@ -385,7 +389,8 @@ ON CONFLICT (id_usuario, id_estabelecimento) DO UPDATE
 INSERT INTO motoboy_estabelecimento (motoboy_id, estabelecimento_id, ativo, simulator_enabled)
 VALUES (@MotoboyId, @EstabelecimentoId, TRUE, FALSE)
 ON CONFLICT (motoboy_id, estabelecimento_id) DO UPDATE
-   SET ativo = TRUE, disabled_at_utc = NULL, updated_at_utc = NOW(), simulator_enabled = FALSE;
+   SET ativo = TRUE, disabled_at_utc = NULL, disabled_by_user_id = NULL,
+       disabled_reason = NULL, updated_at_utc = NOW(), simulator_enabled = FALSE;
 
 UPDATE motoboy_link_requests
    SET status = 'approved', reviewed_at_utc = NOW(), reviewed_by_user_id = @UserId,
@@ -579,6 +584,9 @@ SELECT r.motoboy_id AS MotoboyId,
             if (row == null || row.MotoboyId <= 0)
                 return NotFound(ApiResponse<object>.Fail("Solicitação pendente não encontrada."));
 
+            if (!await MotoboyVinculoLimites.PodeAtivarAsync(connection, transaction, estabelecimentoId.Value, row.MotoboyId))
+                return Conflict(ApiResponse<object>.Fail(MotoboyVinculoLimites.MensagemLimite, "LIMITE_VINCULOS"));
+
             await connection.ExecuteAsync(@"
 INSERT INTO usuario_empresas (
     id, id_usuario, id_empresa, tipo_acesso, status, convidado_por, aprovado_por,
@@ -601,7 +609,8 @@ ON CONFLICT (id_usuario, id_estabelecimento) DO UPDATE
 INSERT INTO motoboy_estabelecimento (motoboy_id, estabelecimento_id, ativo, simulator_enabled)
 VALUES (@MotoboyId, @EstabelecimentoId, TRUE, FALSE)
 ON CONFLICT (motoboy_id, estabelecimento_id) DO UPDATE
-   SET ativo = TRUE, disabled_at_utc = NULL, updated_at_utc = NOW(), simulator_enabled = FALSE;
+   SET ativo = TRUE, disabled_at_utc = NULL, disabled_by_user_id = NULL,
+       disabled_reason = NULL, updated_at_utc = NOW(), simulator_enabled = FALSE;
 
 UPDATE motoboy_link_requests
    SET status = 'approved', reviewed_at_utc = NOW(), reviewed_by_user_id = @Actor,
@@ -651,6 +660,111 @@ UPDATE motoboy_link_requests
             return Ok(ApiResponse<object>.Ok(new { requestId, status = "rejected" }));
         }
 
+        public sealed record EncerrarVinculoRequest(string? Motivo);
+
+        [HttpGet("vinculos/resumo")]
+        [RequirePermission("Delivery", "visualizar")]
+        public async Task<IActionResult> ResumoDeVinculos()
+        {
+            var estabelecimentoId = HttpContext.GetEstabelecimentoId();
+            if (!estabelecimentoId.HasValue)
+                return BadRequest(ApiResponse<object>.Fail("Selecione um restaurante."));
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            var config = await connection.QuerySingleOrDefaultAsync<ResumoConfiguracaoRow>(@"
+SELECT e.pacotes_motoboy AS PacotesMotoboy, d.order_window::text AS JanelaAtual,
+       d.order_window_pending::text AS JanelaPendente,
+       d.order_window_effective_from_utc AS VigoraEm
+  FROM estabelecimentos e
+  LEFT JOIN delivery_settings d ON d.estabelecimento_id=e.id
+ WHERE e.id=@EstabelecimentoId;", new { EstabelecimentoId = estabelecimentoId.Value });
+            if (config == null) return NotFound(ApiResponse<object>.Fail("Restaurante não encontrado."));
+            var agora = DateTimeOffset.UtcNow;
+            var janela = config.JanelaPendente != null && config.VigoraEm <= agora
+                ? config.JanelaPendente : config.JanelaAtual;
+            var regra = OrderWindowRules.Parse(janela);
+            var inicio = DiaOperacionalRules.InicioAtual(regra, agora);
+            var proximo = DiaOperacionalRules.ProximoInicio(regra, agora);
+            var ocupados = (await connection.QueryAsync<int>(@"
+SELECT motoboy_id FROM motoboy_vaga_periodo
+ WHERE estabelecimento_id=@EstabelecimentoId AND periodo_inicio_utc=@Inicio;",
+                new { EstabelecimentoId = estabelecimentoId.Value, Inicio = inicio })).ToHashSet();
+            var vinculados = (await connection.QueryAsync<int>(@"
+SELECT DISTINCT COALESCE(m.canonical_motoboy_id,m.id)
+  FROM motoboy_estabelecimento me
+  JOIN motoboy m ON m.id=me.motoboy_id
+ WHERE me.estabelecimento_id=@EstabelecimentoId AND me.ativo=TRUE AND m.is_simulated=FALSE;",
+                new { EstabelecimentoId = estabelecimentoId.Value })).ToArray();
+            var maxVagas = MotoboyLimites.VagasPorDia(config.PacotesMotoboy);
+            return Ok(ApiResponse<object>.Ok(new {
+                vagasUsadas = ocupados.Count, vagasLimite = maxVagas,
+                vinculosUsados = vinculados.Length,
+                vinculosLimite = MotoboyLimites.Vinculados(config.PacotesMotoboy),
+                proximoResetEmUtc = proximo,
+                motoboys = vinculados.Select(id => new {
+                    motoboyId = id, ocupaVaga = ocupados.Contains(id),
+                    podeOcupar = ocupados.Contains(id) || ocupados.Count < maxVagas
+                }).ToArray()
+            }));
+        }
+
+        [HttpPost("vinculos/{motoboyId:int}/encerrar")]
+        [RequirePermission("Delivery", "gestao_motoboy")]
+        public async Task<IActionResult> EncerrarVinculo(int motoboyId, [FromBody] EncerrarVinculoRequest? request)
+        {
+            var estabelecimentoId = HttpContext.GetEstabelecimentoId();
+            var actorUserId = HttpContext.GetUserId();
+            if (!estabelecimentoId.HasValue || !actorUserId.HasValue)
+                return Unauthorized(ApiResponse<object>.Fail("Contexto autenticado inválido."));
+            var motivo = request?.Motivo?.Trim();
+            if (string.IsNullOrWhiteSpace(motivo))
+                return BadRequest(ApiResponse<object>.Fail("Informe o motivo do encerramento."));
+
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            await connection.ExecuteAsync(
+                "SELECT id FROM estabelecimentos WHERE id=@EstabelecimentoId FOR UPDATE;",
+                new { EstabelecimentoId = estabelecimentoId.Value }, transaction);
+            var vinculo = await connection.QuerySingleOrDefaultAsync<VinculoParaEncerrarRow>(@"
+SELECT me.motoboy_id AS MotoboyId, m.id_usuario AS UserId
+  FROM motoboy_estabelecimento me
+  JOIN motoboy m ON m.id=me.motoboy_id
+ WHERE me.estabelecimento_id=@EstabelecimentoId AND me.motoboy_id=@MotoboyId AND me.ativo=TRUE
+ FOR UPDATE OF me;",
+                new { EstabelecimentoId = estabelecimentoId.Value, MotoboyId = motoboyId }, transaction);
+            if (vinculo == null)
+                return NotFound(ApiResponse<object>.Fail("Vínculo ativo não encontrado."));
+
+            var emAndamento = await connection.ExecuteScalarAsync<bool>(@"
+SELECT EXISTS (
+ SELECT 1 FROM delivery_route_stops
+ WHERE estabelecimento_id=@EstabelecimentoId AND motoboy_id=@MotoboyId
+   AND stop_status IN ('assigned','en_route')
+);", new { EstabelecimentoId = estabelecimentoId.Value, MotoboyId = motoboyId }, transaction);
+            if (emAndamento)
+                return Conflict(ApiResponse<object>.Fail("Há oferta pendente ou entrega em andamento para este motoboy.", "VINCULO_COM_ENTREGA"));
+
+            await connection.ExecuteAsync(@"
+UPDATE motoboy_estabelecimento
+   SET ativo=FALSE, disabled_at_utc=NOW(), disabled_by_user_id=@Actor,
+       disabled_reason=@Motivo, updated_at_utc=NOW()
+ WHERE estabelecimento_id=@EstabelecimentoId AND motoboy_id=@MotoboyId;
+UPDATE usuario_estabelecimentos
+   SET ativo=FALSE, status='removido', data_remocao=NOW(), updated_at=NOW()
+ WHERE id_estabelecimento=@EstabelecimentoId AND id_usuario=@UserId
+   AND tipo_acesso='motoboy';
+UPDATE motoboy_active_sessions
+   SET revoked_at=NOW(), revoke_reason='Vínculo encerrado'
+ WHERE id_estabelecimento=@EstabelecimentoId AND motoboy_id=@MotoboyId
+   AND revoked_at IS NULL AND ended_at_utc IS NULL;
+INSERT INTO motoboy_vinculo_encerramentos
+    (estabelecimento_id, motoboy_id, encerrado_por_usuario_id, motivo)
+VALUES (@EstabelecimentoId, @MotoboyId, @Actor, @Motivo);",
+                new { EstabelecimentoId = estabelecimentoId.Value, MotoboyId = motoboyId,
+                    UserId = vinculo.UserId, Actor = actorUserId.Value, Motivo = motivo }, transaction);
+            await transaction.CommitAsync();
+            return Ok(ApiResponse<object>.Ok(new { motoboyId, status = "encerrado" }));
+        }
+
         private async Task<IReadOnlyCollection<T>> QueryAsync<T>(string sql, object? parameters = null)
         {
             await using var connection = await _dataSource.OpenConnectionAsync();
@@ -668,6 +782,20 @@ UPDATE motoboy_link_requests
             public int MotoboyId { get; set; }
             public int MotoboyUserId { get; set; }
             public Guid EmpresaId { get; set; }
+        }
+
+        private sealed class VinculoParaEncerrarRow
+        {
+            public int MotoboyId { get; set; }
+            public int UserId { get; set; }
+        }
+
+        private sealed class ResumoConfiguracaoRow
+        {
+            public int PacotesMotoboy { get; set; }
+            public string? JanelaAtual { get; set; }
+            public string? JanelaPendente { get; set; }
+            public DateTimeOffset? VigoraEm { get; set; }
         }
 
         private sealed class MotoboyUserRow

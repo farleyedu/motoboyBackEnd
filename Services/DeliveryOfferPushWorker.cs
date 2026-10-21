@@ -21,7 +21,9 @@ public sealed class DeliveryOfferPushWorker(NpgsqlDataSource source, IHttpClient
  WHERE sub.token=p.token AND sub.session_id=p.session_id AND sub.motoboy_id=p.motoboy_id AND sub.estabelecimento_id=p.estabelecimento_id
  AND a.ended_at_utc IS NULL AND a.revoked_at IS NULL AND a.expires_at_utc>NOW() AND me.ativo=TRUE)
  AND EXISTS(SELECT 1 FROM delivery_route_stops s WHERE s.offer_id=p.offer_id AND s.estabelecimento_id=p.estabelecimento_id
- AND s.motoboy_id=p.motoboy_id AND s.offered_at_utc IS NOT NULL AND s.stop_status='assigned')";
+ AND s.motoboy_id=p.motoboy_id AND s.offered_at_utc IS NOT NULL AND s.stop_status='assigned')
+ AND EXISTS(SELECT 1 FROM estabelecimentos e WHERE e.id=p.estabelecimento_id
+ AND e.situacao_comercial IN ('teste','ativo'))";
 
     protected override async Task ExecuteAsync(CancellationToken ct)
     {

@@ -51,7 +51,8 @@ SELECT  ue.id                  AS VinculoId,
         e.status               AS StatusEstabelecimento,
         e.ativo                AS EstabelecimentoAtivo,
         NULL::text             AS Plano,
-        e.modulos_ativos::text[] AS ModulosAtivosRaw
+        CASE WHEN e.situacao_comercial = 'teste' THEN enum_range(NULL::modulo_enum)::text[]
+             ELSE e.modulos_ativos::text[] END AS ModulosAtivosRaw
   FROM usuario_estabelecimentos ue
   JOIN estabelecimentos e ON e.id = ue.id_estabelecimento
   JOIN tipo_estabelecimento te ON te.id = e.id_tipo_estabelecimento
@@ -72,7 +73,8 @@ SELECT  e.id              AS EstabelecimentoId,
         e.status          AS StatusEstabelecimento,
         e.ativo           AS EstabelecimentoAtivo,
         NULL::text        AS Plano,
-        e.modulos_ativos::text[] AS ModulosAtivosRaw
+        CASE WHEN e.situacao_comercial = 'teste' THEN enum_range(NULL::modulo_enum)::text[]
+             ELSE e.modulos_ativos::text[] END AS ModulosAtivosRaw
   FROM estabelecimentos e
   JOIN tipo_estabelecimento te ON te.id = e.id_tipo_estabelecimento
  WHERE (e.status = 'ativo' OR e.status IS NULL)
@@ -95,7 +97,8 @@ SELECT  e.id            AS Id,
         NULL::text      AS Plano,
         e.status        AS Status,
         e.ativo         AS Ativo,
-        e.modulos_ativos::text[] AS ModulosAtivosRaw
+        CASE WHEN e.situacao_comercial = 'teste' THEN enum_range(NULL::modulo_enum)::text[]
+             ELSE e.modulos_ativos::text[] END AS ModulosAtivosRaw
   FROM estabelecimentos e
   JOIN empresas emp ON emp.id = e.id_empresa
   JOIN tipo_estabelecimento te ON te.id = e.id_tipo_estabelecimento

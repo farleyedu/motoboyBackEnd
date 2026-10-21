@@ -99,7 +99,7 @@ SELECT  emp.id                    AS Id,
             await using var transaction = await connection.BeginTransactionAsync();
 
             var empresaId = await InserirEmpresaAsync(connection, transaction, request);
-            await InserirEstabelecimentoAsync(connection, transaction, estabelecimentoRequest, empresaId, "initialEstablishment.tipoEstabelecimentoSlug");
+            var estabelecimentoId = await InserirEstabelecimentoAsync(connection, transaction, estabelecimentoRequest, empresaId, "initialEstablishment.tipoEstabelecimentoSlug");
 
             await transaction.CommitAsync();
             return empresaId;
@@ -311,6 +311,7 @@ SELECT  e.id                      AS Id,
         te.nome                   AS TipoEstabelecimentoNome,
         e.slug                    AS Slug,
         e.modulos_ativos::text[]  AS ModulosAtivosRaw,
+        e.plano_comercial         AS PlanoComercial,
         e.ativo                   AS Ativo,
         COALESCE(e.status, 'ativo') AS Status
   FROM estabelecimentos e
@@ -365,6 +366,7 @@ SELECT  e.id                      AS Id,
 
         public async Task<Guid> CriarEstabelecimentoAsync(SalvarEstabelecimentoRequest request, Guid? empresaIdOverride = null)
         {
+            request.PlanoComercial = NormalizarPlano(request.PlanoComercial);
             await using var connection = new NpgsqlConnection(_connectionString);
             await connection.OpenAsync();
             await using var transaction = await connection.BeginTransactionAsync();
@@ -377,6 +379,7 @@ SELECT  e.id                      AS Id,
 
         public async Task AtualizarEstabelecimentoAsync(Guid estabelecimentoId, SalvarEstabelecimentoRequest request)
         {
+            request.PlanoComercial = NormalizarPlano(request.PlanoComercial);
             await using var connection = new NpgsqlConnection(_connectionString);
             await connection.OpenAsync();
             await using var transaction = await connection.BeginTransactionAsync();
@@ -384,6 +387,7 @@ SELECT  e.id                      AS Id,
             var tipoEstabelecimentoId = await ResolverTipoEstabelecimentoIdAsync(connection, transaction, request, "tipoEstabelecimentoSlug");
             var tipoEstabelecimentoSlug = await ObterTipoEstabelecimentoSlugAsync(connection, transaction, tipoEstabelecimentoId)
                 ?? NormalizeTypeSlug(request.TipoEstabelecimentoSlug, request.TipoEstabelecimentoNome);
+            var modulosPlano = await ResolverModulosPlanoAsync(connection, transaction, request.PlanoComercial);
             var slugAtual = await connection.ExecuteScalarAsync<string?>(@"
 SELECT slug
   FROM estabelecimentos
@@ -395,7 +399,7 @@ SELECT slug
             }, transaction);
             var slugPreferencial = string.IsNullOrWhiteSpace(request.Slug) ? slugAtual : request.Slug;
             var slug = await GarantirSlugDisponivelAsync(connection, transaction, slugPreferencial, request.NomeFantasia, estabelecimentoId);
-            var modulos = EstabelecimentoModuleMapper.ToDatabaseModules(request.ModulosAtivos, tipoEstabelecimentoSlug);
+            var modulos = modulosPlano?.ModulosAtivos ?? EstabelecimentoModuleMapper.ToDatabaseModules(request.ModulosAtivos, tipoEstabelecimentoSlug);
             modulos = await FiltrarModulosConhecidosAsync(connection, transaction, modulos);
             var tipoUnidade = NormalizeTipoUnidade(request.TipoUnidade);
 
@@ -427,6 +431,13 @@ UPDATE estabelecimentos
        taxa_entrega_fixa = @TaxaEntregaFixa,
        taxa_entrega_por_km = @TaxaEntregaPorKm,
        tempo_preparo_min = @TempoPreparoMin,
+       plano_comercial = CASE
+           WHEN @PlanoComercial IS NOT NULL THEN @PlanoComercial
+           WHEN plano_comercial IN ('partida','rota','turbo','frota')
+            AND NOT (modulos_ativos @> @ModulosAtivos::modulo_enum[]
+                 AND @ModulosAtivos::modulo_enum[] @> modulos_ativos)
+           THEN 'personalizado' ELSE plano_comercial END,
+       pacotes_motoboy = GREATEST(pacotes_motoboy, @PacotesMotoboyBase),
        modulos_ativos = @ModulosAtivos::modulo_enum[],
        id_tipo_estabelecimento = @TipoEstabelecimentoId,
        slug = @Slug,
@@ -463,6 +474,8 @@ UPDATE estabelecimentos
                 TaxaEntregaPorKm = request.TaxaEntregaPorKm ?? 0m,
                 TempoPreparoMin = request.TempoPreparoMin ?? 20,
                 ModulosAtivos = modulos,
+                PlanoComercial = request.PlanoComercial,
+                PacotesMotoboyBase = modulosPlano?.PacotesMotoboyBase ?? 1,
                 TipoEstabelecimentoId = tipoEstabelecimentoId,
                 Slug = slug
             }, transaction);
@@ -954,6 +967,9 @@ RETURNING id;", new
                 }, transaction);
             }
 
+            if (!await MotoboyVinculoLimites.PodeAtivarAsync(connection, transaction, estabelecimentoId, motoboyId.Value))
+                throw new InvalidOperationException(MotoboyVinculoLimites.MensagemLimite);
+
             await connection.ExecuteAsync(@"
 UPDATE motoboy
    SET canonical_motoboy_id = id,
@@ -970,7 +986,9 @@ ON CONFLICT (motoboy_id, estabelecimento_id) DO UPDATE
    SET ativo = TRUE,
        simulator_enabled = FALSE,
        updated_at_utc = NOW(),
-       disabled_at_utc = NULL;", new
+       disabled_at_utc = NULL,
+       disabled_by_user_id = NULL,
+       disabled_reason = NULL;", new
             {
                 MotoboyId = motoboyId.Value,
                 Nome = normalizedName,
@@ -1172,6 +1190,7 @@ RETURNING id;";
             Guid? empresaIdOverride,
             string tipoEstabelecimentoField)
         {
+            request.PlanoComercial = NormalizarPlano(request.PlanoComercial);
             var empresaId = empresaIdOverride ?? request.EmpresaId;
             if (!empresaId.HasValue || empresaId == Guid.Empty)
             {
@@ -1181,8 +1200,9 @@ RETURNING id;";
             var tipoEstabelecimentoId = await ResolverTipoEstabelecimentoIdAsync(connection, transaction, request, tipoEstabelecimentoField);
             var tipoEstabelecimentoSlug = await ObterTipoEstabelecimentoSlugAsync(connection, transaction, tipoEstabelecimentoId)
                 ?? NormalizeTypeSlug(request.TipoEstabelecimentoSlug, request.TipoEstabelecimentoNome);
+            var modulosPlano = await ResolverModulosPlanoAsync(connection, transaction, request.PlanoComercial);
             var slug = await GarantirSlugDisponivelAsync(connection, transaction, request.Slug, request.NomeFantasia, null);
-            var modulos = EstabelecimentoModuleMapper.ToDatabaseModules(request.ModulosAtivos, tipoEstabelecimentoSlug);
+            var modulos = modulosPlano?.ModulosAtivos ?? EstabelecimentoModuleMapper.ToDatabaseModules(request.ModulosAtivos, tipoEstabelecimentoSlug);
             modulos = await FiltrarModulosConhecidosAsync(connection, transaction, modulos);
             var tipoUnidade = NormalizeTipoUnidade(request.TipoUnidade);
 
@@ -1191,12 +1211,12 @@ INSERT INTO estabelecimentos (
     id_empresa, tipo_unidade, nome_fantasia, cnpj_loja, inscricao_estadual, inscricao_municipal,
     telefone, whatsapp_e164, email, logradouro, numero, complemento, bairro, cidade, uf, cep,
     latitude, longitude, url_logo, ativo, aceita_pedidos, timezone_iana, raio_entrega_km, pedido_minimo,
-    taxa_entrega_fixa, taxa_entrega_por_km, tempo_preparo_min, modulos_ativos, id_tipo_estabelecimento, slug, status)
+    taxa_entrega_fixa, taxa_entrega_por_km, tempo_preparo_min, modulos_ativos, plano_comercial, pacotes_motoboy, id_tipo_estabelecimento, slug, status)
 VALUES (
     @EmpresaId, @TipoUnidade::tipo_unidade_enum, @NomeFantasia, @CnpjLoja, @InscricaoEstadual, @InscricaoMunicipal,
     @Telefone, @WhatsappE164, @Email, @Logradouro, @Numero, @Complemento, @Bairro, @Cidade, @Uf, @Cep,
     @Latitude, @Longitude, @UrlLogo, TRUE, @AceitaPedidos, @TimezoneIana, @RaioEntregaKm, @PedidoMinimo,
-    @TaxaEntregaFixa, @TaxaEntregaPorKm, @TempoPreparoMin, @ModulosAtivos::modulo_enum[], @TipoEstabelecimentoId, @Slug, 'ativo')
+    @TaxaEntregaFixa, @TaxaEntregaPorKm, @TempoPreparoMin, @ModulosAtivos::modulo_enum[], @PlanoComercial, @PacotesMotoboyBase, @TipoEstabelecimentoId, @Slug, 'ativo')
 RETURNING id;";
 
             return await connection.ExecuteScalarAsync<Guid>(sql, new
@@ -1228,6 +1248,8 @@ RETURNING id;";
                 TaxaEntregaPorKm = request.TaxaEntregaPorKm ?? 0m,
                 TempoPreparoMin = request.TempoPreparoMin ?? 20,
                 ModulosAtivos = modulos,
+                PlanoComercial = request.PlanoComercial,
+                PacotesMotoboyBase = modulosPlano?.PacotesMotoboyBase ?? 1,
                 TipoEstabelecimentoId = tipoEstabelecimentoId,
                 Slug = slug
             }, transaction);
@@ -1383,15 +1405,37 @@ SELECT EXISTS(
 
         /// <summary>
         /// estabelecimentos.modulos_ativos e modulo_enum[]: gravar um valor que o enum ainda nao
-        /// conhece derruba o salvamento. Enquanto uma migration nova nao foi aplicada (deploy fora
-        /// de ordem), o modulo novo e simplesmente ignorado, sem quebrar o resto do cadastro.
+        /// conhece derruba o salvamento. Nunca descarte silenciosamente um modulo solicitado:
+        /// isso faria uma loja perder recurso quando o codigo chegasse antes da migration.
         /// </summary>
+        private static string? NormalizarPlano(string? plano) =>
+            string.IsNullOrWhiteSpace(plano) ? null : plano.Trim().ToLowerInvariant();
+
+        private sealed class PacoteSelecionado
+        {
+            public string[] ModulosAtivos { get; set; } = Array.Empty<string>();
+            public int PacotesMotoboyBase { get; set; }
+        }
+
+        private static async Task<PacoteSelecionado?> ResolverModulosPlanoAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, string? plano)
+        {
+            if (string.IsNullOrWhiteSpace(plano) || string.Equals(plano, "personalizado", StringComparison.OrdinalIgnoreCase)) return null;
+            var pacote = await connection.QuerySingleOrDefaultAsync<PacoteSelecionado>(
+                "SELECT modulos_ativos::text[] AS ModulosAtivos, pacotes_motoboy_base AS PacotesMotoboyBase FROM pacotes_comerciais WHERE chave=@Plano FOR SHARE;",
+                new { Plano = plano.Trim().ToLowerInvariant() }, transaction);
+            return pacote ?? throw new InvalidOperationException("Pacote comercial inválido ou migração pendente.");
+        }
+
         private static async Task<string[]> FiltrarModulosConhecidosAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, string[] modulos)
         {
             var conhecidos = (await connection.QueryAsync<string>(
                 "SELECT unnest(enum_range(NULL::modulo_enum))::text;", transaction: transaction))
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            return modulos.Where(conhecidos.Contains).ToArray();
+            var ausentes = modulos.Where(m => !conhecidos.Contains(m)).ToArray();
+            if (ausentes.Length > 0)
+                throw new InvalidOperationException(
+                    $"A migracao de modulos ainda nao foi aplicada: {string.Join(", ", ausentes)}.");
+            return modulos;
         }
 
         private static string NormalizeTypeSlug(string? slug, string? nome)

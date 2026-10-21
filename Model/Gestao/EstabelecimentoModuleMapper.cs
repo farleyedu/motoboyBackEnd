@@ -26,24 +26,10 @@ namespace APIBack.Model.Gestao
                     case "cliente":
                         modules.Add("CLIENTES");
                         break;
+                    // "Atendimento" e o nome comercial; a chave tecnica continua WHATSAPP.
                     case "whatsapp":
+                    case "atendimento":
                         modules.Add("WHATSAPP");
-                        break;
-                    case "reservas":
-                    case "reserva":
-                    case "agendamentos":
-                    case "agendamento":
-                        modules.Add("AGENDAMENTOS");
-                        break;
-                    case "leads":
-                    case "lead":
-                        modules.Add("LEADS");
-                        break;
-                    case "estoque":
-                        modules.Add("ESTOQUE");
-                        break;
-                    case "vitrine":
-                        modules.Add("VITRINE");
                         break;
                     case "cardapio":
                         modules.Add("CARDAPIO");
@@ -51,10 +37,26 @@ namespace APIBack.Model.Gestao
                     case "cardapioweb":
                         modules.Add("CARDAPIOWEB");
                         break;
-                    case "relatorios":
-                    case "relatorio":
-                        modules.Add("RELATORIOS");
+                    case "ifood":
+                        modules.Add("IFOOD");
                         break;
+                    case "impressao":
+                        modules.Add("IMPRESSAO");
+                        break;
+                    case "remuneracao":
+                        modules.Add("REMUNERACAO");
+                        break;
+                    case "simulador":
+                        modules.Add("SIMULADOR");
+                        break;
+                    case "experience":
+                    case "zippy experience":
+                        modules.Add("EXPERIENCE");
+                        break;
+                    case "financeiro":
+                        modules.Add("FINANCEIRO");
+                        break;
+                    // Leads, Estoque, Vitrine, Agendamentos e Relatorios foram removidos do produto (sem tela): ignorados.
                     case "estabelecimentos":
                     case "estabelecimento":
                         modules.Add("ESTABELECIMENTO");
@@ -114,31 +116,29 @@ namespace APIBack.Model.Gestao
                     case "whatsapp":
                         modules.Add("WhatsApp");
                         break;
-                    case "agendamentos":
-                    case "agendamento":
-                    case "reservas":
-                    case "reserva":
-                        modules.Add("Agendamentos");
-                        break;
-                    case "leads":
-                    case "lead":
-                        modules.Add("Leads");
-                        break;
-                    case "estoque":
-                        modules.Add("Estoque");
-                        break;
-                    case "vitrine":
-                        modules.Add("Vitrine");
-                        break;
                     case "cardapio":
                         modules.Add("Cardapio");
                         break;
                     case "cardapioweb":
                         modules.Add("CardapioWeb");
                         break;
-                    case "relatorios":
-                    case "relatorio":
-                        modules.Add("Relatorios");
+                    case "ifood":
+                        modules.Add("iFood");
+                        break;
+                    case "impressao":
+                        modules.Add("Impressao");
+                        break;
+                    case "remuneracao":
+                        modules.Add("Remuneracao");
+                        break;
+                    case "simulador":
+                        modules.Add("Simulador");
+                        break;
+                    case "experience":
+                        modules.Add("Experience");
+                        break;
+                    case "financeiro":
+                        modules.Add("Financeiro");
                         break;
                     case "estabelecimento":
                         modules.Add("Estabelecimentos");

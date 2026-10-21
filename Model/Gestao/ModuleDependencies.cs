@@ -19,6 +19,11 @@ namespace APIBack.Model.Gestao
             {
                 ["DELIVERY"] = new[] { "PEDIDOS" },
                 ["CARDAPIOWEB"] = new[] { "CARDAPIO", "PEDIDOS" },
+                // iFood tem tela propria fora do mapa: exige so os pedidos (decisao do dono, 20/10).
+                ["IFOOD"] = new[] { "PEDIDOS" },
+                ["IMPRESSAO"] = new[] { "PEDIDOS" },
+                ["REMUNERACAO"] = new[] { "DELIVERY" },
+                ["SIMULADOR"] = new[] { "DELIVERY" },
             };
 
         /// <summary>Modulos exigidos diretamente por <paramref name="module"/> (vazio se nenhum).</summary>
