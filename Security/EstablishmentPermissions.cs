@@ -28,6 +28,36 @@ public static class EstablishmentPermissions
             .ToDictionary(p => p.Key, p => StripActionsOfInactiveModules(p.Key, p.Value, active), StringComparer.OrdinalIgnoreCase);
     }
 
+    public static Dictionary<string, List<string>> ResolveForAccess(string? json, string[]? modules,
+        string? companyRole, string? establishmentRole)
+    {
+        var normalizedCompanyRole = RoleCatalog.Normalize(companyRole);
+        var normalizedEstablishmentRole = RoleCatalog.Normalize(establishmentRole);
+        var isCompanyManager = normalizedCompanyRole is "dono" or "gerente_empresa";
+        var isEstablishmentManager = normalizedEstablishmentRole == "gerente_estabelecimento";
+
+        if (!isCompanyManager && !isEstablishmentManager)
+            return Resolve(json, modules);
+
+        var active = EstabelecimentoModuleMapper.ToUiModules(string.Empty, modules)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var catalog = Catalog();
+        var permissions = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var entry in catalog)
+        {
+            var allowed = string.Equals(entry.Key, "Configuracoes", StringComparison.OrdinalIgnoreCase)
+                || active.Contains(entry.Key)
+                || IsOrderOperation(entry.Key, active)
+                || (isCompanyManager && Administrative.Contains(entry.Key));
+            if (!allowed) continue;
+
+            permissions[entry.Key] = StripActionsOfInactiveModules(entry.Key, entry.Value.ToList(), active);
+        }
+
+        return permissions;
+    }
+
     // A permissao "Delivery" e a da operacao de pedidos (ver, criar, editar, imprimir, cancelar): vale para toda loja com
     // Pedidos, mesmo sem o modulo Delivery (planos Partida e Rota). O que e de motoboy fica travado por [RequireModule("Delivery")].
     private static bool IsOrderOperation(string modulo, HashSet<string> active) =>

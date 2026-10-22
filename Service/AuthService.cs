@@ -1009,7 +1009,8 @@ SELECT ue.id_estabelecimento
                     estabelecimentoId.Value,
                     usuario.IsSuperAdmin);
 
-                if (!usuario.IsSuperAdmin && contexto.VinculoId == null)
+                if (!usuario.IsSuperAdmin && contexto.VinculoId == null &&
+                    !TemAcessoGerencialEmpresa(contexto.TipoAcessoEmpresa))
                 {
                     throw new UnauthorizedAccessException("Usuário não possui acesso ao estabelecimento selecionado.");
                 }
@@ -1173,7 +1174,8 @@ SELECT  e.id                    AS EstabelecimentoId,
                 throw new UnauthorizedAccessException("A loja está inativa. Fale com a Zippy.");
             }
 
-            if (!isSuperAdmin && contexto.VinculoId == null)
+            if (!isSuperAdmin && contexto.VinculoId == null &&
+                !TemAcessoGerencialEmpresa(contexto.TipoAcessoEmpresa))
             {
                 // Mesmo contrato da selecao e do inicio do turno: o vinculo aprovado
                 // do motoboy canonico tambem autoriza contas anteriores ao onboarding.
@@ -1284,7 +1286,14 @@ SELECT  e.id                    AS EstabelecimentoId,
             Guid estabelecimentoId)
         {
             var modules = await ObterModulosAtivosAsync(connection, estabelecimentoId);
-            return EstablishmentPermissions.Resolve(permissoesCustomizadas, modules.ToArray());
+            return EstablishmentPermissions.ResolveForAccess(permissoesCustomizadas, modules.ToArray(),
+                tipoAcessoEmpresa, tipoAcessoEstabelecimento);
+        }
+
+        private static bool TemAcessoGerencialEmpresa(string? tipoAcessoEmpresa)
+        {
+            var role = RoleCatalog.Normalize(tipoAcessoEmpresa);
+            return role is "dono" or "gerente_empresa";
         }
 
         private static Dictionary<string, List<string>> ParsePermissoesCustomizadas(string? raw)

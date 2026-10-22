@@ -62,7 +62,7 @@ namespace APIBack.Tests.Unit
                 UsuarioId = usuario.Id,
                 Status = "ativo",
                 VinculoAtivo = true,
-                TipoAcesso = motoboyLegado ? "motoboy" : "manager"
+                TipoAcesso = motoboyLegado ? "motoboy" : "gerente_estabelecimento"
             };
 
             _repositoryMock.Setup(r => r.ObterUsuarioAsync(usuario.Id)).ReturnsAsync(usuario);
@@ -89,7 +89,43 @@ namespace APIBack.Tests.Unit
             Assert.Equal(motoboyLegado ? (Guid?)null : vinculo.Id, payloadCapturado!.VinculoId);
             Assert.Contains("WhatsApp", payloadCapturado!.EstabelecimentoModulosAtivos);
             Assert.Contains("Clientes", payloadCapturado.EstabelecimentoModulosAtivos);
+            if (!motoboyLegado)
+            {
+                Assert.Contains("Configuracoes", payloadCapturado.Permissoes.Keys);
+                Assert.Equal("gerente_estabelecimento", payloadCapturado.TipoAcesso);
+            }
             _repositoryMock.Verify(r => r.AtualizarUltimoEstabelecimentoAsync(usuario.Id, estabelecimento.Id), Times.Once);
+        }
+
+        [Fact]
+        public async Task DefinirEstabelecimentoAtivoAsync_GerenteEmpresaSemVinculoDaLoja_DeveTerAcessoTotal()
+        {
+            var usuario = CreateUsuario();
+            var estabelecimento = CreateEstabelecimentoDetalhe();
+            JwtPayload? payloadCapturado = null;
+            var vinculoEmpresa = new UsuarioEmpresaAcesso
+            {
+                Id = Guid.NewGuid(), EmpresaId = estabelecimento.EmpresaId, UsuarioId = usuario.Id,
+                Status = "ativo", VinculoAtivo = true, TipoAcesso = "gerente_empresa"
+            };
+
+            _repositoryMock.Setup(r => r.ObterUsuarioAsync(usuario.Id)).ReturnsAsync(usuario);
+            _repositoryMock.Setup(r => r.ObterEstabelecimentoDetalheAsync(estabelecimento.Id)).ReturnsAsync(estabelecimento);
+            _repositoryMock.Setup(r => r.ObterVinculoAsync(usuario.Id, estabelecimento.Id))
+                .ReturnsAsync((UsuarioEstabelecimentoAcesso?)null);
+            _repositoryMock.Setup(r => r.ObterVinculoEmpresaAsync(usuario.Id, estabelecimento.EmpresaId))
+                .ReturnsAsync(vinculoEmpresa);
+            _jwtServiceMock.Setup(j => j.GenerateToken(It.IsAny<JwtPayload>()))
+                .Callback<JwtPayload>(payload => payloadCapturado = payload).Returns("token");
+            _authServiceMock.Setup(a => a.IssueRefreshTokenAsync(usuario.Id)).ReturnsAsync("refresh");
+
+            await _service.DefinirEstabelecimentoAtivoAsync(usuario.Id, estabelecimento.Id);
+
+            Assert.NotNull(payloadCapturado);
+            Assert.Equal("gerente_empresa", payloadCapturado!.TipoAcesso);
+            Assert.Equal("gerente_empresa", payloadCapturado.TipoAcessoEmpresa);
+            Assert.Contains("Configuracoes", payloadCapturado.Permissoes.Keys);
+            Assert.Contains("Empresas", payloadCapturado.Permissoes.Keys);
         }
 
         [Fact]

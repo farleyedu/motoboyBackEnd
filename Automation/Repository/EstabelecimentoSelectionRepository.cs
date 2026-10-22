@@ -41,6 +41,33 @@ SELECT id,
         public async Task<IReadOnlyCollection<UsuarioEstabelecimentoVinculo>> ListarEstabelecimentosUsuarioAsync(int userId)
         {
             const string sql = @"
+SELECT  COALESCE(ue.id, uemp.id) AS VinculoId,
+        e.id                   AS EstabelecimentoId,
+        e.nome_fantasia        AS Nome,
+        te.nome                AS TipoEstabelecimento,
+        CASE WHEN uemp.tipo_acesso IN ('dono', 'gerente_empresa') THEN uemp.status ELSE ue.status END AS StatusVinculo,
+        CASE WHEN uemp.tipo_acesso IN ('dono', 'gerente_empresa') THEN uemp.ativo ELSE ue.ativo END AS VinculoAtivo,
+        CASE WHEN uemp.tipo_acesso IN ('dono', 'gerente_empresa') THEN uemp.tipo_acesso ELSE ue.tipo_acesso END AS TipoAcesso,
+        e.status               AS StatusEstabelecimento,
+        e.ativo                AS EstabelecimentoAtivo,
+        NULL::text             AS Plano,
+        CASE WHEN e.situacao_comercial = 'teste' THEN enum_range(NULL::modulo_enum)::text[]
+             ELSE e.modulos_ativos::text[] END AS ModulosAtivosRaw
+  FROM estabelecimentos e
+  JOIN tipo_estabelecimento te ON te.id = e.id_tipo_estabelecimento
+  LEFT JOIN usuario_estabelecimentos ue
+         ON ue.id_estabelecimento = e.id
+        AND ue.id_usuario = @UserId
+  LEFT JOIN usuario_empresas uemp
+         ON uemp.id_empresa = e.id_empresa
+        AND uemp.id_usuario = @UserId
+        AND uemp.ativo = TRUE
+        AND uemp.status = 'ativo'
+        AND uemp.tipo_acesso IN ('dono', 'gerente_empresa')
+ WHERE ue.id IS NOT NULL OR uemp.id IS NOT NULL
+ ORDER BY e.nome_fantasia";
+
+            const string legacySql = @"
 SELECT  ue.id                  AS VinculoId,
         ue.id_estabelecimento  AS EstabelecimentoId,
         e.nome_fantasia        AS Nome,
@@ -60,8 +87,16 @@ SELECT  ue.id                  AS VinculoId,
  ORDER BY e.nome_fantasia";
 
             await using var connection = new NpgsqlConnection(_connectionString);
-            var result = await connection.QueryAsync<UsuarioEstabelecimentoVinculo>(sql, new { UserId = userId });
-            return result.ToArray();
+            try
+            {
+                var result = await connection.QueryAsync<UsuarioEstabelecimentoVinculo>(sql, new { UserId = userId });
+                return result.ToArray();
+            }
+            catch (PostgresException ex) when (EhTabelaUsuarioEmpresasAusente(ex))
+            {
+                var result = await connection.QueryAsync<UsuarioEstabelecimentoVinculo>(legacySql, new { UserId = userId });
+                return result.ToArray();
+            }
         }
 
         public async Task<IReadOnlyCollection<EstabelecimentoAtivoResumo>> ListarEstabelecimentosAtivosAsync()

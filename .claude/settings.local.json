@@ -8,7 +8,14 @@
       "Bash(dotnet build:*)",
       "Bash(Select-String -Pattern \"error|Erro\" -Context 0,2)",
       "Bash(dotnet ef:*)",
-      "Bash(dir /s /b *.csproj)"
+      "Bash(dir /s /b *.csproj)",
+      "WebFetch(domain:developer.ifood.com.br)",
+      "WebSearch",
+      "Bash(dotnet test *)",
+      "Bash(git worktree *)",
+      "Bash(timeout 280 npx tsc --noEmit -p .)",
+      "Read(//c/Users/farley.silva/MotoboyApp//**)",
+      "Read(//c/Users/farley.silva/MotoboyApp/zippy-admin/src/features/**)"
     ],
     "deny": [],
     "ask": []

@@ -88,10 +88,10 @@ namespace APIBack.Automation.Services
                 await _repository.ObterEstabelecimentoDetalheAsync(estabelecimentoId));
 
             var vinculo = await _repository.ObterVinculoAsync(userId, estabelecimentoId);
-            var vinculoEmpresa = estabelecimento != null
-                ? await _repository.ObterVinculoEmpresaAsync(userId, estabelecimento.EmpresaId)
-                : null;
-            _validator.EnsureVinculoPermitido(vinculo, usuario.IsSuperAdmin);
+            var vinculoEmpresa = await _repository.ObterVinculoEmpresaAsync(userId, estabelecimento.EmpresaId);
+            var acessoGerencialEmpresa = TemAcessoGerencialEmpresa(vinculoEmpresa);
+            if (!acessoGerencialEmpresa)
+                _validator.EnsureVinculoPermitido(vinculo, usuario.IsSuperAdmin);
 
             await _repository.AtualizarUltimoEstabelecimentoAsync(userId, estabelecimentoId);
 
@@ -101,11 +101,11 @@ namespace APIBack.Automation.Services
             var tipoAcessoEmpresa = usuario.IsSuperAdmin
                 ? "super_admin"
                 : RoleCatalog.Normalize(vinculoEmpresa?.TipoAcesso);
+            var tipoAcessoTela = RoleCatalog.ResolveScreenRole(tipoAcessoEmpresa, tipoAcesso, usuario.IsSuperAdmin);
 
-            var modulosUi = ResolveUiModules(estabelecimento.Nome, estabelecimento.ModulosAtivosRaw)
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            var permissoes = APIBack.Security.EstablishmentPermissions.Resolve(
-                vinculo?.PermissoesCustomizadas, estabelecimento.ModulosAtivosRaw);
+            var permissoes = APIBack.Security.EstablishmentPermissions.ResolveForAccess(
+                vinculo?.PermissoesCustomizadas, estabelecimento.ModulosAtivosRaw,
+                tipoAcessoEmpresa, tipoAcesso);
             await TryEnsureAgenteSeNecessarioAsync(usuario.Id, permissoes);
 
             var payload = new JwtPayload
@@ -123,7 +123,7 @@ namespace APIBack.Automation.Services
                 EstabelecimentoNome = estabelecimento.Nome,
                 TipoEstabelecimento = estabelecimento.TipoEstabelecimento,
                 EstabelecimentoModulosAtivos = ResolveUiModules(estabelecimento.Nome, estabelecimento.ModulosAtivosRaw),
-                TipoAcesso = tipoAcesso,
+                TipoAcesso = tipoAcessoTela,
                 VinculoId = vinculo?.Id == Guid.Empty ? null : vinculo?.Id,
                 Permissoes = permissoes
             };
@@ -153,6 +153,16 @@ namespace APIBack.Automation.Services
                     Status = _validator.NormalizarStatusEstabelecimento(estabelecimento.Status, estabelecimento.Ativo)
                 }
             };
+        }
+
+        private static bool TemAcessoGerencialEmpresa(UsuarioEmpresaAcesso? vinculo)
+        {
+            if (vinculo?.VinculoAtivo != true ||
+                !string.Equals(vinculo.Status, "ativo", StringComparison.OrdinalIgnoreCase))
+                return false;
+
+            var role = RoleCatalog.Normalize(vinculo.TipoAcesso);
+            return role is "dono" or "gerente_empresa";
         }
 
         private async Task TryEnsureAgenteSeNecessarioAsync(int userId, Dictionary<string, List<string>> permissoes)
