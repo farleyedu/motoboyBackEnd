@@ -79,7 +79,7 @@ namespace APIBack.Tests.Unit
                 var controller = new WaWebhookController(
                     NullLogger<WaWebhookController>.Instance,
                     new WebhookValidatorService(Assinatura.Object, NullLogger<WebhookValidatorService>.Instance),
-                    Eventos.Object,
+                    new WaWebhookIngestor(Eventos.Object, NullLogger<WaWebhookIngestor>.Instance),
                     Microsoft.Extensions.Options.Options.Create(new AutomationOptions { VerifyToken = VerifyToken }));
                 var contexto = new DefaultHttpContext();
                 contexto.Request.Body = new System.IO.MemoryStream(Encoding.UTF8.GetBytes(corpo));

@@ -10,7 +10,10 @@ using Microsoft.Extensions.Logging;
 
 namespace APIBack.Atendimento
 {
-    public sealed record VerificacaoCanal(bool Ok, string Mensagem, string? NumeroNaMeta, string? NomeVerificado);
+    /// <param name="Codigo">Codigo estavel do erro (WhatsappCodigos); nulo quando deu certo.</param>
+    /// <param name="Campo">Campo da tela a corrigir, quando o erro aponta um.</param>
+    public sealed record VerificacaoCanal(
+        bool Ok, string Mensagem, string? NumeroNaMeta, string? NomeVerificado, string? Codigo = null, string? Campo = null);
 
     public interface ICanalVerificador
     {
@@ -18,6 +21,8 @@ namespace APIBack.Atendimento
         Task<VerificacaoCanal> VerificarAsync(CanalWhatsapp canal);
         /// <summary>Pergunta a Meta com o token informado, sem gravar nada: serve para conectar um numero que ainda nao existe.</summary>
         Task<VerificacaoCanal> ConsultarCredenciaisAsync(string phoneNumberId, string token);
+        /// <summary>Pergunta a Meta com o token global da Zippy (numero criado na conta Meta da Zippy). Sem token global: WA_TOKEN_GLOBAL_AUSENTE.</summary>
+        Task<VerificacaoCanal> ConsultarComTokenGlobalAsync(string phoneNumberId);
     }
 
     /// <summary>
@@ -47,17 +52,14 @@ namespace APIBack.Atendimento
 
         public async Task<VerificacaoCanal> VerificarAsync(CanalWhatsapp canal)
         {
-            var token = _token.Revelar(canal.TokenCifrado);
-            var origem = "canal";
+            var (token, origem) = CanalToken.Resolver(canal, _token, _tokenGlobal);
+
             if (string.IsNullOrWhiteSpace(token))
             {
-                token = _tokenGlobal.GetAccessToken();
-                origem = "global";
-            }
-
-            if (string.IsNullOrWhiteSpace(token) || token.StartsWith("__", StringComparison.Ordinal))
-            {
-                var semToken = new VerificacaoCanal(false, "Este numero ainda nao tem token da Meta: cadastre o token para poder verificar.", null, null);
+                var semToken = origem == CanalToken.Global
+                    ? SemTokenGlobal()
+                    : new VerificacaoCanal(false, "Este numero ainda nao tem token da Meta: cadastre o token para poder verificar.", null, null,
+                        WhatsappCodigos.TokenInvalido, "token");
                 await Registrar(canal, semToken, "sem_token");
                 return semToken;
             }
@@ -77,6 +79,18 @@ namespace APIBack.Atendimento
             return resultado;
         }
 
+        public async Task<VerificacaoCanal> ConsultarComTokenGlobalAsync(string phoneNumberId)
+        {
+            var global = _tokenGlobal.GetAccessToken();
+            if (!CanalToken.TokenGlobalValido(global)) return SemTokenGlobal();
+
+            var (resultado, _) = await ChamarMetaAsync(new CanalWhatsapp { PhoneNumberId = phoneNumberId.Trim() }, global!.Trim());
+            return resultado;
+        }
+
+        private static VerificacaoCanal SemTokenGlobal() => new(false,
+            "O token global do WhatsApp da Zippy nao esta configurado (WhatsApp__AccessToken).", null, null, WhatsappCodigos.TokenGlobalAusente);
+
         private async Task<(VerificacaoCanal Resultado, bool SemResposta)> ChamarMetaAsync(CanalWhatsapp canal, string token)
         {
             var versao = _configuration["WhatsApp:GraphApiVersion"] ?? "v23.0";
@@ -94,7 +108,8 @@ namespace APIBack.Atendimento
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
             {
                 _logger.LogWarning(ex, "[canal] ev=verificacao_sem_resposta canal={Canal}", canal.Id);
-                return (new VerificacaoCanal(false, "Nao foi possivel falar com a Meta agora. Tente de novo em instantes.", null, null), true);
+                return (new VerificacaoCanal(false, "Nao foi possivel falar com a Meta agora. Tente de novo em instantes.", null, null,
+                    WhatsappCodigos.MetaIndisponivel), true);
             }
         }
 
@@ -124,7 +139,8 @@ namespace APIBack.Atendimento
                     if (digitosMeta.Length > 0 && digitosCadastro.Length > 0 && digitosMeta != digitosCadastro)
                     {
                         return new VerificacaoCanal(false,
-                            $"O ID da Meta pertence ao numero {numero}, mas o cadastro diz {canal.NumeroE164}. Corrija o ID ou o telefone.", numero, nome);
+                            $"O ID da Meta pertence ao numero {numero}, mas o cadastro diz {canal.NumeroE164}. Corrija o ID ou o telefone.", numero, nome,
+                            Campo: "phoneNumberId");
                     }
 
                     return new VerificacaoCanal(true, "Numero verificado na Meta.", numero, nome);
@@ -138,11 +154,12 @@ namespace APIBack.Atendimento
                     (10, _) or (200, _) => "O token nao tem permissao para este numero.",
                     _ => $"A Meta recusou a consulta (HTTP {http}): {mensagem ?? "sem detalhe"}"
                 };
-                return new VerificacaoCanal(false, motivo, null, null);
+                var erro = WhatsappErros.DaMeta(ChamadaMeta.Numero, http, codigo, subcodigo, mensagem);
+                return new VerificacaoCanal(false, motivo, null, null, erro.Codigo, erro.Campo);
             }
             catch (JsonException)
             {
-                return new VerificacaoCanal(false, $"Resposta inesperada da Meta (HTTP {http}).", null, null);
+                return new VerificacaoCanal(false, $"Resposta inesperada da Meta (HTTP {http}).", null, null, WhatsappCodigos.MetaErro);
             }
         }
 

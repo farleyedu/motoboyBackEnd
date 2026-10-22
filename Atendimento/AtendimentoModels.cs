@@ -37,6 +37,43 @@ namespace APIBack.Atendimento
         public const string Inativo = "inativo";
     }
 
+    /// <summary>De quem e a conta Meta do numero: define quem guarda o token e por onde chegam as mensagens.</summary>
+    public static class OrigemCanal
+    {
+        /// <summary>Numero criado na conta Meta da Zippy: usa o token global e o webhook global (/wa/webhook).</summary>
+        public const string Zippy = "zippy";
+        /// <summary>O cliente usa o Meta dele: token, app e webhook proprios (/wa/webhook/{chave}).</summary>
+        public const string Proprio = "proprio";
+        /// <summary>Numero compartilhado de testes (so a Gestao mexe).</summary>
+        public const string Central = "central";
+
+        public static bool Valida(string? origem) => origem is Zippy or Proprio or Central;
+    }
+
+    /// <summary>
+    /// Situacao do webhook do numero proprio. nao_aplicavel (zippy e central) -> pendente (aguardando registro na Meta) ->
+    /// registrado (a Meta aceitou a URL) -> recebendo (chegou uma mensagem de verdade). erro: tentou registrar de novo e falhou.
+    /// </summary>
+    public static class WebhookEstado
+    {
+        public const string NaoAplicavel = "nao_aplicavel";
+        public const string Pendente = "pendente";
+        public const string Registrado = "registrado";
+        public const string Recebendo = "recebendo";
+        public const string Erro = "erro";
+
+        /// <summary>Um evento de verdade chegou: a conexao funciona, qualquer que tenha sido o caminho do registro.</summary>
+        public static string AoReceber(string origem, string estado) =>
+            origem == OrigemCanal.Proprio && estado != NaoAplicavel ? Recebendo : estado;
+
+        /// <summary>A Meta aceitou a URL (registro automatico ou a validacao do registro manual). Nunca desfaz "recebendo".</summary>
+        public static string AoRegistrar(string estado) => estado is Pendente or Erro ? Registrado : estado;
+
+        /// <summary>O registro automatico falhou: na conexao fica "pendente" (registro manual); ao tentar de novo, "erro".</summary>
+        public static string AoFalharRegistro(string estado, bool primeiraTentativa) =>
+            estado == Recebendo ? estado : primeiraTentativa ? Pendente : Erro;
+    }
+
     /// <summary>Numero de WhatsApp de uma loja. O token nunca sai deste objeto em texto puro: so se sabe se existe.</summary>
     public sealed class CanalWhatsapp
     {
@@ -60,6 +97,18 @@ namespace APIBack.Atendimento
         public string? UltimoErro { get; set; }
         public DateTime? UltimoErroEm { get; set; }
         public List<string> Servicos { get; set; } = new();
+        public string Origem { get; set; } = OrigemCanal.Zippy;
+        /// <summary>Conta do WhatsApp Business (WABA) na Meta. So no numero proprio.</summary>
+        public string? WabaId { get; set; }
+        public string? AppId { get; set; }
+        /// <summary>App secret do cliente, cifrado: assina os webhooks do numero proprio. Nunca sai em resposta.</summary>
+        public string? AppSecretCifrado { get; set; }
+        /// <summary>Parte secreta da URL do webhook deste canal (/wa/webhook/{chave}).</summary>
+        public string? WebhookChave { get; set; }
+        public string? VerifyTokenCifrado { get; set; }
+        public string WebhookEstado { get; set; } = Atendimento.WebhookEstado.NaoAplicavel;
+        public string? WebhookErro { get; set; }
+        public DateTime? WebhookRegistradoEm { get; set; }
     }
 
     /// <summary>Quem esta pedindo a operacao. "Gestao" e o super admin: so ele cria canais e liga servicos.</summary>

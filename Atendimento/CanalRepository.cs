@@ -18,6 +18,12 @@ namespace APIBack.Atendimento
         Task<CanalWhatsapp?> ObterPorNumeroAsync(string digitos);
         /// <summary>Canal pelo ID da Meta, em qualquer status: o cadastro precisa enxergar o dono.</summary>
         Task<CanalWhatsapp?> ObterPorPhoneNumberIdAsync(string phoneNumberId);
+        /// <summary>Canal do numero proprio dono desta chave de webhook (/wa/webhook/{chave}), em qualquer status.</summary>
+        Task<CanalWhatsapp?> ObterPorWebhookChaveAsync(string chave);
+        /// <summary>Grava os dados do numero proprio (conta, app, segredos cifrados, chave e estado do webhook).</summary>
+        Task GravarProprioAsync(CanalWhatsapp canal);
+        /// <summary>Muda so a situacao do webhook. <paramref name="registradoEm"/> nulo mantem a data atual.</summary>
+        Task DefinirWebhookAsync(Guid canalId, string estado, string? erro, DateTime? registradoEm);
         /// <summary>Primeiro numero em uso da loja (ativo ou ainda configurando), o mais antigo.</summary>
         Task<CanalWhatsapp?> ObterPrimeiroUsavelAsync(Guid estabelecimentoId);
         /// <summary>Numero que atende o servico na loja (para montar o link wa.me e enviar), o mais antigo ativo.</summary>
@@ -50,7 +56,10 @@ namespace APIBack.Atendimento
        id AS Id, id_estabelecimento AS IdEstabelecimento, phone_number_id AS PhoneNumberId, numero_e164 AS NumeroE164,
        nome AS Nome, token_cifrado AS TokenCifrado, central AS Central, status AS Status, modo_atendimento AS ModoAtendimento,
        config::text AS ConfigJson, verificado_em AS VerificadoEm, ultimo_recebimento_em AS UltimoRecebimentoEm,
-       ultimo_envio_ok_em AS UltimoEnvioOkEm, ultimo_erro AS UltimoErro, ultimo_erro_em AS UltimoErroEm";
+       ultimo_envio_ok_em AS UltimoEnvioOkEm, ultimo_erro AS UltimoErro, ultimo_erro_em AS UltimoErroEm,
+       origem AS Origem, waba_id AS WabaId, app_id AS AppId, app_secret_cifrado AS AppSecretCifrado, webhook_chave AS WebhookChave,
+       verify_token_cifrado AS VerifyTokenCifrado, webhook_estado AS WebhookEstado, webhook_erro AS WebhookErro,
+       webhook_registrado_em AS WebhookRegistradoEm";
 
         private readonly string _connectionString;
 
@@ -95,6 +104,35 @@ namespace APIBack.Atendimento
             return await ObterUmAsync(connection, "WHERE phone_number_id = @Id", new { Id = phoneNumberId.Trim() });
         }
 
+        public async Task<CanalWhatsapp?> ObterPorWebhookChaveAsync(string chave)
+        {
+            if (string.IsNullOrWhiteSpace(chave) || chave.Length > 200) return null;
+
+            await using var connection = new NpgsqlConnection(_connectionString);
+            return await ObterUmAsync(connection, "WHERE webhook_chave = @Chave", new { Chave = chave });
+        }
+
+        public async Task GravarProprioAsync(CanalWhatsapp canal)
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.ExecuteAsync(@"
+UPDATE canal_whatsapp
+   SET origem = @Origem, waba_id = @WabaId, app_id = @AppId, app_secret_cifrado = @AppSecretCifrado, webhook_chave = @WebhookChave,
+       verify_token_cifrado = @VerifyTokenCifrado, webhook_estado = @WebhookEstado, webhook_erro = @WebhookErro,
+       webhook_registrado_em = @WebhookRegistradoEm, updated_at_utc = NOW()
+ WHERE id = @Id;", canal);
+        }
+
+        public async Task DefinirWebhookAsync(Guid canalId, string estado, string? erro, DateTime? registradoEm)
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.ExecuteAsync(@"
+UPDATE canal_whatsapp
+   SET webhook_estado = @Estado, webhook_erro = @Erro, webhook_registrado_em = COALESCE(@RegistradoEm, webhook_registrado_em),
+       updated_at_utc = NOW()
+ WHERE id = @Id AND origem = 'proprio';", new { Id = canalId, Estado = estado, Erro = erro, RegistradoEm = registradoEm });
+        }
+
         public async Task<CanalWhatsapp?> ObterPrimeiroUsavelAsync(Guid estabelecimentoId)
         {
             await using var connection = new NpgsqlConnection(_connectionString);
@@ -124,8 +162,9 @@ namespace APIBack.Atendimento
             await using var connection = new NpgsqlConnection(_connectionString);
             await connection.OpenAsync();
             await using var tx = await connection.BeginTransactionAsync();
-            await connection.ExecuteAsync("UPDATE canal_whatsapp SET central = FALSE WHERE central AND id <> @Id;", new { Id = canalId }, tx);
-            await connection.ExecuteAsync("UPDATE canal_whatsapp SET central = TRUE, updated_at_utc = NOW() WHERE id = @Id;", new { Id = canalId }, tx);
+            await connection.ExecuteAsync("UPDATE canal_whatsapp SET central = FALSE, origem = 'zippy' WHERE central AND id <> @Id;", new { Id = canalId }, tx);
+            await connection.ExecuteAsync(
+                "UPDATE canal_whatsapp SET central = TRUE, origem = 'central', updated_at_utc = NOW() WHERE id = @Id;", new { Id = canalId }, tx);
             await tx.CommitAsync();
         }
 
@@ -137,8 +176,10 @@ namespace APIBack.Atendimento
             try
             {
                 await connection.ExecuteAsync(@"
-INSERT INTO canal_whatsapp (id, id_estabelecimento, phone_number_id, numero_e164, nome, token_cifrado, central, status, modo_atendimento, config)
-VALUES (@Id, @IdEstabelecimento, @PhoneNumberId, @NumeroE164, @Nome, @TokenCifrado, @Central, @Status, @ModoAtendimento, CAST(@ConfigJson AS jsonb));",
+INSERT INTO canal_whatsapp (id, id_estabelecimento, phone_number_id, numero_e164, nome, token_cifrado, central, status, modo_atendimento, config,
+                            origem, waba_id, app_id, app_secret_cifrado, webhook_chave, verify_token_cifrado, webhook_estado, webhook_erro, webhook_registrado_em)
+VALUES (@Id, @IdEstabelecimento, @PhoneNumberId, @NumeroE164, @Nome, @TokenCifrado, @Central, @Status, @ModoAtendimento, CAST(@ConfigJson AS jsonb),
+        @Origem, @WabaId, @AppId, @AppSecretCifrado, @WebhookChave, @VerifyTokenCifrado, @WebhookEstado, @WebhookErro, @WebhookRegistradoEm);",
                     canal, tx);
                 await GravarServicosAsync(connection, tx, canal.Id, servicos);
                 await tx.CommitAsync();
@@ -223,7 +264,15 @@ VALUES (@Canal, @Acao, @Origem, @Destino, @Usuario, CAST(@Detalhe AS jsonb));",
         public async Task MarcarRecebimentoAsync(Guid canalId)
         {
             await using var connection = new NpgsqlConnection(_connectionString);
-            await connection.ExecuteAsync("UPDATE canal_whatsapp SET ultimo_recebimento_em = NOW() WHERE id = @Id;", new { Id = canalId });
+            // Numero proprio: a primeira mensagem de verdade e o que prova a conexao (configurando -> ativo; webhook -> recebendo).
+            // Espelha WebhookEstado.AoReceber / StatusCanal.
+            await connection.ExecuteAsync(@"
+UPDATE canal_whatsapp
+   SET ultimo_recebimento_em = NOW(),
+       webhook_estado = CASE WHEN origem = 'proprio' THEN 'recebendo' ELSE webhook_estado END,
+       webhook_erro = CASE WHEN origem = 'proprio' THEN NULL ELSE webhook_erro END,
+       status = CASE WHEN origem = 'proprio' AND status = 'configurando' THEN 'ativo' ELSE status END
+ WHERE id = @Id;", new { Id = canalId });
         }
 
         public async Task MarcarEnvioOkAsync(Guid canalId)
@@ -248,7 +297,10 @@ UPDATE canal_whatsapp
             await using var connection = new NpgsqlConnection(_connectionString);
             await connection.ExecuteAsync(@"
 UPDATE canal_whatsapp
-   SET status = CASE WHEN @Ok THEN 'ativo' ELSE 'erro' END,
+   -- Numero proprio so fica ativo quando chegar uma mensagem de verdade; o GET na Meta so prova que o ID e o token servem.
+   SET status = CASE WHEN NOT @Ok THEN 'erro'
+                     WHEN origem = 'proprio' AND ultimo_recebimento_em IS NULL THEN 'configurando'
+                     ELSE 'ativo' END,
        verificado_em = CASE WHEN @Ok THEN NOW() ELSE verificado_em END,
        ultimo_erro = CASE WHEN @Ok THEN NULL ELSE @Erro END,
        ultimo_erro_em = CASE WHEN @Ok THEN NULL ELSE NOW() END,

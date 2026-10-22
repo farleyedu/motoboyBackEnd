@@ -18,8 +18,8 @@ using Microsoft.Extensions.Logging;
 namespace APIBack.Automation.Services
 {
     /// <summary>
-    /// Envio pela Cloud API da Meta. O token e o ID do numero vem do canal (um token por numero); o token global de
-    /// configuracao so e usado, com aviso no log, enquanto o numero ainda nao tem token proprio. Cada envio deixa
+    /// Envio pela Cloud API da Meta. O token e o ID do numero vem do canal (um token por numero); os numeros da Zippy (origem
+    /// zippy/central) sem token proprio usam o token global de configuracao, o do cliente (origem proprio) nunca. Cada envio deixa
     /// linhas [wa.out] no log; falha permanente (ID inexistente, token invalido) marca o canal como "erro".
     /// </summary>
     public class WhatsAppSender
@@ -164,9 +164,8 @@ namespace APIBack.Automation.Services
             else
             {
                 var canal = await _canais.ObterAtivoPorPhoneNumberIdAsync(phoneNumberId);
-                var token = _tokenProtector.Revelar(canal?.TokenCifrado);
-                if (string.IsNullOrWhiteSpace(token)) token = _tokenProvider.GetAccessToken();
-                if (string.IsNullOrWhiteSpace(token) || token.StartsWith("__")) throw new HttpRequestException("Token do WhatsApp nao configurado.");
+                var (token, _) = CanalToken.Resolver(canal, _tokenProtector, _tokenProvider);
+                if (string.IsNullOrWhiteSpace(token)) throw new HttpRequestException("Token do WhatsApp nao configurado.");
                 using var client = _httpFactory.CreateClient();
                 client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer",token);
                 using var form = new MultipartFormDataContent();
@@ -194,9 +193,8 @@ namespace APIBack.Automation.Services
             var canal=await _canais.ObterAtivoPorPhoneNumberIdAsync(phone);
             if(canal?.IdEstabelecimento!=est||!mediaId.All(char.IsAsciiDigit)||mediaId.Length is <1 or >100)
                 throw new APIBack.Service.DeliveryDomainException(404,"CHAT_ATTACHMENT_INVALID","Anexo indisponivel nesta loja.");
-            var token=_tokenProtector.Revelar(canal.TokenCifrado);
-            if(string.IsNullOrWhiteSpace(token))token=_tokenProvider.GetAccessToken();
-            if(string.IsNullOrWhiteSpace(token)||token.StartsWith("__"))throw new APIBack.Service.DeliveryDomainException(503,"CLIENT_MEDIA_UNAVAILABLE","WhatsApp da loja indisponivel.");
+            var (token,_)=CanalToken.Resolver(canal,_tokenProtector,_tokenProvider);
+            if(string.IsNullOrWhiteSpace(token))throw new APIBack.Service.DeliveryDomainException(503,"CLIENT_MEDIA_UNAVAILABLE","WhatsApp da loja indisponivel.");
             using var client=_httpFactory.CreateClient("chat-media");
             client.DefaultRequestHeaders.Authorization=new AuthenticationHeaderValue("Bearer",token);
             var version=_configuration["WhatsApp:GraphApiVersion"]??"v23.0";
@@ -225,23 +223,8 @@ namespace APIBack.Automation.Services
             }
 
             var canal = await _canais.ObterAtivoPorPhoneNumberIdAsync(new string((phoneNumberId ?? string.Empty).Where(char.IsDigit).ToArray()));
-            var token = _tokenProtector.Revelar(canal?.TokenCifrado);
-            var origemToken = "canal";
-            if (string.IsNullOrWhiteSpace(token))
-            {
-                token = _tokenProvider.GetAccessToken();
-                origemToken = "global";
-                if (!string.IsNullOrWhiteSpace(token) && !token.StartsWith("__", StringComparison.Ordinal))
-                {
-                    _logger.LogWarning(
-                        "[wa.out] ev=token_global conversa={Conversa} canal={Canal} dica=\"cadastre o token deste numero na Gestao\"",
-                        idConversa, canal?.Id);
-                }
-                else
-                {
-                    token = null;
-                }
-            }
+            // Numero zippy/central sem token proprio usa o token global (WhatsApp__AccessToken) de proposito; o proprio do cliente, nunca.
+            var (token, origemToken) = CanalToken.Resolver(canal, _tokenProtector, _tokenProvider);
 
             if (string.IsNullOrWhiteSpace(token))
             {

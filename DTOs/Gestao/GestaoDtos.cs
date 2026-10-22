@@ -199,6 +199,18 @@ namespace APIBack.DTOs.Gestao
         public string? WabaPhoneNumberId { get; set; }
         /// <summary>Telefone da loja no WhatsApp (o que o cliente ve); o cardapio web monta o link wa.me com ele.</summary>
         public string? WabaDisplayPhone { get; set; }
+        /// <summary>So na criacao: como o WhatsApp da loja nasce. Nulo = nao mexe (os campos waba* acima continuam valendo).</summary>
+        public EstabelecimentoWhatsappRequest? Whatsapp { get; set; }
+    }
+
+    /// <summary>
+    /// modo: "zippy" (numero criado na conta Meta da Zippy: so o phoneNumberId), "central" (usa o numero central de testes) ou
+    /// "proprio_depois" (o cliente conecta o numero dele depois, pelo painel). zippy e central so a Gestao.
+    /// </summary>
+    public class EstabelecimentoWhatsappRequest
+    {
+        public string? Modo { get; set; }
+        public string? PhoneNumberId { get; set; }
     }
 
     public class SalvarUsuarioRequest

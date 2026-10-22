@@ -37,7 +37,20 @@ convencao do ASP.NET Core: `Secao__Subsecao__Chave`.
 | `Atendimento__CardapioBaseUrl` | Endereco publico do site (ex.: `https://app.zippygo.com.br`); o bot monta o link `/cardapio/{loja}` com ele. Sem isso o bot passa o cliente para a equipe. |
 | `Automation__Meta__AccessToken` | Access token da conta WhatsApp Business. |
 | `Automation__Meta__PhoneNumberId` | ID do numero de telefone configurado no Meta. |
-| `WhatsApp__AccessToken` | Access token do canal WhatsApp usado pelo fluxo de atendimento. |
+| `WhatsApp__AccessToken` | Token **global** da conta Meta da Zippy. Usado pelos numeros de origem `zippy` (a Gestao cadastra so o Phone Number ID; o cliente nao cola nada) e `central`. Sem ele a API recusa o cadastro com `WA_TOKEN_GLOBAL_AUSENTE`. O numero `proprio` do cliente nunca usa este token. |
+| `App__BaseUrl` | Endereco publico **https** da API (ex.: `https://api.zippygo.com.br`). Usado para montar a URL do webhook de cada numero proprio (`{App__BaseUrl}/wa/webhook/{chave}`) que a API registra no app Meta do cliente. Sem ele o webhook fica `pendente` com a dica de qual variavel configurar. |
+
+### WhatsApp: origem do numero
+
+Cada numero (`canal_whatsapp.origem`) tem uma origem:
+
+| Origem | Quem cadastra | Token | Webhook |
+| --- | --- | --- | --- |
+| `zippy` | Gestao, so com o Phone Number ID (`POST .../canais` com `origem: "zippy"`, ou o bloco `whatsapp` no cadastro da loja) | `WhatsApp__AccessToken` | global (`/wa/webhook`, `Automation__Meta__AppSecret`) |
+| `proprio` | O cliente, no painel (`POST .../canais/proprio`: Phone Number ID, WABA, token, App ID, App Secret) | o do cliente, cifrado com `Atendimento__ChaveToken` | por canal (`/wa/webhook/{chave}`), assinado com o App Secret **do cliente** (cifrado) |
+| `central` | Gestao (numero de testes compartilhado) | global ou o do canal | global |
+
+No numero proprio a API registra o webhook no app do cliente (`POST /{app-id}/subscriptions` com o token de app `appId|appSecret`, objeto `whatsapp_business_account`, campo `messages`; depois `POST /{waba-id}/subscribed_apps` com o token do cliente, que precisa de `whatsapp_business_messaging` e `whatsapp_business_management`). Se o registro automatico falhar a conexao continua, com `webhook.estado = pendente` e a URL e o verify token para registrar na mao. O canal so vira `ativo` (e o webhook `recebendo`) quando chega uma mensagem de verdade. `Atendimento__ChaveToken` e obrigatoria para o numero proprio (`WA_CHAVE_CIFRAGEM_AUSENTE`) e **nao pode ser trocada** depois de haver numeros proprios conectados (os segredos deixam de abrir e o cliente precisa conectar de novo).
 
 ## Delivery / tracking operacional (Parte 2)
 

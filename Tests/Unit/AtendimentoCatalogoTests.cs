@@ -182,7 +182,7 @@ namespace APIBack.Tests.Unit
         {
             var (service, repo) = Build();
 
-            await Assert.ThrowsAsync<RequestValidationException>(() => service.DefinirAsync(Gestao, Loja, new[] { "agendamento" }));
+            await Assert.ThrowsAnyAsync<RequestValidationException>(() => service.DefinirAsync(Gestao, Loja, new[] { "agendamento" }));
 
             repo.Verify(r => r.DefinirServicosDaLojaAsync(
                 It.IsAny<Guid>(), It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<IReadOnlyCollection<string>>(), It.IsAny<int?>()), Times.Never);
@@ -227,6 +227,7 @@ namespace APIBack.Tests.Unit
             public Mock<ICatalogoRepository> Catalogo { get; } = new();
             public Mock<ITokenProtector> Token { get; } = new();
             public Mock<ICanalVerificador> Verificador { get; } = new();
+            public Mock<ICanalWebhookService> Webhook { get; } = new();
             public CanalWhatsapp? Existente { get; set; }
 
             public Fixture()
@@ -245,7 +246,7 @@ namespace APIBack.Tests.Unit
             }
 
             public CanaisWhatsappService Build() =>
-                new(Canais.Object, Catalogo.Object, Token.Object, Verificador.Object, NullLogger<CanaisWhatsappService>.Instance);
+                new(Canais.Object, Catalogo.Object, Token.Object, Verificador.Object, Webhook.Object, NullLogger<CanaisWhatsappService>.Instance);
         }
 
         [Fact]
@@ -285,7 +286,7 @@ namespace APIBack.Tests.Unit
         {
             var f = new Fixture();
 
-            var erro = await Assert.ThrowsAsync<RequestValidationException>(() => f.Build().CriarAsync(Gestao, Loja, Pedido(id: "34991480112")));
+            var erro = await Assert.ThrowsAnyAsync<RequestValidationException>(() => f.Build().CriarAsync(Gestao, Loja, Pedido(id: "34991480112")));
 
             Assert.Contains("phoneNumberId", erro.Errors.Keys);
             f.Canais.Verify(c => c.CriarAsync(It.IsAny<CanalWhatsapp>(), It.IsAny<IReadOnlyCollection<string>>()), Times.Never);
@@ -298,7 +299,7 @@ namespace APIBack.Tests.Unit
             f.Canais.Setup(c => c.CriarAsync(It.IsAny<CanalWhatsapp>(), It.IsAny<IReadOnlyCollection<string>>()))
                 .ThrowsAsync(new CanalConflitoException("numero", "Este numero ja esta cadastrado. Use mover numero."));
 
-            var erro = await Assert.ThrowsAsync<RequestValidationException>(() => f.Build().CriarAsync(Gestao, Loja, Pedido()));
+            var erro = await Assert.ThrowsAnyAsync<RequestValidationException>(() => f.Build().CriarAsync(Gestao, Loja, Pedido()));
 
             Assert.Contains("mover", erro.Errors["numero"].Single());
         }
@@ -309,9 +310,9 @@ namespace APIBack.Tests.Unit
             var f = new Fixture();
             f.Token.Setup(t => t.Configurado).Returns(false);
 
-            var erro = await Assert.ThrowsAsync<RequestValidationException>(() =>
+            var erro = await Assert.ThrowsAnyAsync<RequestValidationException>(() =>
                 f.Build().CriarAsync(Gestao, Loja, Pedido() with { Token = "EAAG-secreto" }));
-            Assert.Contains("token", erro.Errors.Keys);
+            Assert.Equal(WhatsappCodigos.ChaveCifragemAusente, Assert.IsType<WhatsappException>(erro).Erro.Codigo);
 
             f.Token.Setup(t => t.Configurado).Returns(true);
             f.Token.Setup(t => t.Proteger("EAAG-secreto")).Returns("v1.cifrado");
@@ -350,7 +351,7 @@ namespace APIBack.Tests.Unit
             await Assert.ThrowsAsync<UnauthorizedAccessException>(() => service.DefinirModoAsync(Dono(permissao: false), f.Existente.Id, "humano"));
             f.Existente.IdEstabelecimento = Outra;
             await Assert.ThrowsAsync<UnauthorizedAccessException>(() => service.DefinirModoAsync(Dono(), f.Existente.Id, "humano"));
-            await Assert.ThrowsAsync<RequestValidationException>(() => service.DefinirModoAsync(Gestao, f.Existente.Id, "central"));
+            await Assert.ThrowsAnyAsync<RequestValidationException>(() => service.DefinirModoAsync(Gestao, f.Existente.Id, "central"));
         }
 
         [Fact]
@@ -364,7 +365,7 @@ namespace APIBack.Tests.Unit
             f.Canais.Verify(c => c.MoverAsync(f.Existente.Id, Outra), Times.Once);
             f.Catalogo.Verify(c => c.GarantirModulosAsync(Outra, It.Is<IReadOnlyCollection<string>>(m => m.Contains("WHATSAPP"))), Times.Once);
             f.Canais.Verify(c => c.RegistrarAuditoriaAsync(f.Existente.Id, "movido", Loja, Outra, 1, It.IsAny<string?>()), Times.Once);
-            await Assert.ThrowsAsync<RequestValidationException>(() => service.MoverAsync(Gestao, f.Existente.Id, Loja));
+            await Assert.ThrowsAnyAsync<RequestValidationException>(() => service.MoverAsync(Gestao, f.Existente.Id, Loja));
         }
 
         [Fact]

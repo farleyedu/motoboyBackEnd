@@ -24,18 +24,18 @@ namespace APIBack.Automation.Controllers
     {
         private readonly ILogger<WaWebhookController> _logger;
         private readonly WebhookValidatorService _validator;
-        private readonly IWaEventoRepository _eventos;
+        private readonly IWaWebhookIngestor _ingestor;
         private readonly IOptions<AutomationOptions> _opcoes;
 
         public WaWebhookController(
             ILogger<WaWebhookController> logger,
             WebhookValidatorService validator,
-            IWaEventoRepository eventos,
+            IWaWebhookIngestor ingestor,
             IOptions<AutomationOptions> opcoes)
         {
             _logger = logger;
             _validator = validator;
-            _eventos = eventos;
+            _ingestor = ingestor;
             _opcoes = opcoes;
         }
 
@@ -102,12 +102,9 @@ namespace APIBack.Automation.Controllers
                 int novos = 0, repetidos = 0;
                 try
                 {
-                    foreach (var valor in Valores(documento.RootElement))
-                    {
-                        (var n, var r) = await GravarEventosAsync(valor);
-                        novos += n;
-                        repetidos += r;
-                    }
+                    var gravados = await _ingestor.IngerirAsync(documento.RootElement, canal: null);
+                    novos = gravados.Novos;
+                    repetidos = gravados.Repetidos;
                 }
                 catch (Exception ex)
                 {
@@ -123,101 +120,6 @@ namespace APIBack.Automation.Controllers
             }
 
             return Ok();
-        }
-
-        private static System.Collections.Generic.IEnumerable<JsonElement> Valores(JsonElement raiz)
-        {
-            if (!raiz.TryGetProperty("entry", out var entradas) || entradas.ValueKind != JsonValueKind.Array) yield break;
-
-            foreach (var entrada in entradas.EnumerateArray())
-            {
-                if (!entrada.TryGetProperty("changes", out var mudancas) || mudancas.ValueKind != JsonValueKind.Array) continue;
-
-                foreach (var mudanca in mudancas.EnumerateArray())
-                {
-                    if (mudanca.TryGetProperty("value", out var valor) && valor.ValueKind == JsonValueKind.Object) yield return valor;
-                }
-            }
-        }
-
-        private async Task<(int Novos, int Repetidos)> GravarEventosAsync(JsonElement valor)
-        {
-            int novos = 0, repetidos = 0;
-            valor.TryGetProperty("metadata", out var metadata);
-            var phoneNumberId = Texto(metadata, "phone_number_id");
-            var display = Texto(metadata, "display_phone_number");
-            valor.TryGetProperty("contacts", out var contatos);
-
-            if (valor.TryGetProperty("messages", out var mensagens) && mensagens.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var mensagem in mensagens.EnumerateArray())
-                {
-                    var id = Texto(mensagem, "id");
-                    if (string.IsNullOrWhiteSpace(id))
-                    {
-                        _logger.LogWarning("[wa.in] ev=ignorada motivo=mensagem_sem_id phone_number_id={PhoneNumberId}", phoneNumberId);
-                        continue;
-                    }
-
-                    var payload = JsonSerializer.Serialize(new
-                    {
-                        metadata = Clonar(metadata),
-                        contacts = Clonar(contatos),
-                        message = Clonar(mensagem)
-                    });
-
-                    var novo = await _eventos.RegistrarAsync(new WaEvento
-                    {
-                        Id = Guid.NewGuid(), Tipo = TipoEvento.Mensagem, Chave = id,
-                        PhoneNumberId = phoneNumberId, DisplayPhone = display, PayloadJson = payload
-                    });
-
-                    _logger.LogInformation(
-                        "[wa.in] ev={Evento} wa={Wa} tipo={Tipo} de={De} phone_number_id={PhoneNumberId} display={Display} bytes={Bytes}",
-                        novo ? "recebida" : "repetida", id, Texto(mensagem, "type"), Mascarar(Texto(mensagem, "from")),
-                        phoneNumberId, display, payload.Length);
-                    if (novo) novos++; else repetidos++;
-                }
-            }
-
-            if (valor.TryGetProperty("statuses", out var statuses) && statuses.ValueKind == JsonValueKind.Array)
-            {
-                foreach (var status in statuses.EnumerateArray())
-                {
-                    var id = Texto(status, "id");
-                    var situacao = Texto(status, "status");
-                    if (string.IsNullOrWhiteSpace(id) || string.IsNullOrWhiteSpace(situacao)) continue;
-
-                    var payload = JsonSerializer.Serialize(new { metadata = Clonar(metadata), status = Clonar(status) });
-                    var novo = await _eventos.RegistrarAsync(new WaEvento
-                    {
-                        Id = Guid.NewGuid(), Tipo = TipoEvento.Status, Chave = $"{id}:{situacao}",
-                        PhoneNumberId = phoneNumberId, DisplayPhone = display, PayloadJson = payload
-                    });
-
-                    _logger.LogInformation(
-                        "[wa.in] ev={Evento} wa={Wa} status={Status} phone_number_id={PhoneNumberId}",
-                        novo ? "status_recebido" : "status_repetido", id, situacao, phoneNumberId);
-                    if (novo) novos++; else repetidos++;
-                }
-            }
-
-            return (novos, repetidos);
-        }
-
-        private static string? Texto(JsonElement elemento, string propriedade) =>
-            elemento.ValueKind == JsonValueKind.Object && elemento.TryGetProperty(propriedade, out var v) && v.ValueKind == JsonValueKind.String
-                ? v.GetString()
-                : null;
-
-        // JsonElement e uma "visao" do documento; clonar permite serializar depois que o documento for descartado.
-        private static object? Clonar(JsonElement elemento) =>
-            elemento.ValueKind == JsonValueKind.Undefined ? null : elemento.Clone();
-
-        private static string Mascarar(string? valor)
-        {
-            if (string.IsNullOrWhiteSpace(valor)) return "(vazio)";
-            return valor.Length <= 4 ? valor : new string('*', valor.Length - 4) + valor[^4..];
         }
     }
 }

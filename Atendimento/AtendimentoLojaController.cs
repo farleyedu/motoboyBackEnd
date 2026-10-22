@@ -116,6 +116,24 @@ namespace APIBack.Atendimento
         public Task<IActionResult> ConectarCanal(Guid estabelecimentoId, [FromBody] ConectarCanalRequest request) =>
             Executar(ator => _canais.ConectarAsync(ator, estabelecimentoId, request), StatusCodes.Status201Created);
 
+        /// <summary>
+        /// Numero PROPRIO: o cliente usa o Meta dele e cola 5 dados (Phone Number ID, WABA, token, App ID, App Secret). O sistema registra o
+        /// webhook no app dele; o canal so vira "ativo" quando chegar uma mensagem de verdade.
+        /// </summary>
+        [HttpPost("canais/proprio")]
+        public Task<IActionResult> ConectarProprio(Guid estabelecimentoId, [FromBody] ConectarProprioRequest request) =>
+            Executar(ator => _canais.ConectarProprioAsync(ator, estabelecimentoId, request), StatusCodes.Status201Created);
+
+        /// <summary>Tenta de novo registrar o webhook do numero proprio na Meta.</summary>
+        [HttpPost("canais/{canalId:guid}/webhook/registrar")]
+        public Task<IActionResult> RegistrarWebhook(Guid estabelecimentoId, Guid canalId) =>
+            Executar(ator => _canais.RegistrarWebhookAsync(ator, canalId));
+
+        /// <summary>Estado do webhook + URL + verify token para exibir. O app secret e o token nunca saem.</summary>
+        [HttpGet("canais/{canalId:guid}/webhook")]
+        public Task<IActionResult> ObterWebhook(Guid estabelecimentoId, Guid canalId) =>
+            Executar(ator => _canais.ObterWebhookAsync(ator, canalId));
+
         [HttpDelete("canais/{canalId:guid}/conexao")]
         public Task<IActionResult> DesconectarCanal(Guid estabelecimentoId, Guid canalId) =>
             Executar(async ator =>
@@ -186,6 +204,12 @@ namespace APIBack.Atendimento
             try
             {
                 return StatusCode(sucesso, ApiResponse<T>.Ok(await operacao(ator)));
+            }
+            catch (WhatsappException ex)
+            {
+                // Falha do WhatsApp: codigo estavel + como resolver + qual campo corrigir (nunca token ou app secret).
+                _logger.LogWarning("[atend.api] ev=erro_whatsapp rota={Rota} codigo={Codigo} campo={Campo}", Request.Path.Value, ex.Erro.Codigo, ex.Erro.Campo);
+                return StatusCode(ex.Http, ApiResponse<object>.Fail(ex.Erro.Mensagem, ex.Erro.Codigo, ex.Erro.Detalhes));
             }
             catch (RequestValidationException ex)
             {

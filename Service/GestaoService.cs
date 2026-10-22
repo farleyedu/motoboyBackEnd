@@ -5,6 +5,7 @@ using System.Net.Mail;
 using System.Text.Json;
 using System.Text;
 using System.Threading.Tasks;
+using APIBack.Atendimento;
 using APIBack.Automation.Interfaces;
 using APIBack.Automation.Models;
 using APIBack.DTOs.Gestao;
@@ -24,9 +25,13 @@ namespace APIBack.Service
         private readonly IWabaPhoneRepository? _wabaPhoneRepository;
         private readonly IAgenteRepository? _agenteRepository;
         private readonly IAcessoService? _acessoService;
+        private readonly ICanaisWhatsappService? _canaisWhatsapp;
+        private readonly ICanalCentralService? _canalCentral;
 
-        public GestaoService(IGestaoRepository repository, ILogger<GestaoService> logger, IWabaPhoneRepository? wabaPhoneRepository = null, IAgenteRepository? agenteRepository = null, IAcessoService? acessoService = null)
+        public GestaoService(IGestaoRepository repository, ILogger<GestaoService> logger, IWabaPhoneRepository? wabaPhoneRepository = null, IAgenteRepository? agenteRepository = null, IAcessoService? acessoService = null, ICanaisWhatsappService? canaisWhatsapp = null, ICanalCentralService? canalCentral = null)
         {
+            _canaisWhatsapp = canaisWhatsapp;
+            _canalCentral = canalCentral;
             _repository = repository;
             _logger = logger;
             _wabaPhoneRepository = wabaPhoneRepository;
@@ -360,6 +365,9 @@ namespace APIBack.Service
             }
             ValidateSalvarEstabelecimentoRequest(request, requireEmpresaId: true);
 
+            // WhatsApp da loja nova: confere tudo (inclusive na Meta) ANTES de criar, para nao deixar loja pela metade por um ID errado.
+            var whatsapp = await PrepararWhatsappAsync(userId, scope.IsSuperAdmin, request.Whatsapp);
+
             // A loja nova ja nasce acessivel: vinculada aos gerentes da empresa ou, se a empresa nao tem nenhum, com o gerente padrao.
             var empresa = await _repository.ObterEmpresaAsync(request.EmpresaId!.Value)
                 ?? throw new KeyNotFoundException("Empresa nao encontrada.");
@@ -367,7 +375,10 @@ namespace APIBack.Service
             var provisionamento = await _repository.CriarEstabelecimentoAsync(request, gerente);
             var createdId = provisionamento.EstabelecimentoId;
 
-            if (_wabaPhoneRepository != null && HasWabaData(request))
+            if (whatsapp != null) await CriarWhatsappDaLojaAsync(whatsapp, createdId, request.NomeFantasia);
+
+            // Com o bloco "whatsapp" zippy/central os campos legados waba* nao valem; sem ele (ou "proprio_depois") valem como sempre.
+            if (_wabaPhoneRepository != null && whatsapp == null && HasWabaData(request))
             {
                 var wabaSaved = await _wabaPhoneRepository.InserirOuAtualizarAsync(BuildWabaPhone(request, createdId));
                 if (!wabaSaved)
@@ -1302,6 +1313,76 @@ namespace APIBack.Service
                 UltimaMensagemEm = row.UltimaMensagemEm,
                 Status = string.IsNullOrWhiteSpace(row.Status) ? "empresa_pausada" : row.Status
             };
+        }
+
+        private sealed record WhatsappDaLoja(AtendimentoAtor Ator, string Modo, string? PhoneNumberId);
+
+        /// <summary>
+        /// Valida o bloco whatsapp do cadastro. Nulo quando nao ha nada a criar na loja (sem bloco, ou "proprio_depois": o cliente conecta
+        /// o numero dele depois, pelo painel). zippy e central so a Gestao.
+        /// </summary>
+        private async Task<WhatsappDaLoja?> PrepararWhatsappAsync(int userId, bool gestao, EstabelecimentoWhatsappRequest? bloco)
+        {
+            if (bloco == null) return null;
+
+            var modo = (bloco.Modo ?? string.Empty).Trim().ToLowerInvariant();
+            if (modo == "proprio_depois") return null;
+
+            if (modo != "zippy" && modo != "central")
+            {
+                throw new WhatsappException(new WhatsappErro(WhatsappCodigos.CampoInvalido,
+                    "Modo do WhatsApp invalido.",
+                    "Escolha \"zippy\" (numero da Zippy), \"central\" (numero central de testes) ou \"proprio_depois\" (o cliente conecta o dele depois).",
+                    "whatsapp.modo"));
+            }
+
+            if (!gestao) throw new UnauthorizedAccessException("Somente a Gestão pode criar a loja já com número de WhatsApp da Zippy ou o central de testes.");
+            if (_canaisWhatsapp == null || _canalCentral == null) throw new InvalidOperationException("Servico de WhatsApp indisponivel.");
+
+            var ator = new AtendimentoAtor(userId, true, null, (_, _) => true);
+            if (modo == "zippy")
+            {
+                await _canaisWhatsapp.PreverNumeroZippyAsync(ator, bloco.PhoneNumberId);
+                return new WhatsappDaLoja(ator, modo, bloco.PhoneNumberId?.Trim());
+            }
+
+            if (await _canalCentral.ObterAsync(ator) == null)
+            {
+                throw new WhatsappException(new WhatsappErro(WhatsappCodigos.CampoInvalido,
+                    "Ainda nao existe o numero central de testes.",
+                    "Cadastre o numero central em Gestao > Numero central de testes antes, ou escolha outro modo de WhatsApp para esta loja.",
+                    "whatsapp.modo"));
+            }
+
+            return new WhatsappDaLoja(ator, modo, null);
+        }
+
+        private async Task CriarWhatsappDaLojaAsync(WhatsappDaLoja whatsapp, Guid estabelecimentoId, string nomeLoja)
+        {
+            try
+            {
+                if (whatsapp.Modo == "zippy")
+                {
+                    await _canaisWhatsapp!.CriarAsync(whatsapp.Ator, estabelecimentoId,
+                        new CanalRequest(whatsapp.PhoneNumberId, null, nomeLoja, null, null, null, OrigemCanal.Zippy));
+                }
+                else
+                {
+                    await _canalCentral!.SalvarAsync(whatsapp.Ator, new CanalCentralRequest(null, null, null, estabelecimentoId));
+                }
+            }
+            catch (WhatsappException ex)
+            {
+                // A loja ja existe: diz isso, para ninguem recriar a loja inteira por causa do WhatsApp.
+                _logger.LogWarning("Loja {Loja} criada, mas o WhatsApp falhou: {Codigo}", estabelecimentoId, ex.Erro.Codigo);
+                throw new WhatsappException(
+                    ex.Erro with
+                    {
+                        Mensagem = "A loja foi criada, mas o WhatsApp nao foi conectado: " + ex.Erro.Mensagem,
+                        ComoResolver = ex.Erro.ComoResolver + " Depois, conecte o numero em Editar loja > Numeros de WhatsApp."
+                    },
+                    ex.Http);
+            }
         }
 
         private static bool HasWabaData(SalvarEstabelecimentoRequest request) =>

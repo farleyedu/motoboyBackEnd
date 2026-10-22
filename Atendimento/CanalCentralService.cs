@@ -86,6 +86,11 @@ namespace APIBack.Atendimento
                     }
 
                     canal = porId ?? porNumero ?? await _canais.ObterCentralAsync();
+
+                    if (canal != null && canal.Origem == OrigemCanal.Proprio)
+                    {
+                        throw new CanalConflitoException("phoneNumberId", "Este numero e o numero proprio de um cliente e nao pode ser o central de testes.");
+                    }
                 }
                 else
                 {
@@ -103,7 +108,7 @@ namespace APIBack.Atendimento
                     canal = new CanalWhatsapp
                     {
                         Id = Guid.NewGuid(), IdEstabelecimento = request.EstabelecimentoId, PhoneNumberId = phoneNumberId, NumeroE164 = numero,
-                        Nome = "Numero central de testes", TokenCifrado = novoToken, Central = true, Status = StatusCanal.Configurando,
+                        Nome = "Numero central de testes", TokenCifrado = novoToken, Central = true, Origem = OrigemCanal.Central, Status = StatusCanal.Configurando,
                         ModoAtendimento = ModoAtendimento.Hibrido
                     };
                     await _canais.CriarAsync(canal, Array.Empty<string>());
@@ -184,6 +189,7 @@ namespace APIBack.Atendimento
 
         private static CanalView Ver(CanalWhatsapp c) => new(
             c.Id, c.IdEstabelecimento, c.PhoneNumberId, c.NumeroE164, c.Nome, c.Status, c.ModoAtendimento, c.Servicos, c.TemToken,
-            c.VerificadoEm, c.UltimoRecebimentoEm, c.UltimoEnvioOkEm, c.UltimoErro, c.UltimoErroEm, c.Central);
+            c.VerificadoEm, c.UltimoRecebimentoEm, c.UltimoEnvioOkEm, c.UltimoErro, c.UltimoErroEm, c.Central,
+            c.Origem, c.WabaId, c.AppId, new CanalWebhookView(WebhookEstado.NaoAplicavel, null, null, null, null));
     }
 }

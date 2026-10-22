@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using APIBack.Atendimento;
 using APIBack.DTOs.Common;
 using APIBack.DTOs.Gestao;
 using APIBack.Service;
@@ -85,6 +86,12 @@ namespace APIBack.Controllers
                     CurrentIsSuperAdmin,
                     request);
                 return StatusCode(StatusCodes.Status201Created, ApiResponse<GestaoEstabelecimentoDto>.Ok(response));
+            }
+            catch (WhatsappException ex)
+            {
+                // Falha do WhatsApp (Phone Number ID, token global...): codigo estavel + como resolver + campo.
+                _logger.LogWarning("Falha de WhatsApp ao criar estabelecimento. UserId={UserId} Codigo={Codigo}", CurrentUserId.Value, ex.Erro.Codigo);
+                return StatusCode(ex.Http, ApiResponse<object>.Fail(ex.Erro.Mensagem, ex.Erro.Codigo, ex.Erro.Detalhes));
             }
             catch (RequestValidationException ex)
             {

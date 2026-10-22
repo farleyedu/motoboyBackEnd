@@ -42,7 +42,7 @@ namespace APIBack.Tests.Unit
             var f = new Fixture();
             f.Canais.Setup(c => c.ObterPorPhoneNumberIdAsync(IdMeta)).ReturnsAsync(new CanalWhatsapp { Id = Guid.NewGuid(), IdEstabelecimento = OutraLoja, PhoneNumberId = IdMeta });
 
-            var erro = await Assert.ThrowsAsync<RequestValidationException>(() => f.Build().ConectarAsync(Dono(), Loja, new ConectarCanalRequest(IdMeta, "EAAG-token")));
+            var erro = await Assert.ThrowsAnyAsync<RequestValidationException>(() => f.Build().ConectarAsync(Dono(), Loja, new ConectarCanalRequest(IdMeta, "EAAG-token")));
 
             Assert.Contains("phoneNumberId", erro.Errors.Keys);
             f.Verificador.Verify(v => v.ConsultarCredenciaisAsync(It.IsAny<string>(), It.IsAny<string>()), Times.Never);
@@ -56,7 +56,7 @@ namespace APIBack.Tests.Unit
             f.Verificador.Setup(v => v.ConsultarCredenciaisAsync(IdMeta, "ruim"))
                 .ReturnsAsync(new VerificacaoCanal(false, "O token da Meta e invalido ou expirou.", null, null));
 
-            var erro = await Assert.ThrowsAsync<RequestValidationException>(() => f.Build().ConectarAsync(Dono(), Loja, new ConectarCanalRequest(IdMeta, "ruim")));
+            var erro = await Assert.ThrowsAnyAsync<RequestValidationException>(() => f.Build().ConectarAsync(Dono(), Loja, new ConectarCanalRequest(IdMeta, "ruim")));
 
             Assert.Contains("token", erro.Errors.Keys);
             f.Canais.Verify(c => c.CriarAsync(It.IsAny<CanalWhatsapp>(), It.IsAny<IReadOnlyCollection<string>>()), Times.Never);
@@ -71,7 +71,7 @@ namespace APIBack.Tests.Unit
                 new CanalWhatsapp { Id = Guid.NewGuid(), IdEstabelecimento = Loja, PhoneNumberId = "111111111111111", Status = StatusCanal.Ativo }
             });
 
-            var erro = await Assert.ThrowsAsync<RequestValidationException>(() => f.Build().ConectarAsync(Dono(), Loja, new ConectarCanalRequest(IdMeta, "EAAG-token")));
+            var erro = await Assert.ThrowsAnyAsync<RequestValidationException>(() => f.Build().ConectarAsync(Dono(), Loja, new ConectarCanalRequest(IdMeta, "EAAG-token")));
 
             Assert.Contains("desconecte", erro.Errors["phoneNumberId"][0], StringComparison.OrdinalIgnoreCase);
         }
@@ -107,9 +107,9 @@ namespace APIBack.Tests.Unit
             var f = new Fixture();
             f.Token.Setup(t => t.Configurado).Returns(false);
 
-            var erro = await Assert.ThrowsAsync<RequestValidationException>(() => f.Build().ConectarAsync(Dono(), Loja, new ConectarCanalRequest(IdMeta, "EAAG-token")));
+            var erro = await Assert.ThrowsAnyAsync<RequestValidationException>(() => f.Build().ConectarAsync(Dono(), Loja, new ConectarCanalRequest(IdMeta, "EAAG-token")));
 
-            Assert.Contains("token", erro.Errors.Keys);
+            Assert.Equal(WhatsappCodigos.ChaveCifragemAusente, Assert.IsType<WhatsappException>(erro).Erro.Codigo);
         }
 
         [Fact]
@@ -135,6 +135,7 @@ namespace APIBack.Tests.Unit
             public Mock<ICatalogoRepository> Catalogo { get; } = new();
             public Mock<ITokenProtector> Token { get; } = new();
             public Mock<ICanalVerificador> Verificador { get; } = new();
+            public Mock<ICanalWebhookService> Webhook { get; } = new();
 
             public Fixture()
             {
@@ -149,7 +150,7 @@ namespace APIBack.Tests.Unit
             }
 
             public CanaisWhatsappService Build() =>
-                new(Canais.Object, Catalogo.Object, Token.Object, Verificador.Object, NullLogger<CanaisWhatsappService>.Instance);
+                new(Canais.Object, Catalogo.Object, Token.Object, Verificador.Object, Webhook.Object, NullLogger<CanaisWhatsappService>.Instance);
         }
     }
 }

@@ -83,6 +83,16 @@ namespace APIBack.Atendimento
                 return ResultadoEvento.Ignorado($"canal desconhecido (phone_number_id={phoneNumberId}, display={display})");
             }
 
+            if (evento.IdCanal.HasValue && evento.IdCanal.Value != canal.Id)
+            {
+                // Chegou pela URL de webhook de um canal, mas o phone_number_id e de outro. O webhook ja confere isso ao gravar;
+                // aqui e a segunda trava: um cliente nunca injeta mensagem na conversa de outra loja.
+                _logger.LogWarning(
+                    "[wa.in] ev=ignorada motivo=canal_do_webhook_diferente wa={Wa} canal_webhook={CanalWebhook} canal_dono={CanalDono}",
+                    evento.Chave, evento.IdCanal, canal.Id);
+                return ResultadoEvento.Ignorado($"evento do webhook do canal {evento.IdCanal} para o numero do canal {canal.Id}");
+            }
+
             await _canais.MarcarRecebimentoAsync(canal.Id);
 
             var texto = WaMensagemTexto.Exibicao(mensagem);
