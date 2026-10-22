@@ -15,6 +15,8 @@ namespace APIBack.DTOs.Cardapio
         public string Nome { get; set; } = "";
         public string? ExternalCode { get; set; }
         public string? ImagemUrl { get; set; }
+        /// <summary>Preço unitário no pedido mais recente (sem complementos). Só sugestão; null se não houver.</summary>
+        public decimal? PrecoIfood { get; set; }
         public int Pedidos { get; set; }
         public DateTimeOffset UltimoVistoEm { get; set; }
         /// <summary>Verdadeiro quando uma pessoa desfez o vínculo: nunca é religado sozinho.</summary>

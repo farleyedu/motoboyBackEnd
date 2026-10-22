@@ -61,7 +61,13 @@ AND (@Term::text IS NULL OR v.nome_ifood ILIKE @Term ESCAPE '\' OR v.external_co
         var total = await connection.ExecuteScalarAsync<int>(new CommandDefinition($"SELECT COUNT(*)::int FROM ifood_produto_vinculo v WHERE {filter}", args, cancellationToken: ct));
         var items = await connection.QueryAsync<IfoodVinculoPendenteDto>(new CommandDefinition($"""
 SELECT v.id AS VinculoId,v.nome_ifood AS Nome,v.external_code AS ExternalCode,v.imagem_url AS ImagemUrl,v.pedidos_count AS Pedidos,
-v.visto_ultima_em AS UltimoVistoEm,(v.estado='desfeito') AS Desfeito
+v.visto_ultima_em AS UltimoVistoEm,(v.estado='desfeito') AS Desfeito,
+-- Preço unitário do item no pedido mais recente da loja que o trouxe: só sugestão para o "criar produto" (pode ter promoção).
+(SELECT (i->>'unitPrice')::numeric FROM ifood_order_snapshots s
+  CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(s.payload->'items')='array' THEN s.payload->'items' ELSE '[]'::jsonb END) i
+  WHERE s.estabelecimento_id=v.estabelecimento_id AND s.merchant_id=v.merchant_id AND i->>'id'=v.chave_id
+  AND i->>'unitPrice' ~ '^[0-9]+(\.[0-9]+)?$'
+  ORDER BY s.updated_at_utc DESC LIMIT 1) AS PrecoIfood
 FROM ifood_produto_vinculo v WHERE {filter}
 ORDER BY v.visto_ultima_em DESC,v.id OFFSET @Skip LIMIT @Take
 """, args, cancellationToken: ct));

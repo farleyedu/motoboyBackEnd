@@ -107,6 +107,7 @@ DROP TABLE cardapio_produto;
         var link = await db.Scalar<Guid>("SELECT id FROM ifood_produto_vinculo WHERE chave_id='item-1'");
         var links = new IfoodProdutoVinculoRepository(db.Source);
 
+        Assert.Equal(10m, Assert.Single((await links.PendentesAsync(db.StoreA, null, 1, 20, default)).Itens).PrecoIfood); // unitPrice do pedido
         Assert.Equal("https://ifood.example/p.jpg", await links.PrepararCriacaoAsync(db.StoreA, link, "Calabresa Grande", default));
 
         var same = await Product(db, db.StoreA, "Calabresa  GRANDE");
