@@ -23,6 +23,7 @@ public sealed partial class IfoodIntegrationSchemaDatabaseTests
             await db.Migrate(RuntimeSettingsFile);
             await db.Migrate(RuntimeFlagsFile);
             await db.Migrate(ReconciliationFile);
+            await db.Migrate(LifecycleFile);
             return db;
         }
         catch { await db.DisposeAsync(); throw; }
@@ -225,6 +226,7 @@ VALUES(@Op,@Merchant,@Order,@Store,'dispatch','{}'::jsonb,repeat('a',64),1,'unce
     {
         await using var db = await ReconciliationDatabase();
         await db.Migrate(ReconciliationFile);
+        await db.Migrate(LifecycleFile);
         Assert.Equal(1, await db.Scalar<int>("SELECT COUNT(*)::int FROM ifood_app_settings WHERE retention_days=30 AND NOT retention_enabled"));
         await Assert.ThrowsAsync<Npgsql.PostgresException>(() => db.Execute("UPDATE ifood_app_settings SET retention_days=3"));
         await Assert.ThrowsAsync<Npgsql.PostgresException>(() => db.Execute("UPDATE ifood_app_settings SET retention_days=500"));

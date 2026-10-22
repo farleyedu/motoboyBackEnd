@@ -96,16 +96,18 @@ public sealed partial class IfoodIntegrationSchemaDatabaseTests
     }
 
     [DeliveryDatabaseFact]
-    public async Task RevocationAndWrongStoreRollbackEntirePersistenceAndNoAckIsEligible()
+    public async Task RevocationAndWrongStoreNeverStoreEventsAndNoAckIsEligible()
     {
         await using var db = await IngressDatabase(); var lease = await Lease(db);
+        // Merchant sem conexao ativa naquela loja: o evento nao entra no inbox (vai para rejeicoes, sem ACK),
+        // mas a chamada nao falha: outros merchants do mesmo ciclo seguem sendo gravados.
         var wrong = Merchants(db); wrong[0].EstabelecimentoId = db.StoreB;
-        await Assert.ThrowsAsync<IfoodIntegrationException>(() => db.Inbox.PersistAsync(lease, wrong,
-            new[] { IfoodEventIngressTests.Envelope(db.MerchantA) }, default));
+        await db.Inbox.PersistAsync(lease, wrong, new[] { IfoodEventIngressTests.Envelope(db.MerchantA) }, default);
         Assert.Equal(0, await db.Scalar<int>("SELECT COUNT(*)::int FROM ifood_events_inbox"));
+        Assert.Equal(1, await db.Scalar<int>("SELECT COUNT(*)::int FROM ifood_event_rejections WHERE error_code='IFOOD_EVENT_UNROUTABLE'"));
         await db.Execute("UPDATE ifood_connections SET status='revoked',revoked_at_utc=NOW()");
-        await Assert.ThrowsAsync<IfoodIntegrationException>(() => db.Inbox.PersistAsync(lease, Merchants(db),
-            new[] { IfoodEventIngressTests.Envelope(db.MerchantA) }, default));
+        await db.Inbox.PersistAsync(lease, Merchants(db), new[] { IfoodEventIngressTests.Envelope(db.MerchantA) }, default);
+        Assert.Equal(0, await db.Scalar<int>("SELECT COUNT(*)::int FROM ifood_events_inbox"));
         Assert.Empty(await db.Inbox.PendingAcknowledgmentsAsync(lease, Merchants(db), 2000, default));
     }
 

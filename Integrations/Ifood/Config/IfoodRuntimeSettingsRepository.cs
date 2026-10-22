@@ -62,15 +62,21 @@ WHERE id=1
             ExceptionsEnabled = exceptionsEnabled, CompletionEnabled = completionEnabled, DineInEnabled = dineInEnabled, RetentionEnabled = retentionEnabled, RetentionDays = retentionDays, UpdatedBy = updatedBy }, cancellationToken: ct));
     }
 
+    // Uma linha por par (merchant, loja): o historico de lojas antigas fica, so uma conexao fica ativa (revoked_at_utc nulo).
+    private const string ConnectionColumns = """
+merchant_id AS MerchantId, estabelecimento_id AS EstabelecimentoId, status AS Status,
+       authorized_at_utc AS AuthorizedAtUtc, revoked_at_utc AS RevokedAtUtc, last_event_at_utc AS LastEventAtUtc,
+       created_at_utc AS CreatedAtUtc, zippy_delivery_enabled AS ZippyDeliveryEnabled,
+       poll_state AS PollState, poll_error_code AS PollErrorCode, poll_failures AS PollFailures,
+       poll_blocked_until_utc AS PollBlockedUntilUtc, last_poll_at_utc AS LastPollAtUtc, last_poll_ok_at_utc AS LastPollOkAtUtc,
+       remote_check_code AS RemoteCheckCode, remote_checked_at_utc AS RemoteCheckedAtUtc
+""";
+
     public async Task<IReadOnlyList<IfoodConnectionRow>> ListConnectionsAsync(CancellationToken ct = default)
     {
         await using var connection = await _source.OpenConnectionAsync(ct);
-        var rows = await connection.QueryAsync<IfoodConnectionRow>(new CommandDefinition("""
-SELECT merchant_id AS MerchantId, estabelecimento_id AS EstabelecimentoId, status AS Status,
-       authorized_at_utc AS AuthorizedAtUtc, revoked_at_utc AS RevokedAtUtc, last_event_at_utc AS LastEventAtUtc,
-       created_at_utc AS CreatedAtUtc, zippy_delivery_enabled AS ZippyDeliveryEnabled
-FROM ifood_connections ORDER BY created_at_utc DESC
-""", cancellationToken: ct));
+        var rows = await connection.QueryAsync<IfoodConnectionRow>(new CommandDefinition(
+            $"SELECT {ConnectionColumns} FROM ifood_connections ORDER BY (revoked_at_utc IS NULL) DESC, updated_at_utc DESC", cancellationToken: ct));
         return rows.AsList();
     }
 
@@ -78,14 +84,33 @@ FROM ifood_connections ORDER BY created_at_utc DESC
     {
         if (estabelecimentoId == Guid.Empty) return null;
         await using var connection = await _source.OpenConnectionAsync(ct);
-        return await connection.QueryFirstOrDefaultAsync<IfoodConnectionRow>(new CommandDefinition("""
-SELECT merchant_id AS MerchantId, estabelecimento_id AS EstabelecimentoId, status AS Status,
-       authorized_at_utc AS AuthorizedAtUtc, revoked_at_utc AS RevokedAtUtc, last_event_at_utc AS LastEventAtUtc,
-       created_at_utc AS CreatedAtUtc, zippy_delivery_enabled AS ZippyDeliveryEnabled
-FROM ifood_connections WHERE estabelecimento_id=@EstabelecimentoId
-ORDER BY (revoked_at_utc IS NULL) DESC, created_at_utc DESC LIMIT 1
-""", new { EstabelecimentoId = estabelecimentoId }, cancellationToken: ct));
+        return await connection.QueryFirstOrDefaultAsync<IfoodConnectionRow>(new CommandDefinition(
+            $"SELECT {ConnectionColumns} FROM ifood_connections WHERE estabelecimento_id=@EstabelecimentoId ORDER BY (revoked_at_utc IS NULL) DESC, updated_at_utc DESC LIMIT 1",
+            new { EstabelecimentoId = estabelecimentoId }, cancellationToken: ct));
     }
+
+    // Trava todas as linhas do merchant (qualquer loja) e devolve a ativa, se houver. Serializa autorizar/transferir/revogar
+    // e tambem o polling, que le a conexao com FOR SHARE antes de gravar eventos.
+    internal static async Task<(IfoodConnectionRow? Active, IfoodConnectionRow? Pair)> LockMerchantAsync(
+        NpgsqlConnection connection, NpgsqlTransaction tx, Guid merchantId, Guid estabelecimentoId, CancellationToken ct)
+    {
+        var rows = (await connection.QueryAsync<IfoodConnectionRow>(new CommandDefinition(
+            $"SELECT {ConnectionColumns} FROM ifood_connections WHERE merchant_id=@MerchantId FOR UPDATE",
+            new { MerchantId = merchantId }, tx, cancellationToken: ct))).AsList();
+        return (rows.FirstOrDefault(r => r.RevokedAtUtc is null), rows.FirstOrDefault(r => r.EstabelecimentoId == estabelecimentoId));
+    }
+
+    internal static async Task<bool> StoreHasOtherActiveAsync(NpgsqlConnection connection, NpgsqlTransaction tx, Guid merchantId, Guid estabelecimentoId, CancellationToken ct)
+        => await connection.ExecuteScalarAsync<bool>(new CommandDefinition(
+            "SELECT EXISTS (SELECT 1 FROM ifood_connections WHERE estabelecimento_id=@EstabelecimentoId AND merchant_id<>@MerchantId AND revoked_at_utc IS NULL)",
+            new { EstabelecimentoId = estabelecimentoId, MerchantId = merchantId }, tx, cancellationToken: ct));
+
+    internal static Task ResetHealthAsync(NpgsqlConnection connection, NpgsqlTransaction tx, Guid merchantId, Guid estabelecimentoId, CancellationToken ct)
+        => connection.ExecuteAsync(new CommandDefinition("""
+UPDATE ifood_connections SET poll_state=NULL, poll_error_code=NULL, poll_failures=0, poll_blocked_until_utc=NULL,
+    last_poll_at_utc=NULL, last_poll_ok_at_utc=NULL, remote_check_code=NULL, remote_checked_at_utc=NULL
+WHERE merchant_id=@MerchantId AND estabelecimento_id=@EstabelecimentoId
+""", new { MerchantId = merchantId, EstabelecimentoId = estabelecimentoId }, tx, cancellationToken: ct));
 
     public async Task AuthorizeConnectionAsync(Guid merchantId, Guid estabelecimentoId, CancellationToken ct = default)
     {
@@ -93,28 +118,38 @@ ORDER BY (revoked_at_utc IS NULL) DESC, created_at_utc DESC LIMIT 1
             throw new IfoodIntegrationException("IFOOD_CONNECTION_INVALID_INPUT");
         await using var connection = await _source.OpenConnectionAsync(ct);
         await using var tx = await connection.BeginTransactionAsync(ct);
-        var existing = await connection.QuerySingleOrDefaultAsync<Guid?>(new CommandDefinition(
-            "SELECT estabelecimento_id FROM ifood_connections WHERE merchant_id=@MerchantId FOR UPDATE",
-            new { MerchantId = merchantId }, tx, cancellationToken: ct));
-        if (existing is { } current && current != estabelecimentoId)
+        var (active, pair) = await LockMerchantAsync(connection, tx, merchantId, estabelecimentoId, ct);
+        if (active is not null && active.EstabelecimentoId != estabelecimentoId)
             throw new IfoodIntegrationException("IFOOD_CONNECTION_MERCHANT_LINKED_ELSEWHERE");
-        int affected;
+        if (await StoreHasOtherActiveAsync(connection, tx, merchantId, estabelecimentoId, ct))
+            throw new IfoodIntegrationException("IFOOD_CONNECTION_STORE_HAS_ACTIVE");
         try
         {
-            // O FOR UPDATE acima não trava merchant ainda inexistente: numa corrida entre duas lojas a segunda cai no
-            // ON CONFLICT. O WHERE impede que ela reative o merchant da primeira e responda sucesso.
-            affected = await connection.ExecuteAsync(new CommandDefinition("""
+            if (pair is not null)
+            {
+                await connection.ExecuteAsync(new CommandDefinition("""
+UPDATE ifood_connections SET status='authorized', authorized_at_utc=NOW(), revoked_at_utc=NULL, updated_at_utc=NOW()
+WHERE merchant_id=@MerchantId AND estabelecimento_id=@EstabelecimentoId
+""", new { MerchantId = merchantId, EstabelecimentoId = estabelecimentoId }, tx, cancellationToken: ct));
+                // Reautorizar uma conexao que estava revogada recomeca a saude: a quarentena antiga nao vale mais.
+                if (pair.RevokedAtUtc is not null || pair.Status != "authorized")
+                    await ResetHealthAsync(connection, tx, merchantId, estabelecimentoId, ct);
+            }
+            else
+                await connection.ExecuteAsync(new CommandDefinition("""
 INSERT INTO ifood_connections(merchant_id, estabelecimento_id, status, authorized_at_utc, revoked_at_utc)
 VALUES (@MerchantId, @EstabelecimentoId, 'authorized', NOW(), NULL)
-ON CONFLICT (merchant_id) DO UPDATE SET status='authorized', authorized_at_utc=NOW(), revoked_at_utc=NULL, updated_at_utc=NOW()
-WHERE ifood_connections.estabelecimento_id = EXCLUDED.estabelecimento_id
 """, new { MerchantId = merchantId, EstabelecimentoId = estabelecimentoId }, tx, cancellationToken: ct));
         }
         catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.ForeignKeyViolation)
         {
             throw new IfoodIntegrationException("IFOOD_CONNECTION_INVALID_INPUT");
         }
-        if (affected == 0) throw new IfoodIntegrationException("IFOOD_CONNECTION_MERCHANT_LINKED_ELSEWHERE");
+        // Corrida entre duas lojas pelo mesmo merchant (ainda sem linha para travar): o indice unico do ativo decide.
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
+        {
+            throw new IfoodIntegrationException("IFOOD_CONNECTION_MERCHANT_LINKED_ELSEWHERE");
+        }
         await tx.CommitAsync(ct);
     }
 
@@ -124,32 +159,37 @@ WHERE ifood_connections.estabelecimento_id = EXCLUDED.estabelecimento_id
             throw new IfoodIntegrationException("IFOOD_CONNECTION_INVALID_INPUT");
         await using var connection = await _source.OpenConnectionAsync(ct);
         await using var tx = await connection.BeginTransactionAsync(ct);
-        var existing = await connection.QuerySingleOrDefaultAsync<Guid?>(new CommandDefinition(
-            "SELECT estabelecimento_id FROM ifood_connections WHERE merchant_id=@MerchantId FOR UPDATE",
-            new { MerchantId = merchantId }, tx, cancellationToken: ct));
-        if (existing is { } current && current != estabelecimentoId)
+        var (active, pair) = await LockMerchantAsync(connection, tx, merchantId, estabelecimentoId, ct);
+        if (active is not null && active.EstabelecimentoId != estabelecimentoId)
             throw new IfoodIntegrationException("IFOOD_CONNECTION_MERCHANT_LINKED_ELSEWHERE");
-        var otherActive = await connection.ExecuteScalarAsync<bool>(new CommandDefinition("""
-SELECT EXISTS (SELECT 1 FROM ifood_connections WHERE estabelecimento_id=@EstabelecimentoId AND merchant_id<>@MerchantId AND revoked_at_utc IS NULL)
-""", new { EstabelecimentoId = estabelecimentoId, MerchantId = merchantId }, tx, cancellationToken: ct));
-        if (otherActive) throw new IfoodIntegrationException("IFOOD_CONNECTION_STORE_HAS_ACTIVE");
-        int affected;
+        if (await StoreHasOtherActiveAsync(connection, tx, merchantId, estabelecimentoId, ct))
+            throw new IfoodIntegrationException("IFOOD_CONNECTION_STORE_HAS_ACTIVE");
+        // Ja ativa nesta loja (pendente ou autorizada): nada a mudar. So um merchant novo ou revogado fica pendente.
+        if (active is not null) { await tx.CommitAsync(ct); return; }
         try
         {
-            // Merchant ja autorizado desta mesma loja nao volta para pendente; so um merchant novo ou revogado fica pendente.
-            affected = await connection.ExecuteAsync(new CommandDefinition("""
+            if (pair is not null)
+            {
+                await connection.ExecuteAsync(new CommandDefinition("""
+UPDATE ifood_connections SET status='pending', authorized_at_utc=NULL, revoked_at_utc=NULL, updated_at_utc=NOW()
+WHERE merchant_id=@MerchantId AND estabelecimento_id=@EstabelecimentoId
+""", new { MerchantId = merchantId, EstabelecimentoId = estabelecimentoId }, tx, cancellationToken: ct));
+                await ResetHealthAsync(connection, tx, merchantId, estabelecimentoId, ct);
+            }
+            else
+                await connection.ExecuteAsync(new CommandDefinition("""
 INSERT INTO ifood_connections(merchant_id, estabelecimento_id, status, authorized_at_utc, revoked_at_utc)
 VALUES (@MerchantId, @EstabelecimentoId, 'pending', NULL, NULL)
-ON CONFLICT (merchant_id) DO UPDATE SET status='pending', authorized_at_utc=NULL, revoked_at_utc=NULL, updated_at_utc=NOW()
-WHERE ifood_connections.estabelecimento_id = EXCLUDED.estabelecimento_id AND ifood_connections.status IN ('revoked','disabled')
 """, new { MerchantId = merchantId, EstabelecimentoId = estabelecimentoId }, tx, cancellationToken: ct));
         }
         catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.ForeignKeyViolation)
         {
             throw new IfoodIntegrationException("IFOOD_CONNECTION_INVALID_INPUT");
         }
-        // Ja existia, da mesma loja e pendente ou autorizada: nada a mudar.
-        if (affected == 0 && existing is null) throw new IfoodIntegrationException("IFOOD_CONNECTION_MERCHANT_LINKED_ELSEWHERE");
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
+        {
+            throw new IfoodIntegrationException("IFOOD_CONNECTION_MERCHANT_LINKED_ELSEWHERE");
+        }
         await tx.CommitAsync(ct);
     }
 

@@ -29,4 +29,13 @@ public sealed class IfoodConnectionRow
     public DateTimeOffset? LastEventAtUtc { get; set; }
     public DateTimeOffset CreatedAtUtc { get; set; }
     public bool ZippyDeliveryEnabled { get; set; }
+    // Saude por merchant (polling isolado) e ultima conferencia real no iFood. Nulos ate a primeira tentativa.
+    public string? PollState { get; set; }
+    public string? PollErrorCode { get; set; }
+    public int PollFailures { get; set; }
+    public DateTimeOffset? PollBlockedUntilUtc { get; set; }
+    public DateTimeOffset? LastPollAtUtc { get; set; }
+    public DateTimeOffset? LastPollOkAtUtc { get; set; }
+    public string? RemoteCheckCode { get; set; }
+    public DateTimeOffset? RemoteCheckedAtUtc { get; set; }
 }

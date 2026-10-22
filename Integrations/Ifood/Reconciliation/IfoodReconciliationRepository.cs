@@ -237,7 +237,25 @@ WHERE s.estabelecimento_id=@Store AND s.payload->'zippyRecovery'='true'::jsonb
 AND COALESCE(s.remote_status,'PLACED') NOT IN('CANCELLED','CONCLUDED')
 ORDER BY ExpiresAtUtc NULLS LAST,OldestAtUtc
 """, new { Store = estabelecimentoId }, cancellationToken: ct));
-        return rows.Where(row => row.Count > 0).Concat(attention).ToList();
+        return (await ConnectionAlertsAsync(connection, estabelecimentoId, ct)).Concat(rows.Where(row => row.Count > 0)).Concat(attention).ToList();
+    }
+
+    // Merchant que o iFood recusa no polling: a loja nao recebe pedidos e precisa saber. Tolera schema anterior a 20261027_01.
+    private static async Task<IReadOnlyList<IfoodAlertRow>> ConnectionAlertsAsync(NpgsqlConnection connection, Guid estabelecimentoId, CancellationToken ct)
+    {
+        try
+        {
+            var alerts = await connection.QueryAsync<IfoodAlertRow>(new CommandDefinition("""
+SELECT 'IFOOD_MERCHANT_FORBIDDEN' AS Code, 'critical' AS Severity, COUNT(*)::int AS Count, MIN(last_poll_at_utc) AS OldestAtUtc
+FROM ifood_connections WHERE estabelecimento_id=@Store AND revoked_at_utc IS NULL AND status='authorized' AND poll_state='forbidden'
+UNION ALL
+SELECT 'IFOOD_MERCHANT_POLL_ERROR', 'warning', COUNT(*)::int, MIN(last_poll_at_utc)
+FROM ifood_connections WHERE estabelecimento_id=@Store AND revoked_at_utc IS NULL AND status='authorized' AND poll_state='error'
+""", new { Store = estabelecimentoId }, cancellationToken: ct));
+            return alerts.Where(row => row.Count > 0).ToList();
+        }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedColumn)
+        { return Array.Empty<IfoodAlertRow>(); }
     }
 
     public async Task<IfoodPollingHealth?> GetPollingHealthAsync(CancellationToken ct = default)

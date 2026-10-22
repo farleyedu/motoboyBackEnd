@@ -8,6 +8,7 @@ public sealed partial class IfoodIntegrationSchemaDatabaseTests
 {
     private const string SchemaFile = "20261013_01_ifood_integration_schema.sql";
     private const string VerifyFile = "20261013_02_ifood_integration_verify.sql";
+    private const string LifecycleFile = "20261027_01_ifood_connection_lifecycle.sql";
 
     [DeliveryDatabaseFact]
     public async Task SchemaCanBeAppliedTwiceAndVerificationRequiresItsDependency()
@@ -134,6 +135,8 @@ END $$;
         public APIBack.Integrations.Ifood.IIfoodConnectionRepository Connections => new APIBack.Integrations.Ifood.IfoodConnectionRepository(_source);
         public APIBack.Integrations.Ifood.Events.IfoodInboxRepository Inbox => new(_source);
         public APIBack.Integrations.Ifood.Config.IIfoodRuntimeSettingsRepository RuntimeSettings => new APIBack.Integrations.Ifood.Config.IfoodRuntimeSettingsRepository(_source);
+        public APIBack.Integrations.Ifood.Connections.IfoodConnectionLifecycle Lifecycle => new(_source);
+        public APIBack.Integrations.Ifood.Connections.IfoodConnectionHealth Health => new(_source);
         public Guid StoreA { get; } = Guid.NewGuid();
         public Guid StoreB { get; } = Guid.NewGuid();
         public Guid MerchantA { get; } = Guid.NewGuid();

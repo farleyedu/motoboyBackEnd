@@ -167,7 +167,7 @@ VALUES(@MerchantId,@ExternalOrderId,@EstabelecimentoId,@Pedido,@DisplayNumber)
                 await connection.ExecuteAsync(new CommandDefinition("""
 UPDATE ifood_order_links l SET zippy_delivery_enabled=c.zippy_delivery_enabled
 FROM ifood_connections c
-WHERE l.merchant_id=@MerchantId AND l.external_order_id=@ExternalOrderId AND c.merchant_id=l.merchant_id AND c.zippy_delivery_enabled
+WHERE l.merchant_id=@MerchantId AND l.external_order_id=@ExternalOrderId AND c.merchant_id=l.merchant_id AND c.estabelecimento_id=l.estabelecimento_id AND c.zippy_delivery_enabled
 """, new { item.MerchantId, item.ExternalOrderId }, transaction, cancellationToken: ct));
             var validSchedule = order.ScheduledStartUtc != null && order.ScheduledEndUtc != null && order.ScheduledEndUtc >= order.ScheduledStartUtc;
             await connection.ExecuteAsync(new CommandDefinition("""

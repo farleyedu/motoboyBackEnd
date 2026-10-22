@@ -20,6 +20,7 @@ public sealed partial class IfoodIntegrationSchemaDatabaseTests
         await db.Migrate(RuntimeSettingsFile);
         await db.Migrate(RuntimeFlagsFile);
         await db.Migrate(ReconciliationFile);
+        await db.Migrate(LifecycleFile);
         Assert.Equal(1, await db.Scalar<int>("SELECT COUNT(*)::int FROM ifood_app_settings"));
         var settings = await db.RuntimeSettings.GetSettingsAsync();
         Assert.False(settings.Enabled); Assert.False(settings.PollingEnabled); Assert.Equal("", settings.ClientId);
@@ -27,6 +28,7 @@ public sealed partial class IfoodIntegrationSchemaDatabaseTests
         await db.Migrate(RuntimeSettingsFile);
         await db.Migrate(RuntimeFlagsFile);
         await db.Migrate(ReconciliationFile);
+        await db.Migrate(LifecycleFile);
         Assert.Equal(1, await db.Scalar<int>("SELECT COUNT(*)::int FROM ifood_app_settings"));
     }
 
@@ -37,6 +39,7 @@ public sealed partial class IfoodIntegrationSchemaDatabaseTests
         await db.Migrate(RuntimeSettingsFile);
         await db.Migrate(RuntimeFlagsFile);
         await db.Migrate(ReconciliationFile);
+        await db.Migrate(LifecycleFile);
         await db.RuntimeSettings.UpdateSettingsAsync("client-1", "v1.key1.first", true, false, false, false, false, false, "user-1");
         var afterFirst = await db.RuntimeSettings.GetSettingsAsync();
         Assert.Equal("v1.key1.first", afterFirst.ClientSecretCifrado); Assert.True(afterFirst.Enabled);
@@ -58,6 +61,7 @@ public sealed partial class IfoodIntegrationSchemaDatabaseTests
         await db.Migrate(RuntimeSettingsFile);
         await db.Migrate(RuntimeFlagsFile);
         await db.Migrate(ReconciliationFile);
+        await db.Migrate(LifecycleFile);
         var merchant = Guid.NewGuid();
         await db.RuntimeSettings.AuthorizeConnectionAsync(merchant, db.StoreA);
         var connections = await db.RuntimeSettings.ListConnectionsAsync();
@@ -83,6 +87,7 @@ public sealed partial class IfoodIntegrationSchemaDatabaseTests
         await db.Migrate(RuntimeSettingsFile);
         await db.Migrate(RuntimeFlagsFile);
         await db.Migrate(ReconciliationFile);
+        await db.Migrate(LifecycleFile);
         var merchantA = Guid.NewGuid(); var merchantB = Guid.NewGuid(); var oldA = Guid.NewGuid();
         Assert.Null(await db.RuntimeSettings.GetStoreConnectionAsync(db.StoreA));
 
@@ -107,6 +112,7 @@ public sealed partial class IfoodIntegrationSchemaDatabaseTests
         await db.Migrate(RuntimeSettingsFile);
         await db.Migrate(RuntimeFlagsFile);
         await db.Migrate(ReconciliationFile);
+        await db.Migrate(LifecycleFile);
         // Tudo ligado na tela, mas sem nenhum merchant autorizado: nada que exija lista de merchants pode subir.
         await db.RuntimeSettings.UpdateSettingsAsync("client-1", "v1.key1.secret", true, true, true, true, true, true, "user-1", completionEnabled: true);
         var none = Build(db);
@@ -179,6 +185,7 @@ public sealed partial class IfoodIntegrationSchemaDatabaseTests
         await db.Migrate(RuntimeSettingsFile);
         await db.Migrate(RuntimeFlagsFile);
         await db.Migrate(ReconciliationFile);
+        await db.Migrate(LifecycleFile);
         var merchant = Guid.NewGuid(); var other = Guid.NewGuid();
         await db.RuntimeSettings.AuthorizeConnectionAsync(merchant, db.StoreA);
         await db.RuntimeSettings.AuthorizeConnectionAsync(other, db.StoreB);
@@ -201,8 +208,10 @@ public sealed partial class IfoodIntegrationSchemaDatabaseTests
         await db.Migrate(RuntimeSettingsFile);
         await db.Migrate(RuntimeFlagsFile);
         await db.Migrate(ReconciliationFile);
+        await db.Migrate(LifecycleFile);
         await db.Migrate(RuntimeFlagsFile);
         await db.Migrate(ReconciliationFile);
+        await db.Migrate(LifecycleFile);
         var merchant = Guid.NewGuid();
         await db.RuntimeSettings.AuthorizeConnectionAsync(merchant, db.StoreA);
         await db.RuntimeSettings.SetConnectionDeliveryAsync(merchant, true);
@@ -220,6 +229,7 @@ public sealed partial class IfoodIntegrationSchemaDatabaseTests
         await db.Migrate(RuntimeSettingsFile);
         await db.Migrate(RuntimeFlagsFile);
         await db.Migrate(ReconciliationFile);
+        await db.Migrate(LifecycleFile);
         await db.RuntimeSettings.UpdateSettingsAsync("client-1", "v1.key1.secret", true, true, false, false, false, false, "user-1");
         using var provider = new IfoodDatabaseConfigurationProvider(db.Source.ConnectionString, TimeSpan.FromHours(1));
         provider.Load();
@@ -247,6 +257,7 @@ public sealed partial class IfoodIntegrationSchemaDatabaseTests
         await db.Migrate(RuntimeSettingsFile);
         await db.Migrate(RuntimeFlagsFile);
         await db.Migrate(ReconciliationFile);
+        await db.Migrate(LifecycleFile);
         await db.RuntimeSettings.UpdateSettingsAsync("client-1", "v1.key1.secret", true, false, false, false, false, false, "user-1");
         var rollbackSql = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "Migrations", "Delivery", "rollback", RuntimeSettingsRollbackFile));
         await Assert.ThrowsAsync<PostgresException>(() => db.Execute(rollbackSql));

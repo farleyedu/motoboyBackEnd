@@ -1,3 +1,5 @@
+using System.Net;
+using APIBack.Integrations.Ifood.Connections;
 using Microsoft.Extensions.Options;
 
 namespace APIBack.Integrations.Ifood.Events;
@@ -9,8 +11,16 @@ public sealed class IfoodPollingService
     private readonly IOptionsMonitor<IfoodOptions> _optionsMonitor;
     private IfoodOptions _options => _optionsMonitor.CurrentValue;
     private readonly TimeProvider _clock;
-    public IfoodPollingService(IIfoodInboxRepository inbox, IIfoodEventsClient events, IOptionsMonitor<IfoodOptions> options, TimeProvider clock)
-        => (_inbox, _events, _optionsMonitor, _clock) = (inbox, events, options, clock);
+    private readonly IIfoodConnectionHealth _health;
+    public IfoodPollingService(IIfoodInboxRepository inbox, IIfoodEventsClient events, IOptionsMonitor<IfoodOptions> options, TimeProvider clock,
+        IIfoodConnectionHealth? health = null)
+        => (_inbox, _events, _optionsMonitor, _clock, _health) = (inbox, events, options, clock, health ?? NullIfoodConnectionHealth.Instance);
+
+    // Erro que o iFood atribui a UM merchant (sem permissao, nao encontrado, pedido invalido): nao pode parar os demais.
+    // Credencial do app (401), limite (429), 5xx e rede afetam todos e continuam subindo para o backoff global.
+    public static bool IsMerchantScoped(IfoodIntegrationException ex)
+        => ex.Code is "IFOOD_EVENTS_FORBIDDEN" or "IFOOD_MERCHANT_NOT_AUTHORIZED" ||
+           (ex.Code == "IFOOD_EVENTS_REMOTE_ERROR" && ex.RemoteStatus is HttpStatusCode.BadRequest or HttpStatusCode.NotFound or HttpStatusCode.UnprocessableEntity);
 
     public async Task<TimeSpan> RunOnceAsync(CancellationToken ct = default)
     {
@@ -19,25 +29,31 @@ public sealed class IfoodPollingService
         if (lease == null) return TimeSpan.FromSeconds(1);
         try
         {
-            var incoming = await _events.PollAsync(_options.PollingMerchants,
-                token => _inbox.StartPollingRequestAsync(lease, _options.PollingLeaseSeconds, token), ct);
-            // Gravação/commit concluídos antes de qualquer ACK, inclusive duplicados.
-            await _inbox.PersistAsync(lease, _options.PollingMerchants, incoming, ct);
-            // Recupera ACKs pendentes mesmo quando polling responde 204. Limita duração da rodada.
-            for (var batch = 0; batch < 5; batch++)
+            var merchants = _options.PollingMerchants.ToList();
+            var blocked = await _health.BlockedAsync(merchants.Select(m => m.MerchantId).ToArray(), ct);
+            var now = _clock.GetUtcNow();
+            // Em quarentena e ainda dentro do prazo: nao entra no polling. Vencido: volta, mas sozinho (revalidacao).
+            var healthy = merchants.Where(m => !blocked.ContainsKey(m.MerchantId)).ToList();
+            var retrying = merchants.Where(m => blocked.TryGetValue(m.MerchantId, out var until) && until <= now).ToList();
+
+            var polled = new List<IfoodPollingMerchant>();
+            var incoming = new List<IfoodEventEnvelope>();
+            try
             {
-                var pending = await _inbox.PendingAcknowledgmentsAsync(lease, _options.PollingMerchants, _options.AckBatchSize, ct);
-                if (pending.Count == 0) break;
-                try { await _events.AcknowledgeAsync(pending,
-                    token => _inbox.RenewPollingAsync(lease, _options.PollingLeaseSeconds, token), ct); }
-                catch (IfoodIntegrationException ex)
-                {
-                    await _inbox.AcknowledgmentFailedAsync(lease, pending, ex.Code,
-                        ex.RetryAfter is { } delay && delay > TimeSpan.FromSeconds(30) ? delay : TimeSpan.FromSeconds(30), ct);
-                    throw;
-                }
-                await _inbox.AcknowledgedAsync(lease, pending, ct);
+                if (healthy.Count > 0) await PollGroupAsync(lease, healthy, polled, incoming, ct);
+                foreach (var merchant in retrying) await PollOneAsync(lease, merchant, polled, incoming, ct);
             }
+            catch (IfoodIntegrationException) when (incoming.Count > 0)
+            {
+                // Falha global (429, 5xx, rede) depois de alguns merchants ja terem respondido: grava o que chegou.
+                try { await _inbox.PersistAsync(lease, polled, incoming, ct); } catch (IfoodIntegrationException) { /* o iFood reenvia o que nao teve ACK */ }
+                throw;
+            }
+
+            // Gravação/commit concluídos antes de qualquer ACK, inclusive duplicados.
+            if (polled.Count > 0 || incoming.Count > 0) await _inbox.PersistAsync(lease, polled, incoming, ct);
+            await _health.RecordPollSuccessAsync(polled.Select(m => m.MerchantId).ToArray(), ct);
+            await AcknowledgePendingAsync(lease, ct);
             var next = await _inbox.ReleasePollingAsync(lease, TimeSpan.Zero, null, ct);
             return TimeSpan.FromSeconds(Math.Max(1, (next - _clock.GetUtcNow()).TotalSeconds));
         }
@@ -49,6 +65,64 @@ public sealed class IfoodPollingService
             throw;
         }
         // Cancelamento/crash deixam reserva expirar; dados e ACKs pendentes continuam no banco.
+    }
+
+    // Tenta todos juntos (uma chamada). Se o iFood recusar por causa de um merchant, separa um a um: quem falha vai para a
+    // quarentena e os demais continuam recebendo. Nada foi consumido numa chamada recusada, entao repetir nao perde evento.
+    private async Task PollGroupAsync(IfoodPollingLease lease, List<IfoodPollingMerchant> group,
+        List<IfoodPollingMerchant> polled, List<IfoodEventEnvelope> incoming, CancellationToken ct)
+    {
+        try
+        {
+            incoming.AddRange(await _events.PollAsync(group, token => _inbox.StartPollingRequestAsync(lease, _options.PollingLeaseSeconds, token), ct));
+            polled.AddRange(group);
+        }
+        catch (IfoodIntegrationException ex) when (IsMerchantScoped(ex))
+        {
+            if (group.Count == 1) { await _health.RecordPollFailureAsync(group[0].MerchantId, ex.Code, ct); return; }
+            foreach (var merchant in group) await PollOneAsync(lease, merchant, polled, incoming, ct);
+        }
+    }
+
+    private async Task PollOneAsync(IfoodPollingLease lease, IfoodPollingMerchant merchant,
+        List<IfoodPollingMerchant> polled, List<IfoodEventEnvelope> incoming, CancellationToken ct)
+    {
+        try
+        {
+            incoming.AddRange(await _events.PollAsync(new[] { merchant }, token => _inbox.StartPollingRequestAsync(lease, _options.PollingLeaseSeconds, token), ct));
+            polled.Add(merchant);
+        }
+        catch (IfoodIntegrationException ex) when (IsMerchantScoped(ex))
+        {
+            await _health.RecordPollFailureAsync(merchant.MerchantId, ex.Code, ct);
+        }
+    }
+
+    // Recupera ACKs pendentes mesmo quando polling responde 204. Limita duração da rodada. Um merchant por chamada:
+    // a recusa de um não impede o ACK dos outros.
+    private async Task AcknowledgePendingAsync(IfoodPollingLease lease, CancellationToken ct)
+    {
+        for (var batch = 0; batch < 5; batch++)
+        {
+            var pending = await _inbox.PendingAcknowledgmentsAsync(lease, _options.PollingMerchants, _options.AckBatchSize, ct);
+            if (pending.Count == 0) break;
+            foreach (var group in pending.GroupBy(e => e.MerchantId))
+            {
+                var receipts = group.ToArray();
+                try
+                {
+                    await _events.AcknowledgeAsync(receipts, token => _inbox.RenewPollingAsync(lease, _options.PollingLeaseSeconds, token), ct);
+                }
+                catch (IfoodIntegrationException ex)
+                {
+                    await _inbox.AcknowledgmentFailedAsync(lease, receipts, ex.Code,
+                        ex.RetryAfter is { } delay && delay > TimeSpan.FromSeconds(30) ? delay : TimeSpan.FromSeconds(30), ct);
+                    if (!IsMerchantScoped(ex)) throw;
+                    continue;
+                }
+                await _inbox.AcknowledgedAsync(lease, receipts, ct);
+            }
+        }
     }
 }
 

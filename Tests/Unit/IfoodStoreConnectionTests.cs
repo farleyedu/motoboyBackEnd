@@ -101,7 +101,7 @@ namespace APIBack.Tests.Unit
             var probe = new Mock<IIfoodMerchantProbe>();
             var context = new DefaultHttpContext();
             context.Items["EstabelecimentoId"] = Loja;
-            return (new IfoodStoreController(repo.Object, probe.Object) { ControllerContext = new ControllerContext { HttpContext = context } }, repo, probe);
+            return (new IfoodStoreController(repo.Object, probe.Object, new Mock<APIBack.Integrations.Ifood.Merchants.IIfoodMerchantDirectory>().Object, new Mock<APIBack.Integrations.Ifood.Connections.IIfoodConnectionHealth>().Object, new Mock<APIBack.Integrations.Ifood.Connections.IIfoodConnectionLifecycle>().Object, TimeProvider.System) { ControllerContext = new ControllerContext { HttpContext = context } }, repo, probe);
         }
     }
 }

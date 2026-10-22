@@ -74,15 +74,16 @@ RETURNING next_poll_at_utc
         await using var connection = await _source.OpenConnectionAsync(ct);
         await using var transaction = await connection.BeginTransactionAsync(ct);
         await EnsureLeaseAsync(connection, lease, transaction, ct);
-        var mapping = merchants.ToDictionary(m => m.MerchantId, m => m.EstabelecimentoId);
-        // Bloqueios somente durante gravação local; nenhum HTTP dentro da transação.
+        var mapping = new Dictionary<Guid, Guid>();
+        // Bloqueios somente durante gravação local; nenhum HTTP dentro da transação. Um merchant revogado no meio do
+        // ciclo não derruba os demais: seus eventos ficam sem gravação e sem ACK (o iFood os reenvia).
         foreach (var merchant in merchants.OrderBy(m => m.MerchantId))
         {
             var authorized = await connection.QuerySingleOrDefaultAsync<Guid?>(new CommandDefinition("""
 SELECT merchant_id FROM ifood_connections WHERE merchant_id=@MerchantId AND estabelecimento_id=@EstabelecimentoId
 AND status='authorized' AND authorized_at_utc IS NOT NULL AND revoked_at_utc IS NULL FOR SHARE
 """, merchant, transaction, cancellationToken: ct));
-            if (authorized == null) throw new IfoodIntegrationException("IFOOD_MERCHANT_NOT_AUTHORIZED");
+            if (authorized != null) mapping[merchant.MerchantId] = merchant.EstabelecimentoId;
         }
         foreach (var item in events)
         {

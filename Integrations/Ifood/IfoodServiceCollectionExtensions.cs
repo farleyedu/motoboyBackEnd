@@ -78,10 +78,13 @@ public static class IfoodServiceCollectionExtensions
         services.AddHttpClient(Merchants.IfoodMerchantProbe.ClientName, (provider, client) =>
         {
             client.Timeout = TimeSpan.FromSeconds(provider.GetRequiredService<IOptionsMonitor<IfoodOptions>>().CurrentValue.HttpTimeoutSeconds);
-            client.MaxResponseContentBufferSize = 65536;
+            client.MaxResponseContentBufferSize = 1024 * 1024;
         }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false })
             .RedactLoggedHeaders(_ => true).RemoveAllLoggers();
         services.AddSingleton<Merchants.IIfoodMerchantProbe, Merchants.IfoodMerchantProbe>();
+        services.AddSingleton<Merchants.IIfoodMerchantDirectory, Merchants.IfoodMerchantDirectory>();
+        services.AddSingleton<Connections.IIfoodConnectionHealth, Connections.IfoodConnectionHealth>();
+        services.AddSingleton<Connections.IIfoodConnectionLifecycle, Connections.IfoodConnectionLifecycle>();
         services.AddSingleton<Completion.IIfoodDeliveryCodeClient, Completion.IfoodDeliveryCodeClient>();
         services.AddSingleton<Completion.IfoodCompletionService>();
         services.AddHostedService<Completion.IfoodCompletionWorker>();
