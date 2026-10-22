@@ -19,7 +19,7 @@ namespace APIBack.Atendimento
     public sealed record CanalView(
         Guid Id, Guid EstabelecimentoId, string PhoneNumberId, string NumeroE164, string? Nome, string Status, string ModoAtendimento,
         IReadOnlyList<string> Servicos, bool TemToken, DateTime? VerificadoEm, DateTime? UltimoRecebimentoEm,
-        DateTime? UltimoEnvioOkEm, string? UltimoErro, DateTime? UltimoErroEm);
+        DateTime? UltimoEnvioOkEm, string? UltimoErro, DateTime? UltimoErroEm, bool Central = false);
 
     public interface ICanaisWhatsappService
     {
@@ -395,6 +395,6 @@ namespace APIBack.Atendimento
 
         private static CanalView Ver(CanalWhatsapp c) => new(
             c.Id, c.IdEstabelecimento, c.PhoneNumberId, c.NumeroE164, c.Nome, c.Status, c.ModoAtendimento, c.Servicos, c.TemToken,
-            c.VerificadoEm, c.UltimoRecebimentoEm, c.UltimoEnvioOkEm, c.UltimoErro, c.UltimoErroEm);
+            c.VerificadoEm, c.UltimoRecebimentoEm, c.UltimoEnvioOkEm, c.UltimoErro, c.UltimoErroEm, c.Central);
     }
 }
