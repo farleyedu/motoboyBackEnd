@@ -25,6 +25,13 @@ internal static class IfoodSchemaProbe
     public static Task<bool> CompletionsAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction) =>
         Probe(connection, transaction, "completions", "SELECT to_regclass('ifood_delivery_completions') IS NOT NULL");
 
+    /// <summary>Vínculo item iFood → produto do cardápio (também exige o que o JOIN de leitura usa: cardápio, categoria e aviso de bag).</summary>
+    public static Task<bool> LinksAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction) =>
+        Probe(connection, transaction, "links", """
+SELECT to_regclass('ifood_produto_vinculo') IS NOT NULL AND to_regclass('cardapio_produto') IS NOT NULL AND to_regclass('cardapio_categoria') IS NOT NULL
+AND EXISTS(SELECT 1 FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='cardapio_produto' AND column_name='atencao_motoboy')
+""");
+
     public static Task<bool> BlockedCodeAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction) =>
         Probe(connection, transaction, "blocked-code", "SELECT to_regprocedure('ifood_delivery_blocked_code(uuid,integer,boolean)') IS NOT NULL");
 

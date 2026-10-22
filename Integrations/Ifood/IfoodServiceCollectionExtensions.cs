@@ -41,6 +41,7 @@ public static class IfoodServiceCollectionExtensions
         }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false })
             .RedactLoggedHeaders(_ => true).RemoveAllLoggers();
         services.AddSingleton<Orders.IIfoodOrderDetailsClient, Orders.IfoodOrderDetailsClient>();
+        services.AddSingleton<Orders.IfoodItemLinkService>();
         services.AddSingleton<Orders.IfoodOrderImportRepository>();
         services.AddSingleton<Orders.IfoodOrderImportService>();
         services.AddSingleton<Orders.IfoodOrderRefreshService>();

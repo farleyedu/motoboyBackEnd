@@ -16,7 +16,9 @@ public static class DeliveryChecklistRules
         {
             var product = order.Items[index];
             var key = "ifood:" + index;
-            items.Add(new() { Key = key, Name = product.Name, Quantity = product.Quantity, Unit = product.Unit, Note = product.Observations });
+            // Foto e aviso vêm do vínculo ao cardápio (item sem vínculo sai sem aviso). O aviso entra na versão; a foto, não.
+            items.Add(new() { Key = key, Name = product.Name, Quantity = product.Quantity, Unit = product.Unit, Note = product.Observations,
+                ImageUrl = product.ImagemUrl, Extra = product.AtencaoMotoboy });
             if (product.Options.ValueKind != JsonValueKind.Array) continue;
             var optionIndex = 0;
             foreach (var option in product.Options.EnumerateArray())
@@ -28,7 +30,11 @@ public static class DeliveryChecklistRules
                 items.Add(new() { Key = key + ":option:" + optionIndex++, Name = name, ParentName = product.Name, Quantity = quantity.Value });
             }
         }
-        return new() { Items = items, Version = Digest(JsonSerializer.Serialize(items)), DetailsUnavailable = items.Count == 0 };
+        // A versão é calculada sobre uma cópia sem foto: sem vínculo (foto e aviso vazios) o texto é idêntico ao de antes do vínculo, então
+        // conferências já feitas continuam valendo; trocar o aviso de bag (Extra) muda a versão e pede nova conferência (CHECKLIST_CHANGED).
+        var versioned = items.Select(i => new DeliveryChecklistItem { Key = i.Key, Name = i.Name, ParentName = i.ParentName,
+            Quantity = i.Quantity, Unit = i.Unit, ImageUrl = null, Note = i.Note, Extra = i.Extra }).ToList();
+        return new() { Items = items, Version = Digest(JsonSerializer.Serialize(versioned)), DetailsUnavailable = items.Count == 0 };
     }
 
     /// <summary>Pedido iFood cujo detalhe oficial não pôde ser lido: só a conferência manual justificada libera a coleta.</summary>

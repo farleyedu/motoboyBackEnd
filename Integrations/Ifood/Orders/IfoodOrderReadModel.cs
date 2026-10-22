@@ -10,7 +10,7 @@ public sealed record IfoodQueueView(IReadOnlyDictionary<int, IfoodPedidoIdentity
 public static class IfoodOrderReadModel
 {
     public static async Task<IReadOnlyDictionary<int, IfoodPedidoIdentityDto>> IdentitiesAsync(NpgsqlConnection connection, Guid store, int[] orders, NpgsqlTransaction? transaction = null) =>
-        (await LoadAsync(connection, store, orders, transaction)).Identities;
+        (await LoadAsync(connection, store, orders, transaction, includeLinks: false)).Identities;
 
     /// <summary>
     /// Leitura em lote para a fila: um único passe sobre os snapshots (payload lido e normalizado uma vez por pedido) em vez de
@@ -21,12 +21,26 @@ public static class IfoodOrderReadModel
 
     private sealed class BlockedRow { public int Pedido { get; set; } public string? Delivery { get; set; } public string? Departure { get; set; } }
 
-    private static async Task<IfoodQueueView> LoadAsync(NpgsqlConnection connection, Guid store, int[] orders, NpgsqlTransaction? transaction)
+    /// <summary>
+    /// Vínculos confirmados dos itens do pedido, lidos NO MESMO comando que o snapshot (mesma visão do banco do payload): produto
+    /// excluído não entra (o item volta a ser "sem vínculo"). Só acrescenta exibição; nada daqui toca preço, quantidade ou total.
+    /// </summary>
+    private const string LinksColumn = """
+,(SELECT jsonb_object_agg(v.chave_id,jsonb_build_object('produtoId',p.id,'imagemUrl',p.imagem_url,'categoria',c.nome,'atencao',p.atencao_motoboy))::text
+  FROM ifood_produto_vinculo v
+  JOIN cardapio_produto p ON p.id=v.produto_id AND p.id_estabelecimento=v.estabelecimento_id AND p.deleted_at IS NULL
+  LEFT JOIN cardapio_categoria c ON c.id=p.categoria_id
+  WHERE v.estabelecimento_id=l.estabelecimento_id AND v.merchant_id=l.merchant_id AND v.tipo='item' AND v.estado='confirmado'
+  AND v.chave_id IN (SELECT i->>'id' FROM jsonb_array_elements(CASE WHEN jsonb_typeof(s.payload->'items')='array' THEN s.payload->'items' ELSE '[]'::jsonb END) i)) AS Links
+""";
+
+    private static async Task<IfoodQueueView> LoadAsync(NpgsqlConnection connection, Guid store, int[] orders, NpgsqlTransaction? transaction, bool includeLinks = true)
     {
         var noOfficials = new Dictionary<int, IfoodImportedOrder>();
         if (orders.Length == 0 || !await IfoodSchemaProbe.OrdersAsync(connection, transaction))
             return new IfoodQueueView(new Dictionary<int, IfoodPedidoIdentityDto>(), noOfficials);
-        var rows = await connection.QueryAsync<Row>("""
+        var linksSql = includeLinks && await IfoodSchemaProbe.LinksAsync(connection, transaction) ? LinksColumn : ",NULL::text AS Links";
+        var rows = await connection.QueryAsync<Row>($"""
 SELECT l.pedido_id AS PedidoId,l.merchant_id AS MerchantId,l.external_order_id AS ExternalOrderId,l.display_number AS DisplayNumber,
 s.order_type AS OrderType,s.delivered_by AS DeliveredBy,s.order_amount AS OrderAmount,s.prepaid_amount AS PrepaidAmount,s.pending_amount AS PendingAmount,
 s.revision AS Revision,s.remote_status AS RemoteStatus,s.preparation_state AS PreparationState,s.synchronization_state AS SynchronizationState,
@@ -37,6 +51,7 @@ l.created_at_utc AS LinkedAtUtc
 ,(CASE WHEN COALESCE((to_jsonb(s)->>'data_is_current')::boolean,TRUE) AND s.payload->'total'->>'subTotal' ~ '^-?[0-9]+(\.[0-9]+)?$' THEN s.payload->'total'->>'subTotal' END)::numeric AS Subtotal
 ,(CASE WHEN COALESCE((to_jsonb(s)->>'data_is_current')::boolean,TRUE) AND s.payload->'total'->>'deliveryFee' ~ '^-?[0-9]+(\.[0-9]+)?$' THEN s.payload->'total'->>'deliveryFee' END)::numeric AS DeliveryFee
 ,CASE WHEN jsonb_typeof(s.payload->'items')='array' THEN jsonb_array_length(s.payload->'items') ELSE 0 END AS ItemCount
+{linksSql}
 FROM ifood_order_links l JOIN ifood_order_snapshots s USING(merchant_id,external_order_id,estabelecimento_id)
 WHERE l.estabelecimento_id=@Store AND l.pedido_id=ANY(@Orders)
 """, new { Store = store, Orders = orders }, transaction);
@@ -63,7 +78,7 @@ WHERE l.estabelecimento_id=@Store AND l.pedido_id=ANY(@Orders)
                 identity.DataIsCurrent = false; identity.SynchronizationState = "review";
                 identity.ReviewReasons = new[] { "IFOOD_ORDER_DATA_REVIEW" }; continue;
             }
-            normalized[row.PedidoId] = order;
+            normalized[row.PedidoId] = ApplyLinks(order, row.Links);
             // Mesma regra do detalhe oficial: só cobra no destino enquanto o snapshot está sincronizado e o pedido aberto.
             if (row.SynchronizationState == "synced" && row.RemoteStatus is not ("CANCELLED" or "CONCLUDED")) collectable.Add(row.PedidoId);
             identity.IsTest = order.IsTest;
@@ -139,20 +154,53 @@ FROM unnest(@Orders) AS p
     public static async Task<IfoodImportedOrder?> DetailsAsync(NpgsqlConnection connection, Guid store, int pedido, bool collectionAllowed=true, NpgsqlTransaction? transaction = null)
     {
         if (!await IfoodSchemaProbe.ItemsAsync(connection, transaction)) return null;
-        var row = await connection.QuerySingleOrDefaultAsync<Detail>("""
+        var linksSql = await IfoodSchemaProbe.LinksAsync(connection, transaction) ? LinksColumn : ",NULL::text AS Links";
+        var row = await connection.QuerySingleOrDefaultAsync<Detail>($"""
 SELECT l.merchant_id AS MerchantId,l.external_order_id AS ExternalOrderId,s.payload::text AS Payload,
 COALESCE((to_jsonb(s)->>'data_is_current')::boolean,TRUE) AS DataIsCurrent,
 (s.synchronization_state='synced' AND COALESCE(s.remote_status,'') NOT IN('CANCELLED','CONCLUDED')) AS CollectionAllowed
+{linksSql}
 FROM ifood_order_links l JOIN ifood_order_snapshots s USING(merchant_id,external_order_id,estabelecimento_id)
 WHERE l.estabelecimento_id=@Store AND l.pedido_id=@Pedido
 """, new { Store = store, Pedido = pedido }, transaction);
         if (row == null || !row.DataIsCurrent) return null;
         // Um snapshot que a normalização atual recusa (itens vazios, valor inválido) não pode derrubar a fila nem o detalhe:
         // IdentitiesAsync já o trata como "em revisão" e quem chama recebe null.
-        try { return IfoodOrderNormalizer.Normalize(row.Payload, row.MerchantId, row.ExternalOrderId, row.CollectionAllowed && collectionAllowed); }
+        try { return ApplyLinks(IfoodOrderNormalizer.Normalize(row.Payload, row.MerchantId, row.ExternalOrderId, row.CollectionAllowed && collectionAllowed), row.Links); }
         catch (IfoodIntegrationException) { return null; }
     }
-    private sealed class Row : IfoodPedidoIdentityBase { public int PedidoId { get; set; } }
+
+    /// <summary>
+    /// Acrescenta aos itens o que vem do produto vinculado (foto de reserva, categoria, aviso de bag). Preço, quantidade, unidade e
+    /// total ficam exatamente como no snapshot; item sem vínculo sai como está, e JSON de vínculo ilegível nunca derruba a leitura.
+    /// </summary>
+    internal static IfoodImportedOrder ApplyLinks(IfoodImportedOrder order, string? linksJson)
+    {
+        if (string.IsNullOrEmpty(linksJson)) return order;
+        try
+        {
+            using var document = System.Text.Json.JsonDocument.Parse(linksJson);
+            var links = document.RootElement;
+            if (links.ValueKind != System.Text.Json.JsonValueKind.Object) return order;
+            var items = new List<IfoodImportedItem>(order.Items.Count);
+            foreach (var item in order.Items)
+            {
+                if (item.ExternalItemId == null || !links.TryGetProperty(item.ExternalItemId, out var link) || link.ValueKind != System.Text.Json.JsonValueKind.Object ||
+                    !link.TryGetProperty("produtoId", out var id) || !id.TryGetGuid(out var product)) { items.Add(item); continue; }
+                items.Add(item with
+                {
+                    ProdutoId = product, Vinculado = true,
+                    ImagemUrl = item.ImagemUrl ?? IfoodOrderNormalizer.Text(link, "imagemUrl"),
+                    CategoriaNome = IfoodOrderNormalizer.Text(link, "categoria"),
+                    AtencaoMotoboy = link.TryGetProperty("atencao", out var attention) && attention.ValueKind == System.Text.Json.JsonValueKind.True
+                });
+            }
+            return order.WithItems(items);
+        }
+        catch (Exception ex) when (ex is System.Text.Json.JsonException or InvalidOperationException) { return order; }
+    }
+
+    private sealed class Row : IfoodPedidoIdentityBase { public int PedidoId { get; set; } public string? Links { get; set; } }
     public static async Task<IReadOnlyList<IfoodDisputeSummaryDto>> DisputesAsync(NpgsqlConnection connection, Guid store, int pedido, NpgsqlTransaction? transaction = null)
     {
         if (!await connection.ExecuteScalarAsync<bool>("SELECT to_regclass('ifood_disputes') IS NOT NULL AND to_regclass('ifood_order_links') IS NOT NULL", transaction: transaction))
@@ -180,5 +228,5 @@ WHERE d.estabelecimento_id=@Store AND l.pedido_id=@Pedido ORDER BY d.expires_at_
         public bool DataIsCurrent { get; set; }
     }
     private sealed class Detail { public Guid MerchantId { get; set; } public Guid ExternalOrderId { get; set; } public string Payload { get; set; } = "{}";
-        public bool DataIsCurrent { get; set; } public bool CollectionAllowed { get; set; } }
+        public bool DataIsCurrent { get; set; } public bool CollectionAllowed { get; set; } public string? Links { get; set; } }
 }

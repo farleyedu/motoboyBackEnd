@@ -149,6 +149,7 @@ builder.Services.AddScoped<IProdutoAtendimentoRepository, ProdutoAtendimentoRepo
 builder.Services.AddScoped<IIngredienteRepository, IngredienteRepository>();
 builder.Services.AddScoped<IIngredienteService, IngredienteService>();
 builder.Services.AddScoped<CardapioMotoboyAttentionRepository>();
+builder.Services.AddScoped<IfoodProdutoVinculoRepository>();
 builder.Services.AddScoped<IPedidoConsultaRepository, PedidoConsultaRepository>();
 builder.Services.AddScoped<IAtendimentoRepository, AtendimentoRepository>();
 builder.Services.AddScoped<IRastreioRepository, RastreioRepository>();

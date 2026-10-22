@@ -705,6 +705,18 @@ Status: aprovado pelo usuário, implementado e validado localmente. A lista abai
 - **Validação:** backend (`dotnet test --filter Ifood|RiderWork`, PostgreSQL isolado e descartável, instância removida): 324 aprovados na primeira rodada e 1 falha do próprio teste (limpeza com chave estrangeira), corrigida; **rodada final: 336 aprovados, 0 falhas, 0 ignorados** ([TRX](validacao-ifood/if16-17-final.trx)), com 11 testes unitários do controller de diagnóstico. Painel: 75 testes (`features/ifood` e `configuracoes`), typecheck limpo. App: 43 testes Jest, sem erro de tipo em `src/delivery`.
 - **Limites:** nenhum item desta entrada foi exercitado contra o iFood real; o app precisa de **novo build** para levar o motivo de bloqueio e o aviso de cancelamento (o build 8 não os tem).
 
+### 21/10/2026 — Vínculo dos itens do pedido iFood ao cardápio (Fase 1, backend)
+
+- Estado: **Validada localmente** (PostgreSQL isolado). Sem prova no sandbox; painel e app ainda não consomem os campos novos.
+- **Regra de §4.4 mantida:** valores, quantidades, unidades e totais continuam 100% do snapshot oficial; o vínculo só acrescenta exibição (foto, categoria, aviso de bag) e o JSON do snapshot nunca é reescrito. Item sem vínculo é válido, e nenhuma falha do vínculo derruba importação, fila, detalhe ou entrega.
+- **Banco:** `ifood_produto_vinculo` (migration `20261024_01`, rollback `.down.sql`, verify `20261024_02`). Chave `(estabelecimento_id, merchant_id, tipo, chave_id)`; FK composta para `ifood_connections` e para `cardapio_produto(id, id_estabelecimento)` (produto de outra loja é impossível); `confirmado` exige produto e origem. Só `tipo='item'` é gravado nesta fase.
+- **Resolução:** (1) vínculo `confirmado` pelo `items[].id` vale e para; (2) sem vínculo, exatamente UM produto ativo da mesma loja com o mesmo nome (`lower(btrim(regexp_replace(nome,'\s+',' ','g')))`; acento diferencia) vira `confirmado` com origem `nome`, zero ou mais de um vira `pendente`; (3) `desfeito` por pessoa nunca é religado sozinho. `externalCode` é só metadado.
+- **Registro:** `IfoodItemLinkService` roda DEPOIS do commit de `IfoodOrderImportRepository.ImportAsync`, em transação própria; falha só vira log. Reprocessar o pedido garante a chave sem somar `pedidos_count`. `CardapioRepository` reavalia os pendentes da loja ao criar/renomear produto. Script manual `Migrations/Delivery/manual/20261024_ifood_produto_vinculo_backfill.sql` registra as chaves dos snapshots antigos (idempotente).
+- **Leitura:** `IfoodOrderReadModel` traz os vínculos no MESMO comando SQL do snapshot (fila e detalhe); produto excluído conta como sem vínculo. Cada item ganha, como campos opcionais, `produtoId`, `imagemUrl` (foto do iFood antes da do produto), `categoriaNome`, `atencaoMotoboy`, `vinculado` e `externalCode`. `queue.Version` e `revision` não dependem do vínculo.
+- **Checklist:** `DeliveryChecklistRules.BuildIfood` preenche `ImageUrl` e `Extra` (aviso de bag); a `Version` é calculada sobre cópia sem foto, então sem vínculo o hash é idêntico ao anterior e trocar o aviso de bag exige nova conferência (`CHECKLIST_CHANGED`).
+- **API do painel** (`Cardapio`/`editar`, loja sempre do token, só loja com conexão iFood `authorized`): `GET api/v2/cardapio/ifood/resumo`, `GET .../ifood/pendentes`, `GET .../produtos/{id}/ifood`, `POST .../produtos/{id}/ifood/vinculos`, `DELETE .../ifood/vinculos/{id}`.
+- **Fora de escopo:** Catalog API do iFood, vínculo de complementos, botão "ignorar", painel e app.
+
 ### Procedimento para retomar o trabalho
 
 1. Ler este plano, instruções vigentes e registros das últimas tarefas.

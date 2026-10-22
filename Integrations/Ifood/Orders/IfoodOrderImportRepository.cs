@@ -15,7 +15,10 @@ public sealed record IfoodDetailsReservation(Guid MerchantId, Guid ExternalOrder
 public sealed class IfoodOrderImportRepository
 {
     private readonly NpgsqlDataSource _source;
-    public IfoodOrderImportRepository(NpgsqlDataSource source) => _source = source;
+    private readonly IfoodItemLinkService? _links;
+    private readonly ILogger<IfoodOrderImportRepository>? _logger;
+    public IfoodOrderImportRepository(NpgsqlDataSource source, IfoodItemLinkService? links = null, ILogger<IfoodOrderImportRepository>? logger = null)
+        => (_source, _links, _logger) = (source, links, logger);
 
     public Task<IfoodDetailsReservation?> ReserveDetailsAsync(IfoodInboxReservation item, int seconds, CancellationToken ct, bool force = false) => Guard(async () =>
     {
@@ -203,8 +206,20 @@ WHERE id=@Id AND merchant_id=@MerchantId AND estabelecimento_id=@Estabelecimento
 """, new { item.Id, item.MerchantId, item.EstabelecimentoId, item.LeaseId, Recovered = recovered }, transaction, cancellationToken: ct));
         if (completed != 1) throw new IfoodIntegrationException("IFOOD_EVENT_LEASE_LOST", retryable: true);
         await transaction.CommitAsync(ct);
+        await RegisterItemLinksAsync(item, order, created: !existing.HasValue, ct);
         return pedido;
     });
+
+    /// <summary>
+    /// Depois do commit, fora da transação crítica: o vínculo só enriquece a exibição, então qualquer falha (inclusive do próprio
+    /// serviço) vira log e o pedido continua importado.
+    /// </summary>
+    private async Task RegisterItemLinksAsync(IfoodInboxReservation item, IfoodImportedOrder order, bool created, CancellationToken ct)
+    {
+        if (_links == null) return;
+        try { await _links.RegisterAsync(item.EstabelecimentoId, item.MerchantId, order.Items, created, ct); }
+        catch (Exception ex) { _logger?.LogWarning("Vínculo de itens iFood não registrado: {Error}.", ex.GetType().Name); }
+    }
 
     private static string RecoveryPayload(string json)
     {

@@ -1191,6 +1191,7 @@ INSERT INTO cardapio_produto (
                 await connection.ExecuteAsync(sql, entity, transaction);
                 await SubstituirProdutoGruposAsync(connection, transaction, entity.Id, entity.GrupoIds);
                 await transaction.CommitAsync();
+                await ReavaliarVinculosIfoodAsync(entity.IdEstabelecimento, entity.Nome);
                 return entity.Id;
             }
             catch (PostgresException ex) when (ex.SqlState == UniqueViolation)
@@ -1251,6 +1252,7 @@ UPDATE cardapio_produto
 
                 await SubstituirProdutoGruposAsync(connection, transaction, entity.Id, entity.GrupoIds);
                 await transaction.CommitAsync();
+                await ReavaliarVinculosIfoodAsync(entity.IdEstabelecimento, entity.Nome);
                 return true;
             }
             catch (PostgresException ex) when (ex.SqlState == UniqueViolation)
@@ -1262,6 +1264,24 @@ UPDATE cardapio_produto
             {
                 await transaction.RollbackAsync();
                 throw;
+            }
+        }
+
+        /// <summary>
+        /// Produto criado ou renomeado: itens iFood pendentes da loja com o mesmo nome passam a apontar para ele (só se for o único
+        /// produto com esse nome). Depois do commit e em conexão própria: o vínculo é só exibição e nunca pode desfazer o cardápio.
+        /// </summary>
+        private async Task ReavaliarVinculosIfoodAsync(Guid idEstabelecimento, string nome)
+        {
+            try
+            {
+                await using var connection = new NpgsqlConnection(_connectionString);
+                await connection.OpenAsync();
+                await APIBack.Integrations.Ifood.Orders.IfoodItemLinkService.ReevaluatePendingAsync(connection, idEstabelecimento, nome);
+            }
+            catch (Exception)
+            {
+                // Melhor esforço: o próximo pedido iFood com o item tenta de novo.
             }
         }
 

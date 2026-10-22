@@ -52,14 +52,29 @@ public sealed class IfoodImportedOrder
     public double? Latitude { get; init; }
     public double? Longitude { get; init; }
     public JsonElement Benefits { get; init; }
-    public IReadOnlyList<IfoodImportedItem> Items { get; init; } = Array.Empty<IfoodImportedItem>();
+    public IReadOnlyList<IfoodImportedItem> Items { get; internal set; } = Array.Empty<IfoodImportedItem>();
+    /// <summary>Mesmo pedido com os itens enriquecidos pelo vínculo ao cardápio. Preço, quantidade e total nunca passam por aqui.</summary>
+    public IfoodImportedOrder WithItems(IReadOnlyList<IfoodImportedItem> items)
+    {
+        var copy = (IfoodImportedOrder)MemberwiseClone();
+        copy.Items = items;
+        return copy;
+    }
     public IReadOnlyList<IfoodImportedPayment> Payments { get; init; } = Array.Empty<IfoodImportedPayment>();
     [JsonIgnore] public string PayloadJson { get; init; } = "{}";
     public override string ToString() => "[pedido iFood; dados operacionais omitidos]";
 }
 
+/// <summary>
+/// Os dez primeiros campos são os do snapshot oficial. Os demais são opcionais e só de exibição: <c>ExternalCode</c>, <c>ImagemUrl</c>,
+/// <c>UniqueId</c> e <c>Ean</c> vêm do payload; <c>ProdutoId</c>, <c>CategoriaNome</c>, <c>AtencaoMotoboy</c> e <c>Vinculado</c> vêm do vínculo
+/// ao cardápio (preenchidos na leitura, nunca na importação).
+/// </summary>
 public sealed record IfoodImportedItem(string? ExternalItemId, string Name, decimal Quantity, string? Unit,
-    decimal? UnitPrice, decimal? Price, decimal? OptionsPrice, decimal? TotalPrice, string? Observations, JsonElement Options);
+    decimal? UnitPrice, decimal? Price, decimal? OptionsPrice, decimal? TotalPrice, string? Observations, JsonElement Options,
+    string? ExternalCode = null, string? ImagemUrl = null,
+    [property: JsonIgnore] string? UniqueId = null, [property: JsonIgnore] string? Ean = null,
+    Guid? ProdutoId = null, string? CategoriaNome = null, bool AtencaoMotoboy = false, bool Vinculado = false);
 public sealed record IfoodImportedPayment(decimal? Value, string? Currency, string? Type, string? Method,
     string? CardBrand, string? Wallet, decimal? ChangeFor);
 
@@ -130,7 +145,8 @@ public static class IfoodOrderNormalizer
             var itemTotal = Money(item, "totalPrice"); var unitPrice = Number(item, "unitPrice");
             if (itemTotal == null || unitPrice == null) itemReview = true;
             items.Add(new(Text(item, "id"), name, quantity, Text(item, "unit"), unitPrice, Money(item, "price"),
-                Money(item, "optionsPrice"), itemTotal, Text(item, "observations"), CloneOr(options, "[]")));
+                Money(item, "optionsPrice"), itemTotal, Text(item, "observations"), CloneOr(options, "[]"),
+                Text(item, "externalCode"), DisplayUrl(Text(item, "imageUrl")), Text(item, "uniqueId"), Text(item, "ean")));
         }
         var methods = new List<IfoodImportedPayment>(); var methodArray = Field(payments, "methods");
         if (methodArray.ValueKind == JsonValueKind.Array)
@@ -193,6 +209,10 @@ public static class IfoodOrderNormalizer
             Items = items, Payments = methods, PayloadJson = sanitized
         };
     }
+
+    /// <summary>Foto do item para exibição: só endereço http(s) absoluto; qualquer outra coisa vira "sem foto" (nunca falha a importação).</summary>
+    internal static string? DisplayUrl(string? value) =>
+        value is { Length: <= 2048 } && Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme is "http" or "https" ? value : null;
 
     internal static JsonElement Field(JsonElement value, string key) => value.ValueKind == JsonValueKind.Object && value.TryGetProperty(key, out var field) ? field : default;
     internal static string? Text(JsonElement value, string key)
