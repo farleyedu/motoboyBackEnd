@@ -64,6 +64,19 @@ public sealed class IfoodConnectionDeliveryResult
     public int OrdersUpdated { get; set; }
 }
 
+public sealed class IfoodStoreConnectionRequest
+{
+    // Texto, porque quem digita pode errar o formato: o servidor valida e explica.
+    public string? MerchantId { get; set; }
+}
+
+public sealed class IfoodMerchantCheckDto
+{
+    public bool Ok { get; set; }
+    public string Code { get; set; } = "";
+    public string Message { get; set; } = "";
+}
+
 public sealed class IfoodConnectionRequest
 {
     public Guid MerchantId { get; set; }

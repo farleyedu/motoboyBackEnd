@@ -40,6 +40,8 @@ public sealed class IfoodDiagnosticsControllerTests
         public Task<IReadOnlyList<IfoodConnectionRow>> ListConnectionsAsync(CancellationToken ct = default) => throw new NotSupportedException();
         public Task<IfoodConnectionRow?> GetStoreConnectionAsync(Guid estabelecimentoId, CancellationToken ct = default) => throw new NotSupportedException();
         public Task AuthorizeConnectionAsync(Guid merchantId, Guid estabelecimentoId, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task RequestStoreConnectionAsync(Guid merchantId, Guid estabelecimentoId, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<bool> DisconnectStoreAsync(Guid estabelecimentoId, CancellationToken ct = default) => throw new NotSupportedException();
         public Task RevokeConnectionAsync(Guid merchantId, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<int> SetConnectionDeliveryAsync(Guid merchantId, bool enabled, bool applyToOpenOrders = false, CancellationToken ct = default) => throw new NotSupportedException();
     }

@@ -13,6 +13,10 @@ public interface IIfoodRuntimeSettingsRepository
     // Conexão mais recente de UMA loja; nunca devolve dados de outro estabelecimento.
     Task<IfoodConnectionRow?> GetStoreConnectionAsync(Guid estabelecimentoId, CancellationToken ct = default);
     Task AuthorizeConnectionAsync(Guid merchantId, Guid estabelecimentoId, CancellationToken ct = default);
+    // A propria loja informa o merchant: a conexao fica 'pending' (nada e consultado nem importado) ate a Gestao autorizar.
+    Task RequestStoreConnectionAsync(Guid merchantId, Guid estabelecimentoId, CancellationToken ct = default);
+    // A propria loja desfaz a conexao (pendente ou autorizada). Falso se nao havia conexao ativa.
+    Task<bool> DisconnectStoreAsync(Guid estabelecimentoId, CancellationToken ct = default);
     Task RevokeConnectionAsync(Guid merchantId, CancellationToken ct = default);
     // Valor que os pedidos NOVOS da loja herdam para a entrega Zippy; não altera pedidos já importados.
     // applyToOpenOrders também muda os pedidos de entrega da loja que ainda não terminaram no iFood.
@@ -112,6 +116,52 @@ WHERE ifood_connections.estabelecimento_id = EXCLUDED.estabelecimento_id
         }
         if (affected == 0) throw new IfoodIntegrationException("IFOOD_CONNECTION_MERCHANT_LINKED_ELSEWHERE");
         await tx.CommitAsync(ct);
+    }
+
+    public async Task RequestStoreConnectionAsync(Guid merchantId, Guid estabelecimentoId, CancellationToken ct = default)
+    {
+        if (merchantId == Guid.Empty || estabelecimentoId == Guid.Empty)
+            throw new IfoodIntegrationException("IFOOD_CONNECTION_INVALID_INPUT");
+        await using var connection = await _source.OpenConnectionAsync(ct);
+        await using var tx = await connection.BeginTransactionAsync(ct);
+        var existing = await connection.QuerySingleOrDefaultAsync<Guid?>(new CommandDefinition(
+            "SELECT estabelecimento_id FROM ifood_connections WHERE merchant_id=@MerchantId FOR UPDATE",
+            new { MerchantId = merchantId }, tx, cancellationToken: ct));
+        if (existing is { } current && current != estabelecimentoId)
+            throw new IfoodIntegrationException("IFOOD_CONNECTION_MERCHANT_LINKED_ELSEWHERE");
+        var otherActive = await connection.ExecuteScalarAsync<bool>(new CommandDefinition("""
+SELECT EXISTS (SELECT 1 FROM ifood_connections WHERE estabelecimento_id=@EstabelecimentoId AND merchant_id<>@MerchantId AND revoked_at_utc IS NULL)
+""", new { EstabelecimentoId = estabelecimentoId, MerchantId = merchantId }, tx, cancellationToken: ct));
+        if (otherActive) throw new IfoodIntegrationException("IFOOD_CONNECTION_STORE_HAS_ACTIVE");
+        int affected;
+        try
+        {
+            // Merchant ja autorizado desta mesma loja nao volta para pendente; so um merchant novo ou revogado fica pendente.
+            affected = await connection.ExecuteAsync(new CommandDefinition("""
+INSERT INTO ifood_connections(merchant_id, estabelecimento_id, status, authorized_at_utc, revoked_at_utc)
+VALUES (@MerchantId, @EstabelecimentoId, 'pending', NULL, NULL)
+ON CONFLICT (merchant_id) DO UPDATE SET status='pending', authorized_at_utc=NULL, revoked_at_utc=NULL, updated_at_utc=NOW()
+WHERE ifood_connections.estabelecimento_id = EXCLUDED.estabelecimento_id AND ifood_connections.status IN ('revoked','disabled')
+""", new { MerchantId = merchantId, EstabelecimentoId = estabelecimentoId }, tx, cancellationToken: ct));
+        }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.ForeignKeyViolation)
+        {
+            throw new IfoodIntegrationException("IFOOD_CONNECTION_INVALID_INPUT");
+        }
+        // Ja existia, da mesma loja e pendente ou autorizada: nada a mudar.
+        if (affected == 0 && existing is null) throw new IfoodIntegrationException("IFOOD_CONNECTION_MERCHANT_LINKED_ELSEWHERE");
+        await tx.CommitAsync(ct);
+    }
+
+    public async Task<bool> DisconnectStoreAsync(Guid estabelecimentoId, CancellationToken ct = default)
+    {
+        if (estabelecimentoId == Guid.Empty) return false;
+        await using var connection = await _source.OpenConnectionAsync(ct);
+        var affected = await connection.ExecuteAsync(new CommandDefinition("""
+UPDATE ifood_connections SET status='revoked', revoked_at_utc=NOW(), updated_at_utc=NOW()
+WHERE estabelecimento_id=@EstabelecimentoId AND revoked_at_utc IS NULL
+""", new { EstabelecimentoId = estabelecimentoId }, cancellationToken: ct));
+        return affected > 0;
     }
 
     public async Task RevokeConnectionAsync(Guid merchantId, CancellationToken ct = default)

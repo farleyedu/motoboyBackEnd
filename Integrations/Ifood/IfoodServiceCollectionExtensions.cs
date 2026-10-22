@@ -41,6 +41,7 @@ public static class IfoodServiceCollectionExtensions
         }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false })
             .RedactLoggedHeaders(_ => true).RemoveAllLoggers();
         services.AddSingleton<Orders.IIfoodOrderDetailsClient, Orders.IfoodOrderDetailsClient>();
+        services.AddSingleton<Orders.IfoodItemLinkService>();
         services.AddSingleton<Orders.IfoodOrderImportRepository>();
         services.AddSingleton<Orders.IfoodOrderImportService>();
         services.AddSingleton<Orders.IfoodOrderRefreshService>();
@@ -74,6 +75,13 @@ public static class IfoodServiceCollectionExtensions
             client.MaxResponseContentBufferSize = 32768;
         }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false })
             .RedactLoggedHeaders(_ => true).RemoveAllLoggers();
+        services.AddHttpClient(Merchants.IfoodMerchantProbe.ClientName, (provider, client) =>
+        {
+            client.Timeout = TimeSpan.FromSeconds(provider.GetRequiredService<IOptionsMonitor<IfoodOptions>>().CurrentValue.HttpTimeoutSeconds);
+            client.MaxResponseContentBufferSize = 65536;
+        }).ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false })
+            .RedactLoggedHeaders(_ => true).RemoveAllLoggers();
+        services.AddSingleton<Merchants.IIfoodMerchantProbe, Merchants.IfoodMerchantProbe>();
         services.AddSingleton<Completion.IIfoodDeliveryCodeClient, Completion.IfoodDeliveryCodeClient>();
         services.AddSingleton<Completion.IfoodCompletionService>();
         services.AddHostedService<Completion.IfoodCompletionWorker>();

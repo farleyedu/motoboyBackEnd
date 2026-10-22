@@ -113,10 +113,65 @@ public sealed class IfoodConfigController(IIfoodRuntimeSettingsRepository reposi
     };
 }
 
-// Visão do restaurante em Configurações > iFood: somente leitura e restrita à loja do token.
+// Visão do restaurante: o estado da própria loja e o que ela faz sozinha (informar o merchant e desconectar).
+// Quem autoriza de verdade a conexão é a Gestão; sem credenciais e sem lista de outras lojas.
 [ApiController, Route("api/v2/ifood/store")]
-public sealed class IfoodStoreController(IIfoodRuntimeSettingsRepository repository) : ControllerBase
+public sealed class IfoodStoreController(IIfoodRuntimeSettingsRepository repository, Integrations.Ifood.Merchants.IIfoodMerchantProbe probe) : ControllerBase
 {
+    /// <summary>A loja informa o ID dela no iFood. Fica "aguardando": a Gestão pede a autorização no iFood e liga.</summary>
+    [HttpPost("connection"), RequirePermission("Delivery", "integracao_ifood")]
+    public async Task<IActionResult> Connect(IfoodStoreConnectionRequest request, CancellationToken ct)
+    {
+        Response.Headers.CacheControl = "no-store";
+        var store = HttpContext.GetEstabelecimentoId();
+        if (store is null)
+            return BadRequest(ApiResponse<object>.Fail("Selecione um estabelecimento.", "IFOOD_STORE_NOT_SELECTED"));
+        if (!Guid.TryParse(request.MerchantId?.Trim(), out var merchantId) || merchantId == Guid.Empty)
+            return BadRequest(ApiResponse<object>.Fail("O ID da loja no iFood é um código no formato 00000000-0000-0000-0000-000000000000.", "IFOOD_CONNECTION_INVALID_INPUT"));
+        try
+        {
+            await repository.RequestStoreConnectionAsync(merchantId, store.Value, ct);
+            return Ok(ApiResponse<object>.Ok(new { }));
+        }
+        catch (IfoodIntegrationException ex)
+        {
+            return ex.Code switch
+            {
+                "IFOOD_CONNECTION_MERCHANT_LINKED_ELSEWHERE" => StatusCode(409, ApiResponse<object>.Fail("Este ID já está ligado a outra loja. Se ele é seu, fale com a Zippy.", ex.Code)),
+                "IFOOD_CONNECTION_STORE_HAS_ACTIVE" => StatusCode(409, ApiResponse<object>.Fail("Esta loja já tem uma conexão com o iFood. Desconecte antes de informar outro ID.", ex.Code)),
+                _ => BadRequest(ApiResponse<object>.Fail("Não foi possível registrar o ID da loja.", ex.Code))
+            };
+        }
+    }
+
+    [HttpDelete("connection"), RequirePermission("Delivery", "integracao_ifood")]
+    public async Task<IActionResult> Disconnect(CancellationToken ct)
+    {
+        Response.Headers.CacheControl = "no-store";
+        var store = HttpContext.GetEstabelecimentoId();
+        if (store is null)
+            return BadRequest(ApiResponse<object>.Fail("Selecione um estabelecimento.", "IFOOD_STORE_NOT_SELECTED"));
+        var disconnected = await repository.DisconnectStoreAsync(store.Value, ct);
+        return disconnected
+            ? Ok(ApiResponse<object>.Ok(new { }))
+            : NotFound(ApiResponse<object>.Fail("Esta loja não tem conexão com o iFood.", "IFOOD_CONNECTION_NOT_FOUND"));
+    }
+
+    /// <summary>Pergunta ao iFood, agora, se esta loja está autorizada para a Zippy. Não grava nada.</summary>
+    [HttpPost("connection/verify"), RequirePermission("Delivery", "integracao_ifood")]
+    public async Task<IActionResult> Verify(CancellationToken ct)
+    {
+        Response.Headers.CacheControl = "no-store";
+        var store = HttpContext.GetEstabelecimentoId();
+        if (store is null)
+            return BadRequest(ApiResponse<object>.Fail("Selecione um estabelecimento.", "IFOOD_STORE_NOT_SELECTED"));
+        var row = await repository.GetStoreConnectionAsync(store.Value, ct);
+        if (row is null || row.RevokedAtUtc is not null)
+            return Ok(ApiResponse<IfoodMerchantCheckDto>.Ok(new IfoodMerchantCheckDto { Ok = false, Code = "NOT_CONNECTED", Message = "Esta loja ainda não informou o ID do iFood." }));
+        var check = await probe.CheckAsync(row.MerchantId, ct);
+        return Ok(ApiResponse<IfoodMerchantCheckDto>.Ok(new IfoodMerchantCheckDto { Ok = check.Ok, Code = check.Code, Message = check.Message }));
+    }
+
     [HttpGet, RequirePermission("Delivery", "integracao_ifood")]
     public async Task<IActionResult> Get(CancellationToken ct)
     {

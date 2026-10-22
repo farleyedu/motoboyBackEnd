@@ -39,7 +39,7 @@ namespace APIBack.Atendimento
         Task<CanalView> ConectarAsync(AtendimentoAtor ator, Guid estabelecimentoId, ConectarCanalRequest request);
         /// <summary>A propria loja desconecta o numero dela (o central de testes continua so da Gestao).</summary>
         Task DesconectarAsync(AtendimentoAtor ator, Guid canalId);
-        /// <summary>Confere na Meta se o ID existe e e do telefone cadastrado. So a Gestao.</summary>
+        /// <summary>Confere na Meta se o ID existe e e do telefone cadastrado. A Gestao ou quem configura o WhatsApp da propria loja.</summary>
         Task<VerificacaoCanal> VerificarAsync(AtendimentoAtor ator, Guid canalId);
     }
 
@@ -326,7 +326,8 @@ namespace APIBack.Atendimento
         public async Task<VerificacaoCanal> VerificarAsync(AtendimentoAtor ator, Guid canalId)
         {
             var canal = await ObterOuFalharAsync(canalId);
-            ExigirGestao(ator, "verificar_canal", canal.IdEstabelecimento);
+            if (canal.Central) ExigirGestao(ator, "verificar_canal", canal.IdEstabelecimento);
+            else ExigirDonoOuGestao(ator, "verificar_canal", canal.IdEstabelecimento);
             return await _verificador.VerificarAsync(canal);
         }
 
