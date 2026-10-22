@@ -35,7 +35,9 @@ namespace APIBack.Attributes
                 success = false,
                 error = "Este recurso nao faz parte do plano da loja.",
                 code = "MODULO_INATIVO",
-                modulo = Modulo
+                modulo = Modulo,
+                details = APIBack.Service.ErrosOperacionais.Detalhes(APIBack.Service.ErrosOperacionais.ModuloInativo,
+                    dados: new System.Collections.Generic.Dictionary<string, object?> { ["modulo"] = Modulo })
             })
             {
                 StatusCode = StatusCodes.Status403Forbidden

@@ -70,9 +70,9 @@ namespace APIBack.Service
             if (_situacoes == null) return;
             var situacao = await _situacoes.ObterAsync(estabelecimentoId);
             if (situacao?.Situacao is SituacoesComerciais.Bloqueado or SituacoesComerciais.Implantacao)
-                throw new KeyNotFoundException("Cardapio indisponivel no momento.");
+                throw new KeyNotFoundException(CardapioPublicService.MensagemIndisponivel);
             if (!await _situacoes.TemModuloAsync(estabelecimentoId, "CARDAPIOWEB"))
-                throw new KeyNotFoundException("Cardapio indisponivel no momento.");
+                throw new KeyNotFoundException(CardapioPublicService.MensagemIndisponivel);
         }
 
         public async Task<CardapioClienteIdentificadoDto> IdentificarClienteRecenteAsync(Guid estabelecimentoId, string? telefoneBruto)

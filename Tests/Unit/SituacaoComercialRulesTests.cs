@@ -10,6 +10,10 @@ namespace APIBack.Tests.Unit
         [InlineData("/api/auth/me", "GET")]
         [InlineData("/api/me/estabelecimentos", "GET")]
         [InlineData("/api/v2/comercial/situacao", "GET")]
+        [InlineData("/api/v2/comercial/prontidao", "GET")]
+        [InlineData("/api/v2/comercial/iniciar-operacao", "POST")]
+        [InlineData("/api/gestao/estabelecimentos/9f1c4c5e-8a42-4a76-9a39-111111111111/situacao", "POST")]
+        [InlineData("/api/admin/usuarios", "GET")]
         [InlineData("/api/v2/motoboys/me/session", "GET")]
         [InlineData("/api/v2/motoboys/me/session", "DELETE")]
         [InlineData("/api/v2/motoboys/me/session/heartbeat", "POST")]
@@ -36,7 +40,7 @@ namespace APIBack.Tests.Unit
         [InlineData("/api/v2/motoboys/me/session/stops/current/pickup", "POST")]
         [InlineData("/api/v2/motoboys/me/session/stops/123/transfer", "POST")]
         [InlineData("/api/motoboys/me/perfil", "PATCH")]
-        [InlineData("/api/me/estabelecimentos", "POST")]
+        [InlineData("/api/mex/estabelecimentos", "POST")]
         [InlineData("/api/authx/qualquer", "GET")]
         public void Loja_bloqueada_barra_o_resto(string path, string method)
         {

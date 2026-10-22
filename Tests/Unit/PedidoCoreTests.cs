@@ -37,7 +37,7 @@ namespace APIBack.Tests.Unit
         };
 
         public static RestaurantSettingsDto Restaurant(
-            bool accepts = true, decimal? minimum = null, decimal? radiusKm = null,
+            bool accepts = true, decimal? minimum = null, decimal? radiusKm = 50m,
             decimal? fixedFee = null, decimal? perKm = null, double? lat = -18.9, double? lon = -48.27) => new()
         {
             EstabelecimentoId = Est,

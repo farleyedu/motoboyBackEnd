@@ -271,7 +271,7 @@ namespace APIBack.Controllers
                 var restaurant = await _restaurantRepository.GetAsync(est)
                     ?? throw new DeliveryDomainException(404, "ESTABELECIMENTO_NOT_FOUND", "Estabelecimento nao encontrado.");
                 var zonas = await _zonaRepository.ListAtivasOrdenadasAsync(est);
-                var aberto = await _horarioRepository.EstaAbertoAgoraAsync(est, DateTimeOffset.UtcNow, "America/Sao_Paulo");
+                var aberto = await _horarioRepository.EstaAbertoAgoraAsync(est, DateTimeOffset.UtcNow);
                 return DeliverySlaSimulator.Simular(restaurant, zonas, request, aberto);
             });
 

@@ -67,7 +67,7 @@ namespace APIBack.Automation.Infra
 
             // Loja de teste (criada com "numero de teste") nao tem numero proprio: o link do cardapio abre o numero central.
             // So vale para loja sem nenhum numero; uma loja com numero proprio que nao atende o servico continua sem link.
-            if ((await _canais.ListarPorLojaAsync(idEstabelecimento)).Count > 0) return null;
+            if ((await _canais.ListarPorLojaAsync(idEstabelecimento))?.Count > 0) return null;
             return (await _canais.ObterCentralAsync())?.NumeroE164;
         }
 

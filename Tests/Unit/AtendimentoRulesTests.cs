@@ -42,10 +42,12 @@ namespace APIBack.Tests.Unit
             new() { Dias = days.Select(d => new HorarioDiaDto { Dia = d.Dia, Abre = d.Abre, Fecha = d.Fecha }).ToList() };
 
         [Fact]
-        public void No_schedule_means_always_open_but_all_days_closed_means_closed()
+        public void No_schedule_means_closed_and_all_days_closed_means_closed()
         {
-            Assert.True(AtendimentoConfigRules.IsOpen(null, new DateTime(2026, 9, 26, 3, 0, 0)));
+            // Sem horario cadastrado a loja esta FECHADA (SEM_HORARIO): nao existe mais "sem horario = sempre aberta".
+            Assert.False(AtendimentoConfigRules.IsOpen(null, new DateTime(2026, 9, 26, 3, 0, 0)));
             Assert.False(AtendimentoConfigRules.IsOpen(new HorarioAtendimentoDto(), new DateTime(2026, 9, 26, 3, 0, 0)));
+            Assert.False(AtendimentoConfigRules.IsOpen(new HorarioAtendimentoDto { SemHorarioSemanal = true }, new DateTime(2026, 9, 26, 12, 0, 0)));
         }
 
         [Fact]
@@ -261,14 +263,16 @@ namespace APIBack.Tests.Unit
         private static DateTime Quarta(string hora) => DateTime.Parse("2026-10-07 " + hora);
 
         [Fact]
-        public void Sem_horario_so_vale_o_interruptor()
+        public void Sem_horario_a_loja_esta_fechada_e_o_pausado_continua_valendo()
         {
-            Assert.True(PedidosAbertosRules.Avaliar(true, null, Quarta("03:00")).Aberto);
+            var semHorario = PedidosAbertosRules.Avaliar(true, null, Quarta("03:00"));
+            Assert.False(semHorario.Aberto);
+            Assert.Equal(PedidosAbertosRules.SemHorario, semHorario.Motivo);
+            Assert.Null(semHorario.AbreEm);
             var pausado = PedidosAbertosRules.Avaliar(false, null, Quarta("12:00"));
             Assert.False(pausado.Aberto);
             Assert.Equal(PedidosAbertosRules.Pausado, pausado.Motivo);
         }
-
         [Fact]
         public void Fora_do_horario_diz_quando_abre_hoje_amanha_ou_no_dia_da_semana()
         {
@@ -289,12 +293,13 @@ namespace APIBack.Tests.Unit
         }
 
         [Fact]
-        public void Fora_do_horario_pode_aceitar_quando_delivery_permite()
+        public void Fora_do_horario_recusa_sempre_nao_ha_mais_opcao_de_aceitar()
         {
-            var situacao = PedidosAbertosRules.Avaliar(
-                true, Horario((3, "18:00", "23:00")), Quarta("12:00"), bloquearForaHorario: false);
+            var situacao = PedidosAbertosRules.Avaliar(true, Horario((3, "18:00", "23:00")), Quarta("12:00"));
 
-            Assert.True(situacao.Aberto);
+            Assert.False(situacao.Aberto);
+            Assert.Equal(PedidosAbertosRules.ForaDoHorario, situacao.Motivo);
+            Assert.Equal("hoje às 18:00", situacao.AbreEm);
         }
 
         [Fact]

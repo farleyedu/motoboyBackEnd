@@ -136,7 +136,7 @@ namespace APIBack.Atendimento.Motor
             var config = await SafeConfigAsync(loja);
             var aceita = await _lojas.ObterAceitaPedidosAsync(loja) ?? true;
             var delivery = _delivery == null ? null : await _delivery.GetSettingsAsync(loja);
-            var situacao = PedidosAbertosRules.Avaliar(aceita, config?.HorarioAtendimento, AtendimentoConfigRules.ParaHorarioLocal(quandoUtc), delivery?.BloquearPedidosForaHorario ?? true);
+            var situacao = PedidosAbertosRules.Avaliar(aceita, config?.HorarioAtendimento, AtendimentoConfigRules.ParaHorarioLocal(quandoUtc, config?.HorarioAtendimento?.Timezone));
             var aberto = situacao.Aberto;
             var m = config?.Mensagens;
             string? Txt(string chave) => m != null && m.TryGetValue(chave, out var v) ? v : null;

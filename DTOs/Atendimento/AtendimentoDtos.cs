@@ -16,6 +16,8 @@ namespace APIBack.DTOs.Atendimento
         public List<HorarioDiaDto> Dias { get; set; } = new();
         public List<HorarioAtendimentoEspecialDto> Especiais { get; set; } = new();
         public bool SemHorarioSemanal { get; set; }
+        /// <summary>Fuso da loja (estabelecimentos.timezone_iana); nulo = America/Sao_Paulo.</summary>
+        public string? Timezone { get; set; }
     }
 
     public class HorarioAtendimentoEspecialDto

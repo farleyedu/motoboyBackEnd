@@ -38,6 +38,21 @@ SELECT EXISTS(SELECT 1 FROM delivery_route_stops s JOIN pedido p ON p.id=s.pedid
         }
 
         private static bool IsMissingTable(PostgresException ex) => ex.SqlState == PostgresErrorCodes.UndefinedTable;
+        /// <summary>Fuso da loja. Ambiente sem a coluna ou loja sem fuso: America/Sao_Paulo.</summary>
+        private async Task<string?> LerTimezoneAsync(Guid estabelecimentoId)
+        {
+            try
+            {
+                await using var connection = await _dataSource.OpenConnectionAsync();
+                return await connection.ExecuteScalarAsync<string?>(
+                    "SELECT timezone_iana FROM estabelecimentos WHERE id = @Id;", new { Id = estabelecimentoId });
+            }
+            catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.UndefinedColumn or PostgresErrorCodes.UndefinedTable)
+            {
+                return null;
+            }
+        }
+
 
         private static DeliveryDomainException MigrationPending() =>
             new(503, "MIGRATION_PENDING", "O atendimento ainda nao foi habilitado neste ambiente (migration 20260927_03 pendente).");
@@ -67,7 +82,7 @@ SELECT EXISTS(SELECT 1 FROM delivery_route_stops s JOIN pedido p ON p.id=s.pedid
         /// Horario de funcionamento da loja: unica fonte (tela Negocio e identidade, tabela estabelecimento_horario), usada pelo
         /// cardapio web, pelo bot e pela tela de Atendimento. Nulo = loja sem horario cadastrado (sempre aberta); sem nenhum dia aberto = fechada.
         /// </summary>
-        private async Task<HorarioAtendimentoDto?> LerHorarioDeFuncionamentoAsync(Guid estabelecimentoId, DateOnly hoje)
+        private async Task<HorarioAtendimentoDto?> LerHorarioDeFuncionamentoAsync(Guid estabelecimentoId, DateOnly hoje, string? timezone)
         {
             try
             {
@@ -92,6 +107,7 @@ FROM estabelecimento_horario_especial WHERE estabelecimento_id = @Estabeleciment
                 return new HorarioAtendimentoDto
                 {
                     SemHorarioSemanal = rows.Count == 0,
+                    Timezone = timezone,
                     Especiais = especiais,
                     Dias = rows
                         .Where(r => !r.Fechado && r.AbreAs.HasValue && r.FechaAs.HasValue)
@@ -140,8 +156,9 @@ SELECT modo AS Modo, saudacao_humano AS SaudacaoHumano, mensagem_fora_horario AS
                 // sem a migration: valem os padroes (modo humano, sempre aberto)
             }
 
-            var localNow = AtendimentoConfigRules.ParaHorarioLocal(_clock.GetUtcNow().UtcDateTime);
-            config.HorarioAtendimento = await LerHorarioDeFuncionamentoAsync(estabelecimentoId, DateOnly.FromDateTime(localNow));
+            var timezone = await LerTimezoneAsync(estabelecimentoId);
+            var localNow = AtendimentoConfigRules.ParaHorarioLocal(_clock.GetUtcNow().UtcDateTime, timezone);
+            config.HorarioAtendimento = await LerHorarioDeFuncionamentoAsync(estabelecimentoId, DateOnly.FromDateTime(localNow), timezone);
             config.AbertoAgora = AtendimentoConfigRules.IsOpen(config.HorarioAtendimento, localNow);
             return config;
         }

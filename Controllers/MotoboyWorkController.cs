@@ -23,7 +23,7 @@ public sealed class MotoboyWorkController(MotoboyWorkService service) : Controll
         Response.Headers.CacheControl="no-store";
         if(Owner is not >0) return Unauthorized(ApiResponse<object>.Fail("Entre na sua conta para consultar ganhos e acertos."));
         try { return Ok(ApiResponse<object>.Ok(await action(await service.OwnRider(Owner.Value,store,ct),Owner.Value))); }
-        catch(DeliveryDomainException ex){return StatusCode(ex.StatusCode,ApiResponse<object>.Fail(ex.Message,ex.Code));}
+        catch(DeliveryDomainException ex){return StatusCode(ex.StatusCode,ApiResponse<object>.Fail(ex.Message,ex.Code,ex.Details));}
         catch(ArgumentException ex){return BadRequest(ApiResponse<object>.Fail(ex.Message,"VALIDATION_ERROR"));}
     }
 }
@@ -31,6 +31,15 @@ public sealed class MotoboyWorkController(MotoboyWorkService service) : Controll
 [ApiController,Route("api/v2/delivery/rider-work"),APIBack.Attributes.RequireModule("Remuneracao")]
 public sealed class RiderWorkAdminController(MotoboyWorkService service) : ControllerBase
 {
+    /// <summary>Remuneração PADRÃO da loja (vale para todo motoboy sem exceção, inclusive os novos). Existe mesmo sem nenhum motoboy vinculado.</summary>
+    [HttpGet("default"),RequirePermission("Delivery","gestao_motoboy")]
+    public Task<IActionResult> Default(CancellationToken ct) => Run(async(s,u)=>await service.ReadDefault(s,ct));
+    /// <summary>Nova versão do padrão (modo + valor, histórico versionado, idempotente por operationId). Só afeta quem não tem exceção.</summary>
+    [HttpPut("default"),RequirePermission("Delivery","gestao_motoboy")]
+    public Task<IActionResult> SaveDefault(RiderPayPlanRequest request,CancellationToken ct) => Run(async(s,u)=>await service.SaveDefault(s,u,request,ct));
+    /// <summary>"Voltar ao padrão": o motoboy deixa a exceção individual e segue o padrão da loja. Fica no histórico; nada é apagado.</summary>
+    [HttpDelete("{rider:int}/override"),RequirePermission("Delivery","gestao_motoboy")]
+    public Task<IActionResult> ResetOverride(int rider,Guid operationId,Guid? expectedPlanId,CancellationToken ct) => Run(async(s,u)=>await service.ResetToDefault(s,rider,u,operationId,expectedPlanId,ct));
     /// <summary>Resumo da loja: uma linha por motoboy vinculado (plano, saldo, recebimentos pendentes e totais do período). Sem from/to: últimos 30 dias.</summary>
     [HttpGet("resumo"),RequirePermission("Delivery","gestao_motoboy")]
     public Task<IActionResult> Summary(DateTimeOffset? from,DateTimeOffset? to,CancellationToken ct) => Run(async(s,u)=>await service.Summary(s,from,to,ct));
@@ -54,7 +63,7 @@ public sealed class RiderWorkAdminController(MotoboyWorkService service) : Contr
         Response.Headers.CacheControl="no-store";
         if(HttpContext.GetEstabelecimentoId() is not Guid store || HttpContext.GetUserId() is not int user) return Unauthorized();
         try { return Ok(ApiResponse<object>.Ok(await action(store,user))); }
-        catch(DeliveryDomainException ex){return StatusCode(ex.StatusCode,ApiResponse<object>.Fail(ex.Message,ex.Code));}
+        catch(DeliveryDomainException ex){return StatusCode(ex.StatusCode,ApiResponse<object>.Fail(ex.Message,ex.Code,ex.Details));}
         catch(ArgumentException ex){return BadRequest(ApiResponse<object>.Fail(ex.Message,"VALIDATION_ERROR"));}
         catch(Npgsql.PostgresException ex) when(ex.SqlState==Npgsql.PostgresErrorCodes.UniqueViolation){return Conflict(ApiResponse<object>.Fail("Identificação reutilizada. Atualize e confira o registro.","WORK_CONFLICT"));}
     }

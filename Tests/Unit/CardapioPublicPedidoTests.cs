@@ -48,7 +48,8 @@ namespace APIBack.Tests.Unit
             public Mock<IDeliveryZonaRepository> Zonas { get; } = new();
             /// <summary>Quarta-feira, 15h no Brasil (18h UTC): ajustavel por teste.</summary>
             public DateTimeOffset Agora { get; set; } = new(2026, 10, 7, 18, 0, 0, TimeSpan.Zero);
-            public HorarioAtendimentoDto? Horario { get; set; }
+            /// <summary>Sem horario a loja fica fechada; o padrao dos testes e aberta o dia todo.</summary>
+            public HorarioAtendimentoDto? Horario { get; set; } = new() { Dias = Enumerable.Range(0, 7).Select(d => new HorarioDiaDto { Dia = d, Abre = "00:00", Fecha = "23:59" }).ToList() };
             public bool AceitaPedidos { get; set; } = true;
             public CardapioPedidoPublico? Gravado { get; private set; }
 
@@ -568,8 +569,9 @@ namespace APIBack.Tests.Unit
             var fixture = new Fixture();
             fixture.Waba.Setup(w => w.ObterDisplayPhoneParaServicoAsync(Estabelecimento, "cardapio_web")).ReturnsAsync((string?)null);
 
-            var erro = await Assert.ThrowsAsync<InvalidOperationException>(() => fixture.Build().CriarPedidoAsync(Pedido()));
+            var erro = await Assert.ThrowsAsync<DeliveryDomainException>(() => fixture.Build().CriarPedidoAsync(Pedido()));
 
+            Assert.Equal(ErrosOperacionais.CardapioSemWhatsapp, erro.Code);
             Assert.Contains("WhatsApp", erro.Message);
             Assert.Null(fixture.Gravado);
         }

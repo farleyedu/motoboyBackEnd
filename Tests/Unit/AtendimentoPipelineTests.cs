@@ -176,6 +176,10 @@ namespace APIBack.Tests.Unit
         private static readonly Guid Loja = Guid.NewGuid();
         private static readonly Guid Conversa = Guid.NewGuid();
 
+        /// <summary>Sem horario cadastrado a loja fica fechada; estes testes pressupoem a loja aberta o dia todo.</summary>
+        private static HorarioAtendimentoDto LojaAbertaSempre() =>
+            new() { Dias = Enumerable.Range(0, 7).Select(d => new HorarioDiaDto { Dia = d, Abre = "00:00", Fecha = "23:59" }).ToList() };
+
         private sealed class Fixture
         {
             public Mock<IFluxoEstadoRepository> Estados { get; } = new();
@@ -195,7 +199,7 @@ namespace APIBack.Tests.Unit
             public Fixture()
             {
                 Lojas.Setup(l => l.ObterNomeFantasiaAsync(Loja)).ReturnsAsync("Pizza Bom Centro");
-                Config.Setup(c => c.GetConfigAsync(Loja)).ReturnsAsync(new AtendimentoConfigDto { EstabelecimentoId = Loja });
+                Config.Setup(c => c.GetConfigAsync(Loja)).ReturnsAsync(new AtendimentoConfigDto { EstabelecimentoId = Loja, HorarioAtendimento = LojaAbertaSempre() });
                 Enviador.Setup(e => e.EnviarAsync(It.IsAny<Guid>(), It.IsAny<CanalWhatsapp>(), It.IsAny<string>(), It.IsAny<AcaoMotor>()))
                     .Callback<Guid, CanalWhatsapp, string, AcaoMotor>((_, _, _, a) => Enviadas.Add(a)).ReturnsAsync(true);
                 Conversas.Setup(c => c.AtualizarStatusAtendimentoAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<int?>(), It.IsAny<string?>(), It.IsAny<Guid?>())).ReturnsAsync(true);
@@ -252,15 +256,15 @@ namespace APIBack.Tests.Unit
         }
 
         [Fact]
-        public async Task Falha_ao_chamar_a_equipe_nao_derruba_o_atendimento_e_o_estado_ainda_e_salvo()
+        public async Task Falha_ao_chamar_a_equipe_interrompe_para_o_worker_retomar_do_checkpoint()
         {
             var f = new Fixture();
             f.Conversas.Setup(c => c.AtualizarStatusAtendimentoAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<int?>(), It.IsAny<string?>(), It.IsAny<Guid?>()))
                 .ThrowsAsync(new InvalidOperationException("banco"));
 
-            await f.Build().ExecutarAsync(f.Mensagem("atendente", primeira: false));
+            await Assert.ThrowsAsync<InvalidOperationException>(() => f.Build().ExecutarAsync(f.Mensagem("atendente", primeira: false)));
 
-            f.Estados.Verify(e => e.SalvarAsync(Conversa, It.IsAny<EstadoFluxo>(), It.IsAny<string>()), Times.Once);
+            f.Estados.Verify(e => e.SalvarAsync(Conversa, It.IsAny<EstadoFluxo>(), It.IsAny<string>()), Times.Never);
         }
 
         [Fact]
@@ -275,13 +279,16 @@ namespace APIBack.Tests.Unit
         }
 
         [Fact]
-        public async Task Fora_do_horario_da_loja_o_cliente_recebe_a_mensagem_configurada_antes_do_link()
+        public async Task Fora_do_horario_da_loja_o_cliente_recebe_a_mensagem_configurada_com_o_link()
         {
             var f = new Fixture();
             f.Config.Setup(c => c.GetConfigAsync(Loja)).ReturnsAsync(new AtendimentoConfigDto
             {
                 EstabelecimentoId = Loja,
-                MensagemForaHorario = "Estamos fechados, abrimos às 18h!",
+                Mensagens = new Dictionary<string, string>
+                {
+                    [MensagensDoAtendimento.CardapioFechado] = "Estamos fechados, abrimos às 18h! Veja: {link}"
+                },
                 // Todos os dias fechado no horario da mensagem: abre e fecha no mesmo minuto distante de agora.
                 HorarioAtendimento = new HorarioAtendimentoDto
                 {
@@ -293,8 +300,9 @@ namespace APIBack.Tests.Unit
 
             await f.Build().ExecutarAsync(chamada);
 
-            Assert.Equal("Estamos fechados, abrimos às 18h!", f.Enviadas.OfType<AcaoResponder>().First().Mensagem);
-            Assert.Contains("cardapio", f.Enviadas.OfType<AcaoResponder>().Last().Mensagem);
+            var resposta = Assert.Single(f.Enviadas.OfType<AcaoResponder>()).Mensagem;
+            Assert.Contains("Estamos fechados, abrimos às 18h!", resposta);
+            Assert.Contains($"https://app.zippygo.com.br/cardapio/{Loja}", resposta);
         }
 
         [Fact]
@@ -315,6 +323,7 @@ namespace APIBack.Tests.Unit
             f.Config.Setup(c => c.GetConfigAsync(Loja)).ReturnsAsync(new AtendimentoConfigDto
             {
                 EstabelecimentoId = Loja,
+                HorarioAtendimento = LojaAbertaSempre(),
                 Mensagens = new Dictionary<string, string> { ["cardapio"] = "Bem-vindo a {loja}! Peca aqui: {link}" }
             });
 

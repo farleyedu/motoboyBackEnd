@@ -161,20 +161,30 @@ namespace APIBack.Service
                 request.PrevisaoMinutos = delivery.DefaultDeliveryMinutes;
             }
 
-            // So nas origens estritas (cliente/IA, sem atendente controlando): a loja pode recusar fora
-            // do horario e decidir se o pedido entra direto como Pendente ou precisa de confirmacao.
+            // So nas origens estritas (cliente/IA, sem atendente controlando): o horario SEMPRE vale (sem horario cadastrado a loja
+            // esta fechada) e a loja decide se o pedido entra direto como Pendente ou precisa de confirmacao.
             bool? forcarRascunho = null;
-            if (rules.EnforceStoreRules && delivery != null)
+            var abertura = rules.EnforceStoreRules || origin == PedidoOrigem.Atendente
+                ? await _horarios.AvaliarAberturaAsync(estabelecimentoId, DateTimeOffset.UtcNow)
+                : null;
+            if (rules.EnforceStoreRules)
             {
-                if (delivery.BloquearPedidosForaHorario
-                    && !await _horarios.EstaAbertoAgoraAsync(estabelecimentoId, DateTimeOffset.UtcNow, "America/Sao_Paulo"))
-                {
-                    throw new DeliveryDomainException(409, "STORE_CLOSED", "O estabelecimento esta fechado no momento.");
-                }
-                if (!delivery.AutoConfirmarPedidos)
+                if (abertura is { Dentro: false }) throw LojaFechada(abertura);
+                if (delivery is { AutoConfirmarPedidos: false })
                 {
                     forcarRascunho = true;
                 }
+            }
+
+            // Pedido manual (atendente) nao e barrado pelo horario (so pela situacao comercial): vira aviso para o atendente.
+            string? avisoHorario = null;
+            if (origin == PedidoOrigem.Atendente)
+            {
+                ExigirRaioECoordenada(restaurant);
+                if (abertura is { Dentro: false })
+                    avisoHorario = abertura.Motivo == HorarioRegras.SemHorario
+                        ? "A loja está sem horário de funcionamento cadastrado: pedidos de clientes ficam recusados até cadastrar o horário ou abrir a loja."
+                        : "A loja está fora do horário de funcionamento: pedidos de clientes ficam recusados até abrir.";
             }
 
             var manual = ManualOrderRules.Validate(request);
@@ -200,7 +210,7 @@ namespace APIBack.Service
                     ConversaId = request.ConversaId,
                     ClienteId = clienteId,
                     Rascunho = forcarRascunho ?? request.Rascunho,
-                    Avisos = legacy.Warnings
+                    Avisos = ComAviso(legacy.Warnings, avisoHorario)
                 };
             }
 
@@ -241,7 +251,7 @@ namespace APIBack.Service
                 Value = total,
                 Items = LegacyItemsJson(priced.Lines),
                 TipoPagamento = OrderCoreRules.NormalizePayment(manual.TipoPagamento),
-                Avisos = evaluation.Warnings
+                Avisos = ComAviso(evaluation.Warnings, avisoHorario)
             };
         }
 
@@ -258,6 +268,28 @@ namespace APIBack.Service
                 quantidade = line.Quantidade,
                 preco = line.PrecoUnitario + line.Adicionais.Sum(a => a.Preco)
             }), Json);
+
+        private static IReadOnlyList<string> ComAviso(IReadOnlyList<string> avisos, string? extra) =>
+            extra == null ? avisos : avisos.Concat(new[] { extra }).ToList();
+
+        /// <summary>Cliente/IA fora do horario: 409 STORE_CLOSED. Detalhes (motivo, quando abre, como resolver) so para o dono.</summary>
+        private static DeliveryDomainException LojaFechada(AberturaLoja abertura)
+        {
+            var dados = new Dictionary<string, object?> { ["motivo"] = abertura.Motivo, ["abreEm"] = abertura.ProximaAbertura };
+            return ErrosOperacionais.Excecao(ErrosOperacionais.StoreClosed, "O estabelecimento esta fechado no momento.", dados: dados);
+        }
+
+        /// <summary>
+        /// Pedido manual de entrega: sem raio de entrega nem posicao da loja nao ha como calcular distancia, taxa e rota.
+        /// Retirada nao exige. Pedidos do iFood nao passam por aqui.
+        /// </summary>
+        internal static void ExigirRaioECoordenada(RestaurantSettingsDto restaurant)
+        {
+            if (restaurant.RaioEntregaKm is not > 0)
+                throw ErrosOperacionais.Excecao(ErrosOperacionais.RaioEntregaNaoConfigurado);
+            if (!ProntidaoRegras.CoordenadaValida(restaurant.Latitude, restaurant.Longitude))
+                throw ErrosOperacionais.Excecao(ErrosOperacionais.LojaSemCoordenada);
+        }
 
         private static string? CleanRef(string? value)
         {

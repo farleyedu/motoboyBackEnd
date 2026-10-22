@@ -758,7 +758,7 @@ UPDATE delivery_route_stops s
                 "SELECT situacao_comercial FROM estabelecimentos WHERE id=@Id FOR UPDATE",
                 new { Id = estabelecimentoId }, transaction);
             if (situacao is SituacoesComerciais.Bloqueado or SituacoesComerciais.Implantacao)
-                throw new DeliveryDomainException(403,
+                throw ErrosOperacionais.Excecao(
                     situacao == SituacoesComerciais.Bloqueado ? SituacaoComercialRules.CodigoBloqueado : SituacaoComercialRules.CodigoOperacaoNaoIniciada,
                     "A operacao desta loja nao esta disponivel.");
         }

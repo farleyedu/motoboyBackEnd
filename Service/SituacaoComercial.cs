@@ -31,6 +31,21 @@ namespace APIBack.Service
 
         private const string SessaoMotoboy = "/api/v2/motoboys/me/session";
 
+        private static readonly string[] PrefixosSempreLiberados =
+            { "/api/gestao", "/api/admin", "/api/auth", "/api/me", "/api/v2/comercial" };
+
+        /// <summary>
+        /// Rotas que nao dependem da situacao da loja, para qualquer usuario (inclusive super admin com uma loja no contexto):
+        /// a Gestao, o login, a lista de lojas do usuario e a propria situacao comercial/prontidao.
+        /// </summary>
+        public static bool RotaSempreLiberada(string? path)
+        {
+            var p = (path ?? string.Empty).TrimEnd('/').ToLowerInvariant();
+            foreach (var prefixo in PrefixosSempreLiberados)
+                if (p == prefixo || p.StartsWith(prefixo + "/", StringComparison.Ordinal)) return true;
+            return false;
+        }
+
         /// <summary>
         /// O que uma loja bloqueada ainda pode chamar. As excecoes do motoboy so servem para terminar
         /// uma rota existente; os servicos dessas rotas validam a sessao e a posse do pedido.
@@ -38,9 +53,7 @@ namespace APIBack.Service
         public static bool PermitidoQuandoBloqueado(string? path, string? method)
         {
             var p = (path ?? string.Empty).TrimEnd('/').ToLowerInvariant();
-            if (p == "/api/auth" || p.StartsWith("/api/auth/", StringComparison.Ordinal)) return true;
-            if (p == "/api/me/estabelecimentos" && HttpMethods.IsGet(method ?? string.Empty)) return true;
-            if (p == "/api/v2/comercial/situacao" && HttpMethods.IsGet(method ?? string.Empty)) return true;
+            if (RotaSempreLiberada(p)) return true;
             if (HttpMethods.IsPost(method ?? string.Empty))
             {
                 var parts = p.Split('/');
@@ -73,6 +86,7 @@ namespace APIBack.Service
         public static bool OperacaoExigeInicio(string? path, string? method)
         {
             var p = (path ?? string.Empty).TrimEnd('/').ToLowerInvariant();
+            if (RotaSempreLiberada(p)) return false;
             // A implantacao pode montar as regras do delivery e preparar a impressao.
             if (p == "/api/v2/delivery/configuracoes" ||
                 p == "/api/v2/delivery/zonas" || p.StartsWith("/api/v2/delivery/zonas/", StringComparison.Ordinal) ||
@@ -133,7 +147,8 @@ namespace APIBack.Service
         int VagasPorDia,
         int VinculadosMaximo,
         DateTimeOffset? BloqueadoEm,
-        string? BloqueadoMotivo);
+        string? BloqueadoMotivo,
+        int? DiasTesteRestantes = null);
 
     /// <summary>acao: iniciar_operacao | ativar | bloquear | desbloquear.</summary>
     public sealed record AcaoSituacaoRequest(string? Acao, string? Motivo, string? Plano, int? MotoboysBase);
@@ -147,17 +162,41 @@ namespace APIBack.Service
 
     public sealed class SituacaoComercialException : Exception
     {
-        public SituacaoComercialException(int status, string code, string message) : base(message)
+        public SituacaoComercialException(int status, string code, string message, object? details = null) : base(message)
         {
             Status = status;
             Code = code;
+            Details = details;
         }
 
         public int Status { get; }
         public string Code { get; }
+        /// <summary>Corpo de "details" da resposta (comoResolver, correcao, pendencias).</summary>
+        public object? Details { get; }
     }
 
     public sealed record TesteVencidoDto(Guid EstabelecimentoId, string Nome, string? Empresa, DateTimeOffset? TesteTerminaEm);
+
+    /// <summary>Resposta de "Comecar a operar": a situacao nova mais o prazo do teste.</summary>
+    public sealed record IniciarOperacaoDto(
+        SituacaoComercialDto Situacao, DateTimeOffset? TesteTerminaEm, int DiasTeste, int? DiasTesteRestantes);
+
+    /// <summary>Uma loja no painel da Gestao. diasRestantes so no teste em dia; diasAtraso so no teste vencido.</summary>
+    public sealed record PainelLojaDto(
+        Guid EstabelecimentoId, string Nome, string? Empresa, string Situacao,
+        DateTimeOffset? OperacaoIniciadaEm, DateTimeOffset? TesteTerminaEm,
+        [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] int? DiasRestantes,
+        [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)] int? DiasAtraso,
+        ProntidaoResumoDto Prontidao);
+
+    public sealed record PainelComercialDto(
+        IReadOnlyList<PainelLojaDto> ProntasParaIniciar, IReadOnlyList<PainelLojaDto> EmTeste, IReadOnlyList<PainelLojaDto> TestesVencidos);
+
+    public static class OrigensSituacao
+    {
+        public const string Loja = "loja";
+        public const string Gestao = "gestao";
+    }
     public sealed record SituacaoComercialHistoricoDto(
         long Id, string Acao, string? SituacaoAntes, string SituacaoDepois,
         string? Motivo, int? UsuarioId, DateTimeOffset CriadoEm);
@@ -166,6 +205,13 @@ namespace APIBack.Service
     {
         Task<SituacaoComercialDto?> ObterAsync(Guid estabelecimentoId, CancellationToken ct = default);
         Task<SituacaoComercialDto> AplicarAsync(Guid estabelecimentoId, AcaoSituacaoRequest request, int? usuarioId, CancellationToken ct = default);
+        /// <summary>
+        /// "Comecar a operar": reavalia a prontidao no servidor (sem opcao de forcar), passa para teste por 15 dias e registra ator e origem.
+        /// Pendencia obrigatoria = 422 PRONTIDAO_INCOMPLETA com a lista.
+        /// </summary>
+        Task<IniciarOperacaoDto> IniciarOperacaoAsync(Guid estabelecimentoId, int? usuarioId, string origem, CancellationToken ct = default);
+        /// <summary>Gestao: lojas prontas para iniciar, em teste e com teste vencido, cada uma com o resumo da prontidao.</summary>
+        Task<PainelComercialDto> ObterPainelAsync(CancellationToken ct = default);
         /// <summary>Lojas em teste com o prazo de 15 dias vencido. So informa: nada e bloqueado sozinho.</summary>
         Task<IReadOnlyList<TesteVencidoDto>> ListarTestesVencidosAsync(CancellationToken ct = default);
         Task<IReadOnlyList<SituacaoComercialHistoricoDto>> ListarHistoricoAsync(Guid estabelecimentoId, CancellationToken ct = default);
@@ -187,11 +233,15 @@ namespace APIBack.Service
 
         private readonly NpgsqlDataSource _dataSource;
         private readonly IMemoryCache _cache;
+        private readonly IProntidaoService _prontidao;
+        private readonly TimeProvider _clock;
 
-        public SituacaoComercialService(NpgsqlDataSource dataSource, IMemoryCache cache)
+        public SituacaoComercialService(NpgsqlDataSource dataSource, IMemoryCache cache, IProntidaoService prontidao, TimeProvider? clock = null)
         {
             _dataSource = dataSource;
             _cache = cache;
+            _prontidao = prontidao;
+            _clock = clock ?? TimeProvider.System;
         }
 
         private static string Key(Guid id) => $"situacao-comercial:{id}";
@@ -224,9 +274,34 @@ SELECT e.situacao_comercial = 'teste'
                 new { EstabelecimentoId = estabelecimentoId, Modulo = modulo }, cancellationToken: ct));
         }
 
-        public async Task<SituacaoComercialDto> AplicarAsync(Guid estabelecimentoId, AcaoSituacaoRequest request, int? usuarioId, CancellationToken ct = default)
+        public Task<SituacaoComercialDto> AplicarAsync(Guid estabelecimentoId, AcaoSituacaoRequest request, int? usuarioId, CancellationToken ct = default) =>
+            AplicarAsync(estabelecimentoId, request, usuarioId, OrigensSituacao.Gestao, ct);
+
+        public async Task<IniciarOperacaoDto> IniciarOperacaoAsync(Guid estabelecimentoId, int? usuarioId, string origem, CancellationToken ct = default)
+        {
+            var dto = await AplicarAsync(estabelecimentoId, new AcaoSituacaoRequest("iniciar_operacao", null, null, null), usuarioId, origem, ct);
+            return new IniciarOperacaoDto(dto, dto.TesteTerminaEm, SituacaoComercialRules.DiasTeste, dto.DiasTesteRestantes);
+        }
+
+        /// <summary>Reavalia a prontidao no servidor, sem opcao de forcar: a Gestao tambem so inicia a operacao de uma loja pronta.</summary>
+        private async Task ExigirProntidaoAsync(Guid estabelecimentoId, bool visaoGestao, CancellationToken ct)
+        {
+            var prontidao = await _prontidao.ObterAsync(estabelecimentoId, visaoGestao, ct);
+            if (prontidao == null)
+                throw new SituacaoComercialException(404, "ESTABELECIMENTO_NAO_ENCONTRADO", "Estabelecimento nao encontrado.");
+            // Quem ja passou da implantacao recebe o erro proprio (OPERACAO_JA_INICIADA) no passo seguinte.
+            if (prontidao.Situacao != SituacoesComerciais.Implantacao || prontidao.PodeComecarAOperar) return;
+            var erro = ErrosOperacionais.Obter(ErrosOperacionais.ProntidaoIncompleta);
+            throw new SituacaoComercialException(erro.Status, erro.Code,
+                $"Ainda faltam {prontidao.PendenciasBloqueantes} item(ns) obrigatório(s) para começar a operar.",
+                ErrosOperacionais.Detalhes(erro.Code, ProntidaoRegras.Pendencias(prontidao)));
+        }
+
+        /// <summary>Unica porta de entrada das acoes; a origem ("loja" ou "gestao") vai para o historico.</summary>
+        private async Task<SituacaoComercialDto> AplicarAsync(Guid estabelecimentoId, AcaoSituacaoRequest request, int? usuarioId, string origem, CancellationToken ct)
         {
             var acao = (request.Acao ?? string.Empty).Trim().ToLowerInvariant();
+            if (acao == "iniciar_operacao") await ExigirProntidaoAsync(estabelecimentoId, origem == OrigensSituacao.Gestao, ct);
             await using var connection = await _dataSource.OpenConnectionAsync(ct);
             await using var tx = await connection.BeginTransactionAsync(ct);
 
@@ -253,7 +328,7 @@ SELECT modulos_ativos::text[] AS ModulosAtivos, motoboys_base AS MotoboysBase
             {
                 case "iniciar_operacao":
                     if (antes != SituacoesComerciais.Implantacao)
-                        throw new SituacaoComercialException(409, "OPERACAO_JA_INICIADA", "A operacao so pode ser iniciada a partir da implantacao.");
+                        throw new SituacaoComercialException(409, ErrosOperacionais.OperacaoJaIniciada, "A operacao so pode ser iniciada a partir da implantacao.");
                     depois = SituacoesComerciais.Teste;
                     await connection.ExecuteAsync(new CommandDefinition(@"
 UPDATE estabelecimentos
@@ -318,7 +393,7 @@ VALUES (@Id, @Acao, @Antes, @Depois, @Motivo, @Usuario, CAST(@Detalhes AS jsonb)
                 new
                 {
                     Id = estabelecimentoId, Acao = acao, Antes = antes, Depois = depois, Motivo = motivo, Usuario = usuarioId,
-                    Detalhes = JsonSerializer.Serialize(new { request.Plano, request.MotoboysBase })
+                    Detalhes = JsonSerializer.Serialize(new { request.Plano, request.MotoboysBase, origem, ator = usuarioId })
                 }, tx, cancellationToken: ct));
 
             var resultado = await LerAsync(connection, tx, estabelecimentoId, ct)
@@ -411,7 +486,56 @@ SELECT e.id, e.situacao_comercial AS SituacaoComercial, e.operacao_iniciada_em A
                 MotoboyLimites.VagasPorDia(row.MotoboysContratados),
                 MotoboyLimites.Vinculados(row.MotoboysContratados),
                 Utc(row.BloqueadoEm),
-                row.BloqueadoMotivo);
+                row.BloqueadoMotivo,
+                string.Equals(row.SituacaoComercial, SituacoesComerciais.Teste, StringComparison.Ordinal)
+                    ? ProntidaoRegras.DiasRestantes(Utc(row.TesteTerminaEm), DateTimeOffset.UtcNow)
+                    : null);
+        }
+
+        public async Task<PainelComercialDto> ObterPainelAsync(CancellationToken ct = default)
+        {
+            var prontas = new List<PainelLojaDto>();
+            var emTeste = new List<PainelLojaDto>();
+            var vencidos = new List<PainelLojaDto>();
+            IReadOnlyList<(Guid Id, string Nome, string? Empresa, string Situacao, DateTime? Inicio, DateTime? Fim)> lojas;
+            try
+            {
+                await using var connection = await _dataSource.OpenConnectionAsync(ct);
+                lojas = (await connection.QueryAsync<(Guid Id, string Nome, string? Empresa, string Situacao, DateTime? Inicio, DateTime? Fim)>(new CommandDefinition(@"
+SELECT e.id, e.nome_fantasia, emp.nome_fantasia, e.situacao_comercial, e.operacao_iniciada_em, e.teste_termina_em
+  FROM estabelecimentos e
+  LEFT JOIN empresas emp ON emp.id = e.id_empresa
+ WHERE e.situacao_comercial IN ('implantacao', 'teste')
+ ORDER BY e.teste_termina_em NULLS LAST, e.nome_fantasia
+ LIMIT 500;", cancellationToken: ct))).ToList();
+            }
+            catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedColumn)
+            {
+                return new PainelComercialDto(prontas, emTeste, vencidos);
+            }
+
+            var agora = _clock.GetUtcNow();
+            foreach (var loja in lojas)
+            {
+                var prontidao = await _prontidao.ObterAsync(loja.Id, visaoGestao: true, ct);
+                if (prontidao == null) continue;
+                var resumo = ProntidaoRegras.Resumir(prontidao);
+                var inicio = Utc(loja.Inicio);
+                var fim = Utc(loja.Fim);
+                if (loja.Situacao == SituacoesComerciais.Implantacao)
+                {
+                    if (prontidao.PodeComecarAOperar)
+                        prontas.Add(new PainelLojaDto(loja.Id, loja.Nome, loja.Empresa, loja.Situacao, inicio, fim, null, null, resumo));
+                    continue;
+                }
+
+                var dias = ProntidaoRegras.DiasRestantes(fim, agora);
+                if (dias is < 0)
+                    vencidos.Add(new PainelLojaDto(loja.Id, loja.Nome, loja.Empresa, loja.Situacao, inicio, fim, null, -dias.Value, resumo));
+                else
+                    emTeste.Add(new PainelLojaDto(loja.Id, loja.Nome, loja.Empresa, loja.Situacao, inicio, fim, dias, null, resumo));
+            }
+            return new PainelComercialDto(prontas, emTeste, vencidos);
         }
 
         public async Task<IReadOnlyList<MotoboyPacoteDto>> ListarMotoboyPacotesAsync(Guid estabelecimentoId, CancellationToken ct = default)

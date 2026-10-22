@@ -336,13 +336,18 @@ namespace APIBack.Service
             {
                 // O servidor e quem decide: a tela so mostra o aviso. O carrinho do cliente continua la para quando a loja abrir.
                 _logger.LogInformation("[cardapio] ev=pedido_recusado motivo={Motivo} loja={Loja}", cotacao.MotivoFechado, estabelecimento.Id);
-                throw new DeliveryDomainException(409, "loja_fechada",
-                    PedidosAbertosRules.Mensagem(new SituacaoPedidos(false, cotacao.MotivoFechado, cotacao.AbreEm)));
+                // Texto neutro para o cliente final; o motivo exato e o caminho de correcao ficam em details (para o painel do dono).
+                throw new DeliveryDomainException(409, ErrosOperacionais.LojaFechadaCardapio,
+                    PedidosAbertosRules.Mensagem(new SituacaoPedidos(false, cotacao.MotivoFechado, cotacao.AbreEm)),
+                    ErrosOperacionais.Detalhes(ErrosOperacionais.LojaFechadaCardapio,
+                        dados: new Dictionary<string, object?> { ["motivo"] = cotacao.MotivoFechado, ["abreEm"] = cotacao.AbreEm }));
             }
 
             if (!cotacao.PedidoMinimoAtingido)
             {
-                throw new InvalidOperationException("Pedido minimo ainda nao foi atingido.");
+                throw new DeliveryDomainException(409, ErrosOperacionais.MinimumNotReached, "Pedido minimo ainda nao foi atingido.",
+                    ErrosOperacionais.Detalhes(ErrosOperacionais.MinimumNotReached,
+                        dados: new Dictionary<string, object?> { ["pedidoMinimo"] = cotacao.PedidoMinimo }));
             }
 
             if (cotacao.TipoEntrega == "entrega")
@@ -385,7 +390,7 @@ namespace APIBack.Service
             var sessao = await _acesso.RequireAsync(estabelecimento.Id, request.SessaoCliente, telefoneE164);
             if (string.IsNullOrWhiteSpace(await _waba.ObterDisplayPhoneParaServicoAsync(estabelecimento.Id, "cardapio_web")))
             {
-                throw new InvalidOperationException("Este restaurante ainda nao recebe pedidos pelo WhatsApp.");
+                throw ErrosOperacionais.Excecao(ErrosOperacionais.CardapioSemWhatsapp);
             }
 
             var enderecoArmazenado = cotacao.TipoEntrega == "entrega"
@@ -400,7 +405,12 @@ namespace APIBack.Service
                 request.Longitude = enderecoArmazenado.Longitude;
                 cotacao = await CalcularCotacaoAsync(request);
                 if (!cotacao.DentroDoRaio)
-                    throw new DeliveryDomainException(422, "OUT_OF_DELIVERY_RANGE", "Endereco fora da area de entrega configurada.");
+                    throw ErrosOperacionais.Excecao(ErrosOperacionais.OutOfDeliveryRange, "Endereco fora da area de entrega configurada.",
+                        dados: new Dictionary<string, object?>
+                        {
+                            ["raioKm"] = estabelecimento.RaioEntregaKm,
+                            ["distanciaKm"] = cotacao.DistanciaKm.HasValue ? Math.Round(cotacao.DistanciaKm.Value, 1) : null
+                        });
             }
 
             if (enderecoArmazenado != null)
@@ -711,6 +721,9 @@ namespace APIBack.Service
             double.TryParse((texto ?? string.Empty).Replace(',', '.'), NumberStyles.Float, CultureInfo.InvariantCulture, out valor)
             && double.IsFinite(valor);
 
+        /// <summary>Texto neutro ao cliente final quando a loja nao pode atender (implantacao, bloqueio, modulo ou cardapio nao publicado). A causa exata aparece so na prontidao do dono.</summary>
+        public const string MensagemIndisponivel = "Loja fechada ou indisponível no momento. Tente mais tarde.";
+
         private async Task<CardapioEstabelecimentoPublico> ResolverEstabelecimentoAsync(Guid? idEstabelecimento, string? estabelecimentoSlug)
         {
             var errors = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
@@ -738,7 +751,9 @@ namespace APIBack.Service
                 var situacao = await _situacoes.ObterAsync(estabelecimento.Id);
                 if (situacao?.Situacao is SituacoesComerciais.Bloqueado or SituacoesComerciais.Implantacao)
                 {
-                    throw new KeyNotFoundException("Cardapio indisponivel no momento.");
+                    // O cliente final nao precisa saber da situacao comercial; o dono ve a causa exata na prontidao.
+                    _logger.LogInformation("[cardapio] ev=indisponivel motivo={Motivo} loja={Loja}", situacao.Situacao, estabelecimento.Id);
+                    throw new KeyNotFoundException(MensagemIndisponivel);
                 }
                 todosModulosNoTeste = situacao?.Situacao == SituacoesComerciais.Teste;
             }
@@ -750,12 +765,14 @@ namespace APIBack.Service
 
             if (!todosModulosNoTeste && (!modulos.Contains("cardapio") || !modulos.Contains("cardapioweb")))
             {
-                throw new KeyNotFoundException("Cardapio nao disponivel para este estabelecimento.");
+                _logger.LogInformation("[cardapio] ev=indisponivel motivo=modulo_inativo loja={Loja}", estabelecimento.Id);
+                throw new KeyNotFoundException(MensagemIndisponivel);
             }
 
             if (!estabelecimento.Publicado)
             {
-                throw new KeyNotFoundException("Cardapio ainda nao foi publicado.");
+                _logger.LogInformation("[cardapio] ev=indisponivel motivo=nao_publicado loja={Loja}", estabelecimento.Id);
+                throw new KeyNotFoundException(MensagemIndisponivel);
             }
 
             return estabelecimento;

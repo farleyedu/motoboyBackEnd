@@ -51,7 +51,7 @@ SELECT COUNT(*) FROM motoboy_vaga_periodo
             new { EstabelecimentoId = estabelecimentoId, Periodo = periodo }, transaction);
         var maximo = MotoboyLimites.VagasPorDia(config.MotoboysContratados);
         if (usadas >= maximo)
-            throw new DeliveryDomainException(409, "VAGAS_MOTOBOY_ESGOTADAS",
+            throw ErrosOperacionais.Excecao(ErrosOperacionais.VagasMotoboyEsgotadas,
                 $"Vagas de motoboy esgotadas neste dia operacional ({usadas} de {maximo}). Peça mais motoboys à Zippy.");
         if (!ocupar) return;
         await connection.ExecuteAsync(@"

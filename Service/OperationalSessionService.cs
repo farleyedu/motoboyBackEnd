@@ -426,7 +426,7 @@ namespace APIBack.Service
         {
             if (!_options.Enabled)
             {
-                throw new DeliveryDomainException(503, "DELIVERY_TRACKING_DISABLED", "Tracking operacional ainda nao foi ativado.");
+                throw ErrosOperacionais.Excecao(ErrosOperacionais.DeliveryTrackingDisabled, "Tracking operacional ainda nao foi ativado.");
             }
         }
 

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
 using APIBack.Extensions;
@@ -12,7 +13,7 @@ namespace APIBack.Middleware
 {
     /// <summary>
     /// Faz o modulo comercial valer no servidor para as familias de rota sem <c>[RequireModule]</c> (ver <see cref="ModulosPorRota"/>).
-    /// Roda depois da autenticacao e da situacao comercial. Super admin, chamadas sem loja no contexto e loja em teste (tudo liberado)
+    /// Roda depois da autenticacao e da situacao comercial. Chamadas sem loja no contexto (super admin inclusive: ele nao tem excecao em rota operacional) e loja em teste (tudo liberado)
     /// passam. Configuracao <c>ModuleEnforcement</c>: "warn" (padrao) so registra o que seria bloqueado, para ligar "enforce"
     /// sem surpresa com lojas de modulos inconsistentes; "off" desliga.
     /// </summary>
@@ -27,7 +28,7 @@ namespace APIBack.Middleware
         {
             var modo = ModulosPorRota.Modo(configuration["ModuleEnforcement"]);
             var modulo = modo == ModulosPorRota.Off ? null : ModulosPorRota.Exigido(context.Request.Path.Value);
-            if (modulo is null || context.GetEstabelecimentoId() is not Guid loja || context.IsSuperAdmin() ||
+            if (modulo is null || context.GetEstabelecimentoId() is not Guid loja ||
                 context.GetEstabelecimentoModulosAtivos().Any(m => string.Equals(m, modulo, StringComparison.OrdinalIgnoreCase)))
             {
                 await _next(context);
@@ -49,7 +50,9 @@ namespace APIBack.Middleware
                     success = false,
                     error = "Este recurso nao faz parte do plano da loja.",
                     code = ModulosPorRota.CodigoModuloInativo,
-                    modulo
+                    modulo,
+                    details = ErrosOperacionais.Detalhes(ErrosOperacionais.ModuloInativo,
+                        dados: new Dictionary<string, object?> { ["modulo"] = modulo })
                 });
                 return;
             }

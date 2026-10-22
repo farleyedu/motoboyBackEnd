@@ -145,14 +145,14 @@ public class ModulosPorRotaTests
     }
 
     [Fact]
-    public async Task Super_admin_e_chamada_sem_loja_passam()
+    public async Task Super_admin_nao_tem_privilegio_e_chamada_sem_loja_passa()
     {
+        // Super admin com uma loja no contexto recebe a mesma trava do modulo que qualquer usuario.
         var (_, superAdmin) = await Run("/api/v2/delivery/ifood/alerts", "enforce", Array.Empty<string>(), superAdmin: true);
-        Assert.True(superAdmin);
+        Assert.False(superAdmin);
         var (_, semLoja) = await Run("/api/v2/delivery/ifood/alerts", "enforce", Array.Empty<string>(), store: false);
         Assert.True(semLoja);
     }
-
     private static async Task<(DefaultHttpContext Context, bool NextCalled)> Run(
         string path, string modo, string[] modulos, string situacao = SituacoesComerciais.Ativo, bool superAdmin = false, bool store = true)
     {

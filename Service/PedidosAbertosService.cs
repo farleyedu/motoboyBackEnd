@@ -8,7 +8,7 @@ namespace APIBack.Service
 {
     public interface IPedidosAbertosService
     {
-        /// <summary>A loja aceita pedido agora? Interruptor "aceitando pedidos" + horario de atendimento.</summary>
+        /// <summary>A loja aceita pedido agora? Interruptor "aceitando pedidos" + horario de funcionamento (sem horario = fechada).</summary>
         Task<SituacaoPedidos> AvaliarAsync(Guid estabelecimentoId, bool aceitaPedidos);
     }
 
@@ -18,18 +18,15 @@ namespace APIBack.Service
         private readonly IAtendimentoRepository _atendimento;
         private readonly ILogger<PedidosAbertosService> _logger;
         private readonly TimeProvider _relogio;
-        private readonly IPedidoQueueRepository? _delivery;
 
         public PedidosAbertosService(
             IAtendimentoRepository atendimento,
             ILogger<PedidosAbertosService> logger,
-            TimeProvider? relogio = null,
-            IPedidoQueueRepository? delivery = null)
+            TimeProvider? relogio = null)
         {
             _atendimento = atendimento;
             _logger = logger;
             _relogio = relogio ?? TimeProvider.System;
-            _delivery = delivery;
         }
 
         public async Task<SituacaoPedidos> AvaliarAsync(Guid estabelecimentoId, bool aceitaPedidos)
@@ -41,28 +38,15 @@ namespace APIBack.Service
             }
             catch (Exception ex)
             {
-                // Sem o horario nao da para negar com certeza: vale so o interruptor, e o erro fica no log.
+                // Sem conseguir ler o horario nao ha como afirmar que a loja esta aberta: fica fechada e o erro vai para o log.
                 _logger.LogWarning(ex, "[cardapio] ev=sem_horario loja={Loja}", estabelecimentoId);
             }
 
-            var bloquearForaHorario = true;
-            if (_delivery != null)
-            {
-                try
-                {
-                    bloquearForaHorario = (await _delivery.GetSettingsAsync(estabelecimentoId)).BloquearPedidosForaHorario;
-                }
-                catch (Exception ex)
-                {
-                    _logger.LogWarning(ex, "[cardapio] ev=sem_regra_fora_horario loja={Loja}", estabelecimentoId);
-                }
-            }
-
+            // Cliente e IA: o horario SEMPRE vale. Fuso da loja (timezone_iana), nao o de Sao Paulo fixo.
             return PedidosAbertosRules.Avaliar(
                 aceitaPedidos,
                 horario,
-                AtendimentoConfigRules.ParaHorarioLocal(_relogio.GetUtcNow().UtcDateTime),
-                bloquearForaHorario);
+                AtendimentoConfigRules.ParaHorarioLocal(_relogio.GetUtcNow().UtcDateTime, horario?.Timezone));
         }
     }
 }

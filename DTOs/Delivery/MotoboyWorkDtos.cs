@@ -23,10 +23,18 @@ public sealed class RiderPayPlanBatchItem
 }
 public sealed record RiderPayPlanBatchResult(int MotoboyId, bool Ok, RiderPayPlan? Plan, string? Code, string? Message);
 public sealed record RiderSummaryBalance(decimal Outstanding, decimal CashToReturn);
-/// <summary>Uma linha por motoboy vinculado: totais do período (entregas, km, minutos, valor) e saldo/recebimentos de todo o histórico.</summary>
+/// <summary>
+/// Uma linha por motoboy vinculado: totais do período (entregas, km, minutos, valor) e saldo/recebimentos de todo o histórico.
+/// <c>Plan</c> é só a exceção individual ativa; <c>EffectivePlan</c> é a regra que vale de fato e <c>PlanSource</c> diz de onde ela vem:
+/// "rider" (exceção do motoboy), "default" (padrão da loja) ou "none" (nenhuma regra: configure o padrão ou a do motoboy).
+/// </summary>
 public sealed record RiderSummaryRow(int MotoboyId, string Nome, RiderPayPlan? Plan, RiderSummaryBalance Balance, int UnconfirmedReceipts,
-    int Entregas, decimal Km, int MinutosTrabalhados, decimal ValorGanho);
-public sealed record RiderWorkSummary(DateTimeOffset From, DateTimeOffset To, IReadOnlyList<RiderSummaryRow> Riders);
+    int Entregas, decimal Km, int MinutosTrabalhados, decimal ValorGanho, string PlanSource = "none", RiderPayPlan? EffectivePlan = null);
+public sealed record RiderWorkSummary(DateTimeOffset From, DateTimeOffset To, IReadOnlyList<RiderSummaryRow> Riders, RiderPayPlan? DefaultPlan = null);
+/// <summary>Padrão vigente da loja, seu histórico (mais recente primeiro) e quantos motoboys o herdam ou têm exceção.</summary>
+public sealed record RiderDefaultPlanView(RiderPayPlan? Plan, IReadOnlyList<RiderPayPlan> History, int RidersUsingDefault, int RidersWithOverride);
+/// <summary>Resultado de "voltar ao padrão": o motoboy passa a seguir a regra efetiva abaixo (nulo = a loja ainda não tem padrão).</summary>
+public sealed record RiderOverrideResult(int MotoboyId, string PlanSource, RiderPayPlan? EffectivePlan, DateTimeOffset ResetAtUtc);
 public sealed record RiderPayQuote(Guid PlanId, string Mode, decimal Rate, decimal? DistanceKm, decimal? Amount);
 public sealed record RiderPeriodQuote(decimal Amount, long? TotalSeconds, long? WorkedSeconds);
 public sealed class RiderPeriodRequest

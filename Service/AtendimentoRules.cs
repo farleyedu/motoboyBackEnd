@@ -101,89 +101,40 @@ namespace APIBack.Service
             };
         }
 
-        /// <summary>A loja esta aberta agora? Sem horario cadastrado (nulo), sempre aberta; horario sem nenhum dia aberto, fechada. Aceita virada de meia-noite.</summary>
-        public static bool IsOpen(HorarioAtendimentoDto? horario, DateTime localNow)
-        {
-            if (horario == null) return true;
-            var especial = horario.Especiais?.FirstOrDefault(e => e.Data == DateOnly.FromDateTime(localNow));
-            if (especial != null)
-                return !especial.Fechado && TimeSpan.TryParse(especial.Abre, CultureInfo.InvariantCulture, out var inicio)
-                    && TimeSpan.TryParse(especial.Fecha, CultureInfo.InvariantCulture, out var fim)
-                    && localNow.TimeOfDay >= inicio && localNow.TimeOfDay < fim;
-            if (horario.SemHorarioSemanal) return true;
-            if (horario.Dias == null || horario.Dias.Count == 0) return false;
-            var today = (int)localNow.DayOfWeek;
-            var yesterday = (today + 6) % 7;
-            var time = localNow.TimeOfDay;
+        /// <summary>
+        /// A loja esta aberta agora? Sem horario cadastrado (nulo) ou sem dia aberto, FECHADA. Uma funcao so (<see cref="HorarioRegras"/>),
+        /// a mesma do cardapio web, do bot e do nucleo de pedidos. Aceita virada de meia-noite e excecoes por data.
+        /// </summary>
+        public static bool IsOpen(HorarioAtendimentoDto? horario, DateTime localNow) =>
+            HorarioRegras.DentroDoHorario(ParaSemana(horario), localNow);
 
-            foreach (var dia in horario.Dias)
+        /// <summary>Adapta o horario do atendimento (dias 0 = domingo, so os abertos) para o modelo da regra unica.</summary>
+        public static HorarioSemana? ParaSemana(HorarioAtendimentoDto? horario)
+        {
+            if (horario == null) return null;
+            var semanal = new Dictionary<DayOfWeek, HorarioDia>();
+            foreach (var dia in horario.Dias ?? new List<HorarioDiaDto>())
             {
-                var abre = TimeSpan.Parse(dia.Abre, CultureInfo.InvariantCulture);
-                var fecha = TimeSpan.Parse(dia.Fecha, CultureInfo.InvariantCulture);
-                if (abre < fecha)
-                {
-                    if (dia.Dia == today && time >= abre && time < fecha) return true;
-                }
-                else
-                {
-                    // Vira a noite: abre hoje ate a meia-noite; a madrugada e do dia anterior.
-                    if (dia.Dia == today && time >= abre) return true;
-                    if (dia.Dia == yesterday && time < fecha && horario.Especiais?.Any(e => e.Data == DateOnly.FromDateTime(localNow.AddDays(-1))) != true) return true;
-                }
+                if (dia.Dia is < 0 or > 6) continue;
+                semanal[(DayOfWeek)dia.Dia] = new HorarioDia(false, HorarioRegras.Hora(dia.Abre), HorarioRegras.Hora(dia.Fecha));
             }
-            return false;
+            var especiais = new Dictionary<DateOnly, HorarioDia>();
+            foreach (var especial in horario.Especiais ?? new List<HorarioAtendimentoEspecialDto>())
+                especiais[especial.Data] = new HorarioDia(especial.Fechado, HorarioRegras.Hora(especial.Abre), HorarioRegras.Hora(especial.Fecha));
+            return new HorarioSemana { TemSemanal = !horario.SemHorarioSemanal, Semanal = semanal, Especiais = especiais };
         }
 
-        /// <summary>Hora local (America/Sao_Paulo) de um instante UTC: o horario de atendimento e sempre o da loja no Brasil.</summary>
-        public static DateTime ParaHorarioLocal(DateTime utc)
-        {
-            var instante = DateTime.SpecifyKind(utc, DateTimeKind.Utc);
-            try
-            {
-                return TimeZoneInfo.ConvertTimeFromUtc(instante, TimeZoneInfo.FindSystemTimeZoneById("America/Sao_Paulo"));
-            }
-            catch (TimeZoneNotFoundException)
-            {
-                return instante.AddHours(-3);
-            }
-        }
+        /// <summary>Hora local (America/Sao_Paulo) de um instante UTC. Prefira a sobrecarga com o fuso da loja.</summary>
+        public static DateTime ParaHorarioLocal(DateTime utc) => HorarioRegras.ParaHorarioLocal(utc, null);
 
-        private static readonly string[] NomesDosDias = { "domingo", "segunda", "terça", "quarta", "quinta", "sexta", "sábado" };
+        /// <summary>Hora local no fuso da loja (estabelecimentos.timezone_iana); sem fuso, America/Sao_Paulo.</summary>
+        public static DateTime ParaHorarioLocal(DateTime utc, string? timezoneIana) => HorarioRegras.ParaHorarioLocal(utc, timezoneIana);
 
         /// <summary>"hoje às 18:00", "amanhã às 11:00" ou "quarta às 11:00": a proxima abertura. Nulo sem horario ou sem dia marcado.</summary>
         public static string? ProximaAbertura(HorarioAtendimentoDto? horario, DateTime localNow)
         {
-            if (horario == null) return null;
-
-            DateTime? melhor = null;
-            var melhorOffset = 0;
-            for (var offset = 0; offset <= 7; offset++)
-            {
-                var data = localNow.Date.AddDays(offset);
-                var especial = horario.Especiais?.FirstOrDefault(e => e.Data == DateOnly.FromDateTime(data));
-                var aberturas = especial != null
-                    ? (!especial.Fechado && TimeSpan.TryParse(especial.Abre, CultureInfo.InvariantCulture, out var abreEspecial) ? new[] { abreEspecial } : Array.Empty<TimeSpan>())
-                    : horario.SemHorarioSemanal ? new[] { TimeSpan.Zero }
-                    : horario.Dias.Where(d => d.Dia == (int)data.DayOfWeek).Select(d => TimeSpan.Parse(d.Abre, CultureInfo.InvariantCulture));
-                foreach (var abre in aberturas)
-                {
-                    var candidato = data + abre;
-                    if (candidato > localNow && (melhor == null || candidato < melhor))
-                    {
-                        melhor = candidato;
-                        melhorOffset = offset;
-                    }
-                }
-            }
-
-            if (melhor == null) return null;
-            var hora = melhor.Value.ToString("HH:mm", CultureInfo.InvariantCulture);
-            return melhorOffset switch
-            {
-                0 => $"hoje às {hora}",
-                1 => $"amanhã às {hora}",
-                _ => $"{NomesDosDias[(int)melhor.Value.DayOfWeek]} às {hora}"
-            };
+            var proxima = HorarioRegras.ProximaAbertura(ParaSemana(horario), localNow);
+            return proxima.HasValue ? HorarioRegras.Descrever(proxima.Value, localNow) : null;
         }
 
         internal static string? Clean(string? value, int max, string field)
@@ -209,19 +160,22 @@ namespace APIBack.Service
     {
         public const string Pausado = "pausado";
         public const string ForaDoHorario = "fora_horario";
+        /// <summary>A loja nunca cadastrou horario nem abriu o dia: fechada ate cadastrar ou abrir manualmente.</summary>
+        public const string SemHorario = "sem_horario";
 
-        public static SituacaoPedidos Avaliar(
-            bool aceitaPedidos,
-            HorarioAtendimentoDto? horario,
-            DateTime localNow,
-            bool bloquearForaHorario = true)
+        /// <summary>
+        /// Para cliente e IA o horario sempre vale (BloquearPedidosForaHorario deixou de ser opcional): sem horario ou fora dele,
+        /// fechada. O pedido manual do atendente nao passa por aqui.
+        /// </summary>
+        public static SituacaoPedidos Avaliar(bool aceitaPedidos, HorarioAtendimentoDto? horario, DateTime localNow)
         {
             if (!aceitaPedidos) return new SituacaoPedidos(false, Pausado, null);
-            if (AtendimentoConfigRules.IsOpen(horario, localNow)) return SituacaoPedidos.Aberta;
-            if (!bloquearForaHorario) return SituacaoPedidos.Aberta;
-            return new SituacaoPedidos(false, ForaDoHorario, AtendimentoConfigRules.ProximaAbertura(horario, localNow));
+            var abertura = HorarioRegras.Avaliar(AtendimentoConfigRules.ParaSemana(horario), localNow);
+            if (abertura.Dentro) return SituacaoPedidos.Aberta;
+            return new SituacaoPedidos(false, abertura.Motivo == HorarioRegras.SemHorario ? SemHorario : ForaDoHorario, abertura.ProximaAberturaTexto);
         }
 
+        /// <summary>Texto para o CLIENTE FINAL: neutro, sem revelar o que a loja precisa configurar.</summary>
         public static string Mensagem(SituacaoPedidos situacao)
         {
             if (situacao.Aberto) return string.Empty;

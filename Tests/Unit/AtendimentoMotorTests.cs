@@ -184,14 +184,22 @@ namespace APIBack.Tests.Unit
         [Theory]
         [InlineData("qual o cardápio?", "cardapio_web")]
         [InlineData("quero fazer um pedido", "cardapio_web")]
-        [InlineData("QUERO AGENDAR UM HORÁRIO", "agendamento")]
-        [InlineData("onde está meu pedido", "delivery")]
         public void Palavra_chave_leva_direto_ao_servico_do_numero(string texto, string esperado)
         {
             var r = Motor.Decidir(Entrada(texto: texto, interpretado: null, servicos: new[] { "cardapio_web", "agendamento", "delivery" }, primeira: false), null, Agora);
 
             Assert.Equal(esperado, r.Fluxo);
             Assert.StartsWith("gatilho:", r.Regra);
+        }
+
+        [Theory]
+        [InlineData("QUERO AGENDAR UM HORÁRIO")]
+        [InlineData("onde está meu pedido")]
+        public void Comandos_globais_de_horario_e_acompanhamento_prevalecem_sobre_palavra_do_servico(string texto)
+        {
+            var r = Motor.Decidir(Entrada(texto: texto, interpretado: null, servicos: new[] { "cardapio_web", "agendamento", "delivery" }, primeira: false), null, Agora);
+
+            Assert.Equal("base", r.Fluxo);
         }
 
         [Fact]

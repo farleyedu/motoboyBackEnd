@@ -36,22 +36,24 @@ namespace APIBack.Service
             IReadOnlyList<DeliveryZonaDto>? zonas = null)
         {
             var warnings = new List<string>();
-            void Violation(int status, string code, string message)
+            void Violation(string code, string message, IReadOnlyDictionary<string, object?>? dados = null)
             {
-                if (rules.EnforceStoreRules) throw new DeliveryDomainException(status, code, message);
+                // Origens estritas recusam com o caminho de correcao do catalogo; as demais viram aviso para o atendente.
+                if (rules.EnforceStoreRules) throw ErrosOperacionais.Excecao(code, message, dados: dados);
                 warnings.Add(message);
             }
 
             if (!settings.AceitaPedidos)
             {
-                Violation(409, "STORE_NOT_ACCEPTING", "O estabelecimento nao esta aceitando pedidos no momento.");
+                Violation(ErrosOperacionais.StoreNotAccepting, "O estabelecimento nao esta aceitando pedidos no momento.");
             }
 
             var minimum = settings.PedidoMinimo ?? 0m;
             if (minimum > 0 && subtotal < minimum)
             {
-                Violation(422, "MINIMUM_NOT_REACHED",
-                    $"Pedido minimo de {minimum:0.00} nao atingido (subtotal {subtotal:0.00}).");
+                Violation(ErrosOperacionais.MinimumNotReached,
+                    $"Pedido minimo de {minimum:0.00} nao atingido (subtotal {subtotal:0.00}).",
+                    new Dictionary<string, object?> { ["pedidoMinimo"] = minimum, ["subtotal"] = subtotal });
             }
 
             double? distance = null;
@@ -61,8 +63,9 @@ namespace APIBack.Service
                 var radius = settings.RaioEntregaKm ?? 0m;
                 if (radius > 0 && distance.Value > (double)radius)
                 {
-                    Violation(422, "OUT_OF_DELIVERY_RANGE",
-                        $"Endereco fora do raio de entrega ({distance.Value:0.0} km, maximo {radius:0.0} km).");
+                    Violation(ErrosOperacionais.OutOfDeliveryRange,
+                        $"Endereco fora do raio de entrega ({distance.Value:0.0} km, maximo {radius:0.0} km).",
+                        new Dictionary<string, object?> { ["raioKm"] = radius, ["distanciaKm"] = Math.Round(distance.Value, 1) });
                 }
             }
 
