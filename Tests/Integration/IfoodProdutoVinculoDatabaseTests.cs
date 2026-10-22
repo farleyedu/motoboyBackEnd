@@ -93,7 +93,33 @@ DROP TABLE cardapio_produto;
     {
         var context = new DefaultHttpContext();
         context.Items["EstabelecimentoId"] = store; context.Items["UserId"] = user;
-        return new CardapioIfoodVinculoController(new IfoodProdutoVinculoRepository(db.Source)) { ControllerContext = new ControllerContext { HttpContext = context } };
+        // Cardápio e fotos só entram no "criar produto", coberto direto no repositório (PrepararCriacaoAsync).
+        return new CardapioIfoodVinculoController(new IfoodProdutoVinculoRepository(db.Source), null!, null!,
+            Microsoft.Extensions.Logging.Abstractions.NullLogger<CardapioIfoodVinculoController>.Instance) { ControllerContext = new ControllerContext { HttpContext = context } };
+    }
+
+    [DeliveryDatabaseFact]
+    public async Task CreateFromItemRequiresAFreeItemAndAnUnusedNameAndReturnsTheIfoodPhoto()
+    {
+        await using var db = await LinkDatabase(); var repo = LinkingRepository(db);
+        var payload = OrderPayload(db, db.OrderA, ("item-1", "Pizza Calabresa G", "7993", "https://ifood.example/p.jpg"));
+        await ImportOrder(db, repo, db.OrderA, payload);
+        var link = await db.Scalar<Guid>("SELECT id FROM ifood_produto_vinculo WHERE chave_id='item-1'");
+        var links = new IfoodProdutoVinculoRepository(db.Source);
+
+        Assert.Equal("https://ifood.example/p.jpg", await links.PrepararCriacaoAsync(db.StoreA, link, "Calabresa Grande", default));
+
+        var same = await Product(db, db.StoreA, "Calabresa  GRANDE");
+        var byName = await Assert.ThrowsAsync<DeliveryDomainException>(() => links.PrepararCriacaoAsync(db.StoreA, link, "calabresa grande", default));
+        Assert.Equal((409, "PRODUTO_NOME_JA_EXISTE"), (byName.StatusCode, byName.Code));
+        Assert.Equal(same, (Guid)byName.Details!.GetType().GetProperty("produtoId")!.GetValue(byName.Details)!);
+
+        await links.VincularAsync(db.StoreA, 7, same, link, default);
+        var used = await Assert.ThrowsAsync<DeliveryDomainException>(() => links.PrepararCriacaoAsync(db.StoreA, link, "Outro nome", default));
+        Assert.Equal((409, "IFOOD_VINCULO_JA_USADO"), (used.StatusCode, used.Code));
+
+        var foreign = await Assert.ThrowsAsync<DeliveryDomainException>(() => links.PrepararCriacaoAsync(db.StoreB, link, "Outro nome", default));
+        Assert.Equal(404, foreign.StatusCode);
     }
 
     [DeliveryDatabaseFact]
@@ -468,13 +494,16 @@ DROP TABLE cardapio_produto;
     public void PanelEndpointsRequireTheSamePermissionThatEditsTheMenu()
     {
         var actions = typeof(CardapioIfoodVinculoController).GetMethods().Where(m => m.DeclaringType == typeof(CardapioIfoodVinculoController) && m.GetCustomAttributes(typeof(HttpMethodAttribute), true).Any()).ToList();
-        Assert.Equal(5, actions.Count);
+        Assert.Equal(6, actions.Count);
         foreach (var action in actions)
         {
             var permission = Assert.Single(action.GetCustomAttributes(typeof(RequirePermissionAttribute), true).Cast<RequirePermissionAttribute>());
-            Assert.Equal(("Cardapio", "editar"), (permission.Modulo, permission.Acao));
+            // Criar produto a partir do item pede a mesma permissão de criar produto no cardápio.
+            var expected = action.Name == nameof(CardapioIfoodVinculoController.CriarProduto) ? "criar" : "editar";
+            Assert.Equal(("Cardapio", expected), (permission.Modulo, permission.Acao));
         }
-        Assert.Equal(new[] { "api/v2/cardapio/ifood/pendentes", "api/v2/cardapio/ifood/resumo", "api/v2/cardapio/ifood/vinculos/{vinculoId:guid}",
+        Assert.Equal(new[] { "api/v2/cardapio/ifood/pendentes", "api/v2/cardapio/ifood/pendentes/{vinculoId:guid}/criar-produto",
+                "api/v2/cardapio/ifood/resumo", "api/v2/cardapio/ifood/vinculos/{vinculoId:guid}",
                 "api/v2/cardapio/produtos/{produtoId:guid}/ifood", "api/v2/cardapio/produtos/{produtoId:guid}/ifood/vinculos" },
             actions.Select(a => ((HttpMethodAttribute)a.GetCustomAttributes(typeof(HttpMethodAttribute), true).Single()).Template!).Order().ToArray());
     }

@@ -49,6 +49,13 @@ namespace APIBack.DTOs.Cardapio
         public Guid? VinculoId { get; set; }
     }
 
+    /// <summary>Produto criado a partir do item do iFood, já ligado a ele.</summary>
+    public sealed class IfoodProdutoCriadoDto
+    {
+        public CardapioProdutoContractDto Produto { get; set; } = new();
+        public IfoodProdutoVinculoDto Vinculo { get; set; } = new();
+    }
+
     public sealed class IfoodVinculoDesfeitoDto
     {
         public Guid VinculoId { get; set; }

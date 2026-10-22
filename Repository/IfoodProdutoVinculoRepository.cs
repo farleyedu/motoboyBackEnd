@@ -1,4 +1,5 @@
 using APIBack.DTOs.Cardapio;
+using APIBack.Integrations.Ifood.Orders;
 using APIBack.Service;
 using Dapper;
 using Npgsql;
@@ -116,6 +117,41 @@ WHERE id=@Id AND estabelecimento_id=@Store
         await transaction.CommitAsync(ct);
         return result;
     }
+
+    /// <summary>
+    /// Antes de criar o produto a partir do item: o item precisa estar livre (pendente, desfeito ou ligado a produto excluído)
+    /// e não pode haver produto da loja com o mesmo nome (aí o certo é ligar a ele). Devolve a foto do item no iFood.
+    /// </summary>
+    public async Task<string?> PrepararCriacaoAsync(Guid store, Guid vinculoId, string nome, CancellationToken ct)
+    {
+        await using var connection = await source.OpenConnectionAsync(ct);
+        if (!await AvailableAsync(connection, null, store, ct)) throw NotConnected();
+        var link = await connection.QuerySingleOrDefaultAsync<LinkRow>(new CommandDefinition("""
+SELECT id AS Id,estado AS Estado,produto_id AS ProdutoId FROM ifood_produto_vinculo
+WHERE id=@Id AND estabelecimento_id=@Store AND tipo='item'
+""", new { Id = vinculoId, Store = store }, cancellationToken: ct)) ?? throw LinkNotFound();
+        if (link.Estado == "confirmado" && link.ProdutoId.HasValue)
+        {
+            var owner = await connection.QuerySingleOrDefaultAsync<string?>(new CommandDefinition(
+                "SELECT nome FROM cardapio_produto WHERE id=@Id AND id_estabelecimento=@Store AND deleted_at IS NULL",
+                new { Id = link.ProdutoId, Store = store }, cancellationToken: ct));
+            if (owner != null)
+                throw new DeliveryDomainException(409, "IFOOD_VINCULO_JA_USADO", "Este item do iFood já está ligado a outro produto.",
+                    new { produtoId = link.ProdutoId, produtoNome = owner });
+        }
+        var same = await connection.QueryFirstOrDefaultAsync<SameNameRow>(new CommandDefinition($"""
+SELECT id AS Id,nome AS Nome FROM cardapio_produto
+WHERE id_estabelecimento=@Store AND deleted_at IS NULL AND {IfoodItemLinkRules.NameSql("nome")}=@Nome
+ORDER BY ativo DESC,id LIMIT 1
+""", new { Store = store, Nome = IfoodItemLinkRules.NormalizeName(nome) }, cancellationToken: ct));
+        if (same != null)
+            throw new DeliveryDomainException(409, "PRODUTO_NOME_JA_EXISTE", "Já existe um produto com esse nome.",
+                new { produtoId = same.Id, produtoNome = same.Nome });
+        return await connection.ExecuteScalarAsync<string?>(new CommandDefinition(
+            "SELECT imagem_url FROM ifood_produto_vinculo WHERE id=@Id", new { Id = vinculoId }, cancellationToken: ct));
+    }
+
+    private sealed class SameNameRow { public Guid Id { get; set; } public string Nome { get; set; } = ""; }
 
     public async Task<IfoodVinculoDesfeitoDto> DesfazerAsync(Guid store, int? user, Guid vinculoId, CancellationToken ct)
     {

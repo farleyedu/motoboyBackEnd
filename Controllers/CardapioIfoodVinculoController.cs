@@ -3,6 +3,7 @@ using APIBack.DTOs.Cardapio;
 using APIBack.DTOs.Common;
 using APIBack.Repository;
 using APIBack.Service;
+using APIBack.Service.Interface;
 using Microsoft.AspNetCore.Mvc;
 
 namespace APIBack.Controllers;
@@ -12,7 +13,11 @@ namespace APIBack.Controllers;
 /// preço, quantidade ou total do pedido. A loja vem sempre do token; produto ou vínculo de outra loja responde 404.
 /// </summary>
 [ApiController]
-public sealed class CardapioIfoodVinculoController(IfoodProdutoVinculoRepository repository) : EstabelecimentoScopedControllerBase
+public sealed class CardapioIfoodVinculoController(
+    IfoodProdutoVinculoRepository repository,
+    ICardapioContractService cardapio,
+    CardapioImagemService imagens,
+    ILogger<CardapioIfoodVinculoController> logger) : EstabelecimentoScopedControllerBase
 {
     [HttpGet("api/v2/cardapio/ifood/resumo")]
     [RequirePermission("Cardapio", "editar")]
@@ -40,6 +45,57 @@ public sealed class CardapioIfoodVinculoController(IfoodProdutoVinculoRepository
     [RequirePermission("Cardapio", "editar")]
     public Task<IActionResult> Desfazer(Guid vinculoId, CancellationToken ct) =>
         RunAsync(store => repository.DesfazerAsync(store, CurrentUserId, vinculoId, ct));
+
+    /// <summary>
+    /// Cria o produto a partir do item pendente e já liga os dois. O produto nasce oculto do cardápio web (o preço do iFood
+    /// costuma ser maior que o do canal próprio); a foto do iFood é copiada para o nosso armazenamento quando possível.
+    /// Se o vínculo falhar depois de criado, o produto é excluído: não sobra produto solto.
+    /// </summary>
+    [HttpPost("api/v2/cardapio/ifood/pendentes/{vinculoId:guid}/criar-produto")]
+    [RequirePermission("Cardapio", "criar")]
+    public async Task<IActionResult> CriarProduto(Guid vinculoId, [FromBody] SalvarCardapioProdutoContractRequest? request, CancellationToken ct)
+    {
+        if (request == null) return BadRequestErrorResponse("Corpo da requisicao e obrigatorio.");
+        if (!TryResolveCurrentEstabelecimentoAndModule("Cardapio", out var store, out var error)) return error!;
+        try
+        {
+            var imagemIfood = await repository.PrepararCriacaoAsync(store, vinculoId, request.Nome, ct);
+            request.PublicadoWeb = false;
+            request.ImageUrl = await HospedarFotoAsync(store, request.ImageUrl, imagemIfood, ct);
+
+            var produto = await cardapio.CriarProdutoAsync(store, request);
+            IfoodProdutoVinculoDto vinculo;
+            try
+            {
+                vinculo = await repository.VincularAsync(store, CurrentUserId, produto.Id, vinculoId, CancellationToken.None);
+            }
+            catch
+            {
+                await cardapio.ExcluirProdutoAsync(store, produto.Id);
+                throw;
+            }
+            return Ok(ApiResponse<IfoodProdutoCriadoDto>.Ok(new IfoodProdutoCriadoDto { Produto = produto, Vinculo = vinculo }));
+        }
+        catch (DeliveryDomainException ex) { return StatusCode(ex.StatusCode, ApiResponse<object>.Fail(ex.Message, ex.Code, ex.Details)); }
+        catch (RequestValidationException ex) { return ValidationErrorResponse(ex); }
+        catch (InvalidOperationException ex) { return ConflictErrorResponse(ex.Message); }
+    }
+
+    /// <summary>Foto do iFood (ou vazia com foto no iFood) vira cópia nossa; falha na cópia cria o produto sem foto.</summary>
+    private async Task<string?> HospedarFotoAsync(Guid store, string? enviada, string? imagemIfood, CancellationToken ct)
+    {
+        var url = string.IsNullOrWhiteSpace(enviada) ? null : enviada.Trim();
+        if (url == null || !string.Equals(url, imagemIfood?.Trim(), StringComparison.Ordinal)) return url;
+        try
+        {
+            return (await imagens.ImportarDeUrlAsync(store, url, ct)).Url;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            logger.LogWarning(ex, "Nao foi possivel copiar a foto do iFood {VinculoUrl}; produto criado sem foto.", url);
+            return null;
+        }
+    }
 
     private async Task<IActionResult> RunAsync<T>(Func<Guid, Task<T>> action)
     {
