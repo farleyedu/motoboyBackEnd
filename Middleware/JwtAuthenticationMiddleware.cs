@@ -101,7 +101,14 @@ namespace APIBack.Middleware
                 payload.TipoAcesso = APIBack.Security.RoleCatalog.Normalize(membership.TipoAcesso);
                 payload.EstabelecimentoNome = establishment.Nome;
                 payload.EstabelecimentoModulosAtivos = APIBack.Model.Gestao.EstabelecimentoModuleMapper.ToUiModules(establishment.Nome, establishment.ModulosAtivosRaw);
-                payload.Permissoes = APIBack.Security.EstablishmentPermissions.Resolve(membership.PermissoesCustomizadas, establishment.ModulosAtivosRaw);
+                // Mesma regra do login e da troca de loja (ResolveForAccess): dono e gerentes recebem Configuracoes e o resto do
+                // catalogo. Com Resolve, o /api/auth/me tirava essas permissoes logo depois do login.
+                var companyAccess = motoboyIdentity ? null : await repository.ObterVinculoEmpresaAsync(membership.UsuarioId, establishment.EmpresaId);
+                var companyRole = companyAccess?.VinculoAtivo == true && string.Equals(companyAccess.Status, "ativo", StringComparison.OrdinalIgnoreCase)
+                    ? companyAccess.TipoAcesso
+                    : null;
+                payload.Permissoes = APIBack.Security.EstablishmentPermissions.ResolveForAccess(
+                    membership.PermissoesCustomizadas, establishment.ModulosAtivosRaw, companyRole, membership.TipoAcesso);
             }
 
             var allowEndedOperationalSession =
