@@ -111,6 +111,19 @@ namespace APIBack.Atendimento
         public Task<IActionResult> CriarCanal(Guid estabelecimentoId, [FromBody] CanalRequest request) =>
             Executar(ator => _canais.CriarAsync(ator, estabelecimentoId, request), StatusCodes.Status201Created);
 
+        /// <summary>A propria loja conecta o numero: cola o Phone Number ID e o token da Meta (o telefone vem da Meta).</summary>
+        [HttpPost("canais/conectar")]
+        public Task<IActionResult> ConectarCanal(Guid estabelecimentoId, [FromBody] ConectarCanalRequest request) =>
+            Executar(ator => _canais.ConectarAsync(ator, estabelecimentoId, request), StatusCodes.Status201Created);
+
+        [HttpDelete("canais/{canalId:guid}/conexao")]
+        public Task<IActionResult> DesconectarCanal(Guid estabelecimentoId, Guid canalId) =>
+            Executar(async ator =>
+            {
+                await _canais.DesconectarAsync(ator, canalId);
+                return new object();
+            });
+
         [HttpPut("canais/{canalId:guid}")]
         public Task<IActionResult> AtualizarCanal(Guid estabelecimentoId, Guid canalId, [FromBody] CanalRequest request) =>
             Executar(ator => _canais.AtualizarAsync(ator, canalId, request));

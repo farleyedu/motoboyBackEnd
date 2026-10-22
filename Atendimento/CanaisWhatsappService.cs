@@ -13,6 +13,9 @@ namespace APIBack.Atendimento
     public sealed record CanalRequest(
         string? PhoneNumberId, string? Numero, string? Nome, string? Token, string? ModoAtendimento, IReadOnlyList<string>? Servicos);
 
+    /// <summary>O dono cola o ID da Meta e o token; o telefone vem da propria Meta.</summary>
+    public sealed record ConectarCanalRequest(string? PhoneNumberId, string? Token);
+
     public sealed record CanalView(
         Guid Id, Guid EstabelecimentoId, string PhoneNumberId, string NumeroE164, string? Nome, string Status, string ModoAtendimento,
         IReadOnlyList<string> Servicos, bool TemToken, DateTime? VerificadoEm, DateTime? UltimoRecebimentoEm,
@@ -29,6 +32,13 @@ namespace APIBack.Atendimento
         /// <summary>Passa o numero para outra loja (um numero pertence a uma loja so). Zera os servicos do numero.</summary>
         Task<CanalView> MoverAsync(AtendimentoAtor ator, Guid canalId, Guid destinoEstabelecimentoId);
         Task RemoverAsync(AtendimentoAtor ator, Guid canalId);
+        /// <summary>
+        /// A propria loja conecta o numero dela: confere o ID e o token na Meta antes de gravar, pega o telefone de la e deixa o canal
+        /// ativo. Recusa um ID que ja e de outra loja. So a Gestao ou quem configura o WhatsApp da loja.
+        /// </summary>
+        Task<CanalView> ConectarAsync(AtendimentoAtor ator, Guid estabelecimentoId, ConectarCanalRequest request);
+        /// <summary>A propria loja desconecta o numero dela (o central de testes continua so da Gestao).</summary>
+        Task DesconectarAsync(AtendimentoAtor ator, Guid canalId);
         /// <summary>Confere na Meta se o ID existe e e do telefone cadastrado. So a Gestao.</summary>
         Task<VerificacaoCanal> VerificarAsync(AtendimentoAtor ator, Guid canalId);
     }
@@ -221,6 +231,98 @@ namespace APIBack.Atendimento
             _logger.LogInformation("[canal] ev=removido canal={Canal} loja={Loja} usuario={Usuario}", canalId, canal.IdEstabelecimento, ator.UsuarioId);
         }
 
+        public async Task<CanalView> ConectarAsync(AtendimentoAtor ator, Guid estabelecimentoId, ConectarCanalRequest request)
+        {
+            ExigirDonoOuGestao(ator, "conectar_canal", estabelecimentoId);
+            if (!await _catalogo.LojaExisteAsync(estabelecimentoId)) throw new KeyNotFoundException("Estabelecimento nao encontrado.");
+
+            var phoneNumberId = request.PhoneNumberId?.Trim() ?? string.Empty;
+            var token = request.Token?.Trim() ?? string.Empty;
+            var erros = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+            if (!AtendimentoRegras.PhoneNumberIdValido(phoneNumberId))
+            {
+                erros["phoneNumberId"] = new List<string> { "Informe o Phone Number ID da Meta (so digitos, uns 15 numeros). Nao e o telefone." };
+            }
+
+            if (token.Length == 0) erros["token"] = new List<string> { "Informe o token da Meta." };
+            var tokenCifrado = token.Length == 0 ? null : CifrarToken(token, erros);
+            if (erros.Count > 0) throw new RequestValidationException("Dados invalidos.", erros);
+
+            var existente = await _canais.ObterPorPhoneNumberIdAsync(phoneNumberId);
+            if (existente != null && existente.IdEstabelecimento != estabelecimentoId)
+            {
+                _logger.LogWarning("[canal] ev=conectar_recusado motivo=de_outra_loja loja={Loja} usuario={Usuario}", estabelecimentoId, ator.UsuarioId);
+                throw Invalido("phoneNumberId", "Este numero ja esta conectado a outra loja. Se ele e seu, fale com a Zippy.");
+            }
+
+            if (existente == null)
+            {
+                var proprios = (await _canais.ListarPorLojaAsync(estabelecimentoId)).Where(c => !c.Central && c.Status != StatusCanal.Inativo).ToList();
+                if (proprios.Count > 0) throw Invalido("phoneNumberId", "Esta loja ja tem um numero conectado. Desconecte antes de conectar outro.");
+            }
+
+            var meta = await _verificador.ConsultarCredenciaisAsync(phoneNumberId, token);
+            if (!meta.Ok) throw Invalido(meta.Mensagem.Contains("token", StringComparison.OrdinalIgnoreCase) ? "token" : "phoneNumberId", meta.Mensagem);
+
+            var numero = AtendimentoRegras.NormalizarNumero(meta.NumeroNaMeta);
+            if (numero == null) throw Invalido("phoneNumberId", "A Meta nao devolveu um telefone valido para este numero.");
+
+            var donoDoNumero = await _canais.ObterPorNumeroAsync(numero.TrimStart('+'));
+            if (donoDoNumero != null && donoDoNumero.Id != existente?.Id)
+            {
+                _logger.LogWarning("[canal] ev=conectar_recusado motivo=telefone_ja_cadastrado loja={Loja} usuario={Usuario}", estabelecimentoId, ator.UsuarioId);
+                throw Invalido("phoneNumberId", "O telefone deste numero ja esta cadastrado em outro canal. Fale com a Zippy.");
+            }
+
+            CanalWhatsapp canal;
+            if (existente != null)
+            {
+                canal = existente;
+                canal.NumeroE164 = numero;
+                canal.Nome = LimparTexto(meta.NomeVerificado) ?? canal.Nome;
+                canal.TokenCifrado = tokenCifrado;
+                canal.Status = StatusCanal.Configurando;
+                canal.UltimoErro = null;
+                await ExecutarAsync("conectar_canal", canal.Id, () => _canais.AtualizarDadosAsync(canal));
+            }
+            else
+            {
+                var ativos = (await _catalogo.ListarServicosDaLojaAsync(estabelecimentoId)).Where(sv => sv.Ativo).Select(sv => sv.Codigo).ToList();
+                canal = new CanalWhatsapp
+                {
+                    Id = Guid.NewGuid(),
+                    IdEstabelecimento = estabelecimentoId,
+                    PhoneNumberId = phoneNumberId,
+                    NumeroE164 = numero,
+                    Nome = LimparTexto(meta.NomeVerificado),
+                    TokenCifrado = tokenCifrado,
+                    Status = StatusCanal.Configurando,
+                    ModoAtendimento = ModoAtendimento.Hibrido,
+                    Servicos = ativos
+                };
+                await ExecutarAsync("conectar_canal", canal.Id, () => _canais.CriarAsync(canal, ativos));
+            }
+
+            await _canais.MarcarVerificadoAsync(canal.Id, true, null);
+            await _canais.RegistrarAuditoriaAsync(canal.Id, "conectado", null, estabelecimentoId, ator.UsuarioId,
+                JsonSerializer.Serialize(new { numero, pelaLoja = !ator.Gestao }));
+            _logger.LogInformation("[canal] ev=conectado canal={Canal} loja={Loja} usuario={Usuario} numero={Numero}", canal.Id, estabelecimentoId, ator.UsuarioId, numero);
+
+            return Ver((await _canais.ObterAsync(canal.Id))!);
+        }
+
+        public async Task DesconectarAsync(AtendimentoAtor ator, Guid canalId)
+        {
+            var canal = await ObterOuFalharAsync(canalId);
+            if (canal.Central) ExigirGestao(ator, "desconectar_canal", canal.IdEstabelecimento);
+            else ExigirDonoOuGestao(ator, "desconectar_canal", canal.IdEstabelecimento);
+
+            await _canais.RegistrarAuditoriaAsync(canalId, "desconectado", canal.IdEstabelecimento, null, ator.UsuarioId,
+                JsonSerializer.Serialize(new { numero = canal.NumeroE164, phoneNumberId = canal.PhoneNumberId }));
+            await _canais.RemoverAsync(canalId);
+            _logger.LogInformation("[canal] ev=desconectado canal={Canal} loja={Loja} usuario={Usuario}", canalId, canal.IdEstabelecimento, ator.UsuarioId);
+        }
+
         public async Task<VerificacaoCanal> VerificarAsync(AtendimentoAtor ator, Guid canalId)
         {
             var canal = await ObterOuFalharAsync(canalId);
@@ -240,6 +342,19 @@ namespace APIBack.Atendimento
             _logger.LogWarning("[canal] ev=negado acao={Acao} motivo=so_gestao loja={Loja} usuario={Usuario}", acao, estabelecimentoId, ator.UsuarioId);
             throw new UnauthorizedAccessException("Somente a Gestao cadastra e altera numeros de WhatsApp.");
         }
+
+        // Quem conecta o numero da propria loja: a Gestao ou quem tem a permissao de configurar o WhatsApp nela.
+        private void ExigirDonoOuGestao(AtendimentoAtor ator, string acao, Guid estabelecimentoId)
+        {
+            if (ator.Gestao) return;
+            if (ator.EstabelecimentoId == estabelecimentoId && ator.TemPermissao("WhatsApp", "configurar")) return;
+
+            _logger.LogWarning("[canal] ev=negado acao={Acao} motivo=sem_permissao loja={Loja} usuario={Usuario}", acao, estabelecimentoId, ator.UsuarioId);
+            throw new UnauthorizedAccessException("Voce nao tem permissao para conectar o WhatsApp desta loja.");
+        }
+
+        private static RequestValidationException Invalido(string campo, string mensagem) =>
+            new("Dados invalidos.", new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase) { [campo] = new List<string> { mensagem } });
 
         private string? CifrarToken(string? token, Dictionary<string, List<string>> erros)
         {

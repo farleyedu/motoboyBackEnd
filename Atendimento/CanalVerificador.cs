@@ -16,6 +16,8 @@ namespace APIBack.Atendimento
     {
         /// <summary>Pergunta a Meta de quem e o Phone Number ID e confere com o telefone cadastrado.</summary>
         Task<VerificacaoCanal> VerificarAsync(CanalWhatsapp canal);
+        /// <summary>Pergunta a Meta com o token informado, sem gravar nada: serve para conectar um numero que ainda nao existe.</summary>
+        Task<VerificacaoCanal> ConsultarCredenciaisAsync(string phoneNumberId, string token);
     }
 
     /// <summary>
@@ -60,6 +62,23 @@ namespace APIBack.Atendimento
                 return semToken;
             }
 
+            var (resultado, semResposta) = await ChamarMetaAsync(canal, token);
+            // Rede fora: nao diz nada sobre o cadastro, entao nao marca erro no canal.
+            if (semResposta) return resultado;
+
+            await Registrar(canal, resultado, origem);
+            return resultado;
+        }
+
+        public async Task<VerificacaoCanal> ConsultarCredenciaisAsync(string phoneNumberId, string token)
+        {
+            // Sem telefone cadastrado ainda: o que a Meta devolver e o telefone do canal.
+            var (resultado, _) = await ChamarMetaAsync(new CanalWhatsapp { PhoneNumberId = phoneNumberId.Trim() }, token.Trim());
+            return resultado;
+        }
+
+        private async Task<(VerificacaoCanal Resultado, bool SemResposta)> ChamarMetaAsync(CanalWhatsapp canal, string token)
+        {
             var versao = _configuration["WhatsApp:GraphApiVersion"] ?? "v23.0";
             var url = $"https://graph.facebook.com/{versao}/{canal.PhoneNumberId}?fields=display_phone_number,verified_name";
 
@@ -67,21 +86,16 @@ namespace APIBack.Atendimento
             cliente.Timeout = TimeSpan.FromSeconds(10);
             cliente.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
 
-            VerificacaoCanal resultado;
             try
             {
                 using var resposta = await cliente.GetAsync(url);
-                resultado = Avaliar(canal, (int)resposta.StatusCode, await resposta.Content.ReadAsStringAsync());
+                return (Avaliar(canal, (int)resposta.StatusCode, await resposta.Content.ReadAsStringAsync()), false);
             }
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
             {
-                // Rede fora: nao diz nada sobre o cadastro, entao nao marca erro no canal.
                 _logger.LogWarning(ex, "[canal] ev=verificacao_sem_resposta canal={Canal}", canal.Id);
-                return new VerificacaoCanal(false, "Nao foi possivel falar com a Meta agora. Tente de novo em instantes.", null, null);
+                return (new VerificacaoCanal(false, "Nao foi possivel falar com a Meta agora. Tente de novo em instantes.", null, null), true);
             }
-
-            await Registrar(canal, resultado, origem);
-            return resultado;
         }
 
         private async Task Registrar(CanalWhatsapp canal, VerificacaoCanal resultado, string origemToken)
@@ -107,7 +121,7 @@ namespace APIBack.Atendimento
                     var digitosMeta = Digitos(numero);
                     var digitosCadastro = Digitos(canal.NumeroE164);
 
-                    if (digitosMeta.Length > 0 && digitosMeta != digitosCadastro)
+                    if (digitosMeta.Length > 0 && digitosCadastro.Length > 0 && digitosMeta != digitosCadastro)
                     {
                         return new VerificacaoCanal(false,
                             $"O ID da Meta pertence ao numero {numero}, mas o cadastro diz {canal.NumeroE164}. Corrija o ID ou o telefone.", numero, nome);
