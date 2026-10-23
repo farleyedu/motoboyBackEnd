@@ -1,0 +1,4 @@
+BEGIN;
+DROP TABLE IF EXISTS chamado_mensagem;
+DROP TABLE IF EXISTS chamado;
+COMMIT;

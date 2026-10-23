@@ -32,7 +32,8 @@ namespace APIBack.Service
         private const string SessaoMotoboy = "/api/v2/motoboys/me/session";
 
         private static readonly string[] PrefixosSempreLiberados =
-            { "/api/gestao", "/api/admin", "/api/auth", "/api/me", "/api/v2/comercial" };
+            // Chamados ficam abertos: a loja bloqueada precisa conseguir perguntar por que.
+            { "/api/gestao", "/api/admin", "/api/auth", "/api/me", "/api/v2/comercial", "/api/v2/chamados" };
 
         /// <summary>
         /// Rotas que nao dependem da situacao da loja, para qualquer usuario (inclusive super admin com uma loja no contexto):

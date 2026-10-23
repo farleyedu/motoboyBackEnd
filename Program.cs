@@ -108,6 +108,7 @@ builder.Services.AddScoped<APIBack.Service.IProntidaoService, APIBack.Service.Pr
 builder.Services.AddScoped<APIBack.Service.IOperacaoLojaService, APIBack.Service.OperacaoLojaService>();
 builder.Services.AddScoped<APIBack.Service.ISituacaoComercialService, APIBack.Service.SituacaoComercialService>();
 builder.Services.AddScoped<APIBack.Service.IGestaoCentralService, APIBack.Service.GestaoCentralService>();
+builder.Services.AddScoped<APIBack.Service.IChamadosService, APIBack.Service.ChamadosService>();
 builder.Services.AddScoped<APIBack.Service.IPacotesComerciaisService, APIBack.Service.PacotesComerciaisService>();
 builder.Services.AddSingleton<APIBack.Hubs.DeliveryHubConnections>();
 builder.Services.AddHostedService<APIBack.Hubs.DeliveryHubBlockWorker>();
