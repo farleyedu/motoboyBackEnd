@@ -171,9 +171,10 @@ namespace APIBack.Service
                 $"A loja abre em {d.DiasAbertos} dia(s) da semana.", "Nenhum dia da semana está aberto no horário de funcionamento.",
                 "Marque ao menos um dia aberto, com hora de abrir e fechar, em Configurações > Negócio > Horários.",
                 QuemResolve.Loja, CorrecaoDto.Config("negocio", "horarios"));
-            Add(itens, RaioEntrega, "delivery", "Raio de entrega", d.RaioEntregaKm is > 0,
-                $"A loja entrega até {d.RaioEntregaKm:0.##} km.", "O raio de entrega ainda não foi informado (precisa ser maior que zero).",
-                "Informe o raio de entrega, em km, em Configurações > Delivery.",
+            Add(itens, RaioEntrega, "delivery", "Raio de entrega", d.RaioEntregaKm is > 0 || d.ZonasAtivas > 0,
+                d.RaioEntregaKm is > 0 ? $"A loja entrega até {d.RaioEntregaKm:0.##} km." : $"A loja entrega por {d.ZonasAtivas} zona(s) de entrega.",
+                "A loja não tem raio nem zona de entrega (o raio precisa ser maior que zero).",
+                "Informe o raio de entrega, em km, ou desenhe uma zona em Configurações > Delivery.",
                 QuemResolve.Loja, CorrecaoDto.Config("delivery"));
             Add(itens, ProdutoVendavel, "cardapio", "Produto para vender", d.ProdutosVendaveis > 0,
                 $"A loja tem {d.ProdutosVendaveis} produto(s) à venda.", "Nenhum produto ativo, disponível e com preço maior que zero.",
