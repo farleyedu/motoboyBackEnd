@@ -206,10 +206,10 @@ SELECT e.id, e.nome_fantasia AS Nome, e.id_empresa AS EmpresaId, emp.nome_fantas
   FROM estabelecimentos e
   LEFT JOIN empresas emp ON emp.id = e.id_empresa
   LEFT JOIN LATERAL (
-       SELECT COUNT(*) FILTER (WHERE p.data_pedido >= NOW() - INTERVAL '7 days') AS p7,
+       SELECT COUNT(*) FILTER (WHERE LEFT(p.data_pedido::text, 10) >= (CURRENT_DATE - 7)::text) AS p7,
               COUNT(*) AS p28, MAX(p.data_pedido) AS ultimo
          FROM pedido p
-        WHERE p.id_estabelecimento = e.id AND p.data_pedido >= NOW() - INTERVAL '28 days'
+        WHERE p.id_estabelecimento = e.id AND LEFT(p.data_pedido::text, 10) >= (CURRENT_DATE - 28)::text
           AND COALESCE(p.origem, '') <> 'simulador' AND COALESCE(p.status_pedido, 1) <> 6) ped ON TRUE
   LEFT JOIN LATERAL (
        SELECT COUNT(*) AS contratos, MIN(c.status::text) AS status,
