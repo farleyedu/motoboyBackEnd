@@ -43,7 +43,7 @@ public sealed class IfoodDiagnosticsControllerTests
         public Task RequestStoreConnectionAsync(Guid merchantId, Guid estabelecimentoId, CancellationToken ct = default) => throw new NotSupportedException();
         public Task<bool> DisconnectStoreAsync(Guid estabelecimentoId, CancellationToken ct = default) => throw new NotSupportedException();
         public Task RevokeConnectionAsync(Guid merchantId, CancellationToken ct = default) => throw new NotSupportedException();
-        public Task<int> SetConnectionDeliveryAsync(Guid merchantId, bool enabled, bool applyToOpenOrders = false, CancellationToken ct = default) => throw new NotSupportedException();
+        public Task<int> SetConnectionDeliveryAsync(Guid merchantId, bool enabled, bool applyToOpenOrders = false, CancellationToken ct = default, Guid? store = null) => throw new NotSupportedException();
     }
 
     private static IfoodDiagnosticsController Controller(FakeReconciliation repository, bool enabled = true, bool polling = true, Guid? store = null, int? user = 7)

@@ -190,11 +190,17 @@ public sealed class IfoodConfigController(IIfoodRuntimeSettingsRepository reposi
     [HttpPut("connections/{merchantId:guid}/delivery"), RequirePermission("Delivery", "integracao_ifood")]
     public async Task<IActionResult> SetDelivery(Guid merchantId, IfoodConnectionDeliveryRequest request, CancellationToken ct)
     {
-        if (!HttpContext.IsSuperAdmin()) return SuperAdminRequired();
+        // Quem gerencia a loja (permissão de operar o iFood) liga e desliga a Entrega Zippy, mas só na conexão da própria
+        // loja; a Gestão (super admin) altera qualquer uma.
+        var superAdmin = HttpContext.IsSuperAdmin();
+        var store = superAdmin ? null : HttpContext.GetEstabelecimentoId();
+        if (!superAdmin && store is null)
+            return BadRequest(ApiResponse<object>.Fail("Selecione um estabelecimento.", "IFOOD_STORE_NOT_SELECTED"));
         Response.Headers.CacheControl = "no-store";
         try
         {
-            var updated = await repository.SetConnectionDeliveryAsync(merchantId, request.Enabled, request.ApplyToOpenOrders, ct);
+            var updated = await repository.SetConnectionDeliveryAsync(merchantId, request.Enabled, request.ApplyToOpenOrders, ct, store);
+            await AuditAsync(merchantId, store, request.Enabled ? "zippy_delivery_enabled" : "zippy_delivery_disabled", ct);
             return Ok(ApiResponse<IfoodConnectionDeliveryResult>.Ok(new IfoodConnectionDeliveryResult { OrdersUpdated = updated }));
         }
         catch (IfoodIntegrationException ex)

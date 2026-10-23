@@ -20,7 +20,8 @@ public interface IIfoodRuntimeSettingsRepository
     Task RevokeConnectionAsync(Guid merchantId, CancellationToken ct = default);
     // Valor que os pedidos NOVOS da loja herdam para a entrega Zippy; não altera pedidos já importados.
     // applyToOpenOrders também muda os pedidos de entrega da loja que ainda não terminaram no iFood.
-    Task<int> SetConnectionDeliveryAsync(Guid merchantId, bool enabled, bool applyToOpenOrders = false, CancellationToken ct = default);
+    /// <param name="store">Com loja, só altera a conexão dessa loja (quem gerencia a loja); nulo é a Gestão (super admin).</param>
+    Task<int> SetConnectionDeliveryAsync(Guid merchantId, bool enabled, bool applyToOpenOrders = false, CancellationToken ct = default, Guid? store = null);
 }
 
 public sealed class IfoodRuntimeSettingsRepository : IIfoodRuntimeSettingsRepository
@@ -214,14 +215,14 @@ WHERE merchant_id=@MerchantId AND revoked_at_utc IS NULL
         if (affected == 0) throw new IfoodIntegrationException("IFOOD_CONNECTION_NOT_FOUND");
     }
 
-    public async Task<int> SetConnectionDeliveryAsync(Guid merchantId, bool enabled, bool applyToOpenOrders = false, CancellationToken ct = default)
+    public async Task<int> SetConnectionDeliveryAsync(Guid merchantId, bool enabled, bool applyToOpenOrders = false, CancellationToken ct = default, Guid? store = null)
     {
         await using var connection = await _source.OpenConnectionAsync(ct);
         await using var tx = await connection.BeginTransactionAsync(ct);
         var affected = await connection.ExecuteAsync(new CommandDefinition("""
 UPDATE ifood_connections SET zippy_delivery_enabled=@Enabled, updated_at_utc=NOW()
-WHERE merchant_id=@MerchantId AND status='authorized' AND revoked_at_utc IS NULL
-""", new { MerchantId = merchantId, Enabled = enabled }, tx, cancellationToken: ct));
+WHERE merchant_id=@MerchantId AND status='authorized' AND revoked_at_utc IS NULL AND (@Store::uuid IS NULL OR estabelecimento_id=@Store)
+""", new { MerchantId = merchantId, Enabled = enabled, Store = store }, tx, cancellationToken: ct));
         if (affected == 0) throw new IfoodIntegrationException("IFOOD_CONNECTION_NOT_FOUND");
         var orders = 0;
         if (applyToOpenOrders)
