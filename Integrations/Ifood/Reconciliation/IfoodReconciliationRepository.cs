@@ -214,6 +214,8 @@ FROM ifood_events_inbox WHERE estabelecimento_id=@Store AND state='review' AND r
 UNION ALL
 SELECT 'IFOOD_COMMAND_UNCERTAIN', 'critical', COUNT(*)::int, MIN(updated_at_utc)
 FROM ifood_outbound_commands WHERE estabelecimento_id=@Store AND state IN ('uncertain','review') AND updated_at_utc > NOW() - INTERVAL '7 days'
+-- O 202 do iFood fica 'uncertain' esperando o evento (30 a 60 s): é o caminho normal; só vira alerta depois de 5 min.
+AND NOT (state='uncertain' AND http_accepted_at_utc IS NOT NULL AND http_accepted_at_utc > NOW() - INTERVAL '5 minutes')
 UNION ALL
 SELECT 'IFOOD_COMPLETION_UNCERTAIN', 'critical', COUNT(*)::int, MIN(created_at_utc)
 FROM ifood_delivery_completions WHERE estabelecimento_id=@Store AND state IN ('uncertain','review') AND created_at_utc > NOW() - INTERVAL '7 days'
