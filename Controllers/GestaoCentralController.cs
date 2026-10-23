@@ -70,6 +70,9 @@ namespace APIBack.Controllers
         [HttpDelete("pendencias")]
         public Task<IActionResult> Reabrir([FromQuery] string chave) => Run((_, ct) => service.ReabrirAsync(chave, ct));
 
+        [HttpGet("lojas/{id:guid}/motoboys")]
+        public Task<IActionResult> Motoboys(Guid id) => Run((_, ct) => service.MotoboysDaLojaAsync(id, ct));
+
         [HttpGet("lembretes")]
         public Task<IActionResult> Lembretes() => Run((_, ct) => service.LembretesAsync(ct));
 

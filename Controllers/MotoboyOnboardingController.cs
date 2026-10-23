@@ -307,7 +307,7 @@ RETURNING id AS Id,
         [RequirePermission("Delivery", "gestao_motoboy")]
         public async Task<IActionResult> ListarCandidatosParaConvite()
         {
-            var estabelecimentoId = HttpContext.GetEstabelecimentoId();
+            var estabelecimentoId = LojaDoContexto();
             if (!estabelecimentoId.HasValue || estabelecimentoId.Value == Guid.Empty)
                 return BadRequest(ApiResponse<object>.Fail("Selecione um restaurante."));
 
@@ -444,7 +444,7 @@ UPDATE motoboy_link_requests r
         [RequirePermission("Delivery", "gestao_motoboy")]
         public async Task<IActionResult> ConvidarMotoboy([FromBody] ConvidarMotoboyRequest? request)
         {
-            var estabelecimentoId = HttpContext.GetEstabelecimentoId();
+            var estabelecimentoId = LojaDoContexto();
             var actorUserId = HttpContext.GetUserId();
             if (!estabelecimentoId.HasValue || !actorUserId.HasValue)
                 return Unauthorized(ApiResponse<object>.Fail("Contexto autenticado invalido."));
@@ -532,7 +532,7 @@ RETURNING id AS Id,
         [RequirePermission("Delivery", "gestao_motoboy")]
         public async Task<IActionResult> ListarSolicitacoesDoRestaurante()
         {
-            var estabelecimentoId = HttpContext.GetEstabelecimentoId();
+            var estabelecimentoId = LojaDoContexto();
             if (!estabelecimentoId.HasValue || estabelecimentoId.Value == Guid.Empty)
                 return BadRequest(ApiResponse<object>.Fail("Selecione um restaurante."));
 
@@ -564,7 +564,7 @@ SELECT r.id AS Id,
         [RequirePermission("Delivery", "gestao_motoboy")]
         public async Task<IActionResult> AprovarSolicitacao(Guid requestId)
         {
-            var estabelecimentoId = HttpContext.GetEstabelecimentoId();
+            var estabelecimentoId = LojaDoContexto();
             var actorUserId = HttpContext.GetUserId();
             if (!estabelecimentoId.HasValue || !actorUserId.HasValue)
                 return Unauthorized(ApiResponse<object>.Fail("Contexto autenticado inválido."));
@@ -638,7 +638,7 @@ UPDATE motoboy_link_requests
         [RequirePermission("Delivery", "gestao_motoboy")]
         public async Task<IActionResult> RecusarSolicitacao(Guid requestId, [FromBody] RecusarVinculoMotoboyRequest? request)
         {
-            var estabelecimentoId = HttpContext.GetEstabelecimentoId();
+            var estabelecimentoId = LojaDoContexto();
             var actorUserId = HttpContext.GetUserId();
             if (!estabelecimentoId.HasValue || !actorUserId.HasValue)
                 return Unauthorized(ApiResponse<object>.Fail("Contexto autenticado inválido."));
@@ -672,7 +672,7 @@ UPDATE motoboy_link_requests
         [RequirePermission("Delivery", "visualizar")]
         public async Task<IActionResult> ResumoDeVinculos()
         {
-            var estabelecimentoId = HttpContext.GetEstabelecimentoId();
+            var estabelecimentoId = LojaDoContexto();
             if (!estabelecimentoId.HasValue)
                 return BadRequest(ApiResponse<object>.Fail("Selecione um restaurante."));
             await using var connection = await _dataSource.OpenConnectionAsync();
@@ -726,7 +726,7 @@ SELECT quantidade, fim_utc FROM motoboy_pacotes
         [RequirePermission("Delivery", "gestao_motoboy")]
         public async Task<IActionResult> EncerrarVinculo(int motoboyId, [FromBody] EncerrarVinculoRequest? request)
         {
-            var estabelecimentoId = HttpContext.GetEstabelecimentoId();
+            var estabelecimentoId = LojaDoContexto();
             var actorUserId = HttpContext.GetUserId();
             if (!estabelecimentoId.HasValue || !actorUserId.HasValue)
                 return Unauthorized(ApiResponse<object>.Fail("Contexto autenticado inválido."));
@@ -778,6 +778,15 @@ VALUES (@EstabelecimentoId, @MotoboyId, @Actor, @Motivo);",
                     UserId = vinculo.UserId, Actor = actorUserId.Value, Motivo = motivo }, transaction);
             await transaction.CommitAsync();
             return Ok(ApiResponse<object>.Ok(new { motoboyId, status = "encerrado" }));
+        }
+
+        /// <summary>
+        /// Loja em que a acao vale: a do token ou, para o super admin na Gestao, a que vem em ?loja= (mesmas regras, outra loja).
+        /// </summary>
+        private Guid? LojaDoContexto()
+        {
+            if (HttpContext.IsSuperAdmin() && Guid.TryParse(Request.Query["loja"], out var loja) && loja != Guid.Empty) return loja;
+            return HttpContext.GetEstabelecimentoId();
         }
 
         private async Task<IReadOnlyCollection<T>> QueryAsync<T>(string sql, object? parameters = null)

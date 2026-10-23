@@ -135,6 +135,19 @@ namespace APIBack.Service
         public string? Autor { get; set; }
     }
 
+    public sealed class MotoboyDaLojaDto
+    {
+        public int MotoboyId { get; set; }
+        public string Nome { get; set; } = string.Empty;
+        public string? Telefone { get; set; }
+        public bool Ativo { get; set; }
+        public DateTimeOffset VinculadoEm { get; set; }
+        public DateTimeOffset? EncerradoEm { get; set; }
+        public string? MotivoEncerramento { get; set; }
+        public int Entregas7d { get; set; }
+        public DateTimeOffset? UltimaEntregaEm { get; set; }
+    }
+
     public sealed class GestaoCentralException(int status, string message) : Exception(message)
     {
         public int Status { get; } = status;
@@ -160,6 +173,7 @@ namespace APIBack.Service
         Task<IReadOnlyList<LinhaDoTempoItemDto>> LinhaDoTempoAsync(Guid estabelecimentoId, CancellationToken ct = default);
         Task<IReadOnlyList<UltimoAcessoDto>> UltimosAcessosAsync(CancellationToken ct = default);
         Task<IReadOnlyList<LembreteDto>> LembretesAsync(CancellationToken ct = default);
+        Task<IReadOnlyList<MotoboyDaLojaDto>> MotoboysDaLojaAsync(Guid estabelecimentoId, CancellationToken ct = default);
         Task RegistrarEntradaAsync(Guid estabelecimentoId, int usuarioId, CancellationToken ct = default);
     }
 
@@ -499,6 +513,24 @@ SELECT n.id, n.estabelecimento_id AS EstabelecimentoId, e.nome_fantasia AS Loja,
         {
             await using var connection = await dataSource.OpenConnectionAsync(ct);
             await LogAsync(connection, null, usuarioId, estabelecimentoId, "entrou_na_loja", null, ct);
+        }
+
+        public async Task<IReadOnlyList<MotoboyDaLojaDto>> MotoboysDaLojaAsync(Guid estabelecimentoId, CancellationToken ct = default)
+        {
+            // Vinculados e os que ja sairam (com o motivo), com o quanto entregaram na semana.
+            await using var connection = await dataSource.OpenConnectionAsync(ct);
+            return (await connection.QueryAsync<MotoboyDaLojaDto>(new CommandDefinition(@"
+SELECT m.id AS MotoboyId, m.nome AS Nome, m.telefone AS Telefone, me.ativo AS Ativo, me.created_at_utc AS VinculadoEm,
+       me.disabled_at_utc AS EncerradoEm, me.disabled_reason AS MotivoEncerramento,
+       COALESCE(ent.n, 0)::int AS Entregas7d, ent.ultima AS UltimaEntregaEm
+  FROM motoboy_estabelecimento me
+  JOIN motoboy m ON m.id = me.motoboy_id
+  LEFT JOIN LATERAL (
+       SELECT COUNT(*) FILTER (WHERE rs.completed_at_utc >= NOW() - INTERVAL '7 days') AS n, MAX(rs.completed_at_utc) AS ultima
+         FROM delivery_route_stops rs
+        WHERE rs.estabelecimento_id = me.estabelecimento_id AND rs.motoboy_id = me.motoboy_id AND rs.stop_status = 'completed') ent ON TRUE
+ WHERE me.estabelecimento_id = @Loja AND COALESCE(m.is_simulated, FALSE) = FALSE
+ ORDER BY me.ativo DESC, ent.ultima DESC NULLS LAST, m.nome;", new { Loja = estabelecimentoId }, cancellationToken: ct))).ToList();
         }
     }
 }
