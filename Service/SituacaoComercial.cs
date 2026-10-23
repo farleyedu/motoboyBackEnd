@@ -340,8 +340,9 @@ UPDATE estabelecimentos
                     if (antes == SituacoesComerciais.Bloqueado)
                         throw new SituacaoComercialException(409, "ESTABELECIMENTO_BLOQUEADO", "Desbloqueie a loja antes de ativar ou alterar o plano.");
                     var plano = planoSolicitado;
-                    if (!SituacoesComerciais.Planos.Contains(plano))
-                        throw new SituacaoComercialException(422, "PLANO_INVALIDO", "Escolha o plano: partida, rota, turbo, frota ou personalizado.");
+                    // O plano existe no catalogo (validado acima) ou e personalizado: a Gestao pode criar planos novos.
+                    if (pacote == null && plano != "personalizado")
+                        throw new SituacaoComercialException(422, "PLANO_INVALIDO", "Escolha um plano do catalogo ou personalizado.");
                     // Sem valor informado vale a base do plano escolhido (Turbo 3, Frota 5); "personalizado" mantem a atual.
                     var motoboysBase = request.MotoboysBase ?? pacote?.MotoboysBase ?? atual.MotoboysBase;
                     if (motoboysBase < 0)
