@@ -117,36 +117,39 @@ SELECT column_name AS Name,data_type AS Type,character_maximum_length AS MaxLeng
 WHERE table_schema=current_schema() AND table_name='pedido'
 """, transaction: transaction, cancellationToken: ct))).ToDictionary(c => c.Name);
             if (!columns.ContainsKey("origem_ref") || !columns.ContainsKey("subtotal")) throw new IfoodIntegrationException("IFOOD_SCHEMA_UNAVAILABLE");
-            string TextTimeSql(string column)
+            string TextTimeSql(string column, string parameter)
             {
                 var max = columns[column].MaxLength;
                 var format = column == "horario_pedido"
                     ? max is null or >= 8 ? "HH24:MI:SS" : max >= 5 ? "HH24:MI" : null
                     : max is null or >= 19 ? "YYYY-MM-DD HH24:MI:SS" : max >= 10 ? "YYYY-MM-DD" : null;
                 if (format == null) throw new IfoodIntegrationException("IFOOD_ORDER_SCHEMA_UNSUPPORTED");
-                return $"to_char(@CreatedAtUtc::timestamptz AT TIME ZONE 'America/Sao_Paulo','{format}')";
+                return $"to_char({parameter}::timestamptz AT TIME ZONE 'America/Sao_Paulo','{format}')";
             }
-            string TimeSql(string column) => columns.GetValueOrDefault(column)?.Type switch
+            string TimeSql(string column, string parameter = "@CreatedAtUtc") => columns.GetValueOrDefault(column)?.Type switch
             {
-                "timestamp with time zone" => "@CreatedAtUtc::timestamptz",
-                "timestamp without time zone" => "(@CreatedAtUtc::timestamptz AT TIME ZONE 'America/Sao_Paulo')",
-                "date" => "(@CreatedAtUtc::timestamptz AT TIME ZONE 'America/Sao_Paulo')::date",
-                "time without time zone" => "(@CreatedAtUtc::timestamptz AT TIME ZONE 'America/Sao_Paulo')::time",
-                "text" or "character varying" => TextTimeSql(column),
+                "timestamp with time zone" => $"{parameter}::timestamptz",
+                "timestamp without time zone" => $"({parameter}::timestamptz AT TIME ZONE 'America/Sao_Paulo')",
+                "date" => $"({parameter}::timestamptz AT TIME ZONE 'America/Sao_Paulo')::date",
+                "time without time zone" => $"({parameter}::timestamptz AT TIME ZONE 'America/Sao_Paulo')::time",
+                "text" or "character varying" => TextTimeSql(column, parameter),
                 _ => throw new IfoodIntegrationException("IFOOD_ORDER_SCHEMA_UNSUPPORTED")
             };
             var address = order.Address;
             string? Text(string key) => IfoodOrderNormalizer.Text(address, key);
             static decimal? LegacyMoney(decimal? money) => money <= 9_999_999_999.99m ? money : null;
+            // Prazo prometido pelo iFood: sem ele o painel ficava "Sem SLA" e "Prazo em --" em todo pedido iFood.
+            var promisedColumn = columns.ContainsKey("previsao_entrega") ? ",previsao_entrega" : "";
+            var promisedValue = columns.ContainsKey("previsao_entrega") ? "," + TimeSql("previsao_entrega", "@PromisedAtUtc") : "";
             // Canal oficial não passa pelo catálogo, não cria cliente próprio e não preenche id_ifood legado.
             pedido = await connection.ExecuteScalarAsync<int>(new CommandDefinition($"""
 INSERT INTO pedido(nome_cliente,endereco_entrega,telefone_cliente,data_pedido,horario_pedido,status_pedido,motoboy_responsavel,
 items,value,region,latitude,longitude,entrega_rua,entrega_numero,entrega_bairro,entrega_cidade,entrega_estado,entrega_cep,
-tipo_pagamento,observacoes,status_pagamento,codigo_entrega,id_estabelecimento,origem,origem_ref,cliente_id,conversa_id,subtotal,taxa_entrega,desconto)
+tipo_pagamento,observacoes,status_pagamento,codigo_entrega,id_estabelecimento,origem,origem_ref,cliente_id,conversa_id,subtotal,taxa_entrega,desconto{promisedColumn})
 VALUES(@CustomerName,@Address,NULL,{TimeSql("data_pedido")},{TimeSql("horario_pedido")},6,NULL,@Items,@OrderAmount,@District,@Latitude,@Longitude,
-@Street,@Number,@District,@City,@State,@Zip,@PaymentMethod,@Observations,@PaymentState,NULL,@EstabelecimentoId,'ifood',@Reference,NULL,NULL,@Subtotal,@Fee,@Discount)
+@Street,@Number,@District,@City,@State,@Zip,@PaymentMethod,@Observations,@PaymentState,NULL,@EstabelecimentoId,'ifood',@Reference,NULL,NULL,@Subtotal,@Fee,@Discount{promisedValue})
 RETURNING id
-""", new { order.CustomerName, Address = Text("formattedAddress") ?? string.Join(", ", new[] { Text("streetName"), Text("streetNumber"), Text("neighborhood"), Text("city"), Text("state") }.Where(x => x != null)), order.CreatedAtUtc,
+""", new { order.CustomerName, Address = Text("formattedAddress") ?? string.Join(", ", new[] { Text("streetName"), Text("streetNumber"), Text("neighborhood"), Text("city"), Text("state") }.Where(x => x != null)), order.CreatedAtUtc, order.PromisedAtUtc,
                 Items = JsonSerializer.Serialize(order.Items.Select(i => $"{i.Quantity.ToString(System.Globalization.CultureInfo.InvariantCulture)} {i.Unit} · {i.Name}")),
                 order.OrderAmount, order.Latitude, order.Longitude, District = Text("neighborhood") ?? Text("district"), Street = Text("streetName"), Number = Text("streetNumber"),
                 City = Text("city"), State = Text("state"), Zip = Text("postalCode") ?? Text("zipCode"),

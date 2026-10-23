@@ -18,6 +18,8 @@ public sealed class IfoodImportedOrder
     public DateTimeOffset? PreparationStartUtc { get; init; }
     public DateTimeOffset? ScheduledStartUtc { get; init; }
     public DateTimeOffset? ScheduledEndUtc { get; init; }
+    /// <summary>Até quando o iFood promete ao cliente: entrega imediata, retirada ou o fim da janela agendada. Vira o prazo (previsao_entrega).</summary>
+    public DateTimeOffset? PromisedAtUtc { get; init; }
     public string? CustomerName { get; init; }
     public string? ContactNumber { get; init; }
     public string? Localizer { get; init; }
@@ -196,6 +198,9 @@ public static class IfoodOrderNormalizer
             ReviewReasons = reasons,
             CreatedAtUtc = Date(root, "createdAt") ?? throw Invalid("IFOOD_ORDER_INVALID_DATE"),
             PreparationStartUtc = preparation, ScheduledStartUtc = start, ScheduledEndUtc = end,
+            PromisedAtUtc = timing == "SCHEDULED" ? end
+                : type == "DELIVERY" ? OptionalDate(delivery, "deliveryDateTime")
+                : type == "TAKEOUT" ? OptionalDate(Field(root, "takeout"), "takeoutDateTime") : null,
             CustomerName = Text(customer, "name"), ContactNumber = Text(phone, "number"), Localizer = Text(phone, "localizer"),
             LocalizerExpirationUtc = Date(phone, "localizerExpiration"),
             OrderAmount = Money(total, "orderAmount") ?? throw Invalid("IFOOD_ORDER_INVALID_TOTAL"), Subtotal = Money(total, "subTotal"),
@@ -234,6 +239,12 @@ public static class IfoodOrderNormalizer
         if (result > 9_999_999_999_999_999.99m || (result.HasValue && decimal.Round(result.Value, 2) != result))
             throw Invalid("IFOOD_ORDER_INVALID_MONEY");
         return result;
+    }
+    // O prazo é informativo: data malformada não pode recusar o pedido inteiro, só fica sem prazo.
+    private static DateTimeOffset? OptionalDate(JsonElement value, string key)
+    {
+        var field = Field(value, key);
+        return field.ValueKind == JsonValueKind.String && field.TryGetDateTimeOffset(out var result) ? result.ToUniversalTime() : null;
     }
     private static DateTimeOffset? Date(JsonElement value, string key)
     {
