@@ -212,7 +212,7 @@ SELECT e.id, e.nome_fantasia AS Nome, e.id_empresa AS EmpresaId, emp.nome_fantas
         WHERE p.id_estabelecimento = e.id AND p.data_pedido >= NOW() - INTERVAL '28 days'
           AND COALESCE(p.origem, '') <> 'simulador' AND COALESCE(p.status_pedido, 1) <> 6) ped ON TRUE
   LEFT JOIN LATERAL (
-       SELECT COUNT(*) AS contratos, MIN(c.status) AS status,
+       SELECT COUNT(*) AS contratos, MIN(c.status::text) AS status,
               SUM(c.mensalidade_saas + c.mensalidade_marketing) AS mensal, SUM(c.mensalidade_saas) AS saas,
               MIN(c.dia_vencimento) AS dia
          FROM crm_contrato c
