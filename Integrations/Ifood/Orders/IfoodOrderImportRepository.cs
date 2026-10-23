@@ -120,9 +120,12 @@ WHERE table_schema=current_schema() AND table_name='pedido'
             string TextTimeSql(string column, string parameter)
             {
                 var max = columns[column].MaxLength;
+                // previsao_entrega legada é varchar(5) ("HH:MI"), como o horario_pedido (ver DeliveryRules.LocalNowSql).
                 var format = column == "horario_pedido"
                     ? max is null or >= 8 ? "HH24:MI:SS" : max >= 5 ? "HH24:MI" : null
-                    : max is null or >= 19 ? "YYYY-MM-DD HH24:MI:SS" : max >= 10 ? "YYYY-MM-DD" : null;
+                    : column == "previsao_entrega"
+                        ? max is null or >= 19 ? "YYYY-MM-DD HH24:MI:SS" : max >= 5 ? "HH24:MI" : null
+                        : max is null or >= 19 ? "YYYY-MM-DD HH24:MI:SS" : max >= 10 ? "YYYY-MM-DD" : null;
                 if (format == null) throw new IfoodIntegrationException("IFOOD_ORDER_SCHEMA_UNSUPPORTED");
                 return $"to_char({parameter}::timestamptz AT TIME ZONE 'America/Sao_Paulo','{format}')";
             }
@@ -139,8 +142,12 @@ WHERE table_schema=current_schema() AND table_name='pedido'
             string? Text(string key) => IfoodOrderNormalizer.Text(address, key);
             static decimal? LegacyMoney(decimal? money) => money <= 9_999_999_999.99m ? money : null;
             // Prazo prometido pelo iFood: sem ele o painel ficava "Sem SLA" e "Prazo em --" em todo pedido iFood.
-            var promisedColumn = columns.ContainsKey("previsao_entrega") ? ",previsao_entrega" : "";
-            var promisedValue = columns.ContainsKey("previsao_entrega") ? "," + TimeSql("previsao_entrega", "@PromisedAtUtc") : "";
+            // O prazo é informativo: coluna num formato que não cabe a data fica sem prazo, nunca derruba a importação.
+            string? promisedSql = null;
+            if (columns.ContainsKey("previsao_entrega"))
+                try { promisedSql = TimeSql("previsao_entrega", "@PromisedAtUtc"); } catch (IfoodIntegrationException) { promisedSql = null; }
+            var promisedColumn = promisedSql != null ? ",previsao_entrega" : "";
+            var promisedValue = promisedSql != null ? "," + promisedSql : "";
             // Canal oficial não passa pelo catálogo, não cria cliente próprio e não preenche id_ifood legado.
             pedido = await connection.ExecuteScalarAsync<int>(new CommandDefinition($"""
 INSERT INTO pedido(nome_cliente,endereco_entrega,telefone_cliente,data_pedido,horario_pedido,status_pedido,motoboy_responsavel,
