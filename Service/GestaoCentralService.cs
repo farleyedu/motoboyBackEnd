@@ -194,7 +194,7 @@ namespace APIBack.Service
             var sql = @"
 SELECT e.id, e.nome_fantasia AS Nome, e.id_empresa AS EmpresaId, emp.nome_fantasia AS Empresa, e.url_logo AS Logo,
        COALESCE(e.situacao_comercial, 'ativo') AS Situacao, e.plano_comercial AS Plano, e.status AS StatusCadastro,
-       e.created_at AS CriadaEm, e.operacao_iniciada_em AS OperacaoIniciadaEm, e.teste_termina_em AS TesteTerminaEm,
+       e.data_criacao AS CriadaEm, e.operacao_iniciada_em AS OperacaoIniciadaEm, e.teste_termina_em AS TesteTerminaEm,
        e.bloqueado_motivo AS BloqueadoMotivo, COALESCE(e.modulos_ativos::text[], ARRAY[]::text[]) AS Modulos,
        " + MotoboyLimites.SqlContratados + @" AS MotoboysContratados,
        COALESCE(ped.p7, 0)::int AS Pedidos7d, COALESCE(ped.p28, 0)::int AS Pedidos28d, ped.ultimo AS UltimoPedidoEm,
