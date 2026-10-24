@@ -272,7 +272,8 @@ SELECT id AS Id, status_pedido AS StatusPedido, subtotal AS Subtotal, taxa_entre
         private static string ToStatusKey(StatusPedido status) => status.ToApiKey();
 
         private async Task PublishOrderEventAsync(
-            NpgsqlConnection connection, NpgsqlTransaction transaction, Guid estabelecimentoId, int actorUserId, int pedidoId, string action)
+            NpgsqlConnection connection, NpgsqlTransaction transaction, Guid estabelecimentoId, int actorUserId, int pedidoId, string action,
+            string? origin = null, string? reason = null, int? actorMotoboyId = null)
         {
             var payload = JsonSerializer.Serialize(new
             {
@@ -282,6 +283,9 @@ SELECT id AS Id, status_pedido AS StatusPedido, subtotal AS Subtotal, taxa_entre
                 pedidoId,
                 action,
                 createdByUserId = actorUserId,
+                actorMotoboyId,
+                origin,
+                reason,
                 occurredAtUtc = DateTimeOffset.UtcNow
             });
             await InsertOutboxAsync(connection, transaction, DeliveryRealtimeEvents.DeliveryOrderUpdated,

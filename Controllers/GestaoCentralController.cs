@@ -24,8 +24,9 @@ namespace APIBack.Controllers
             }
         }
 
+        // ApiResponse<T> marca Data com WhenWritingNull, o que o System.Text.Json rejeita para tipo-valor (bool): usa object.
         private Task<IActionResult> Run(Func<int, CancellationToken, Task> action) =>
-            Run<bool>(async (usuario, ct) => { await action(usuario, ct); return true; });
+            Run<object>(async (usuario, ct) => { await action(usuario, ct); return true; });
 
         private static DateOnly MesOuAtual(string? mes) =>
             DateOnly.TryParseExact($"{mes}-01", "yyyy-MM-dd", out var value) ? value : DateOnly.FromDateTime(DateTime.UtcNow.AddHours(-3));

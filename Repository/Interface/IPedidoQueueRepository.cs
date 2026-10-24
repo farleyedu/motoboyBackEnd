@@ -26,7 +26,7 @@ namespace APIBack.Repository.Interface
         Task<MotoboyQueueDto> ReorderAsync(Guid estabelecimentoId, int actorUserId, int motoboyId, long expectedVersion, IReadOnlyList<int> pedidoIdsOrdenados);
         Task<MotoboyQueueDto> CompleteCurrentAsync(Guid estabelecimentoId, int actorUserId, int motoboyId);
         /// <summary>Conclui uma entrega especifica da fila (nao precisa ser a atual), pelo operador.</summary>
-        Task<MotoboyQueueDto> CompleteStopAsync(Guid estabelecimentoId, int actorUserId, int pedidoId);
+        Task<MotoboyQueueDto> CompleteStopAsync(Guid estabelecimentoId, int actorUserId, int pedidoId, string? motivo = null);
         /// <summary>Passa a rota inteira de um motoboy para outro, atomicamente (vira uma oferta para o destino).</summary>
         Task<RouteTransferResultDto> TransferRouteByOperatorAsync(Guid estabelecimentoId, int operatorUserId, int fromMotoboyId, int toMotoboyId, string? motivo);
         Task<MotoboyQueueDto> ResumeAsync(Guid estabelecimentoId, int actorUserId, int motoboyId);
@@ -34,7 +34,7 @@ namespace APIBack.Repository.Interface
         /// <summary>Entrega manual (sem app do motoboy): a loja marca a saida. Devolve o status novo.</summary>
         Task<string> MarcarSaiuManualAsync(Guid estabelecimentoId, int actorUserId, int pedidoId, string? entregadorNome);
         /// <summary>Entrega manual: a loja marca como entregue (tambem retirada no balcao). Devolve o status novo.</summary>
-        Task<string> MarcarEntregueManualAsync(Guid estabelecimentoId, int actorUserId, int pedidoId);
+        Task<string> MarcarEntregueManualAsync(Guid estabelecimentoId, int actorUserId, int pedidoId, string? origem = null, string? motivo = null);
         Task<MotoboyQueueDto> GetQueueAsync(Guid estabelecimentoId, int motoboyId, CancellationToken cancellationToken = default);
         /// <summary>Trava/destrava pedidos da fila (ancoras). Estabelecimento apenas.</summary>
         Task<LockPedidosResultDto> SetLockedAsync(Guid estabelecimentoId, int actorUserId, IReadOnlyList<int> pedidoIds, bool locked);

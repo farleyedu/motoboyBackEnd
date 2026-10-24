@@ -24,6 +24,13 @@ public sealed partial class IfoodIntegrationSchemaDatabaseTests
             await db.Migrate(RuntimeFlagsFile);
             await db.Migrate(ReconciliationFile);
             await db.Migrate(LifecycleFile);
+            // A fixture iFood e propositalmente minima; os alertas leem a mesma janela do mapa.
+            await db.Execute("""
+CREATE TABLE IF NOT EXISTS delivery_settings(
+    estabelecimento_id UUID PRIMARY KEY REFERENCES estabelecimentos(id),
+    order_window JSONB NULL
+)
+""");
             return db;
         }
         catch { await db.DisposeAsync(); throw; }
@@ -135,23 +142,69 @@ VALUES(@Op,@Merchant,@Order,@Store,'dispatch','{}'::jsonb,repeat('a',64),1,'unce
     {
         await using var db = await ReconciliationDatabase();
         var repository = new IfoodReconciliationRepository(db.Source);
-        Assert.Empty(await repository.GetStoreAlertsAsync(db.StoreA));
+        var nowUtc = DateTimeOffset.Parse("2026-10-13T20:00:00Z");
+        Assert.Empty(await repository.GetStoreAlertsAsync(db.StoreA, nowUtc));
 
-        // Aguardando aceite há muito mais de 6 minutos (o payload de teste é de 13/10).
-        await db.Execute("UPDATE ifood_order_snapshots SET remote_status='PLACED', preparation_state='awaiting_acceptance'");
-        var alerts = await repository.GetStoreAlertsAsync(db.StoreA);
+        await db.Execute("""
+UPDATE ifood_order_links SET created_at_utc=@CreatedAt WHERE estabelecimento_id=@Store;
+UPDATE ifood_order_snapshots
+SET remote_status='PLACED',preparation_state='awaiting_acceptance',updated_at_utc=@Now,
+    payload=jsonb_set(payload,'{createdAt}',CAST(@CreatedAtJson AS jsonb),TRUE)
+WHERE estabelecimento_id=@Store
+""", new { Store = db.StoreA, Now = nowUtc, CreatedAt = nowUtc.AddMinutes(-10), CreatedAtJson = JsonSerializer.Serialize(nowUtc.AddMinutes(-10)) });
+        var alerts = await repository.GetStoreAlertsAsync(db.StoreA, nowUtc);
         var deadline = Assert.Single(alerts, a => a.Code == "IFOOD_ACCEPTANCE_DEADLINE");
         Assert.Equal("critical", deadline.Severity); Assert.Equal(1, deadline.Count);
-        Assert.Empty(await repository.GetStoreAlertsAsync(db.StoreB));
+        Assert.Empty(await repository.GetStoreAlertsAsync(db.StoreB, nowUtc));
 
-        await db.Execute("UPDATE ifood_order_snapshots SET synchronization_state='review'");
-        await db.Execute("UPDATE ifood_events_inbox SET state='failed' WHERE id=(SELECT MIN(id) FROM ifood_events_inbox)");
-        alerts = await repository.GetStoreAlertsAsync(db.StoreA);
+        await db.Execute("UPDATE ifood_order_snapshots SET synchronization_state='review',updated_at_utc=@Now WHERE estabelecimento_id=@Store", new { Store = db.StoreA, Now = nowUtc });
+        await db.Execute("UPDATE ifood_events_inbox SET state='failed',received_at_utc=@Received WHERE id=(SELECT MIN(id) FROM ifood_events_inbox)", new { Received = nowUtc.AddMinutes(-2) });
+        alerts = await repository.GetStoreAlertsAsync(db.StoreA, nowUtc);
         Assert.Contains(alerts, a => a.Code == "IFOOD_ORDER_REVIEW" && a.Severity == "warning" && a.Count == 1);
         Assert.Contains(alerts, a => a.Code == "IFOOD_EVENT_FAILED" && a.Severity == "critical");
 
-        await db.Execute("UPDATE ifood_events_inbox SET state='queued', received_at_utc=NOW()-INTERVAL '10 minutes' WHERE id=(SELECT MAX(id) FROM ifood_events_inbox)");
-        Assert.Contains(await repository.GetStoreAlertsAsync(db.StoreA), a => a.Code == "IFOOD_EVENT_BACKLOG");
+        await db.Execute("UPDATE ifood_events_inbox SET state='queued',received_at_utc=@Received WHERE id=(SELECT MAX(id) FROM ifood_events_inbox)", new { Received = nowUtc.AddMinutes(-10) });
+        Assert.Contains(await repository.GetStoreAlertsAsync(db.StoreA, nowUtc), a => a.Code == "IFOOD_EVENT_BACKLOG");
+    }
+
+    [DeliveryDatabaseFact]
+    public async Task AlertsCutPreviousShiftAcrossMidnightButKeepCurrentAndGlobalFailures()
+    {
+        await using var db = await ReconciliationDatabase();
+        var repository = new IfoodReconciliationRepository(db.Source);
+        // Sexta 01:30 em Brasilia: ainda pertence ao turno de quinta, 18:00-02:00.
+        var nowUtc = DateTimeOffset.Parse("2026-10-16T04:30:00Z");
+        var currentOrderAt = DateTimeOffset.Parse("2026-10-16T03:30:00Z");
+        var previousShiftAt = DateTimeOffset.Parse("2026-10-15T03:30:00Z");
+        const string window = """{"mode":"shifts","shifts":[{"days":[4],"start":"18:00","end":"02:00"}],"alwaysShowOpenOrders":true}""";
+        await db.Execute("INSERT INTO delivery_settings(estabelecimento_id,order_window)VALUES(@Store,CAST(@Window AS jsonb))", new { Store = db.StoreA, Window = window });
+        await db.Execute("""
+UPDATE ifood_order_links SET created_at_utc=@Previous WHERE estabelecimento_id=@Store;
+UPDATE ifood_order_snapshots
+SET remote_status='PLACED',preparation_state='awaiting_acceptance',synchronization_state='review',updated_at_utc=@Now,
+    payload=jsonb_set(payload,'{createdAt}',CAST(@PreviousJson AS jsonb),TRUE)
+WHERE estabelecimento_id=@Store;
+UPDATE ifood_events_inbox SET state='failed',received_at_utc=@Received
+WHERE id=(SELECT MIN(id) FROM ifood_events_inbox WHERE estabelecimento_id=@Store);
+INSERT INTO ifood_events_inbox(merchant_id,estabelecimento_id,event_id,external_order_id,event_code,payload,state,received_at_utc)
+VALUES(@Merchant,@Store,@Event,NULL,'GLOBAL_ERROR','{}'::jsonb,'failed',@Received)
+""", new { Store = db.StoreA, Merchant = db.MerchantA, Event = Guid.NewGuid(), Now = nowUtc,
+            Previous = previousShiftAt, PreviousJson = JsonSerializer.Serialize(previousShiftAt), Received = nowUtc.AddMinutes(-10) });
+
+        var previousAlerts = await repository.GetStoreAlertsAsync(db.StoreA, nowUtc);
+        Assert.DoesNotContain(previousAlerts, alert => alert.Code is "IFOOD_ACCEPTANCE_DEADLINE" or "IFOOD_ORDER_REVIEW");
+        Assert.Equal(1, Assert.Single(previousAlerts, alert => alert.Code == "IFOOD_EVENT_FAILED").Count);
+
+        await db.Execute("""
+UPDATE ifood_order_links SET created_at_utc=@Current WHERE estabelecimento_id=@Store;
+UPDATE ifood_order_snapshots SET payload=jsonb_set(payload,'{createdAt}',CAST(@CurrentJson AS jsonb),TRUE)
+WHERE estabelecimento_id=@Store
+""", new { Store = db.StoreA, Current = currentOrderAt, CurrentJson = JsonSerializer.Serialize(currentOrderAt) });
+        var currentAlerts = await repository.GetStoreAlertsAsync(db.StoreA, nowUtc);
+        Assert.Contains(currentAlerts, alert => alert.Code == "IFOOD_ACCEPTANCE_DEADLINE" && alert.Count == 1);
+        Assert.Contains(currentAlerts, alert => alert.Code == "IFOOD_ORDER_REVIEW" && alert.Count == 1);
+        Assert.Equal(2, Assert.Single(currentAlerts, alert => alert.Code == "IFOOD_EVENT_FAILED").Count);
+        Assert.Empty(await repository.GetStoreAlertsAsync(db.StoreB, nowUtc));
     }
 
     [DeliveryDatabaseFact]

@@ -60,7 +60,7 @@ namespace APIBack.Tests.Unit
         {
             var store = Guid.NewGuid();
             var expected = new MotoboyQueueDto { MotoboyId = 7 };
-            _repository.Setup(r => r.CompleteStopAsync(store, 1, 23)).ReturnsAsync(expected);
+            _repository.Setup(r => r.CompleteStopAsync(store, 1, 23, null)).ReturnsAsync(expected);
             Assert.Same(expected, await Service.CompleteStopAsync(store, 1, 23));
         }
 
@@ -74,7 +74,6 @@ namespace APIBack.Tests.Unit
         }
 
         [Theory]
-        [InlineData(nameof(DeliveryOrdersV2Controller.CompletePedido))]
         [InlineData(nameof(DeliveryOrdersV2Controller.TransferRoute))]
         [InlineData(nameof(DeliveryOrdersV2Controller.Remove))]
         public void OperatorQueueActions_RequireTheDeliveryModuleAndTheAssignPermission(string action)
@@ -82,6 +81,15 @@ namespace APIBack.Tests.Unit
             var method = typeof(DeliveryOrdersV2Controller).GetMethod(action)!;
             Assert.Contains(method.GetCustomAttributes<RequireModuleAttribute>(), a => a.Modulo == "Delivery");
             Assert.Contains(method.GetCustomAttributes<RequirePermissionAttribute>(), a => a.Modulo == "Delivery" && a.Acao == "atribuir_motoboy");
+        }
+
+        [Fact]
+        public void CompletePedido_UsesTheOperatorPermissionWithoutRequiringTheRiderModule()
+        {
+            var method = typeof(DeliveryOrdersV2Controller).GetMethod(nameof(DeliveryOrdersV2Controller.CompletePedido))!;
+            Assert.Empty(method.GetCustomAttributes<RequireModuleAttribute>());
+            Assert.Contains(method.GetCustomAttributes<RequirePermissionAttribute>(),
+                a => a.Modulo == "Delivery" && a.Acao == "atribuir_motoboy");
         }
     }
 }

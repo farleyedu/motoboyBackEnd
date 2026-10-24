@@ -32,7 +32,7 @@ public sealed class PacotesComerciaisController(IPacotesComerciaisService servic
     public Task<IActionResult> Arquivar(string chave, [FromQuery] bool arquivado, CancellationToken ct) => Run(u => service.ArquivarAsync(chave, arquivado, u, ct));
 
     [HttpDelete("api/gestao/comercial/pacotes/{chave}")]
-    public Task<IActionResult> Excluir(string chave, CancellationToken ct) => Run(async _ => { await service.ExcluirAsync(chave, ct); return true; });
+    public Task<IActionResult> Excluir(string chave, CancellationToken ct) => Run(async _ => { await service.ExcluirAsync(chave, ct); return (object)true; });
 
     [HttpGet("api/gestao/comercial/avulsos")]
     public Task<IActionResult> Avulsos(CancellationToken ct) => Run(_ => service.ListarAvulsosAsync(ct));
@@ -44,5 +44,5 @@ public sealed class PacotesComerciaisController(IPacotesComerciaisService servic
     public Task<IActionResult> SalvarAvulso(long id, [FromBody] SalvarProdutoAvulsoRequest request, CancellationToken ct) => Run(_ => service.SalvarAvulsoAsync(id, request, ct));
 
     [HttpDelete("api/gestao/comercial/avulsos/{id:long}")]
-    public Task<IActionResult> ExcluirAvulso(long id, CancellationToken ct) => Run(async _ => { await service.ExcluirAvulsoAsync(id, ct); return true; });
+    public Task<IActionResult> ExcluirAvulso(long id, CancellationToken ct) => Run(async _ => { await service.ExcluirAvulsoAsync(id, ct); return (object)true; });
 }

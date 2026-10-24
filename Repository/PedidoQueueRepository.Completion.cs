@@ -144,6 +144,7 @@ SELECT EXISTS(SELECT 1 FROM motoboy_active_sessions s WHERE s.session_id=@Sessio
             throw new DeliveryDomainException(422,"PROOF_INVALID","Este comprovante não pertence à entrega atual.");
         if(!paid) await c.ExecuteAsync(new CommandDefinition("UPDATE pedido SET status_pagamento='pago',tipo_pagamento=@Method WHERE id=@Pedido",new { Pedido=row.PedidoId,Method=string.Join(" + ",request.Payments.Select(p=>p.Method)) },tx,commandTimeout:10,cancellationToken:ct));
         var queue=await CompleteCurrentInternalAsync(c,tx,store,rider,"motoboy",request.Codigo,true);
+        await PublishOrderEventAsync(c,tx,store,user,row.PedidoId,"delivered","motoboy_app","Entrega confirmada pelo motoboy.",rider);
         var receipt=new DeliveryReceipt { OperationId=request.OperationId,PedidoId=row.PedidoId,NomeCliente=row.NomeCliente,CompletedAtUtc=DateTimeOffset.UtcNow,Total=row.Total,CodeChecked=row.RequiresCode&&DeliveryRules.HasDeliveryCode(row.Code),PaidBeforeDelivery=paid,Payments=request.Payments,ProofId=request.ProofId,Checklist=request.Checklist };
         await c.ExecuteAsync(new CommandDefinition("""
 INSERT INTO delivery_completions(operation_id,estabelecimento_id,motoboy_id,user_id,session_id,session_epoch,pedido_id,stop_id,payload_hash,receipt)

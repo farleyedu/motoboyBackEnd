@@ -1,5 +1,7 @@
 using Dapper;
 using Npgsql;
+using APIBack.Repository;
+using APIBack.Service;
 
 namespace APIBack.Integrations.Ifood.Reconciliation;
 
@@ -180,46 +182,70 @@ WHERE merchant_id=@Merchant AND external_order_id=@Order
         await tx.CommitAsync(ct);
     }
 
-    public async Task<IReadOnlyList<IfoodAlertRow>> GetStoreAlertsAsync(Guid estabelecimentoId, CancellationToken ct = default)
+    public Task<IReadOnlyList<IfoodAlertRow>> GetStoreAlertsAsync(Guid estabelecimentoId, CancellationToken ct = default) =>
+        GetStoreAlertsAsync(estabelecimentoId, DateTimeOffset.UtcNow, ct);
+
+    internal async Task<IReadOnlyList<IfoodAlertRow>> GetStoreAlertsAsync(Guid estabelecimentoId, DateTimeOffset nowUtc, CancellationToken ct = default)
     {
         await using var connection = await _source.OpenConnectionAsync(ct);
+        var orderWindow = await OrderWindowStore.ReadAsync(connection, estabelecimentoId);
+        var windowFromUtc = OrderWindowRules.Resolve(orderWindow, nowUtc).FromUtc
+            ?? OperationalDayWindow.ToUtcRange(OperationalDayWindow.Today(nowUtc)).FromUtc;
         // Aceite: o iFood dá 8 minutos; avisa aos 3 e fica crítico aos 6.
         var rows = (await connection.QueryAsync<IfoodAlertRow>(new CommandDefinition("""
-WITH waiting AS (
-    SELECT COALESCE(CASE WHEN s.payload->>'createdAt' ~ '^\d{4}-\d{2}-\d{2}T.*(Z|[+-]\d{2}:\d{2})$'
-                         THEN (s.payload->>'createdAt')::timestamptz END, l.created_at_utc) AS created_at
-    FROM ifood_order_snapshots s
-    JOIN ifood_order_links l ON l.merchant_id=s.merchant_id AND l.external_order_id=s.external_order_id
-    WHERE s.estabelecimento_id=@Store AND s.preparation_state='awaiting_acceptance'
-      AND COALESCE(s.remote_status,'PLACED')='PLACED' AND s.order_type IN ('DELIVERY','TAKEOUT')
-      AND COALESCE(s.payload->'zippyRecovery','false'::jsonb)<>'true'::jsonb
+WITH linked_orders AS (
+    SELECT l.merchant_id,l.external_order_id,l.pedido_id,
+           COALESCE(CASE WHEN s.payload->>'createdAt' ~ '^\d{4}-\d{2}-\d{2}T.*(Z|[+-]\d{2}:\d{2})$'
+                         THEN (s.payload->>'createdAt')::timestamptz END,l.created_at_utc) AS created_at,
+           s.preparation_state,s.remote_status,s.order_type,s.synchronization_state,s.updated_at_utc,s.payload
+    FROM ifood_order_links l
+    JOIN ifood_order_snapshots s USING(merchant_id,external_order_id,estabelecimento_id)
+    WHERE l.estabelecimento_id=@Store
+), current_orders AS (
+    SELECT * FROM linked_orders WHERE created_at>=@WindowFromUtc
+), waiting AS (
+    SELECT created_at
+    FROM current_orders
+    WHERE preparation_state='awaiting_acceptance'
+      AND COALESCE(remote_status,'PLACED')='PLACED' AND order_type IN ('DELIVERY','TAKEOUT')
+      AND COALESCE(payload->'zippyRecovery','false'::jsonb)<>'true'::jsonb
 )
 SELECT 'IFOOD_ACCEPTANCE_DEADLINE' AS Code, 'critical' AS Severity, COUNT(*)::int AS Count, MIN(created_at) AS OldestAtUtc
-FROM waiting WHERE created_at <= NOW() - INTERVAL '6 minutes'
+FROM waiting WHERE created_at <= @NowUtc - INTERVAL '6 minutes'
 UNION ALL
 SELECT 'IFOOD_ACCEPTANCE_WAITING', 'warning', COUNT(*)::int, MIN(created_at)
-FROM waiting WHERE created_at <= NOW() - INTERVAL '3 minutes' AND created_at > NOW() - INTERVAL '6 minutes'
+FROM waiting WHERE created_at <= @NowUtc - INTERVAL '3 minutes' AND created_at > @NowUtc - INTERVAL '6 minutes'
 UNION ALL
 SELECT 'IFOOD_ORDER_REVIEW', 'warning', COUNT(*)::int, MIN(updated_at_utc)
-FROM ifood_order_snapshots WHERE estabelecimento_id=@Store AND synchronization_state='review' AND updated_at_utc > NOW() - INTERVAL '30 days'
+FROM current_orders WHERE synchronization_state='review' AND updated_at_utc > @NowUtc - INTERVAL '30 days'
 UNION ALL
 SELECT 'IFOOD_EVENT_BACKLOG', 'warning', COUNT(*)::int, MIN(received_at_utc)
-FROM ifood_events_inbox WHERE estabelecimento_id=@Store AND state IN ('queued','processing') AND received_at_utc <= NOW() - INTERVAL '3 minutes'
+FROM ifood_events_inbox WHERE estabelecimento_id=@Store AND state IN ('queued','processing') AND received_at_utc <= @NowUtc - INTERVAL '3 minutes'
 UNION ALL
-SELECT 'IFOOD_EVENT_FAILED', 'critical', COUNT(*)::int, MIN(received_at_utc)
-FROM ifood_events_inbox WHERE estabelecimento_id=@Store AND state='failed' AND received_at_utc > NOW() - INTERVAL '7 days'
+SELECT 'IFOOD_EVENT_FAILED', 'critical', COUNT(*)::int, MIN(i.received_at_utc)
+FROM ifood_events_inbox i
+LEFT JOIN linked_orders o ON o.merchant_id=i.merchant_id AND o.external_order_id=i.external_order_id
+WHERE i.estabelecimento_id=@Store AND i.state='failed' AND i.received_at_utc > @NowUtc - INTERVAL '7 days'
+  AND (o.pedido_id IS NULL OR o.created_at>=@WindowFromUtc)
 UNION ALL
-SELECT 'IFOOD_EVENT_REVIEW', 'warning', COUNT(*)::int, MIN(received_at_utc)
-FROM ifood_events_inbox WHERE estabelecimento_id=@Store AND state='review' AND received_at_utc > NOW() - INTERVAL '30 days'
+SELECT 'IFOOD_EVENT_REVIEW', 'warning', COUNT(*)::int, MIN(i.received_at_utc)
+FROM ifood_events_inbox i
+LEFT JOIN linked_orders o ON o.merchant_id=i.merchant_id AND o.external_order_id=i.external_order_id
+WHERE i.estabelecimento_id=@Store AND i.state='review' AND i.received_at_utc > @NowUtc - INTERVAL '30 days'
+  AND (o.pedido_id IS NULL OR o.created_at>=@WindowFromUtc)
 UNION ALL
-SELECT 'IFOOD_COMMAND_UNCERTAIN', 'critical', COUNT(*)::int, MIN(updated_at_utc)
-FROM ifood_outbound_commands WHERE estabelecimento_id=@Store AND state IN ('uncertain','review') AND updated_at_utc > NOW() - INTERVAL '7 days'
+SELECT 'IFOOD_COMMAND_UNCERTAIN', 'critical', COUNT(*)::int, MIN(c.updated_at_utc)
+FROM ifood_outbound_commands c
+JOIN current_orders o USING(merchant_id,external_order_id)
+WHERE c.estabelecimento_id=@Store AND c.state IN ('uncertain','review') AND c.updated_at_utc > @NowUtc - INTERVAL '7 days'
 -- O 202 do iFood fica 'uncertain' esperando o evento (30 a 60 s): é o caminho normal; só vira alerta depois de 5 min.
-AND NOT (state='uncertain' AND http_accepted_at_utc IS NOT NULL AND http_accepted_at_utc > NOW() - INTERVAL '5 minutes')
+AND NOT (c.state='uncertain' AND c.http_accepted_at_utc IS NOT NULL AND c.http_accepted_at_utc > @NowUtc - INTERVAL '5 minutes')
 UNION ALL
-SELECT 'IFOOD_COMPLETION_UNCERTAIN', 'critical', COUNT(*)::int, MIN(created_at_utc)
-FROM ifood_delivery_completions WHERE estabelecimento_id=@Store AND state IN ('uncertain','review') AND created_at_utc > NOW() - INTERVAL '7 days'
-""", new { Store = estabelecimentoId }, cancellationToken: ct))).AsList();
+SELECT 'IFOOD_COMPLETION_UNCERTAIN', 'critical', COUNT(*)::int, MIN(c.created_at_utc)
+FROM ifood_delivery_completions c
+JOIN current_orders o ON o.pedido_id=c.pedido_id
+WHERE c.estabelecimento_id=@Store AND c.state IN ('uncertain','review') AND c.created_at_utc > @NowUtc - INTERVAL '7 days'
+""", new { Store = estabelecimentoId, WindowFromUtc = windowFromUtc, NowUtc = nowUtc }, cancellationToken: ct))).AsList();
         var attention = await connection.QueryAsync<IfoodAlertRow>(new CommandDefinition("""
 SELECT 'IFOOD_DISPUTE_OPEN' AS Code,'critical' AS Severity,COUNT(*)::int AS Count,
 MIN(d.opened_at_utc) AS OldestAtUtc,l.pedido_id AS PedidoId,l.display_number AS DisplayNumber,MIN(d.expires_at_utc) AS ExpiresAtUtc

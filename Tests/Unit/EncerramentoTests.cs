@@ -126,6 +126,33 @@ namespace APIBack.Tests.Unit
         {
             Assert.Equal(Brasilia.BaseUtcOffset, EncerramentoRules.ResolveTimeZone("Nao/Existe").BaseUtcOffset);
         }
+
+        [Theory]
+        [InlineData(StatusPedido.Pendente, null, EncerramentoRules.OrigemBalcao)]
+        [InlineData(StatusPedido.Pendente, EncerramentoRules.OrigemBalcao, EncerramentoRules.OrigemBalcao)]
+        [InlineData(StatusPedido.EmRota, null, EncerramentoRules.OrigemEntregaManual)]
+        [InlineData(StatusPedido.EmRota, EncerramentoRules.OrigemEntregaManual, EncerramentoRules.OrigemEntregaManual)]
+        public void CompletionWithoutRiderDerivesItsOriginFromThePersistedState(StatusPedido status, string? informed, string expected) =>
+            Assert.Equal(expected, EncerramentoRules.OrigemConclusaoSemMotoboy(status, informed));
+
+        [Theory]
+        [InlineData(StatusPedido.Pendente, EncerramentoRules.OrigemEntregaManual)]
+        [InlineData(StatusPedido.EmRota, EncerramentoRules.OrigemBalcao)]
+        public void CompletionWithoutRiderRejectsAnOriginThatContradictsTheOrder(StatusPedido status, string informed)
+        {
+            var error = Assert.Throws<DeliveryDomainException>(() =>
+                EncerramentoRules.OrigemConclusaoSemMotoboy(status, informed));
+            Assert.Equal("ORIGEM_CONCLUSAO_INVALIDA", error.Code);
+        }
+
+        [Fact]
+        public void CompletionWithoutRiderHasAnAuditableDefaultReason()
+        {
+            Assert.Equal("Retirada no balcao confirmada pelo operador.",
+                EncerramentoRules.MotivoConclusaoSemMotoboy(EncerramentoRules.OrigemBalcao, null));
+            Assert.Equal("motivo informado",
+                EncerramentoRules.MotivoConclusaoSemMotoboy(EncerramentoRules.OrigemEntregaManual, "  motivo informado  "));
+        }
     }
 
     public sealed class EncerramentoStatusTests

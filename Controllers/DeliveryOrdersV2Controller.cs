@@ -387,15 +387,18 @@ namespace APIBack.Controllers
             }
         }
 
+        public sealed record EntregueManualRequest(string? Origem, string? Motivo);
+
         /// <summary>Entrega manual: a loja marca como entregue (tambem pedido retirado no balcao).</summary>
         [HttpPost("pedidos/{pedidoId:int}/entregue")]
         [RequirePermission("Delivery", "editar_pedido")]
-        public async Task<IActionResult> EntregueManual(int pedidoId)
+        public async Task<IActionResult> EntregueManual(int pedidoId, [FromBody] EntregueManualRequest? request)
         {
             if (!TryGetActor(out var actorUserId, out var estabelecimentoId, out var error)) return error!;
             try
             {
-                var status = await _queueService.MarcarEntregueManualAsync(estabelecimentoId, actorUserId, pedidoId);
+                var status = await _queueService.MarcarEntregueManualAsync(estabelecimentoId, actorUserId, pedidoId,
+                    request?.Origem, request?.Motivo);
                 return Ok(ApiResponse<object>.Ok(new { pedidoId, status }));
             }
             catch (DeliveryDomainException ex)
@@ -477,10 +480,33 @@ namespace APIBack.Controllers
         /// Mesma conclusao do concluir-atual; pedido iFood continua pelo fluxo oficial (409 IFOOD_ORDER_MANAGED_EXTERNALLY).
         /// </summary>
         [HttpPost("pedidos/{pedidoId:int}/concluir")]
-        [RequireModule("Delivery")]
         [RequirePermission("Delivery", "atribuir_motoboy")]
-        public Task<IActionResult> CompletePedido(int pedidoId) =>
-            ExecuteAsync((est, userId) => _queueService.CompleteStopAsync(est, userId, pedidoId));
+        public async Task<IActionResult> CompletePedido(int pedidoId, [FromBody] EntregueManualRequest? request)
+        {
+            if (!TryGetActor(out var actorUserId, out var estabelecimentoId, out var error)) return error!;
+            try
+            {
+                var queue = await _queueService.CompleteStopAsync(estabelecimentoId, actorUserId, pedidoId, request?.Motivo);
+                return Ok(ApiResponse<MotoboyQueueDto>.Ok(queue));
+            }
+            catch (DeliveryDomainException ex) when (ex.Code == "PEDIDO_NOT_IN_QUEUE")
+            {
+                try
+                {
+                    var status = await _queueService.MarcarEntregueManualAsync(estabelecimentoId, actorUserId, pedidoId,
+                        request?.Origem, request?.Motivo);
+                    return Ok(ApiResponse<object>.Ok(new { pedidoId, status }));
+                }
+                catch (DeliveryDomainException manualEx)
+                {
+                    return DomainError(manualEx);
+                }
+            }
+            catch (DeliveryDomainException ex)
+            {
+                return DomainError(ex);
+            }
+        }
 
         /// <summary>Passa a rota inteira do motoboy para outro (uma oferta so, tudo ou nada). O pedido ja coletado leva a coleta junto.</summary>
         [HttpPost("motoboys/{motoboyId:int}/fila/transferir")]

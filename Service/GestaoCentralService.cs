@@ -512,7 +512,12 @@ SELECT n.id, n.estabelecimento_id AS EstabelecimentoId, e.nome_fantasia AS Loja,
         public async Task RegistrarEntradaAsync(Guid estabelecimentoId, int usuarioId, CancellationToken ct = default)
         {
             await using var connection = await dataSource.OpenConnectionAsync(ct);
-            await LogAsync(connection, null, usuarioId, estabelecimentoId, "entrou_na_loja", null, ct);
+            // Loja inexistente violaria a FK de gestao_acao_log e viraria INTERNAL_ERROR: responde 404 previsivel.
+            var linhas = await connection.ExecuteAsync(new CommandDefinition(@"
+INSERT INTO gestao_acao_log (usuario_id, estabelecimento_id, acao, detalhe)
+SELECT @Usuario, e.id, 'entrou_na_loja', NULL FROM estabelecimentos e WHERE e.id = @Loja;",
+                new { Usuario = usuarioId, Loja = estabelecimentoId }, cancellationToken: ct));
+            if (linhas == 0) throw new GestaoCentralException(404, "Loja nao encontrada.");
         }
 
         public async Task<IReadOnlyList<MotoboyDaLojaDto>> MotoboysDaLojaAsync(Guid estabelecimentoId, CancellationToken ct = default)

@@ -356,8 +356,26 @@ public sealed class IfoodStoreController(IIfoodRuntimeSettingsRepository reposit
         var store = HttpContext.GetEstabelecimentoId();
         if (store is null)
             return BadRequest(ApiResponse<object>.Fail("Selecione um estabelecimento.", "IFOOD_STORE_NOT_SELECTED"));
+        return await StatusOfAsync(store.Value, ct);
+    }
+
+    /// <summary>
+    /// Estado do iFood de uma loja escolhida pela tela (Gestão > Lojas > Detalhes), sem depender da loja ativa na sessão.
+    /// A Gestão lê qualquer loja; os demais só a própria.
+    /// </summary>
+    [HttpGet("{estabelecimentoId:guid}"), RequirePermission("Delivery", "integracao_ifood")]
+    public async Task<IActionResult> GetByStore(Guid estabelecimentoId, CancellationToken ct)
+    {
+        Response.Headers.CacheControl = "no-store";
+        if (!HttpContext.IsSuperAdmin() && HttpContext.GetEstabelecimentoId() != estabelecimentoId)
+            return StatusCode(403, ApiResponse<object>.Fail("Acesso negado a este estabelecimento.", "IFOOD_STORE_FORBIDDEN"));
+        return await StatusOfAsync(estabelecimentoId, ct);
+    }
+
+    private async Task<IActionResult> StatusOfAsync(Guid storeId, CancellationToken ct)
+    {
         var settings = await repository.GetSettingsAsync(ct);
-        var row = await repository.GetStoreConnectionAsync(store.Value, ct);
+        var row = await repository.GetStoreConnectionAsync(storeId, ct);
         var enabled = settings.Enabled && !string.IsNullOrWhiteSpace(settings.ClientId) && !string.IsNullOrWhiteSpace(settings.ClientSecretCifrado);
         return Ok(ApiResponse<IfoodStoreStatusDto>.Ok(new IfoodStoreStatusDto
         {

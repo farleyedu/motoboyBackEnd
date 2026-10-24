@@ -95,6 +95,32 @@ namespace APIBack.Tests.Unit
             Assert.NotNull(resultado.Value);
         }
 
+        [Fact]
+        public async Task Gestao_le_o_ifood_de_outra_loja_sem_depender_da_loja_da_sessao()
+        {
+            var (controller, repo, _) = Montar();
+            controller.HttpContext.Items["IsSuperAdmin"] = true;
+            var outra = Guid.NewGuid();
+            repo.Setup(r => r.GetSettingsAsync(It.IsAny<CancellationToken>())).ReturnsAsync(new IfoodRuntimeSettings());
+
+            var resultado = await controller.GetByStore(outra, CancellationToken.None);
+
+            Assert.IsType<OkObjectResult>(resultado);
+            repo.Verify(r => r.GetStoreConnectionAsync(outra, It.IsAny<CancellationToken>()), Times.Once);
+            repo.Verify(r => r.GetStoreConnectionAsync(Loja, It.IsAny<CancellationToken>()), Times.Never);
+        }
+
+        [Fact]
+        public async Task Loja_comum_nao_le_o_ifood_de_outra_loja()
+        {
+            var (controller, repo, _) = Montar();
+
+            var resultado = await controller.GetByStore(Guid.NewGuid(), CancellationToken.None);
+
+            Assert.Equal(403, Assert.IsType<ObjectResult>(resultado).StatusCode);
+            repo.Verify(r => r.GetStoreConnectionAsync(It.IsAny<Guid>(), It.IsAny<CancellationToken>()), Times.Never);
+        }
+
         private static (IfoodStoreController Controller, Mock<IIfoodRuntimeSettingsRepository> Repo, Mock<IIfoodMerchantProbe> Probe) Montar()
         {
             var repo = new Mock<IIfoodRuntimeSettingsRepository>();

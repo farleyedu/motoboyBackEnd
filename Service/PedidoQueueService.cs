@@ -72,10 +72,11 @@ namespace APIBack.Service
             return _repository.RemoveForSimulatorAsync(estabelecimentoId, actorUserId, pedidoId);
         }
 
-        public Task<MotoboyQueueDto> CompleteStopAsync(Guid estabelecimentoId, int actorUserId, int pedidoId)
+        public Task<MotoboyQueueDto> CompleteStopAsync(Guid estabelecimentoId, int actorUserId, int pedidoId, string? motivo = null)
         {
             EnsurePositive(pedidoId, "pedidoId");
-            return _repository.CompleteStopAsync(estabelecimentoId, actorUserId, pedidoId);
+            return _repository.CompleteStopAsync(estabelecimentoId, actorUserId, pedidoId,
+                DeliveryRules.NormalizeReason(motivo, required: false));
         }
 
         public Task<RouteTransferResultDto> TransferRouteByOperatorAsync(Guid estabelecimentoId, int operatorUserId, int fromMotoboyId, int toMotoboyId, string? motivo)
@@ -132,10 +133,12 @@ namespace APIBack.Service
             return _repository.MarcarSaiuManualAsync(estabelecimentoId, actorUserId, pedidoId, entregadorNome);
         }
 
-        public Task<string> MarcarEntregueManualAsync(Guid estabelecimentoId, int actorUserId, int pedidoId)
+        public Task<string> MarcarEntregueManualAsync(Guid estabelecimentoId, int actorUserId, int pedidoId,
+            string? origem = null, string? motivo = null)
         {
             EnsurePositive(pedidoId, "pedidoId");
-            return _repository.MarcarEntregueManualAsync(estabelecimentoId, actorUserId, pedidoId);
+            return _repository.MarcarEntregueManualAsync(estabelecimentoId, actorUserId, pedidoId, origem,
+                DeliveryRules.NormalizeReason(motivo, required: false));
         }
 
         public Task<MotoboyQueueDto> GetQueueAsync(Guid estabelecimentoId, int motoboyId, CancellationToken cancellationToken = default)

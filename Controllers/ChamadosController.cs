@@ -29,10 +29,10 @@ namespace APIBack.Controllers
         public Task<IActionResult> MeuChamado(long id) => Run(false, async (_, loja, ct) => { var (c, m) = await service.ObterAsync(id, loja, ct); return new { chamado = c, mensagens = m }; });
 
         [HttpPost("api/v2/chamados/{id:long}/mensagens")]
-        public Task<IActionResult> LojaResponde(long id, [FromBody] ResponderChamadoRequest request) => Run(false, async (u, loja, ct) => { await service.ResponderAsync(id, loja, u, false, request.Texto ?? string.Empty, ct); return true; });
+        public Task<IActionResult> LojaResponde(long id, [FromBody] ResponderChamadoRequest request) => Run(false, async (u, loja, ct) => { await service.ResponderAsync(id, loja, u, false, request.Texto ?? string.Empty, ct); return (object)true; });
 
         [HttpPost("api/v2/chamados/{id:long}/nota")]
-        public Task<IActionResult> Avaliar(long id, [FromBody] NotaChamadoRequest request) => Run(false, async (_, loja, ct) => { await service.AvaliarAsync(id, loja!.Value, request.Nota, ct); return true; });
+        public Task<IActionResult> Avaliar(long id, [FromBody] NotaChamadoRequest request) => Run(false, async (_, loja, ct) => { await service.AvaliarAsync(id, loja!.Value, request.Nota, ct); return (object)true; });
 
         [HttpGet("api/gestao/chamados")]
         public Task<IActionResult> Todos() => Run(true, (_, _, ct) => service.ListarAsync(null, ct));
@@ -41,9 +41,9 @@ namespace APIBack.Controllers
         public Task<IActionResult> Um(long id) => Run(true, async (_, _, ct) => { var (c, m) = await service.ObterAsync(id, null, ct); return new { chamado = c, mensagens = m }; });
 
         [HttpPost("api/gestao/chamados/{id:long}/mensagens")]
-        public Task<IActionResult> ZippyResponde(long id, [FromBody] ResponderChamadoRequest request) => Run(true, async (u, _, ct) => { await service.ResponderAsync(id, null, u, true, request.Texto ?? string.Empty, ct); return true; });
+        public Task<IActionResult> ZippyResponde(long id, [FromBody] ResponderChamadoRequest request) => Run(true, async (u, _, ct) => { await service.ResponderAsync(id, null, u, true, request.Texto ?? string.Empty, ct); return (object)true; });
 
         [HttpPost("api/gestao/chamados/{id:long}/status")]
-        public Task<IActionResult> Status(long id, [FromBody] StatusChamadoRequest request) => Run(true, async (_, _, ct) => { await service.MudarStatusAsync(id, request.Status ?? string.Empty, ct); return true; });
+        public Task<IActionResult> Status(long id, [FromBody] StatusChamadoRequest request) => Run(true, async (_, _, ct) => { await service.MudarStatusAsync(id, request.Status ?? string.Empty, ct); return (object)true; });
     }
 }

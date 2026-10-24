@@ -40,7 +40,8 @@ UPDATE pedido
     }
 
     /// <summary>Vale para pedido que saiu (em rota manual) e para o pendente entregue direto (retirada no balcao).</summary>
-    public async Task<string> MarcarEntregueManualAsync(Guid estabelecimentoId, int actorUserId, int pedidoId)
+    public async Task<string> MarcarEntregueManualAsync(Guid estabelecimentoId, int actorUserId, int pedidoId,
+        string? origem = null, string? motivo = null)
     {
         await using var connection = await _dataSource.OpenConnectionAsync();
         await using var transaction = await connection.BeginTransactionAsync();
@@ -51,6 +52,8 @@ UPDATE pedido
         if (status is not (StatusPedido.Pendente or StatusPedido.EmRota))
             throw new DeliveryDomainException(409, "PEDIDO_NAO_ENTREGAVEL", "Este pedido não pode ser marcado como entregue.");
         await GarantirSemMotoboyAsync(connection, transaction, estabelecimentoId, pedido);
+        var origemAuditada = EncerramentoRules.OrigemConclusaoSemMotoboy(status, origem);
+        var motivoAuditado = EncerramentoRules.MotivoConclusaoSemMotoboy(origemAuditada, motivo);
 
         var entregaNow = await PedidoColumnTypes.LocalNowSqlAsync(connection, transaction, "horario_entrega");
         await connection.ExecuteAsync($@"
@@ -58,7 +61,8 @@ UPDATE pedido
    SET status_pedido = @Concluido, horario_entrega = {entregaNow}, entrega_manual_entregue_utc = NOW()
  WHERE id = @PedidoId;",
             new { Concluido = (int)StatusPedido.Concluido, PedidoId = pedidoId }, transaction);
-        await PublishOrderEventAsync(connection, transaction, estabelecimentoId, actorUserId, pedidoId, "manual_delivered");
+        await PublishOrderEventAsync(connection, transaction, estabelecimentoId, actorUserId, pedidoId,
+            "manual_delivered", origemAuditada, motivoAuditado);
         await transaction.CommitAsync();
         return StatusPedido.Concluido.ToApiKey();
     }

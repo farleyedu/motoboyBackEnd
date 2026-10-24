@@ -19,12 +19,42 @@ namespace APIBack.Service
         public const string MotivoExpediente = "expediente";
         public const string MotivoManual = "manual";
 
+        public const string OrigemBalcao = "balcao";
+        public const string OrigemEntregaManual = "entrega_manual";
+
         /// <summary>Pedido em aberto: o que o encerramento alcanca. Rascunho, entregue e cancelado ficam fora.</summary>
         public static bool IsOpen(StatusPedido status) =>
             status is StatusPedido.Pendente or StatusPedido.Atribuido or StatusPedido.EmRota or StatusPedido.AguardandoMotoboy;
 
         /// <summary>So o pedido encerrado automaticamente pode ser reaberto por aqui.</summary>
         public static bool CanReopen(StatusPedido status) => status == StatusPedido.EncerradoAuto;
+
+        /// <summary>
+        /// Sem motoboy, pendente so pode ser encerrado como retirada no balcao; em rota so como entrega manual.
+        /// A origem e derivada do estado persistido para o cliente nao conseguir registrar uma entrega de motoboy inexistente.
+        /// </summary>
+        public static string OrigemConclusaoSemMotoboy(StatusPedido status, string? origemInformada)
+        {
+            var esperada = status switch
+            {
+                StatusPedido.Pendente => OrigemBalcao,
+                StatusPedido.EmRota => OrigemEntregaManual,
+                _ => throw new DeliveryDomainException(409, "PEDIDO_NAO_ENTREGAVEL", "Este pedido nao pode ser concluido sem motoboy.")
+            };
+            var informada = origemInformada?.Trim().ToLowerInvariant();
+            if (!string.IsNullOrEmpty(informada) && informada != esperada)
+                throw new DeliveryDomainException(422, "ORIGEM_CONCLUSAO_INVALIDA", "A origem da conclusao nao corresponde ao estado do pedido.");
+            return esperada;
+        }
+
+        public static string MotivoConclusaoSemMotoboy(string origem, string? motivo)
+        {
+            var informado = motivo?.Trim();
+            if (!string.IsNullOrEmpty(informado)) return informado.Length > 200 ? informado[..200] : informado;
+            return origem == OrigemBalcao
+                ? "Retirada no balcao confirmada pelo operador."
+                : "Entrega manual confirmada pelo operador.";
+        }
 
         public static bool IsValidHoras(int horas) => horas is >= 0 and <= HorasMaximo;
 

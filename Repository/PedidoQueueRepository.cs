@@ -263,8 +263,13 @@ SELECT m.id
         {
             await using var connection = await _dataSource.OpenConnectionAsync();
             await using var transaction = await connection.BeginTransactionAsync();
+            await LockQueuesAsync(connection, transaction, estabelecimentoId, motoboyId);
+            var completed = await GetCurrentStopAsync(connection, transaction, estabelecimentoId, motoboyId, forUpdate: false);
             var snapshot = await CompleteCurrentInternalAsync(connection, transaction, estabelecimentoId, motoboyId,
                 completedBy: "operator", providedCode: null, enforceCode: false);
+            if (completed != null)
+                await PublishOrderEventAsync(connection, transaction, estabelecimentoId, actorUserId, completed.PedidoId,
+                    "operator_delivered", "operador_rota", "Entrega atual concluida pelo operador.", motoboyId);
             await transaction.CommitAsync();
             return snapshot;
         }
