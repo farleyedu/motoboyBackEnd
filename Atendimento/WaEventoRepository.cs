@@ -12,6 +12,10 @@ namespace APIBack.Atendimento
     {
         public const string Mensagem = "mensagem";
         public const string Status = "status";
+        /// <summary>account_update da conta (PARTNER_REMOVED etc.): chave = waba + evento + hash do corpo.</summary>
+        public const string Conta = "conta";
+        /// <summary>smb_message_echoes (coexistencia): mensagem enviada pelo app WhatsApp Business; chave = wamid.</summary>
+        public const string Eco = "eco";
     }
 
     /// <summary>Evento do webhook gravado antes de qualquer processamento.</summary>

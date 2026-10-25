@@ -35,9 +35,17 @@ namespace APIBack.Atendimento
         public async Task<ResultadoIngestao> IngerirAsync(JsonElement raiz, CanalWhatsapp? canal)
         {
             int novos = 0, repetidos = 0, ignorados = 0;
-            foreach (var valor in Valores(raiz))
+            foreach (var (campo, valor, wabaId) in Valores(raiz))
             {
-                var (n, r, i) = await GravarEventosAsync(valor, canal);
+                var (n, r, i) = campo switch
+                {
+                    // Ciclo de vida da conta (ex.: PARTNER_REMOVED). So vale no webhook global: e sobre o app ZippyGo, nao sobre o app do cliente.
+                    "account_update" when canal == null => await GravarContaAsync(valor, wabaId),
+                    "account_update" => (0, 0, 1),
+                    // Coexistencia: historico e contatos do app WhatsApp Business nao viram conversa nova nem resposta automatica.
+                    "history" or "smb_app_state_sync" => Ignorar(campo, wabaId),
+                    _ => await GravarEventosAsync(valor, canal, wabaId)
+                };
                 novos += n;
                 repetidos += r;
                 ignorados += i;
@@ -46,22 +54,45 @@ namespace APIBack.Atendimento
             return new ResultadoIngestao(novos, repetidos, ignorados);
         }
 
-        private static IEnumerable<JsonElement> Valores(JsonElement raiz)
+        /// <summary>Cada mudanca com o campo assinado (messages, account_update...) e o id da entrada (a WABA).</summary>
+        private static IEnumerable<(string? Campo, JsonElement Valor, string? WabaId)> Valores(JsonElement raiz)
         {
             if (!raiz.TryGetProperty("entry", out var entradas) || entradas.ValueKind != JsonValueKind.Array) yield break;
 
             foreach (var entrada in entradas.EnumerateArray())
             {
                 if (!entrada.TryGetProperty("changes", out var mudancas) || mudancas.ValueKind != JsonValueKind.Array) continue;
+                var wabaId = Texto(entrada, "id");
 
                 foreach (var mudanca in mudancas.EnumerateArray())
                 {
-                    if (mudanca.TryGetProperty("value", out var valor) && valor.ValueKind == JsonValueKind.Object) yield return valor;
+                    if (mudanca.TryGetProperty("value", out var valor) && valor.ValueKind == JsonValueKind.Object)
+                    {
+                        yield return (Texto(mudanca, "field"), valor, wabaId);
+                    }
                 }
             }
         }
 
-        private async Task<(int Novos, int Repetidos, int Ignorados)> GravarEventosAsync(JsonElement valor, CanalWhatsapp? canal)
+        private (int, int, int) Ignorar(string campo, string? wabaId)
+        {
+            _logger.LogInformation("[wa.in] ev=ignorada motivo=campo_sem_uso campo={Campo} waba={Waba}", campo, wabaId);
+            return (0, 0, 1);
+        }
+
+        private async Task<(int Novos, int Repetidos, int Ignorados)> GravarContaAsync(JsonElement valor, string? wabaId)
+        {
+            var evento = Texto(valor, "event") ?? "desconhecido";
+            var waba = valor.TryGetProperty("waba_info", out var info) ? Texto(info, "waba_id") ?? wabaId : wabaId;
+            var payload = JsonSerializer.Serialize(new { field = "account_update", waba_id = waba, value = Clonar(valor) });
+            // A Meta reenvia: o mesmo corpo vira a mesma chave (idempotente).
+            var chave = $"{waba}:{evento}:{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(valor.GetRawText())))[..16]}";
+            var novo = await _eventos.RegistrarAsync(new WaEvento { Id = Guid.NewGuid(), Tipo = TipoEvento.Conta, Chave = chave, PayloadJson = payload });
+            _logger.LogInformation("[wa.in] ev={Ev} tipo=conta evento={Evento} waba={Waba}", novo ? "conta_recebida" : "conta_repetida", evento, waba);
+            return novo ? (1, 0, 0) : (0, 1, 0);
+        }
+
+        private async Task<(int Novos, int Repetidos, int Ignorados)> GravarEventosAsync(JsonElement valor, CanalWhatsapp? canal, string? wabaId)
         {
             int novos = 0, repetidos = 0;
             valor.TryGetProperty("metadata", out var metadata);
@@ -72,7 +103,7 @@ namespace APIBack.Atendimento
             if (canal != null && phoneNumberId != canal.PhoneNumberId)
             {
                 // O app do cliente pode servir varios numeros, mas esta URL e so deste canal. Evento de outro numero nao entra.
-                var quantos = Contar(valor, "messages") + Contar(valor, "statuses");
+                var quantos = Contar(valor, "messages") + Contar(valor, "statuses") + Contar(valor, "message_echoes");
                 if (quantos > 0)
                 {
                     _logger.LogWarning(
@@ -94,11 +125,13 @@ namespace APIBack.Atendimento
                         continue;
                     }
 
+                    // waba_id (id da entrada) deixa o processador conferir que o numero autorizado e mesmo daquela WABA.
                     var payload = JsonSerializer.Serialize(new
                     {
                         metadata = Clonar(metadata),
                         contacts = Clonar(contatos),
-                        message = Clonar(mensagem)
+                        message = Clonar(mensagem),
+                        waba_id = wabaId
                     });
 
                     var novo = await _eventos.RegistrarAsync(new WaEvento
@@ -133,6 +166,26 @@ namespace APIBack.Atendimento
                     _logger.LogInformation(
                         "[wa.in] ev={Evento} wa={Wa} status={Status} phone_number_id={PhoneNumberId}",
                         novo ? "status_recebido" : "status_repetido", id, situacao, phoneNumberId);
+                    if (novo) novos++; else repetidos++;
+                }
+            }
+
+            // smb_message_echoes: mensagem que o restaurante mandou pelo app WhatsApp Business (coexistencia). Fica gravada (idempotente)
+            // e nunca dispara resposta automatica.
+            if (valor.TryGetProperty("message_echoes", out var ecos) && ecos.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var eco in ecos.EnumerateArray())
+                {
+                    var id = Texto(eco, "id");
+                    if (string.IsNullOrWhiteSpace(id)) continue;
+
+                    var payload = JsonSerializer.Serialize(new { metadata = Clonar(metadata), message = Clonar(eco), waba_id = wabaId });
+                    var novo = await _eventos.RegistrarAsync(new WaEvento
+                    {
+                        Id = Guid.NewGuid(), Tipo = TipoEvento.Eco, Chave = id,
+                        PhoneNumberId = phoneNumberId, DisplayPhone = display, PayloadJson = payload, IdCanal = canal?.Id
+                    });
+                    _logger.LogInformation("[wa.in] ev={Evento} wa={Wa} phone_number_id={PhoneNumberId}", novo ? "eco_recebido" : "eco_repetido", id, phoneNumberId);
                     if (novo) novos++; else repetidos++;
                 }
             }

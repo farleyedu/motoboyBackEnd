@@ -1,3 +1,4 @@
+using APIBack.Atendimento.ConexaoMeta;
 using APIBack.Atendimento.Motor;
 using System;
 using System.Collections.Generic;
@@ -84,16 +85,58 @@ namespace APIBack.Atendimento
         private readonly IServicosDaLojaService _servicos;
         private readonly ICanaisWhatsappService _canais;
         private readonly IExecutorDeAtendimento _executor;
+        private readonly IConexaoMetaService _conexaoMeta;
         private readonly ILogger<AtendimentoLojaController> _logger;
 
         public AtendimentoLojaController(
-            IServicosDaLojaService servicos, ICanaisWhatsappService canais, IExecutorDeAtendimento executor, ILogger<AtendimentoLojaController> logger)
+            IServicosDaLojaService servicos, ICanaisWhatsappService canais, IExecutorDeAtendimento executor, IConexaoMetaService conexaoMeta,
+            ILogger<AtendimentoLojaController> logger)
         {
             _servicos = servicos;
             _canais = canais;
             _executor = executor;
+            _conexaoMeta = conexaoMeta;
             _logger = logger;
         }
+
+        // ---- Conectar com a Meta (Embedded Signup v4, app central ZippyGo) --------------------------------------------
+
+        /// <summary>Se o fluxo esta disponivel, em que modo (producao/teste) e o App ID/Configuration ID publicos. Nunca segredos.</summary>
+        [HttpGet("conexao-meta/configuracao")]
+        public Task<IActionResult> ConfiguracaoConexaoMeta(Guid estabelecimentoId) =>
+            Executar(ator => _conexaoMeta.ConfiguracaoAsync(ator, estabelecimentoId));
+
+        /// <summary>Cria a tentativa (state + prazo) antes de abrir o FB.login.</summary>
+        [HttpPost("conexao-meta/iniciar")]
+        public Task<IActionResult> IniciarConexaoMeta(Guid estabelecimentoId, [FromBody] IniciarConexaoMetaRequest? request) =>
+            Executar(ator => _conexaoMeta.IniciarAsync(ator, estabelecimentoId, request ?? new IniciarConexaoMetaRequest(), Origem()),
+                StatusCodes.Status201Created);
+
+        /// <summary>Fim do Embedded Signup (FINISH*, CANCEL ou ERROR). O codigo vale 30 s: o painel envia assim que recebe.</summary>
+        [HttpPost("conexao-meta/concluir")]
+        public Task<IActionResult> ConcluirConexaoMeta(Guid estabelecimentoId, [FromBody] ConcluirConexaoMetaRequest request) =>
+            Executar(ator => _conexaoMeta.ConcluirAsync(ator, estabelecimentoId, request, Origem()));
+
+        /// <summary>Escolhe o numero (quando a conta tem mais de um) ou repete a etapa que falhou, sem autorizar de novo.</summary>
+        [HttpPost("conexao-meta/ativar")]
+        public Task<IActionResult> AtivarNumeroMeta(Guid estabelecimentoId, [FromBody] AtivarNumeroMetaRequest request) =>
+            Executar(ator => _conexaoMeta.AtivarAsync(ator, estabelecimentoId, request));
+
+        [HttpGet("conexao-meta/estado")]
+        public Task<IActionResult> EstadoConexaoMeta(Guid estabelecimentoId, [FromQuery] Guid? tentativaId) =>
+            Executar(ator => _conexaoMeta.EstadoAsync(ator, estabelecimentoId, tentativaId));
+
+        /// <summary>Diagnostico real (token, permissoes, WABA, numero, inscricao, webhook, recebimento). reparar=true refaz o que for seguro.</summary>
+        [HttpPost("canais/{canalId:guid}/revalidar")]
+        public Task<IActionResult> RevalidarCanal(Guid estabelecimentoId, Guid canalId, [FromBody] RevalidarCanalRequest? request) =>
+            Executar(ator => _conexaoMeta.RevalidarAsync(ator, estabelecimentoId, canalId, request ?? new RevalidarCanalRequest()));
+
+        /// <summary>Nova autorizacao na Meta para o mesmo canal (mantem conversas e configuracoes). Responde como o iniciar.</summary>
+        [HttpPost("canais/{canalId:guid}/reconectar")]
+        public Task<IActionResult> ReconectarCanal(Guid estabelecimentoId, Guid canalId) =>
+            Executar(ator => _conexaoMeta.ReconectarAsync(ator, estabelecimentoId, canalId, Origem()), StatusCodes.Status201Created);
+
+        private string Origem() => Request.Headers.Origin.ToString();
 
         [HttpGet("servicos")]
         public Task<IActionResult> ObterServicos(Guid estabelecimentoId) =>
@@ -134,13 +177,13 @@ namespace APIBack.Atendimento
         public Task<IActionResult> ObterWebhook(Guid estabelecimentoId, Guid canalId) =>
             Executar(ator => _canais.ObterWebhookAsync(ator, canalId));
 
+        /// <summary>
+        /// Desconecta do Zippy sem apagar o canal (conversas e configuracoes ficam) e sem excluir nada na Meta. Na conexao pela Meta, tira
+        /// a inscricao do app da WABA so quando nenhuma outra loja ou numero depende dela.
+        /// </summary>
         [HttpDelete("canais/{canalId:guid}/conexao")]
         public Task<IActionResult> DesconectarCanal(Guid estabelecimentoId, Guid canalId) =>
-            Executar(async ator =>
-            {
-                await _canais.DesconectarAsync(ator, canalId);
-                return new object();
-            });
+            Executar(ator => _conexaoMeta.DesconectarAsync(ator, estabelecimentoId, canalId));
 
         [HttpPut("canais/{canalId:guid}")]
         public Task<IActionResult> AtualizarCanal(Guid estabelecimentoId, Guid canalId, [FromBody] CanalRequest request) =>

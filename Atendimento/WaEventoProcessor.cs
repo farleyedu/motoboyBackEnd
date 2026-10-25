@@ -36,17 +36,65 @@ namespace APIBack.Atendimento
         private readonly IMessageService _mensagens;
         private readonly IPipelineDeMensagem _pipeline;
         private readonly ILogger<WaEventoProcessor> _logger;
+        private readonly ConexaoMeta.IConexaoMetaRepository? _conexoes;
 
-        public WaEventoProcessor(ICanalRepository canais, IMessageService mensagens, IPipelineDeMensagem pipeline, ILogger<WaEventoProcessor> logger)
+        public WaEventoProcessor(
+            ICanalRepository canais, IMessageService mensagens, IPipelineDeMensagem pipeline, ILogger<WaEventoProcessor> logger,
+            ConexaoMeta.IConexaoMetaRepository? conexoes = null)
         {
             _canais = canais;
             _mensagens = mensagens;
             _pipeline = pipeline;
             _logger = logger;
+            _conexoes = conexoes;
         }
 
-        public Task<ResultadoEvento> ProcessarAsync(WaEvento evento) =>
-            evento.Tipo == TipoEvento.Status ? ProcessarStatusAsync(evento) : ProcessarMensagemAsync(evento);
+        public Task<ResultadoEvento> ProcessarAsync(WaEvento evento) => evento.Tipo switch
+        {
+            TipoEvento.Status => ProcessarStatusAsync(evento),
+            TipoEvento.Conta => ProcessarContaAsync(evento),
+            TipoEvento.Eco => ProcessarEcoAsync(evento),
+            _ => ProcessarMensagemAsync(evento)
+        };
+
+        // ---- conta (account_update) ---------------------------------------------------------------------------
+
+        /// <summary>
+        /// PARTNER_REMOVED: o restaurante tirou o app ZippyGo da conta (ou desconectou no app WhatsApp Business). O Zippy para de usar o
+        /// token e marca os numeros autorizados daquela WABA com erro; nada e apagado e outras origens nao mudam.
+        /// </summary>
+        private async Task<ResultadoEvento> ProcessarContaAsync(WaEvento evento)
+        {
+            using var documento = JsonDocument.Parse(evento.PayloadJson);
+            var raiz = documento.RootElement;
+            var waba = Texto(raiz, "waba_id");
+            var tipo = raiz.TryGetProperty("value", out var valor) ? Texto(valor, "event") : null;
+
+            if (tipo != "PARTNER_REMOVED" || string.IsNullOrWhiteSpace(waba))
+            {
+                _logger.LogInformation("[wa.in] ev=conta_evento evento={Evento} waba={Waba}", tipo, waba);
+                return ResultadoEvento.Ignorado($"account_update {tipo ?? "sem evento"} sem acao no Zippy");
+            }
+
+            if (_conexoes == null) return ResultadoEvento.TentarDeNovo("repositorio de conexoes indisponivel");
+
+            var canais = await _conexoes.RevogarPorWabaAsync(waba, null,
+                "O restaurante removeu o acesso do Zippy na Meta. Use \"Reconectar\" para autorizar de novo.");
+            _logger.LogWarning("[wa.in] ev=acesso_removido_pela_meta waba={Waba} canais_afetados={Canais}", waba, canais);
+            return ResultadoEvento.Processado();
+        }
+
+        // ---- eco do app WhatsApp Business (coexistencia) ------------------------------------------------------
+
+        private async Task<ResultadoEvento> ProcessarEcoAsync(WaEvento evento)
+        {
+            var canal = string.IsNullOrWhiteSpace(evento.PhoneNumberId) ? null : await _canais.ObterAtivoPorPhoneNumberIdAsync(evento.PhoneNumberId);
+            _logger.LogInformation("[wa.in] ev=eco_app_business wa={Wa} canal={Canal} loja={Loja}", evento.Chave, canal?.Id, canal?.IdEstabelecimento);
+            // Nunca entra no pipeline: o restaurante respondeu pelo celular e o robo nao pode responder de novo.
+            return ResultadoEvento.Ignorado(canal == null
+                ? "eco de numero desconhecido"
+                : "eco do app WhatsApp Business: guardado, sem resposta automatica (exibicao no chat ainda nao implementada)");
+        }
 
         // ---- mensagem recebida ----------------------------------------------------------------------------------
 
@@ -91,6 +139,15 @@ namespace APIBack.Atendimento
                     "[wa.in] ev=ignorada motivo=canal_do_webhook_diferente wa={Wa} canal_webhook={CanalWebhook} canal_dono={CanalDono}",
                     evento.Chave, evento.IdCanal, canal.Id);
                 return ResultadoEvento.Ignorado($"evento do webhook do canal {evento.IdCanal} para o numero do canal {canal.Id}");
+            }
+
+            var wabaDoEvento = Texto(raiz, "waba_id");
+            if (canal.Origem == OrigemCanal.Autorizado && wabaDoEvento != null && canal.WabaId != null && wabaDoEvento != canal.WabaId)
+            {
+                // Webhook global: a entrada diz de qual WABA veio. Numero autorizado de outra WABA nao recebe (WABA compartilhada nao mistura).
+                _logger.LogWarning("[wa.in] ev=ignorada motivo=waba_diferente_do_canal wa={Wa} canal={Canal} waba_evento={WabaEvento}",
+                    evento.Chave, canal.Id, wabaDoEvento);
+                return ResultadoEvento.Ignorado($"evento da WABA {wabaDoEvento} para o canal {canal.Id} de outra WABA");
             }
 
             await _canais.MarcarRecebimentoAsync(canal.Id);

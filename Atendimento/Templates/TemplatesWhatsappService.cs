@@ -518,7 +518,8 @@ namespace APIBack.Atendimento.Templates
         private IReadOnlyList<string> Candidatas(CanalWhatsapp canal)
         {
             var local = canal.WabaId?.Trim();
-            if (canal.Origem == OrigemCanal.Proprio)
+            // Proprio e autorizado (Embedded Signup): a WABA e a da conexao do cliente, nunca uma das WABAs da Zippy.
+            if (OrigemCanal.DoCliente(canal.Origem))
             {
                 if (string.IsNullOrEmpty(local)) throw new WhatsappException(WhatsappErros.WabaFormato());
                 return new[] { local };
@@ -546,7 +547,7 @@ namespace APIBack.Atendimento.Templates
         /// <summary>WABA ja sabida sem chamar a Meta: a da conexao propria ou a ultima confirmada para este numero.</summary>
         private string? WabaConhecida(CanalWhatsapp canal)
         {
-            if (canal.Origem == OrigemCanal.Proprio && !string.IsNullOrWhiteSpace(canal.WabaId)) return canal.WabaId.Trim();
+            if (OrigemCanal.DoCliente(canal.Origem) && !string.IsNullOrWhiteSpace(canal.WabaId)) return canal.WabaId.Trim();
             return _cache.TryGetValue(ChaveWabaConhecida(canal), out string? waba) ? waba : null;
         }
 

@@ -46,8 +46,29 @@ namespace APIBack.Atendimento
         public const string Proprio = "proprio";
         /// <summary>Numero compartilhado de testes (so a Gestao mexe).</summary>
         public const string Central = "central";
+        /// <summary>
+        /// A loja autorizou o app central ZippyGo pela propria Meta (Embedded Signup): a WABA e do cliente, o token de integracao fica
+        /// na autorizacao (whatsapp_autorizacao_meta) e as mensagens chegam pelo webhook global (/wa/webhook).
+        /// </summary>
+        public const string Autorizado = "autorizado";
 
-        public static bool Valida(string? origem) => origem is Zippy or Proprio or Central;
+        public static bool Valida(string? origem) => origem is Zippy or Proprio or Central or Autorizado;
+
+        /// <summary>A conta Meta e do cliente (proprio ou autorizado): o numero nunca usa o token global da Zippy.</summary>
+        public static bool DoCliente(string? origem) => origem is Proprio or Autorizado;
+    }
+
+    /// <summary>
+    /// Registro do numero na Cloud API (POST /{phone}/register), so na origem autorizado. dispensado = coexistencia com o app WhatsApp
+    /// Business: o numero ja esta registrado e a API nunca deve registra-lo (nem desregistra-lo).
+    /// </summary>
+    public static class RegistroEstado
+    {
+        public const string NaoAplicavel = "nao_aplicavel";
+        public const string Pendente = "pendente";
+        public const string Registrado = "registrado";
+        public const string Dispensado = "dispensado";
+        public const string Erro = "erro";
     }
 
     /// <summary>
@@ -64,7 +85,7 @@ namespace APIBack.Atendimento
 
         /// <summary>Um evento de verdade chegou: a conexao funciona, qualquer que tenha sido o caminho do registro.</summary>
         public static string AoReceber(string origem, string estado) =>
-            origem == OrigemCanal.Proprio && estado != NaoAplicavel ? Recebendo : estado;
+            OrigemCanal.DoCliente(origem) && estado != NaoAplicavel ? Recebendo : estado;
 
         /// <summary>A Meta aceitou a URL (registro automatico ou a validacao do registro manual). Nunca desfaz "recebendo".</summary>
         public static string AoRegistrar(string estado) => estado is Pendente or Erro ? Registrado : estado;
@@ -87,7 +108,7 @@ namespace APIBack.Atendimento
         public string? TokenCifrado { get; set; }
         /// <summary>Numero central de testes: todas as lojas de teste usam este numero; recebe quem esta vinculado a ele agora.</summary>
         public bool Central { get; set; }
-        public bool TemToken => !string.IsNullOrWhiteSpace(TokenCifrado);
+        public bool TemToken => !string.IsNullOrWhiteSpace(TokenCifrado) || !string.IsNullOrWhiteSpace(TokenAutorizacaoCifrado);
         public string Status { get; set; } = StatusCanal.Configurando;
         public string ModoAtendimento { get; set; } = Atendimento.ModoAtendimento.Hibrido;
         public string ConfigJson { get; set; } = "{}";
@@ -109,6 +130,23 @@ namespace APIBack.Atendimento
         public string WebhookEstado { get; set; } = Atendimento.WebhookEstado.NaoAplicavel;
         public string? WebhookErro { get; set; }
         public DateTime? WebhookRegistradoEm { get; set; }
+
+        // ---- origem autorizado (Embedded Signup) ----
+        public Guid? IdAutorizacaoMeta { get; set; }
+        /// <summary>Token da autorizacao ATIVA ligada ao canal (lido por subconsulta; nunca gravado a partir daqui). Nunca sai em resposta.</summary>
+        public string? TokenAutorizacaoCifrado { get; set; }
+        /// <summary>Estado da autorizacao ligada (ativa, revogada, expirada, erro); nulo sem autorizacao.</summary>
+        public string? AutorizacaoEstado { get; set; }
+        public bool Coexistencia { get; set; }
+        public string RegistroEstado { get; set; } = Atendimento.RegistroEstado.NaoAplicavel;
+        public string? RegistroPinCifrado { get; set; }
+        public int RegistroTentativas { get; set; }
+        public DateTime? RegistroTentadoEm { get; set; }
+        /// <summary>status do numero na Meta (CONNECTED, PENDING...) na ultima consulta.</summary>
+        public string? EstadoMeta { get; set; }
+        public DateTime? InscricaoWabaEm { get; set; }
+        public DateTime? CoexistenciaSincronizadaEm { get; set; }
+        public DateTime? DesconectadoEm { get; set; }
     }
 
     /// <summary>Quem esta pedindo a operacao. "Gestao" e o super admin: so ele cria canais e liga servicos.</summary>

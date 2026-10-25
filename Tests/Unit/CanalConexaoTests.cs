@@ -125,7 +125,9 @@ namespace APIBack.Tests.Unit
             await Assert.ThrowsAsync<UnauthorizedAccessException>(() => f.Build().DesconectarAsync(Dono(), central.Id));
             await f.Build().DesconectarAsync(Gestao, central.Id);
 
-            f.Canais.Verify(c => c.RemoverAsync(proprio.Id), Times.Once);
+            // Desconectar preserva o canal (conversas e configuracoes); so o central de testes ainda sai de vez.
+            f.Canais.Verify(c => c.DesativarAsync(proprio.Id), Times.Once);
+            f.Canais.Verify(c => c.RemoverAsync(proprio.Id), Times.Never);
             f.Canais.Verify(c => c.RemoverAsync(central.Id), Times.Once);
         }
 

@@ -48,6 +48,21 @@ namespace APIBack.Atendimento
         Task MarcarEnvioOkAsync(Guid canalId);
         Task MarcarErroAsync(Guid canalId, string erro, bool desativar);
         Task MarcarVerificadoAsync(Guid canalId, bool ok, string? erro);
+
+        // ---- origem autorizado (Embedded Signup) ----
+        /// <summary>
+        /// Grava o canal como autorizado: origem, WABA, app integrador, autorizacao, coexistencia, estados de registro/webhook e status.
+        /// Limpa os segredos do numero proprio (token, app secret, verify token, chave de URL), que deixam de valer neste canal.
+        /// </summary>
+        /// <exception cref="CanalConflitoException">O numero ou o ID da Meta ja pertence a outro canal.</exception>
+        Task GravarAutorizadoAsync(CanalWhatsapp canal);
+        /// <summary>
+        /// Desconecta sem apagar: status inativo e data, mantendo o id (conversas, modelos e auditoria continuam ligados). Apaga o token e o
+        /// app secret do numero proprio (reconectar pede de novo); mantem a URL e o verify token do webhook.
+        /// </summary>
+        Task DesativarAsync(Guid canalId);
+        /// <summary>Canais nao inativos que usam esta WABA, de qualquer loja e origem, menos <paramref name="excetoCanal"/>.</summary>
+        Task<int> ContarCanaisDaWabaAsync(string wabaId, Guid excetoCanal);
     }
 
     public sealed class SqlCanalRepository : ICanalRepository
@@ -59,7 +74,15 @@ namespace APIBack.Atendimento
        ultimo_envio_ok_em AS UltimoEnvioOkEm, ultimo_erro AS UltimoErro, ultimo_erro_em AS UltimoErroEm,
        origem AS Origem, waba_id AS WabaId, app_id AS AppId, app_secret_cifrado AS AppSecretCifrado, webhook_chave AS WebhookChave,
        verify_token_cifrado AS VerifyTokenCifrado, webhook_estado AS WebhookEstado, webhook_erro AS WebhookErro,
-       webhook_registrado_em AS WebhookRegistradoEm";
+       webhook_registrado_em AS WebhookRegistradoEm,
+       id_autorizacao_meta AS IdAutorizacaoMeta, coexistencia AS Coexistencia, registro_estado AS RegistroEstado,
+       registro_pin_cifrado AS RegistroPinCifrado, registro_tentativas AS RegistroTentativas, registro_tentado_em AS RegistroTentadoEm,
+       estado_meta AS EstadoMeta, inscricao_waba_em AS InscricaoWabaEm, coexistencia_sincronizada_em AS CoexistenciaSincronizadaEm,
+       desconectado_em AS DesconectadoEm,
+       (SELECT a.token_cifrado FROM whatsapp_autorizacao_meta a
+         WHERE a.id = canal_whatsapp.id_autorizacao_meta AND a.estado = 'ativa'
+           AND (a.token_expira_em IS NULL OR a.token_expira_em > NOW())) AS TokenAutorizacaoCifrado,
+       (SELECT a.estado FROM whatsapp_autorizacao_meta a WHERE a.id = canal_whatsapp.id_autorizacao_meta) AS AutorizacaoEstado";
 
         private readonly string _connectionString;
 
@@ -130,7 +153,49 @@ UPDATE canal_whatsapp
 UPDATE canal_whatsapp
    SET webhook_estado = @Estado, webhook_erro = @Erro, webhook_registrado_em = COALESCE(@RegistradoEm, webhook_registrado_em),
        updated_at_utc = NOW()
- WHERE id = @Id AND origem = 'proprio';", new { Id = canalId, Estado = estado, Erro = erro, RegistradoEm = registradoEm });
+ WHERE id = @Id AND origem IN ('proprio', 'autorizado');", new { Id = canalId, Estado = estado, Erro = erro, RegistradoEm = registradoEm });
+        }
+
+        public async Task GravarAutorizadoAsync(CanalWhatsapp canal)
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            try
+            {
+                await connection.ExecuteAsync(@"
+UPDATE canal_whatsapp
+   SET origem = 'autorizado', phone_number_id = @PhoneNumberId, numero_e164 = @NumeroE164, nome = @Nome, waba_id = @WabaId, app_id = @AppId,
+       id_autorizacao_meta = @IdAutorizacaoMeta, coexistencia = @Coexistencia, registro_estado = @RegistroEstado,
+       registro_pin_cifrado = @RegistroPinCifrado, registro_tentativas = @RegistroTentativas, registro_tentado_em = @RegistroTentadoEm,
+       estado_meta = @EstadoMeta, inscricao_waba_em = @InscricaoWabaEm, coexistencia_sincronizada_em = @CoexistenciaSincronizadaEm,
+       webhook_estado = @WebhookEstado, webhook_erro = @WebhookErro, webhook_registrado_em = @WebhookRegistradoEm,
+       status = @Status, ultimo_erro = @UltimoErro, ultimo_erro_em = CASE WHEN @UltimoErro IS NULL THEN NULL ELSE NOW() END,
+       desconectado_em = NULL, central = FALSE,
+       token_cifrado = NULL, app_secret_cifrado = NULL, verify_token_cifrado = NULL, webhook_chave = NULL,
+       updated_at_utc = NOW()
+ WHERE id = @Id;", canal);
+            }
+            catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
+            {
+                throw Conflito(ex);
+            }
+        }
+
+        public async Task DesativarAsync(Guid canalId)
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.ExecuteAsync(@"
+UPDATE canal_whatsapp
+   -- Os segredos do numero proprio deixam de valer (reconectar pede os dados de novo); a URL do webhook e mantida.
+   SET status = 'inativo', desconectado_em = NOW(), token_cifrado = NULL, app_secret_cifrado = NULL, updated_at_utc = NOW()
+ WHERE id = @Id;", new { Id = canalId });
+        }
+
+        public async Task<int> ContarCanaisDaWabaAsync(string wabaId, Guid excetoCanal)
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            return await connection.ExecuteScalarAsync<int>(
+                "SELECT COUNT(*) FROM canal_whatsapp WHERE waba_id = @Waba AND id <> @Canal AND status <> 'inativo';",
+                new { Waba = wabaId, Canal = excetoCanal });
         }
 
         public async Task<CanalWhatsapp?> ObterPrimeiroUsavelAsync(Guid estabelecimentoId)
@@ -177,9 +242,13 @@ UPDATE canal_whatsapp
             {
                 await connection.ExecuteAsync(@"
 INSERT INTO canal_whatsapp (id, id_estabelecimento, phone_number_id, numero_e164, nome, token_cifrado, central, status, modo_atendimento, config,
-                            origem, waba_id, app_id, app_secret_cifrado, webhook_chave, verify_token_cifrado, webhook_estado, webhook_erro, webhook_registrado_em)
+                            origem, waba_id, app_id, app_secret_cifrado, webhook_chave, verify_token_cifrado, webhook_estado, webhook_erro, webhook_registrado_em,
+                            id_autorizacao_meta, coexistencia, registro_estado, registro_pin_cifrado, registro_tentativas, registro_tentado_em,
+                            estado_meta, inscricao_waba_em, coexistencia_sincronizada_em)
 VALUES (@Id, @IdEstabelecimento, @PhoneNumberId, @NumeroE164, @Nome, @TokenCifrado, @Central, @Status, @ModoAtendimento, CAST(@ConfigJson AS jsonb),
-        @Origem, @WabaId, @AppId, @AppSecretCifrado, @WebhookChave, @VerifyTokenCifrado, @WebhookEstado, @WebhookErro, @WebhookRegistradoEm);",
+        @Origem, @WabaId, @AppId, @AppSecretCifrado, @WebhookChave, @VerifyTokenCifrado, @WebhookEstado, @WebhookErro, @WebhookRegistradoEm,
+        @IdAutorizacaoMeta, @Coexistencia, @RegistroEstado, @RegistroPinCifrado, @RegistroTentativas, @RegistroTentadoEm,
+        @EstadoMeta, @InscricaoWabaEm, @CoexistenciaSincronizadaEm);",
                     canal, tx);
                 await GravarServicosAsync(connection, tx, canal.Id, servicos);
                 await tx.CommitAsync();
@@ -198,7 +267,8 @@ VALUES (@Id, @IdEstabelecimento, @PhoneNumberId, @NumeroE164, @Nome, @TokenCifra
                 await connection.ExecuteAsync(@"
 UPDATE canal_whatsapp
    SET phone_number_id = @PhoneNumberId, numero_e164 = @NumeroE164, nome = @Nome, token_cifrado = @TokenCifrado,
-       status = @Status, ultimo_erro = @UltimoErro, updated_at_utc = NOW()
+       status = @Status, ultimo_erro = @UltimoErro,
+       desconectado_em = CASE WHEN @Status = 'inativo' THEN desconectado_em ELSE NULL END, updated_at_utc = NOW()
  WHERE id = @Id;", canal);
             }
             catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
@@ -264,14 +334,14 @@ VALUES (@Canal, @Acao, @Origem, @Destino, @Usuario, CAST(@Detalhe AS jsonb));",
         public async Task MarcarRecebimentoAsync(Guid canalId)
         {
             await using var connection = new NpgsqlConnection(_connectionString);
-            // Numero proprio: a primeira mensagem de verdade e o que prova a conexao (configurando -> ativo; webhook -> recebendo).
+            // Numero proprio/autorizado: a primeira mensagem de verdade e o que prova a conexao (configurando -> ativo; webhook -> recebendo).
             // Espelha WebhookEstado.AoReceber / StatusCanal.
             await connection.ExecuteAsync(@"
 UPDATE canal_whatsapp
    SET ultimo_recebimento_em = NOW(),
-       webhook_estado = CASE WHEN origem = 'proprio' THEN 'recebendo' ELSE webhook_estado END,
-       webhook_erro = CASE WHEN origem = 'proprio' THEN NULL ELSE webhook_erro END,
-       status = CASE WHEN origem = 'proprio' AND status = 'configurando' THEN 'ativo' ELSE status END
+       webhook_estado = CASE WHEN origem IN ('proprio', 'autorizado') THEN 'recebendo' ELSE webhook_estado END,
+       webhook_erro = CASE WHEN origem IN ('proprio', 'autorizado') THEN NULL ELSE webhook_erro END,
+       status = CASE WHEN origem IN ('proprio', 'autorizado') AND status = 'configurando' THEN 'ativo' ELSE status END
  WHERE id = @Id;", new { Id = canalId });
         }
 
@@ -300,6 +370,8 @@ UPDATE canal_whatsapp
    -- Numero proprio so fica ativo quando chegar uma mensagem de verdade; o GET na Meta so prova que o ID e o token servem.
    SET status = CASE WHEN NOT @Ok THEN 'erro'
                      WHEN origem = 'proprio' AND ultimo_recebimento_em IS NULL THEN 'configurando'
+                     -- Autorizado: quem decide 'ativo' e a ativacao (numero registrado + app inscrito); desconectado continua desconectado.
+                     WHEN origem = 'autorizado' AND status IN ('configurando', 'inativo') THEN status
                      ELSE 'ativo' END,
        verificado_em = CASE WHEN @Ok THEN NOW() ELSE verificado_em END,
        ultimo_erro = CASE WHEN @Ok THEN NULL ELSE @Erro END,

@@ -89,6 +89,8 @@ namespace APIBack.Atendimento
         /// <summary>Pura (sem banco, rede ou relogio): o que a tela mostra para o webhook de um canal.</summary>
         public static CanalWebhookView MontarVisao(CanalWhatsapp canal, string? url, string? verifyToken, DateTime agora)
         {
+            // Autorizado: webhook global do app ZippyGo; so o estado (sem URL nem verify token por canal).
+            if (canal.Origem == OrigemCanal.Autorizado) return new CanalWebhookView(canal.WebhookEstado, null, null, null, canal.WebhookRegistradoEm);
             if (canal.Origem != OrigemCanal.Proprio) return new CanalWebhookView(WebhookEstado.NaoAplicavel, null, null, null, null);
 
             var erro = LerErro(canal.WebhookErro);

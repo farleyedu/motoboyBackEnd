@@ -24,7 +24,8 @@ namespace APIBack.Atendimento
         Guid Id, Guid EstabelecimentoId, string PhoneNumberId, string NumeroE164, string? Nome, string Status, string ModoAtendimento,
         IReadOnlyList<string> Servicos, bool TemToken, DateTime? VerificadoEm, DateTime? UltimoRecebimentoEm,
         DateTime? UltimoEnvioOkEm, string? UltimoErro, DateTime? UltimoErroEm, bool Central = false,
-        string Origem = OrigemCanal.Zippy, string? WabaId = null, string? AppId = null, CanalWebhookView? Webhook = null);
+        string Origem = OrigemCanal.Zippy, string? WabaId = null, string? AppId = null, CanalWebhookView? Webhook = null,
+        ConexaoMeta.CanalConexaoView? Conexao = null);
 
     public interface ICanaisWhatsappService
     {
@@ -156,9 +157,9 @@ namespace APIBack.Atendimento
             var numero = AtendimentoRegras.NormalizarNumero(request.Numero)!;
             var identidadeMudou = phoneNumberId != canal.PhoneNumberId || numero != canal.NumeroE164;
 
-            if (canal.Origem == OrigemCanal.Proprio && (identidadeMudou || novoToken != null))
+            if (OrigemCanal.DoCliente(canal.Origem) && (identidadeMudou || novoToken != null))
             {
-                // O webhook, o app e a WABA do numero proprio dependem destes dados: trocar so uma parte deixaria tudo desencontrado.
+                // O webhook, o app e a WABA do numero do cliente dependem destes dados: trocar so uma parte deixaria tudo desencontrado.
                 throw new WhatsappException(new WhatsappErro(WhatsappCodigos.CampoInvalido,
                     "Este e um numero proprio do cliente: ID e token nao se alteram por aqui.",
                     "Peca ao cliente para conectar de novo (Numeros de WhatsApp > Conectar numero proprio) ou desconecte o numero e conecte outro.",
@@ -292,6 +293,9 @@ namespace APIBack.Atendimento
                 throw new WhatsappException(WhatsappErros.NumeroOutraLoja());
             }
 
+            // Conectado pela Meta (Embedded Signup): o token e o da autorizacao; colar outro por aqui deixaria os dois desencontrados.
+            if (existente?.Origem == OrigemCanal.Autorizado) throw new WhatsappException(ConexaoMeta.ConexaoMetaErros.ConexaoExistente(existente.Origem));
+
             if (existente == null)
             {
                 var proprios = (await _canais.ListarPorLojaAsync(estabelecimentoId)).Where(c => !c.Central && c.Status != StatusCanal.Inativo).ToList();
@@ -356,7 +360,10 @@ namespace APIBack.Atendimento
 
             await _canais.RegistrarAuditoriaAsync(canalId, "desconectado", canal.IdEstabelecimento, null, ator.UsuarioId,
                 JsonSerializer.Serialize(new { numero = canal.NumeroE164, phoneNumberId = canal.PhoneNumberId }));
-            await _canais.RemoverAsync(canalId);
+            // Desconectar nao apaga: conversas, modelos e configuracoes continuam ligados ao mesmo canal e voltam ao reconectar.
+            // So o central de testes (da Gestao) ainda sai de vez.
+            if (canal.Central) await _canais.RemoverAsync(canalId);
+            else await _canais.DesativarAsync(canalId);
             _logger.LogInformation("[canal] ev=desconectado canal={Canal} loja={Loja} usuario={Usuario}", canalId, canal.IdEstabelecimento, ator.UsuarioId);
         }
 
@@ -487,6 +494,8 @@ namespace APIBack.Atendimento
                 _logger.LogWarning("[canal] ev=conectar_recusado motivo=de_outra_loja loja={Loja} usuario={Usuario}", estabelecimentoId, ator.UsuarioId);
                 throw new WhatsappException(WhatsappErros.NumeroOutraLoja());
             }
+
+            if (existente?.Origem == OrigemCanal.Autorizado) throw new WhatsappException(ConexaoMeta.ConexaoMetaErros.ConexaoExistente(existente.Origem));
 
             if (existente != null && existente.Origem != OrigemCanal.Proprio)
             {
@@ -669,9 +678,13 @@ namespace APIBack.Atendimento
         // Depois de uma escrita: quem escreveu pode configurar o WhatsApp da loja, entao ve URL e verify token.
         private CanalView Ver(CanalWhatsapp c) => Ver(c, detalhado: true);
 
-        private CanalView Ver(CanalWhatsapp c, bool detalhado) => new(
+        private CanalView Ver(CanalWhatsapp c, bool detalhado) => Montar(c, _webhook.Visao(c, detalhado));
+
+        /// <summary>O canal como a tela enxerga (sem token, app secret nem PIN). Usado tambem pela conexao pela Meta.</summary>
+        internal static CanalView Montar(CanalWhatsapp c, CanalWebhookView webhook) => new(
             c.Id, c.IdEstabelecimento, c.PhoneNumberId, c.NumeroE164, c.Nome, c.Status, c.ModoAtendimento, c.Servicos, c.TemToken,
             c.VerificadoEm, c.UltimoRecebimentoEm, c.UltimoEnvioOkEm, c.UltimoErro, c.UltimoErroEm, c.Central,
-            c.Origem, c.WabaId, c.AppId, _webhook.Visao(c, detalhado));
+            c.Origem, c.WabaId, c.AppId, webhook,
+            new ConexaoMeta.CanalConexaoView(c.AutorizacaoEstado, c.Coexistencia, c.RegistroEstado, c.EstadoMeta, c.InscricaoWabaEm, c.DesconectadoEm));
     }
 }

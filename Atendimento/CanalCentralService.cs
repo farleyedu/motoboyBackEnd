@@ -87,7 +87,7 @@ namespace APIBack.Atendimento
 
                     canal = porId ?? porNumero ?? await _canais.ObterCentralAsync();
 
-                    if (canal != null && canal.Origem == OrigemCanal.Proprio)
+                    if (canal != null && OrigemCanal.DoCliente(canal.Origem))
                     {
                         throw new CanalConflitoException("phoneNumberId", "Este numero e o numero proprio de um cliente e nao pode ser o central de testes.");
                     }

@@ -295,6 +295,9 @@ builder.Services.AddScoped<APIBack.Atendimento.IWebhookRegistrador, APIBack.Aten
 builder.Services.AddScoped<APIBack.Atendimento.ICanalWebhookService, APIBack.Atendimento.CanalWebhookService>();
 builder.Services.AddScoped<APIBack.Atendimento.ICanaisWhatsappService, APIBack.Atendimento.CanaisWhatsappService>();
 builder.Services.AddScoped<APIBack.Atendimento.ICanalCentralService, APIBack.Atendimento.CanalCentralService>();
+builder.Services.AddScoped<APIBack.Atendimento.ConexaoMeta.IConexaoMetaRepository, APIBack.Atendimento.ConexaoMeta.SqlConexaoMetaRepository>();
+builder.Services.AddScoped<APIBack.Atendimento.ConexaoMeta.IMetaOnboardingApi, APIBack.Atendimento.ConexaoMeta.MetaOnboardingApi>();
+builder.Services.AddScoped<APIBack.Atendimento.ConexaoMeta.IConexaoMetaService, APIBack.Atendimento.ConexaoMeta.ConexaoMetaService>();
 // Modelos oficiais (templates) da Meta por loja: Graph API pela WABA do numero
 builder.Services.AddScoped<APIBack.Atendimento.Templates.ITemplateRepository, APIBack.Atendimento.Templates.SqlTemplateRepository>();
 builder.Services.AddScoped<APIBack.Atendimento.Templates.IMetaTemplatesApi, APIBack.Atendimento.Templates.MetaTemplatesApi>();
