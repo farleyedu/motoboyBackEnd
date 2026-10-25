@@ -85,4 +85,16 @@ public class EstablishmentPermissionsTests
         Assert.Equal(new[] { "visualizar" }, result["Delivery"]);
         Assert.False(result.ContainsKey("Configuracoes"));
     }
+
+    [Theory]
+    [InlineData("gerente_empresa", null)]
+    [InlineData("colaborador", "gerente_estabelecimento")]
+    public void ManagersCanConnectTheStoreWhatsapp(string companyRole, string? establishmentRole)
+    {
+        var result = EstablishmentPermissions.ResolveForAccess("{}", new[] { "PEDIDOS", "WHATSAPP" }, companyRole, establishmentRole);
+
+        Assert.Contains("configurar", result["WhatsApp"]);
+        Assert.Contains("visualizar", result["WhatsApp"]);
+        Assert.Null(EstablishmentPermissions.Validate(new() { ["WhatsApp"] = new() { "configurar" } }, new(), true));
+    }
 }

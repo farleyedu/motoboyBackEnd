@@ -91,6 +91,9 @@ public static class EstablishmentPermissions
             .ToDictionary(g => g.Key, g => g.Select(a => a.Acao).Distinct().OrderBy(a => a).ToArray(),
                 StringComparer.OrdinalIgnoreCase);
         result["Financeiro"] = new[] { "visualizar", "criar", "editar", "cancelar", "exportar", "configurar" };
+        // "configurar" do WhatsApp (conectar/desconectar o numero da loja) e checado no CanaisWhatsappService, sem atributo.
+        result["WhatsApp"] = result.GetValueOrDefault("WhatsApp", Array.Empty<string>())
+            .Append("configurar").Distinct().OrderBy(a => a).ToArray();
         foreach (var module in new[] { "Usuarios", "Empresas", "Estabelecimentos" })
             result[module] = new[] { "visualizar", "criar", "editar", "excluir", "deletar" };
         return result;
