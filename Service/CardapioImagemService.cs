@@ -59,7 +59,7 @@ namespace APIBack.Service
         /// Falha cedo e com mensagem clara se alguma nao foi preenchida, em vez de deixar a chamada ao
         /// Cloudinary falhar la na frente com um erro de autenticacao dificil de rastrear ate aqui.
         /// </summary>
-        private static Cloudinary BuildCloudinary(IConfiguration configuration)
+        internal static Cloudinary BuildCloudinary(IConfiguration configuration)
         {
             string Required(string key)
             {
