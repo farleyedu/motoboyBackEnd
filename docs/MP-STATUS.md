@@ -19,7 +19,7 @@ Repositórios: backend `motoboyBackEnd` (master), frontend `../zippy-admin` (mai
 | ~~MP 3 — UI cardápio~~ | ✅ feito, commit `31931ff`: opções "Pix online"/"Cartão online" no checkout (só com conta MP conectada), `PagamentoOnlinePanel` (QR/copia e cola e Payment Brick) quando o pedido está `aguardando_pagamento`. tsc + 66 testes ok; **não testado no navegador**. | §8.3 |
 | Resto não commitado no zippy-admin | `PlataformaScreen.tsx` (mistura card de resumo MP com `MetaAppCard`), `MetaAppCard.tsx`, `conexaoMetaApi.ts` — são da sessão do WhatsApp Meta; não mexer aqui. | — |
 | MP 4 — Assinaturas e compras Zippy | Backend já commitado em `f566809` (`Payments/Assinaturas`, migration 40; conferir se está completo). Falta a UI e validar `/api/v2/comercial/*` + webhooks `subscription_*`. | §8.4, §5.3, §2.15 |
-| MP 6 — Chat UI | Botão "Cobrar Pix", balão de cobrança com status em tempo real (SignalR), página `/pix/{token}`. Depende do MP 5. | §8.5, §8.6, §6 |
+| ~~MP 6 — Chat UI~~ | ✅ feito (zippy-admin): botão "Cobrar Pix", balão com SignalR (`cobrancaAtualizada`), página `/pix/{token}` com polling de 3 s, botão "Devolver valor" (reembolso direto ou pedido ao gerente em `PAG_EXIGE_APROVACAO`); cliente já tem aprovações e config, **sem tela** de fila do gerente nem config. tsc + vitest ok; **não testado no navegador**. | §8.5, §8.6, §6 |
 
 ## Ordem sugerida
 1. ~~MP 2 UI + MP 3 UI~~ feitos.
