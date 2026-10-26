@@ -8,15 +8,16 @@ Repositórios: backend `motoboyBackEnd` (master), frontend `../zippy-admin` (mai
 |---|---|---|
 | MP 1 — Núcleo (Pix, cartão, estorno, webhook, conciliador, página Pix pública, rotas da loja §8.6/8.7) | backend | ✅ commit `dcd710b` |
 | MP 2 — Gestão Pagamentos + OAuth das lojas (§8.1/8.2) | backend | ✅ commit `f08ecd9` |
-| MP 3 — Cardápio web: rotas públicas (§8.3) | backend | ✅ (veio no núcleo) |
+| MP 3 — Cardápio web: backend (pagamento antes do aceite, estorno, worker) | backend | ✅ commit `f566809` (build ok, testes unitários ok) |
+| MP 3 — Cardápio web: tipos + cliente `pagamentoOnlineApi.ts` | zippy-admin | ✅ commit `f796f2a` (tsc ok) |
+| MP 5 — Cobrança Pix no chat (backend) | backend | ✅ commit `f566809` (`Payments/Chat/*`, build ok, testes unitários ok; testes de banco não rodados) |
 
 ## Pendente (todas as sessões 2–6 pararam por limite de uso)
 | Parte | O que falta | Contrato |
 |---|---|---|
 | MP 2 — UI | Frontend **não commitado** em zippy-admin: `features/gestao/pagamentos/`, `app/(DashboardLayout)/apps/gestao/(central)/pagamentos/`, `features/pagamentos/MercadoPagoCard.tsx`, `integracoes/IntegracoesScreen.tsx`, `gestao/areas.ts`. Revisar, compilar e commitar. | §8.1, §8.2 |
-| MP 3 — UI cardápio | Frontend **não commitado**: `cardapio/checkout/pagamentoOnlineApi.ts`, `checkout/types.ts`. Falta passo de pagamento no checkout (Pix + Payment Brick) e polling de status. | §8.3 |
+| MP 3 — UI cardápio | Passo de pagamento no checkout (Pix + Payment Brick) e polling de status, usando `pagamentoOnlineApi.ts` (já commitado, ainda sem uso). | §8.3 |
 | MP 4 — Assinaturas e compras Zippy | Nada no código ainda. Backend `/api/v2/comercial/*` + webhooks `subscription_*`, depois UI. | §8.4, §5.3, §2.15 |
-| MP 5 — Cobrança Pix no chat (backend) | Nada no código ainda. Permissão `WhatsApp:cobrar`, rotas `/api/v2/atendimento/.../cobrancas`, fluxo do POST descrito no fim da §8.5. | §8.5, §3.3, §6 |
 | MP 6 — Chat UI | Botão "Cobrar Pix", balão de cobrança com status em tempo real (SignalR), página `/pix/{token}`. Depende do MP 5. | §8.5, §8.6, §6 |
 
 ## Ordem sugerida
