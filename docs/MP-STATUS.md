@@ -15,14 +15,15 @@ Repositórios: backend `motoboyBackEnd` (master), frontend `../zippy-admin` (mai
 ## Pendente (todas as sessões 2–6 pararam por limite de uso)
 | Parte | O que falta | Contrato |
 |---|---|---|
-| MP 2 — UI | Frontend **não commitado** em zippy-admin: `features/gestao/pagamentos/`, `app/(DashboardLayout)/apps/gestao/(central)/pagamentos/`, `features/pagamentos/MercadoPagoCard.tsx`, `integracoes/IntegracoesScreen.tsx`, `gestao/areas.ts`. Revisar, compilar e commitar. | §8.1, §8.2 |
-| MP 3 — UI cardápio | Passo de pagamento no checkout (Pix + Payment Brick) e polling de status, usando `pagamentoOnlineApi.ts` (já commitado, ainda sem uso). | §8.3 |
-| MP 4 — Assinaturas e compras Zippy | Nada no código ainda. Backend `/api/v2/comercial/*` + webhooks `subscription_*`, depois UI. | §8.4, §5.3, §2.15 |
+| ~~MP 2 — UI~~ | ✅ feito, commit `31931ff` (zippy-admin): `/apps/gestao/pagamentos` (superadmin) e card Mercado Pago em Configurações > Integrações. tsc ok; **não testado no navegador**. | §8.1, §8.2 |
+| ~~MP 3 — UI cardápio~~ | ✅ feito, commit `31931ff`: opções "Pix online"/"Cartão online" no checkout (só com conta MP conectada), `PagamentoOnlinePanel` (QR/copia e cola e Payment Brick) quando o pedido está `aguardando_pagamento`. tsc + 66 testes ok; **não testado no navegador**. | §8.3 |
+| Resto não commitado no zippy-admin | `PlataformaScreen.tsx` (mistura card de resumo MP com `MetaAppCard`), `MetaAppCard.tsx`, `conexaoMetaApi.ts` — são da sessão do WhatsApp Meta; não mexer aqui. | — |
+| MP 4 — Assinaturas e compras Zippy | Backend já commitado em `f566809` (`Payments/Assinaturas`, migration 40; conferir se está completo). Falta a UI e validar `/api/v2/comercial/*` + webhooks `subscription_*`. | §8.4, §5.3, §2.15 |
 | MP 6 — Chat UI | Botão "Cobrar Pix", balão de cobrança com status em tempo real (SignalR), página `/pix/{token}`. Depende do MP 5. | §8.5, §8.6, §6 |
 
 ## Ordem sugerida
-1. MP 2 UI + MP 3 UI (só revisar/fechar o que já está no zippy-admin e commitar).
-2. MP 5 backend → 3. MP 6 UI → 4. MP 4.
+1. ~~MP 2 UI + MP 3 UI~~ feitos.
+2. MP 6 UI → 3. MP 4. Antes: teste ponta a ponta no sandbox do MP (migrations 30/40/50 no banco, webhook).
 
 ## Regras para economizar tokens
 - Uma sessão nova por parte, iniciada só com este arquivo + a seção do contrato.
