@@ -380,7 +380,10 @@ UPDATE mp_conta_zippy SET estado = CASE WHEN @Ok THEN 'ativa' ELSE 'erro' END, u
 
                 var meios = await _client.MeiosDePagamentoAsync(cred, ct);
                 var pix = meios.Any(m => m.Id == "pix" && m.Status is null or "active");
-                Add("recebedor_pix", pix, "pix_indisponivel", pix ? "Pix liberado na conta da Zippy." : "Pix indisponível: cadastre uma chave Pix na conta da Zippy no Mercado Pago.");
+                // Conta de teste do MP nao consegue cadastrar chave Pix: no sandbox a falta de Pix so avisa, nao reprova.
+                if (!pix && amb == Ambientes.Sandbox)
+                    Add("recebedor_pix", true, null, "Aviso: Pix não liberado na conta de teste da Zippy (limitação do sandbox do Mercado Pago). Em produção a chave Pix é obrigatória.");
+                else Add("recebedor_pix", pix, "pix_indisponivel", pix ? "Pix liberado na conta da Zippy." : "Pix indisponível: cadastre uma chave Pix na conta da Zippy no Mercado Pago.");
             }
             catch (MercadoPagoApiException ex)
             {
