@@ -223,47 +223,25 @@ SELECT i.id, i.origem, i.status, i.versao, i.valor, i.valor_pago, i.valor_estorn
         [HttpGet("cardapio/{estabelecimentoId:guid}/pagamentos/config")]
         public Task<IActionResult> Configuracao(Guid estabelecimentoId) => Executar(() => _cartao.ConfiguracaoAsync(estabelecimentoId, HttpContext.RequestAborted), _logger);
 
+        // Cardapio web: as regras do pedido (so pedido online, status que aceita pagamento, Pix novo depois de vencido, cancelar o Pix
+        // antes do cartao, vinculo com o pre-pedido) ficam em ICardapioPagamentoService (sessao 3). O valor e sempre o do pre-pedido.
         [HttpPost("cardapio/pedidos/{prePedidoId:guid}/pagamentos/pix")]
-        public Task<IActionResult> PixDoPedido(Guid prePedidoId, [FromBody] PublicPixPedidoRequest? body) => Executar(async () =>
-        {
-            var p = await PrePedidoPagavelAsync(prePedidoId, body?.Codigo);
-            var r = await _pix.CriarAsync(new PixChargeRequest
-            {
-                IdEstabelecimento = p.IdEstabelecimento, Origem = OrigensPagamento.Cardapio, Valor = p.Total, Descricao = $"Pedido {p.Codigo}",
-                IdempotencyKey = $"cardapio:{prePedidoId:N}", PrePedidoId = prePedidoId, PedidoId = p.IdPedido, ConversaId = p.IdConversa,
-                Pagador = new PagadorInfo { Email = p.EmailCliente }
-            }, HttpContext.RequestAborted);
-            return Publico(r, null);
-        }, _logger);
+        public Task<IActionResult> PixDoPedido(Guid prePedidoId, [FromBody] PublicPixPedidoRequest? body,
+            [FromServices] APIBack.Service.Interface.ICardapioPagamentoService cardapio) =>
+            Executar(() => cardapio.CriarPixAsync(prePedidoId, body?.Codigo, HttpContext.RequestAborted), _logger);
 
         [HttpPost("cardapio/pedidos/{prePedidoId:guid}/pagamentos/cartao")]
-        public Task<IActionResult> CartaoDoPedido(Guid prePedidoId, [FromBody] PublicCartaoPedidoRequest? body) => Executar(async () =>
+        public Task<IActionResult> CartaoDoPedido(Guid prePedidoId, [FromBody] PublicCartaoPedidoRequest? body,
+            [FromServices] APIBack.Service.Interface.ICardapioPagamentoService cardapio) => Executar(async () =>
         {
-            var p = await PrePedidoPagavelAsync(prePedidoId, body?.Codigo);
-            var r = await _cartao.CriarAsync(new CardPaymentRequest
-            {
-                IdEstabelecimento = p.IdEstabelecimento, Origem = OrigensPagamento.Cardapio, Valor = p.Total, Descricao = $"Pedido {p.Codigo}",
-                IdempotencyKey = $"cardapio:{prePedidoId:N}:cartao", PrePedidoId = prePedidoId, PedidoId = p.IdPedido, ConversaId = p.IdConversa,
-                Token = body?.Token ?? string.Empty, PaymentMethodId = body?.PaymentMethodId ?? string.Empty, IssuerId = body?.IssuerId,
-                Parcelas = body?.Parcelas ?? 1, Pagador = body?.Pagador
-            }, HttpContext.RequestAborted);
-            if (r.Status == StatusIntent.Recusado)
-                throw new PagamentoException(PagamentoCodigos.CartaoRecusado, 422, "O cartao foi recusado.",
-                    new Dictionary<string, object?> { ["statusDetail"] = r.StatusDetail, ["intentId"] = r.IntentId });
+            var r = await cardapio.PagarComCartaoAsync(prePedidoId, body ?? new PublicCartaoPedidoRequest(), HttpContext.RequestAborted);
             return new { r.IntentId, r.Status, r.StatusPagamento, r.StatusDetail, r.Aprovado, r.Versao, r.Valor };
         }, _logger);
 
         [HttpGet("cardapio/pedidos/{prePedidoId:guid}/pagamento")]
-        public Task<IActionResult> StatusDoPedido(Guid prePedidoId, [FromQuery] string? codigo) => Executar(async () =>
-        {
-            await using var cx = await _db.OpenConnectionAsync(HttpContext.RequestAborted);
-            var p = await PrePedidoAsync(cx, prePedidoId, codigo);
-            var intentId = await cx.ExecuteScalarAsync<Guid?>(@"
-SELECT id FROM pagamento_intent WHERE pre_pedido_id = @Id AND id_estabelecimento = @Loja AND origem = 'cardapio' ORDER BY updated_at DESC LIMIT 1",
-                new { Id = prePedidoId, Loja = p.IdEstabelecimento });
-            if (intentId == null) return new { status = "sem_pagamento", statusPagamentoPedido = p.StatusPagamento, versao = 0 } as object;
-            return Publico(await _pix.ObterAsync(intentId.Value, p.IdEstabelecimento, HttpContext.RequestAborted), null);
-        }, _logger);
+        public Task<IActionResult> StatusDoPedido(Guid prePedidoId, [FromQuery] string? codigo,
+            [FromServices] APIBack.Service.Interface.ICardapioPagamentoService cardapio) =>
+            Executar(() => cardapio.ObterPagamentoPublicoAsync(prePedidoId, codigo, HttpContext.RequestAborted), _logger);
 
         /// <summary>Pagina Pix publica do link (token opaco). So valor, descricao, nome da loja, QR e status.</summary>
         [HttpGet("pagamentos/pix/{token}")]
@@ -285,38 +263,5 @@ SELECT i.id, i.id_estabelecimento, COALESCE(NULLIF(w.nome_publico, ''), e.nome_f
             Status = r.Status, Versao = r.Versao, Valor = r.Valor, Descricao = r.Descricao, CopiaECola = r.CopiaECola, QrCodeBase64 = r.QrCodeBase64,
             ExpiraEm = r.ExpiraEm, LojaNome = loja
         };
-
-        private sealed class PrePedido
-        {
-            public Guid IdEstabelecimento { get; set; }
-            public string Codigo { get; set; } = string.Empty;
-            public string Status { get; set; } = string.Empty;
-            public decimal Total { get; set; }
-            public string StatusPagamento { get; set; } = string.Empty;
-            public string? EmailCliente { get; set; }
-            public int? IdPedido { get; set; }
-            public Guid? IdConversa { get; set; }
-        }
-
-        private static async Task<PrePedido> PrePedidoAsync(NpgsqlConnection cx, Guid id, string? codigo)
-        {
-            var p = await cx.QueryFirstOrDefaultAsync<PrePedido>(@"
-SELECT id_estabelecimento, codigo, status, total, status_pagamento, email_cliente, id_pedido, id_conversa
-  FROM cardapio_pedido_publico WHERE id = @Id", new { Id = id });
-            // Mesmo 404 para id inexistente e codigo errado: nao revela que o pedido existe.
-            if (p == null || string.IsNullOrWhiteSpace(codigo) || !string.Equals(p.Codigo, codigo.Trim(), StringComparison.OrdinalIgnoreCase))
-                throw PagamentoException.NaoEncontrado("Pedido nao encontrado.");
-            return p;
-        }
-
-        private async Task<PrePedido> PrePedidoPagavelAsync(Guid id, string? codigo)
-        {
-            await using var cx = await _db.OpenConnectionAsync(HttpContext.RequestAborted);
-            var p = await PrePedidoAsync(cx, id, codigo);
-            if (p.Status is CardapioPedidoStatus.Recusado or CardapioPedidoStatus.Expirado)
-                throw PagamentoException.Regra(PagamentoCodigos.PedidoNaoPagavel, "Este pedido nao pode mais ser pago.");
-            if (p.Total <= 0) throw PagamentoException.Regra(PagamentoCodigos.PedidoNaoPagavel, "Pedido sem valor a pagar.");
-            return p;
-        }
     }
 }

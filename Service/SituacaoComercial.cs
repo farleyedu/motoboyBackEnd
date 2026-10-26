@@ -149,7 +149,11 @@ namespace APIBack.Service
         int VinculadosMaximo,
         DateTimeOffset? BloqueadoEm,
         string? BloqueadoMotivo,
-        int? DiasTesteRestantes = null);
+        int? DiasTesteRestantes = null,
+        // Estado financeiro da assinatura (separado da situacao): em_dia | em_atraso | suspensa | encerrada; nulo = sem assinatura.
+        // suspensa e encerrada param so as operacoes novas (AcessoFinanceiroRules).
+        string? Financeiro = null,
+        DateTimeOffset? SuspensaEm = null);
 
     /// <summary>acao: iniciar_operacao | ativar | bloquear | desbloquear.</summary>
     public sealed record AcaoSituacaoRequest(string? Acao, string? Motivo, string? Plano, int? MotoboysBase);
@@ -245,7 +249,10 @@ namespace APIBack.Service
             _clock = clock ?? TimeProvider.System;
         }
 
-        private static string Key(Guid id) => $"situacao-comercial:{id}";
+        private static string Key(Guid id) => CacheKey(id);
+
+        /// <summary>Chave do cache da situacao: as assinaturas invalidam quando o pagamento muda o acesso.</summary>
+        public static string CacheKey(Guid id) => $"situacao-comercial:{id}";
 
         public async Task<SituacaoComercialDto?> ObterAsync(Guid estabelecimentoId, CancellationToken ct = default)
         {
@@ -477,6 +484,7 @@ SELECT e.id, e.situacao_comercial AS SituacaoComercial, e.operacao_iniciada_em A
   FROM estabelecimentos e WHERE e.id = @Id;";
             var row = await connection.QuerySingleOrDefaultAsync<Row>(new CommandDefinition(sql, new { Id = id }, tx, cancellationToken: ct));
             if (row == null) return null;
+            var financeiro = await FinanceiroAsync(connection, tx, id, ct);
             return new SituacaoComercialDto(
                 row.Id,
                 string.IsNullOrWhiteSpace(row.SituacaoComercial) ? SituacoesComerciais.Ativo : row.SituacaoComercial,
@@ -491,7 +499,30 @@ SELECT e.id, e.situacao_comercial AS SituacaoComercial, e.operacao_iniciada_em A
                 row.BloqueadoMotivo,
                 string.Equals(row.SituacaoComercial, SituacoesComerciais.Teste, StringComparison.Ordinal)
                     ? ProntidaoRegras.DiasRestantes(Utc(row.TesteTerminaEm), DateTimeOffset.UtcNow)
-                    : null);
+                    : null,
+                financeiro?.Financeiro,
+                Utc(financeiro?.SuspensaEm));
+        }
+
+        /// <summary>
+        /// Estado financeiro da assinatura da loja (Payments/Assinaturas): a viva, ou "encerrada" se a ultima terminou e nao ha outra.
+        /// Antes da migracao 20261101_40 nao ha tabela: ninguem fica suspenso. Dentro de transacao nao consulta (um erro abortaria a transacao).
+        /// </summary>
+        private static async Task<(string Financeiro, DateTime? SuspensaEm)?> FinanceiroAsync(NpgsqlConnection connection, NpgsqlTransaction? tx, Guid id, CancellationToken ct)
+        {
+            if (tx != null) return null;
+            try
+            {
+                return await connection.QueryFirstOrDefaultAsync<(string, DateTime?)?>(new CommandDefinition(@"
+SELECT CASE WHEN status = 'encerrada' THEN 'encerrada' ELSE financeiro END,
+       CASE WHEN status = 'encerrada' THEN encerrada_em ELSE suspensa_em END
+  FROM assinatura WHERE id_estabelecimento = @Id AND (status IN ('pendente', 'ativa') OR encerramento_motivo = 'fim_do_periodo')
+ ORDER BY (status IN ('pendente', 'ativa')) DESC, created_at DESC LIMIT 1;", new { Id = id }, cancellationToken: ct));
+            }
+            catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.UndefinedTable or PostgresErrorCodes.UndefinedColumn)
+            {
+                return null;
+            }
         }
 
         public async Task<PainelComercialDto> ObterPainelAsync(CancellationToken ct = default)

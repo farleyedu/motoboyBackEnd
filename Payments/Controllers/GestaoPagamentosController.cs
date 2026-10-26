@@ -52,7 +52,8 @@ namespace APIBack.Payments.Controllers
         private int Usuario => HttpContext.GetUserId() ?? 0;
 
         [HttpGet("resumo")]
-        public Task<IActionResult> Resumo() => Executar(() => _gestao.ResumoAsync(HttpContext.RequestAborted), _logger);
+        public Task<IActionResult> Resumo([FromQuery] string? mes) => Executar(() => _gestao.ResumoAsync(
+            DateOnly.TryParseExact($"{mes}-01", "yyyy-MM-dd", out var m) ? m : null, HttpContext.RequestAborted), _logger);
 
         [HttpGet("configuracao")]
         public Task<IActionResult> Configuracao([FromQuery] string? ambiente) => Executar(() => _gestao.ConfiguracaoAsync(ambiente, HttpContext.RequestAborted), _logger);

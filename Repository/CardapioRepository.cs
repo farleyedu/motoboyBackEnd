@@ -1362,6 +1362,9 @@ INSERT INTO cardapio_pedido_publico (
     itens_json,
     endereco_entrega_json,
     status_pagamento,
+    pagamento_online,
+    metodo_online,
+    chave_idempotencia,
     created_at,
     updated_at
 ) VALUES (
@@ -1382,6 +1385,9 @@ INSERT INTO cardapio_pedido_publico (
     CAST(@ItensJson AS jsonb),
     CAST(@EnderecoEntregaJson AS jsonb),
     @StatusPagamento,
+    @PagamentoOnline,
+    @MetodoOnline,
+    @ChaveIdempotencia,
     @CreatedAt,
     @UpdatedAt
 );";

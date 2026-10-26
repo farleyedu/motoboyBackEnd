@@ -149,6 +149,29 @@ namespace APIBack.Automation.Services
             return SendPayloadAsync(idConversa, phoneNumberId, payload, "interactive", idMensagem);
         }
 
+        /// <summary>
+        /// Modelo aprovado da Meta (unico envio permitido fora da janela de 24 h). <paramref name="corpo"/> preenche {{1}}, {{2}}... do corpo;
+        /// <paramref name="sufixoBotaoUrl"/> preenche o {{1}} do primeiro botao de URL. Uma tentativa so: repetir poderia duplicar a mensagem.
+        /// </summary>
+        public Task<string?> SendTemplateAsync(Guid idConversa, string phoneNumberId, string numeroDestino, string nome, string idioma,
+            IReadOnlyList<string> corpo, string? sufixoBotaoUrl, Guid? idMensagem = null)
+        {
+            var componentes = new List<object>();
+            if (corpo.Count > 0)
+                componentes.Add(new { type = "body", parameters = corpo.Select(t => new { type = "text", text = t }).ToArray() });
+            if (!string.IsNullOrEmpty(sufixoBotaoUrl))
+                componentes.Add(new { type = "button", sub_type = "url", index = "0", parameters = new[] { new { type = "text", text = sufixoBotaoUrl } } });
+
+            var payload = new
+            {
+                messaging_product = "whatsapp",
+                to = TelefoneHelper.NormalizeBrazilianForWhatsappTo(numeroDestino),
+                type = "template",
+                template = new { name = nome, language = new { code = idioma }, components = componentes }
+            };
+            return SendPayloadAsync(idConversa, phoneNumberId, payload, "template", idMensagem, singleAttempt: true);
+        }
+
         /// <summary>Erro da Meta que nao adianta repetir: ID do numero inexistente (100/33), token invalido (190) ou sem permissao (10, 200).</summary>
         internal static bool ErroPermanenteDoCanal(int? codigo, int? subcodigo) =>
             codigo is 190 or 10 or 200 || (codigo == 100 && subcodigo == 33);

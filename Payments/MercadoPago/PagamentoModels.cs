@@ -56,6 +56,8 @@ namespace APIBack.Payments.MercadoPago
     /// <summary>Estados de cobranca_chat.</summary>
     public static class StatusCobranca
     {
+        /// <summary>Acima do limite da loja: espera o gerente aprovar antes de gerar o Pix (sessao 5).</summary>
+        public const string AguardandoAprovacao = "aguardando_aprovacao";
         public const string Criando = "criando";
         public const string Aguardando = "aguardando";
         public const string Enviado = "enviado";
@@ -66,7 +68,7 @@ namespace APIBack.Payments.MercadoPago
         public const string Reembolsado = "reembolsado";
         public const string Recusado = "recusado";
 
-        public static bool Aberta(string s) => s is Criando or Aguardando or Enviado;
+        public static bool Aberta(string s) => s is AguardandoAprovacao or Criando or Aguardando or Enviado;
     }
 
     public static class StatusEstorno

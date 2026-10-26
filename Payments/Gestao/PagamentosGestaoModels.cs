@@ -256,6 +256,7 @@ namespace APIBack.Payments.Gestao
     public sealed class ResumoGestaoDto
     {
         public string Ambiente { get; set; } = string.Empty;
+        public string Mes { get; set; } = string.Empty;
         /// <summary>Dinheiro da Zippy (mensalidades e extras) confirmado pelo MP no mes.</summary>
         public decimal RecebidoZippyMes { get; set; }
         public decimal EstornadoZippyMes { get; set; }

@@ -27,7 +27,7 @@ namespace APIBack.Payments.Gestao
         Task<TesteContaZippyDto> TestarContaZippyAsync(string? ambiente, int usuario, CancellationToken ct = default);
         Task<VerificacaoDto> VerificarAsync(string? ambiente, int usuario, CancellationToken ct = default);
         Task<ConfiguracaoDto> AtualizarAmbienteAsync(AtualizarAmbienteRequest r, int usuario, CancellationToken ct = default);
-        Task<ResumoGestaoDto> ResumoAsync(CancellationToken ct = default);
+        Task<ResumoGestaoDto> ResumoAsync(DateOnly? mes = null, CancellationToken ct = default);
         Task<Pagina<ConexaoLojaGestaoDto>> ConexoesAsync(string? busca, string? estado, int pagina, CancellationToken ct = default);
         Task<TransacoesGestaoDto> TransacoesAsync(string? conta, Guid? loja, string? origem, string? status, DateTime? de, DateTime? ate, int pagina, CancellationToken ct = default);
         Task<TransacoesGestaoDto> AssinaturasAsync(string? status, int pagina, CancellationToken ct = default);
@@ -449,26 +449,30 @@ ON CONFLICT (ambiente) DO UPDATE SET habilitado = EXCLUDED.habilitado, lojas_pod
 
         // ---- leitura ---------------------------------------------------------------------------------------------------
 
-        public async Task<ResumoGestaoDto> ResumoAsync(CancellationToken ct = default)
+        public async Task<ResumoGestaoDto> ResumoAsync(DateOnly? mes = null, CancellationToken ct = default)
         {
             var amb = _credenciais.AmbienteAtivo;
             await using var cx = await _db.OpenConnectionAsync(ct);
-            var inicioMes = new DateTime(DateTime.UtcNow.Year, DateTime.UtcNow.Month, 1, 0, 0, 0, DateTimeKind.Utc);
+            // Mes no fuso de Brasilia (o mesmo do Dinheiro da Gestao).
+            var m = mes ?? DateOnly.FromDateTime(DateTime.UtcNow.AddHours(-3));
+            var inicioMes = new DateTime(m.Year, m.Month, 1, 3, 0, 0, DateTimeKind.Utc);
+            var fimMes = inicioMes.AddMonths(1);
             var r = await cx.QueryFirstAsync<ResumoGestaoDto>(new CommandDefinition(@"
 SELECT
-  COALESCE((SELECT sum(valor_pago) FROM pagamento_intent WHERE ambiente = @Amb AND conta_tipo = 'zippy' AND pago_em >= @Mes), 0) AS recebido_zippy_mes,
-  COALESCE((SELECT sum(valor_estornado) FROM pagamento_intent WHERE ambiente = @Amb AND conta_tipo = 'zippy' AND pago_em >= @Mes), 0) AS estornado_zippy_mes,
+  COALESCE((SELECT sum(valor_pago) FROM pagamento_intent WHERE ambiente = @Amb AND conta_tipo = 'zippy' AND pago_em >= @Mes AND pago_em < @Fim), 0) AS recebido_zippy_mes,
+  COALESCE((SELECT sum(valor_estornado) FROM pagamento_intent WHERE ambiente = @Amb AND conta_tipo = 'zippy' AND pago_em >= @Mes AND pago_em < @Fim), 0) AS estornado_zippy_mes,
   (SELECT count(*)::int FROM pagamento_intent WHERE ambiente = @Amb AND conta_tipo = 'zippy' AND status IN ('criado', 'aguardando_pagamento', 'processando')) AS cobrancas_zippy_abertas,
   COALESCE((SELECT sum(valor) FROM pagamento_intent WHERE ambiente = @Amb AND conta_tipo = 'zippy' AND status IN ('criado', 'aguardando_pagamento', 'processando')), 0) AS valor_zippy_aberto,
-  COALESCE((SELECT sum(valor_pago) FROM pagamento_intent WHERE ambiente = @Amb AND conta_tipo = 'loja' AND pago_em >= @Mes), 0) AS vendas_lojas_mes,
-  (SELECT count(*)::int FROM pagamento_intent WHERE ambiente = @Amb AND conta_tipo = 'loja' AND pago_em >= @Mes) AS transacoes_lojas_mes,
+  COALESCE((SELECT sum(valor_pago) FROM pagamento_intent WHERE ambiente = @Amb AND conta_tipo = 'loja' AND pago_em >= @Mes AND pago_em < @Fim), 0) AS vendas_lojas_mes,
+  (SELECT count(*)::int FROM pagamento_intent WHERE ambiente = @Amb AND conta_tipo = 'loja' AND pago_em >= @Mes AND pago_em < @Fim) AS transacoes_lojas_mes,
   (SELECT count(*)::int FROM mp_conta_loja WHERE ambiente = @Amb AND estado = 'ativa') AS lojas_conectadas,
   (SELECT count(*)::int FROM mp_conta_loja WHERE ambiente = @Amb AND (estado IN ('expirada', 'erro') OR (estado = 'ativa' AND ultimo_erro IS NOT NULL))) AS lojas_com_problema,
   (SELECT count(*)::int FROM mp_webhook_evento WHERE ambiente = @Amb AND status IN ('falhou', 'rejeitado') AND recebido_em > NOW() - INTERVAL '7 days') AS webhooks_com_falha,
   (SELECT count(*)::int FROM pagamento_disputa d JOIN pagamento p ON p.id = d.id_pagamento WHERE p.ambiente = @Amb AND d.status IN ('aberta', 'em_analise')) AS disputas_abertas,
   (SELECT count(*)::int FROM pagamento_estorno e JOIN pagamento p ON p.id = e.id_pagamento WHERE p.ambiente = @Amb AND e.status IN ('solicitado', 'processando')) AS reembolsos_pendentes",
-                new { Amb = amb, Mes = inicioMes }, cancellationToken: ct));
+                new { Amb = amb, Mes = inicioMes, Fim = fimMes }, cancellationToken: ct));
             r.Ambiente = amb;
+            r.Mes = m.ToString("yyyy-MM");
             var cfg = await ConfiguracaoAsync(amb, ct);
             r.Pronto = cfg.Pronto;
             r.AmbienteHabilitado = cfg.AmbienteEstado.Habilitado;

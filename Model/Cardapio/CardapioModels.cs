@@ -147,6 +147,23 @@ namespace APIBack.Model.Cardapio
         public string? MotivoRecusa { get; set; }
         /// <summary>Pedido real do delivery criado no aceite (entrega); nulo na retirada.</summary>
         public int? IdPedido { get; set; }
+
+        // ---- Pagamento online (migration 20261101_30) ----
+        /// <summary>Pix ou cartao pelo Mercado Pago: o pedido so vai ao restaurante depois do dinheiro confirmado.</summary>
+        public bool PagamentoOnline { get; set; }
+        /// <summary>pix ou cartao (o meio escolhido no checkout; o cliente pode trocar enquanto nao pagou).</summary>
+        public string? MetodoOnline { get; set; }
+        public string? ChaveIdempotencia { get; set; }
+        /// <summary>Intencao de pagamento mais recente deste pre-pedido (o Pix em aberto, o cartao em analise).</summary>
+        public Guid? IdIntentAtual { get; set; }
+        /// <summary>Intencao que pagou o pedido: so uma vale, qualquer outra paga depois e devolvida.</summary>
+        public Guid? IdIntentPago { get; set; }
+        public DateTimeOffset? PagoEm { get; set; }
+        public DateTimeOffset? CanceladoEm { get; set; }
+        public string? MotivoCancelamento { get; set; }
+
+        /// <summary>Pedido online cujo dinheiro ja entrou (so a intencao paga conta).</summary>
+        public bool Pago => IdIntentPago.HasValue;
     }
 
     public class CardapioWebConfig

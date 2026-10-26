@@ -310,8 +310,13 @@ namespace APIBack.DTOs.Cardapio
         public string? ApelidoEndereco { get; set; }
         public CriarCardapioPedidoPublicoClienteRequest Cliente { get; set; } = new();
         public CriarCardapioPedidoPublicoEnderecoRequest? EnderecoEntrega { get; set; }
+        /// <summary>Presencial (Dinheiro, Cartão na entrega...) ou online: pix_online / cartao_online.</summary>
         public string? FormaPagamento { get; set; }
         public string? Observacoes { get; set; }
+        /// <summary>Chave do checkout gerada pela tela: a mesma chave repetida devolve o mesmo pre-pedido (nunca um segundo).</summary>
+        public string? ChaveIdempotencia { get; set; }
+        /// <summary>Total que o cliente viu. Se o servidor recalcular outro valor, o pedido nao e criado (409 CARDAPIO_TOTAL_ALTERADO).</summary>
+        public decimal? TotalEsperado { get; set; }
     }
 
     public class CardapioCotacaoAdicionalDto
@@ -368,5 +373,11 @@ namespace APIBack.DTOs.Cardapio
         public CardapioCotacaoDto Resumo { get; set; } = new();
         /// <summary>Como o cliente confirma o pedido pelo WhatsApp (mensagem enviada ou codigo).</summary>
         public CardapioConfirmacaoDto Confirmacao { get; set; } = new();
+        /// <summary>Pedido online: o pagamento comeca aqui (o restaurante so ve o pedido depois do dinheiro confirmado).</summary>
+        public bool PagamentoOnline { get; set; }
+        /// <summary>pix ou cartao (null no presencial).</summary>
+        public string? MetodoOnline { get; set; }
+        /// <summary>True quando a mesma chave do checkout ja tinha criado este pedido (retentativa).</summary>
+        public bool Reaproveitado { get; set; }
     }
 }

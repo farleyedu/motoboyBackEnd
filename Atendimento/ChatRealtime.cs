@@ -20,6 +20,11 @@ namespace APIBack.Atendimento
         public const string MessageStatus = "chat.message.status";
         /// <summary>A conversa mudou (assumida, devolvida ao bot, fechada, reaberta, lida...).</summary>
         public const string ConversationUpdated = "chat.conversation.updated";
+        /// <summary>
+        /// Cobranca Pix do chat mudou (criada, enviada, paga, expirada, cancelada, reembolsada). Mesmo grupo, mas publicada SO pela outbox de
+        /// pagamentos (PagamentoOutboxPublisher, depois do commit), nunca por este publisher nem pelo PipelineDeMensagem. Payload em CONTRATOS.md §6.
+        /// </summary>
+        public const string ChargeUpdated = "cobrancaAtualizada";
 
         public static string Group(Guid estabelecimentoId) => $"chat:{estabelecimentoId:N}";
     }

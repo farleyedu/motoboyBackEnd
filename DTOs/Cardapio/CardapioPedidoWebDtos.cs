@@ -30,6 +30,78 @@ namespace APIBack.DTOs.Cardapio
         public string? TelefoneCheckout { get; set; }
         public string? TelefoneConfirmado { get; set; }
         public string TipoEntrega { get; set; } = "retirada";
+        /// <summary>Pagamento online (Pix/cartao). Pagamento confirmado nao e pedido aceito: o aceite vem em <see cref="Status"/>.</summary>
+        public CardapioPagamentoPublicoDto? Pagamento { get; set; }
+        /// <summary>O cliente ainda pode desistir sozinho (antes do aceite). Pago: o dinheiro volta integralmente.</summary>
+        public bool PodeCancelar { get; set; }
+        public string? MotivoCancelamento { get; set; }
+    }
+
+    /// <summary>O pagamento online como o cliente ve. Nunca traz QR, copia e cola nem dado do cartao alem do final.</summary>
+    public class CardapioPagamentoPublicoDto
+    {
+        /// <summary>pix ou cartao.</summary>
+        public string? Metodo { get; set; }
+        /// <summary>
+        /// aguardando, processando, aprovado, recusado, expirado, cancelado, reembolso_pendente, reembolso_em_processamento,
+        /// reembolsado, reembolsado_parcial (CardapioPagamentoRules.StatusParaCliente).
+        /// </summary>
+        public string Status { get; set; } = "aguardando";
+        public int Versao { get; set; }
+        public decimal Valor { get; set; }
+        public decimal ValorEstornado { get; set; }
+        /// <summary>Validade do Pix em aberto.</summary>
+        public DateTime? ExpiraEm { get; set; }
+        public DateTime? PagoEm { get; set; }
+        /// <summary>status_detail do Mercado Pago no cartao recusado (cc_rejected_*): a tela escolhe a mensagem.</summary>
+        public string? StatusDetalhe { get; set; }
+        public string? CartaoBandeira { get; set; }
+        public string? CartaoFinal { get; set; }
+    }
+
+    public class CancelarPedidoPublicoRequest
+    {
+        public string? Codigo { get; set; }
+        public string? Motivo { get; set; }
+    }
+
+    /// <summary>Pagamento do pedido do cardapio no painel da loja: resumo, fase do cancelamento e reembolsos.</summary>
+    public class CardapioPagamentoLojaDto
+    {
+        public bool Online { get; set; }
+        public CardapioPagamentoPublicoDto? Pagamento { get; set; }
+        /// <summary>antes_do_aceite, aceito_antes_do_preparo, em_preparo_ou_entrega, encerrado.</summary>
+        public string Fase { get; set; } = string.Empty;
+        public List<CardapioReembolsoDto> Reembolsos { get; set; } = new();
+    }
+
+    public class CardapioReembolsoDto
+    {
+        public Guid Id { get; set; }
+        public string Tipo { get; set; } = string.Empty;
+        public string Motivo { get; set; } = string.Empty;
+        public decimal Valor { get; set; }
+        public string? Justificativa { get; set; }
+        public string Status { get; set; } = string.Empty;
+        public int? SolicitadoPor { get; set; }
+        public int? DecididoPor { get; set; }
+        public DateTimeOffset? DecididoEm { get; set; }
+        public string? UltimoErro { get; set; }
+        public DateTimeOffset? ConcluidoEm { get; set; }
+        public DateTimeOffset CriadoEm { get; set; }
+    }
+
+    public class SolicitarReembolsoCardapioRequest
+    {
+        /// <summary>Null = tudo o que ainda nao voltou. Antes do preparo so vale o integral.</summary>
+        public decimal? Valor { get; set; }
+        public string? Justificativa { get; set; }
+        public string? IdempotencyKey { get; set; }
+    }
+
+    public class DecidirReembolsoCardapioRequest
+    {
+        public string? Justificativa { get; set; }
     }
 
     /// <summary>Endereco guardado no pre-pedido (com a coordenada achada no servidor).</summary>
@@ -77,6 +149,10 @@ namespace APIBack.DTOs.Cardapio
         public string? Observacoes { get; set; }
         public string? FormaPagamento { get; set; }
         public decimal Total { get; set; }
+        /// <summary>Pago online (Pix/cartao) e confirmado pelo Mercado Pago: nada a cobrar na entrega.</summary>
+        public bool PagoOnline { get; set; }
+        /// <summary>aceitando = outro atendente ja esta aceitando este pedido.</summary>
+        public string Status { get; set; } = "aguardando_aceite";
     }
 
     public class RecusarCardapioPedidoRequest

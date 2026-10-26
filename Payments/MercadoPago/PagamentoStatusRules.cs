@@ -113,6 +113,8 @@ namespace APIBack.Payments.MercadoPago
 
         private static readonly Dictionary<string, string[]> TransicoesCobranca = new()
         {
+            // Aprovada vira 'criando' (gera o Pix); rejeitada ou abandonada vira 'cancelado'. Ainda nao tem intencao.
+            [StatusCobranca.AguardandoAprovacao] = new[] { StatusCobranca.Criando, StatusCobranca.Cancelado },
             [StatusCobranca.Criando] = new[] { StatusCobranca.Aguardando, StatusCobranca.Recusado, StatusCobranca.Cancelado, StatusCobranca.Pago },
             [StatusCobranca.Aguardando] = new[] { StatusCobranca.Enviado, StatusCobranca.Pago, StatusCobranca.Expirado, StatusCobranca.Cancelado, StatusCobranca.Recusado },
             [StatusCobranca.Enviado] = new[] { StatusCobranca.Pago, StatusCobranca.Expirado, StatusCobranca.Cancelado, StatusCobranca.Recusado },

@@ -125,18 +125,17 @@ pix_ticket_url, cartao_bandeira, cartao_final, parcelas, live_mode, expira_em, a
         Task<Guid?> AplicarAsync(NpgsqlConnection cx, NpgsqlTransaction tx, PagamentoIntent intent, string statusAnterior, string ator, CancellationToken ct);
     }
 
-    /// <summary>Cardapio web: espelha o status no cardapio_pedido_publico.status_pagamento (a sessao 3 decide o resto do fluxo).</summary>
+    /// <summary>
+    /// Cardapio web: espelha o status no cardapio_pedido_publico.status_pagamento e, quando o dinheiro e confirmado, libera o pedido
+    /// online para o aceite (ou agenda o reembolso se ele ja foi recusado/cancelado ou pago em dobro). Ver APIBack.Repository.CardapioPagamentoSql.
+    /// </summary>
     public sealed class CardapioPagamentoEfeito : IPagamentoEfeitoHandler
     {
         public string Origem => OrigensPagamento.Cardapio;
 
         public async Task<Guid?> AplicarAsync(NpgsqlConnection cx, NpgsqlTransaction tx, PagamentoIntent intent, string statusAnterior, string ator, CancellationToken ct)
         {
-            if (intent.PrePedidoId == null) return null;
-            await cx.ExecuteAsync(new CommandDefinition(@"
-UPDATE cardapio_pedido_publico SET status_pagamento = @S, updated_at = NOW()
- WHERE id = @Id AND id_estabelecimento = @Loja AND status_pagamento IS DISTINCT FROM @S",
-                new { S = PagamentoStatusRules.StatusPagamentoPrePedido(intent.Status), Id = intent.PrePedidoId, Loja = intent.IdEstabelecimento }, tx, cancellationToken: ct));
+            await APIBack.Repository.CardapioPagamentoSql.AplicarEfeitoAsync(cx, tx, intent, ct);
             return null;
         }
     }

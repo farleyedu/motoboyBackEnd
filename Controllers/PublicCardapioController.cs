@@ -5,6 +5,7 @@ using APIBack.DTOs.Cardapio;
 using APIBack.DTOs.Common;
 using APIBack.Service;
 using APIBack.Service.Interface;
+using APIBack.Payments.MercadoPago;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Caching.Memory;
@@ -18,6 +19,7 @@ namespace APIBack.Controllers
     {
         private readonly ICardapioPublicService _service;
         private readonly ICardapioPedidoWebService _pedidosWeb;
+        private readonly ICardapioPagamentoService? _pagamentos;
         private readonly IMemoryCache _cache;
 
         // Cada busca de endereco custa uma chamada ao Google: sem este teto, qualquer script poderia gastar a cota.
@@ -28,10 +30,12 @@ namespace APIBack.Controllers
         private const int MaximoDeIdentificacoesPorJanela = 30;
         private static readonly TimeSpan JanelaDeIdentificacoes = TimeSpan.FromMinutes(10);
 
-        public PublicCardapioController(ICardapioPublicService service, ICardapioPedidoWebService pedidosWeb, IMemoryCache cache)
+        public PublicCardapioController(ICardapioPublicService service, ICardapioPedidoWebService pedidosWeb, IMemoryCache cache,
+            ICardapioPagamentoService? pagamentos = null)
         {
             _service = service;
             _pedidosWeb = pedidosWeb;
+            _pagamentos = pagamentos;
             _cache = cache;
         }
 
@@ -217,7 +221,7 @@ namespace APIBack.Controllers
             }
             catch (DeliveryDomainException ex)
             {
-                return StatusCode(ex.StatusCode, ApiResponse<object>.Fail(ex.Message, ex.Code));
+                return StatusCode(ex.StatusCode, ApiResponse<object>.Fail(ex.Message, ex.Code, ex.Details));
             }
         }
 
@@ -234,7 +238,7 @@ namespace APIBack.Controllers
             }
             catch (DeliveryDomainException ex)
             {
-                return StatusCode(ex.StatusCode, ApiResponse<object>.Fail(ex.Message, ex.Code));
+                return StatusCode(ex.StatusCode, ApiResponse<object>.Fail(ex.Message, ex.Code, ex.Details));
             }
             catch (KeyNotFoundException ex)
             {
@@ -261,7 +265,35 @@ namespace APIBack.Controllers
             }
             catch (DeliveryDomainException ex)
             {
-                return StatusCode(ex.StatusCode, ApiResponse<object>.Fail(ex.Message, ex.Code));
+                return StatusCode(ex.StatusCode, ApiResponse<object>.Fail(ex.Message, ex.Code, ex.Details));
+            }
+        }
+
+        /// <summary>
+        /// O cliente desiste antes do aceite. Nao pago: so a intencao de pagamento e cancelada. Pago: o valor volta integralmente
+        /// (automatico). Depois do aceite: 409, o cliente fala com a loja. Id + codigo do pedido.
+        /// </summary>
+        [HttpPost("pedidos/{id:guid}/cancelar")]
+        public async Task<IActionResult> CancelarPedido(Guid id, [FromBody] CancelarPedidoPublicoRequest? request)
+        {
+            if (_pagamentos == null) return StatusCode(503, ApiResponse<object>.Fail("Cancelamento indisponivel.", PagamentoCodigos.NaoConfigurado));
+            try
+            {
+                await _pagamentos.CancelarPeloClienteAsync(id, request?.Codigo, request?.Motivo, HttpContext.RequestAborted);
+                var status = await _pedidosWeb.ObterStatusAsync(id);
+                return status == null ? NotFoundErrorResponse("Pedido nao encontrado.") : Ok(ApiResponse<CardapioPedidoPublicoStatusDto>.Ok(status));
+            }
+            catch (PagamentoException ex)
+            {
+                return StatusCode(ex.Http, ApiResponse<object>.Fail(ex.Message, ex.Codigo, ex.Detalhes));
+            }
+            catch (DeliveryDomainException ex)
+            {
+                return StatusCode(ex.StatusCode, ApiResponse<object>.Fail(ex.Message, ex.Code, ex.Details));
+            }
+            catch (KeyNotFoundException ex)
+            {
+                return NotFoundErrorResponse(ex.Message);
             }
         }
 
@@ -288,7 +320,7 @@ namespace APIBack.Controllers
             }
             catch (DeliveryDomainException ex)
             {
-                return StatusCode(ex.StatusCode, ApiResponse<object>.Fail(ex.Message, ex.Code));
+                return StatusCode(ex.StatusCode, ApiResponse<object>.Fail(ex.Message, ex.Code, ex.Details));
             }
         }
     }

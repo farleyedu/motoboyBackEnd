@@ -36,6 +36,7 @@ namespace APIBack.Service
         private readonly IMemoryCache _cache;
         private readonly ILogger<CardapioPedidoWebService> _logger;
         private readonly ISituacaoComercialService? _situacoes;
+        private readonly ICardapioPagamentoService? _pagamentos;
 
         public CardapioPedidoWebService(
             ICardapioPedidoWebRepository repository,
@@ -49,7 +50,8 @@ namespace APIBack.Service
             IRastreioRepository rastreio,
             IMemoryCache cache,
             ILogger<CardapioPedidoWebService> logger,
-            ISituacaoComercialService? situacoes = null)
+            ISituacaoComercialService? situacoes = null,
+            ICardapioPagamentoService? pagamentos = null)
         {
             _repository = repository;
             _cardapio = cardapio;
@@ -63,6 +65,7 @@ namespace APIBack.Service
             _cache = cache;
             _logger = logger;
             _situacoes = situacoes;
+            _pagamentos = pagamentos;
         }
 
         private async Task ExigirCardapioDisponivelAsync(Guid estabelecimentoId)
@@ -223,7 +226,12 @@ namespace APIBack.Service
                 NumeroPedido = pedido.IdPedido,
                 TelefoneCheckout = pedido.TelefoneCliente,
                 TelefoneConfirmado = pedido.TelefoneContato,
-                Confirmacao = status == CardapioPedidoStatus.AguardandoCodigo ? await ConfirmacaoPorCodigoAsync(pedido) : null
+                Confirmacao = status == CardapioPedidoStatus.AguardandoCodigo ? await ConfirmacaoPorCodigoAsync(pedido) : null,
+                // Pagamento e aceite sao mostrados separados: "pagamento confirmado" nao quer dizer "pedido aceito".
+                Pagamento = _pagamentos == null ? null : await _pagamentos.ResumoAsync(pedido),
+                PodeCancelar = status is CardapioPedidoStatus.Pendente or CardapioPedidoStatus.AguardandoCodigo or CardapioPedidoStatus.Expirado
+                    or CardapioPedidoStatus.AguardandoPagamento or CardapioPedidoStatus.AguardandoAceite,
+                MotivoCancelamento = status == CardapioPedidoStatus.Cancelado ? pedido.MotivoCancelamento : null
             };
         }
 
@@ -300,24 +308,53 @@ namespace APIBack.Service
 
         public async Task<AceitarCardapioPedidoResultDto> AceitarAsync(Guid estabelecimentoId, int actorUserId, Guid id)
         {
-            var pedido = await ObterAguardandoAsync(estabelecimentoId, id);
+            var pedido = await _repository.ObterAsync(estabelecimentoId, id)
+                ?? throw new DeliveryDomainException(404, "CARDAPIO_PEDIDO_NOT_FOUND", "Pedido do cardapio nao encontrado.");
+            if (pedido.Status == CardapioPedidoStatus.Aceito)
+            {
+                // Clique duplo depois de concluido: devolve o que ja foi feito, sem avisar o cliente de novo.
+                return new AceitarCardapioPedidoResultDto { Id = pedido.Id, PedidoId = pedido.IdPedido, TotalCliente = pedido.Total };
+            }
+
+            // Reserva primeiro (aguardando_aceite -> aceitando): a recusa e o cancelamento do cliente nao passam mais, e pedido
+            // online sem dinheiro confirmado nunca e reservado. So depois o pedido real nasce.
+            if (!await _repository.IniciarAceiteAsync(estabelecimentoId, id))
+            {
+                if (pedido.PagamentoOnline && !pedido.Pago && pedido.Status == CardapioPedidoStatus.AguardandoAceite)
+                    throw new DeliveryDomainException(409, "CARDAPIO_PAGAMENTO_PENDENTE", "O pagamento online deste pedido ainda nao foi confirmado.");
+                throw new DeliveryDomainException(409, "CARDAPIO_PEDIDO_STATUS",
+                    "Este pedido nao esta mais aguardando aceite. Atualize a lista.");
+            }
 
             int? pedidoId = null;
             decimal? totalPedido = null;
             var avisos = new List<string>();
             if (EhEntrega(pedido))
             {
-                // O pedido real nasce pelo nucleo, com a origem cardapio_web e o codigo do pedido como origemRef:
-                // aceitar de novo (clique duplo, dois atendentes) devolve o mesmo pedido em vez de criar outro.
-                var criado = await _core.CreateAsync(estabelecimentoId, actorUserId, MontarPedido(pedido), idempotencyKey: null);
-                if (string.Equals(criado.Status, "rascunho", StringComparison.OrdinalIgnoreCase))
+                try
                 {
-                    // A loja pode exigir confirmacao dos pedidos de cliente; aqui o atendente acabou de aceitar.
-                    criado = await _core.ConfirmAsync(estabelecimentoId, actorUserId, criado.Id);
+                    // O pedido real nasce pelo nucleo, com a origem cardapio_web e o codigo do pedido como origemRef:
+                    // aceitar de novo (clique duplo, dois atendentes) devolve o mesmo pedido em vez de criar outro.
+                    var criado = await _core.CreateAsync(estabelecimentoId, actorUserId, MontarPedido(pedido), idempotencyKey: null);
+                    if (string.Equals(criado.Status, "rascunho", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // A loja pode exigir confirmacao dos pedidos de cliente; aqui o atendente acabou de aceitar.
+                        criado = await _core.ConfirmAsync(estabelecimentoId, actorUserId, criado.Id);
+                    }
+                    pedidoId = criado.Id;
+                    totalPedido = criado.Total;
+                    avisos.AddRange(criado.Avisos);
                 }
-                pedidoId = criado.Id;
-                totalPedido = criado.Total;
-                avisos.AddRange(criado.Avisos);
+                catch
+                {
+                    await _repository.DesfazerAceiteAsync(estabelecimentoId, id);
+                    throw;
+                }
+            }
+            if (pedido.PagamentoOnline && totalPedido.HasValue && totalPedido.Value > pedido.Total)
+            {
+                avisos.Add($"O cliente pagou {CardapioConfirmacaoRules.Dinheiro(pedido.Total)} online; o pedido no delivery ficou em " +
+                           $"{CardapioConfirmacaoRules.Dinheiro(totalPedido.Value)}. Nao cobre a diferenca na entrega sem combinar com o cliente.");
             }
 
             var resultado = new AceitarCardapioPedidoResultDto
@@ -347,16 +384,40 @@ namespace APIBack.Service
 
         public async Task RecusarAsync(Guid estabelecimentoId, Guid id, string? motivo)
         {
-            var pedido = await ObterAguardandoAsync(estabelecimentoId, id);
             var motivoLimpo = CardapioConfirmacaoRules.NormalizarMotivo(motivo);
 
-            if (!await _repository.MarcarRecusadoAsync(estabelecimentoId, id, motivoLimpo)) return;
+            // Recusa e reembolso integral (se pago) gravados na mesma transacao, com o pre-pedido travado contra o aceite.
+            var decisao = await _repository.RecusarAsync(estabelecimentoId, id, motivoLimpo);
+            if (decisao.Pedido == null)
+                throw new DeliveryDomainException(404, "CARDAPIO_PEDIDO_NOT_FOUND", "Pedido do cardapio nao encontrado.");
+            if (!decisao.Mudou)
+            {
+                // Clique duplo na recusa: nada a fazer. Qualquer outro status (aceitando, aceito, cancelado) e conflito.
+                if (decisao.Status == CardapioPedidoStatus.Recusado) return;
+                throw new DeliveryDomainException(409, "CARDAPIO_PEDIDO_STATUS",
+                    "Este pedido nao esta mais aguardando aceite. Atualize a lista.");
+            }
 
+            var pedido = decisao.Pedido;
             if (pedido.IdConversa.HasValue)
             {
                 var nomeLoja = await NomeDaLojaAsync(estabelecimentoId);
-                await TentarEnviarAsync(pedido.IdConversa.Value, estabelecimentoId,
-                    CardapioConfirmacaoRules.PedidoRecusado(pedido.NomeCliente, nomeLoja, motivoLimpo));
+                await TentarEnviarAsync(pedido.IdConversa.Value, estabelecimentoId, decisao.ReembolsoId.HasValue
+                    ? CardapioPagamentoRules.PedidoRecusadoComEstorno(pedido.NomeCliente, nomeLoja, motivoLimpo, decisao.ValorReembolso)
+                    : CardapioConfirmacaoRules.PedidoRecusado(pedido.NomeCliente, nomeLoja, motivoLimpo));
+            }
+
+            if (_pagamentos != null)
+            {
+                try
+                {
+                    await _pagamentos.AposEncerrarAsync(decisao);
+                }
+                catch (Exception ex)
+                {
+                    // O reembolso ja esta gravado: o trabalhador do cardapio tenta de novo.
+                    _logger.LogWarning(ex, "Reembolso do pedido recusado {Pedido} fica para o trabalhador.", id);
+                }
             }
         }
 
@@ -378,18 +439,6 @@ namespace APIBack.Service
             var nomeLoja = await NomeDaLojaAsync(estabelecimentoId);
             var texto = QuickReplyRenderer.Render(settings.ProntoRetiradaText, ValoresDoPedido(pedido, nomeLoja)).Texto;
             await TentarEnviarAsync(pedido.IdConversa.Value, estabelecimentoId, texto);
-        }
-
-        private async Task<CardapioPedidoPublico> ObterAguardandoAsync(Guid estabelecimentoId, Guid id)
-        {
-            var pedido = await _repository.ObterAsync(estabelecimentoId, id)
-                ?? throw new DeliveryDomainException(404, "CARDAPIO_PEDIDO_NOT_FOUND", "Pedido do cardapio nao encontrado.");
-            if (pedido.Status != CardapioPedidoStatus.AguardandoAceite)
-            {
-                throw new DeliveryDomainException(409, "CARDAPIO_PEDIDO_STATUS",
-                    "Este pedido nao esta mais aguardando aceite. Atualize a lista.");
-            }
-            return pedido;
         }
 
         // =====================================================================
@@ -473,8 +522,10 @@ namespace APIBack.Service
                     ? linhas
                     : solicitados.Select(item => new CardapioPedidoAguardandoItemDto { Quantidade = item.Quantidade, Nome = "Item" }).ToList(),
                 Observacoes = pedido.Observacoes,
-                FormaPagamento = pedido.FormaPagamento,
-                Total = pedido.Total
+                FormaPagamento = pedido.PagamentoOnline ? CardapioPagamentoRules.FormaPagamentoDoPedido(pedido.MetodoOnline) : pedido.FormaPagamento,
+                Total = pedido.Total,
+                PagoOnline = pedido.PagamentoOnline && pedido.Pago,
+                Status = pedido.Status
             };
         }
 
@@ -505,7 +556,7 @@ namespace APIBack.Service
                 Cep = endereco.Cep,
                 Latitude = endereco.Latitude,
                 Longitude = endereco.Longitude,
-                TipoPagamento = pedido.FormaPagamento,
+                TipoPagamento = pedido.PagamentoOnline ? CardapioPagamentoRules.FormaPagamentoDoPedido(pedido.MetodoOnline) : pedido.FormaPagamento,
                 Observacoes = observacoes,
                 Origem = PedidoOrigem.CardapioWeb,
                 OrigemRef = pedido.Codigo,

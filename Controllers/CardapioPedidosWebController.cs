@@ -54,6 +54,34 @@ namespace APIBack.Controllers
                 return new { id };
             });
 
+        // ---- Pagamento online e reembolsos ---------------------------------------------------------------
+        // Antes do aceite a recusa ja devolve tudo sozinha. Depois do aceite: antes do preparo o gerente aprova o integral;
+        // em preparo/entrega abre uma solicitacao (total ou parcial, com justificativa) que quem tem Financeiro:cancelar decide.
+
+        [HttpGet("{id:guid}/pagamento")]
+        [RequirePermission("Delivery", "visualizar")]
+        public Task<IActionResult> Pagamento(Guid id, [FromServices] ICardapioPagamentoService pagamentos) =>
+            ExecuteAsync((estabelecimentoId, _) => pagamentos.ObterParaLojaAsync(estabelecimentoId, id));
+
+        [HttpPost("{id:guid}/reembolsos")]
+        [RequirePermission("Delivery", "criar_pedido")]
+        public Task<IActionResult> SolicitarReembolso(Guid id, [FromBody] SolicitarReembolsoCardapioRequest? request,
+            [FromServices] ICardapioPagamentoService pagamentos) =>
+            ExecuteAsync((estabelecimentoId, userId) =>
+                pagamentos.SolicitarReembolsoAsync(estabelecimentoId, userId, id, request ?? new SolicitarReembolsoCardapioRequest()));
+
+        [HttpPost("reembolsos/{reembolsoId:guid}/aprovar")]
+        [RequirePermission("Financeiro", "cancelar")]
+        public Task<IActionResult> AprovarReembolso(Guid reembolsoId, [FromBody] DecidirReembolsoCardapioRequest? request,
+            [FromServices] ICardapioPagamentoService pagamentos) =>
+            ExecuteAsync((estabelecimentoId, userId) => pagamentos.DecidirReembolsoAsync(estabelecimentoId, userId, reembolsoId, true, request?.Justificativa));
+
+        [HttpPost("reembolsos/{reembolsoId:guid}/negar")]
+        [RequirePermission("Financeiro", "cancelar")]
+        public Task<IActionResult> NegarReembolso(Guid reembolsoId, [FromBody] DecidirReembolsoCardapioRequest? request,
+            [FromServices] ICardapioPagamentoService pagamentos) =>
+            ExecuteAsync((estabelecimentoId, userId) => pagamentos.DecidirReembolsoAsync(estabelecimentoId, userId, reembolsoId, false, request?.Justificativa));
+
         private async Task<IActionResult> ExecuteAsync<T>(Func<Guid, int, Task<T>> action)
         {
             var userId = HttpContext.GetUserId() ?? 0;
@@ -70,6 +98,10 @@ namespace APIBack.Controllers
             catch (DeliveryDomainException ex)
             {
                 return StatusCode(ex.StatusCode, ApiResponse<object>.Fail(ex.Message, ex.Code, ex.Details));
+            }
+            catch (APIBack.Payments.MercadoPago.PagamentoException ex)
+            {
+                return StatusCode(ex.Http, ApiResponse<object>.Fail(ex.Message, ex.Codigo, ex.Detalhes));
             }
         }
     }

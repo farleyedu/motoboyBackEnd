@@ -54,6 +54,8 @@ namespace APIBack.Tests.Unit
                 Repo.Setup(r => r.ObterConversaPorTelefoneAsync(Estabelecimento, It.IsAny<IReadOnlyList<string>>()))
                     .ReturnsAsync((ConversaPorTelefone?)null);
                 Rastreio.Setup(r => r.GetSettingsAsync(It.IsAny<Guid>())).ReturnsAsync(new NoticeSettings());
+                // O aceite reserva o pedido antes de criar o pedido real (o repositorio real so reserva o que aguarda aceite).
+                Repo.Setup(r => r.IniciarAceiteAsync(Estabelecimento, It.IsAny<Guid>())).ReturnsAsync(true);
             }
 
             public CardapioPedidoWebService Build() => new(
@@ -602,23 +604,81 @@ namespace APIBack.Tests.Unit
 
         [Theory]
         [InlineData(CardapioPedidoStatus.AguardandoCodigo)]
-        [InlineData(CardapioPedidoStatus.Aceito)]
+        [InlineData(CardapioPedidoStatus.AguardandoPagamento)]
         [InlineData(CardapioPedidoStatus.Recusado)]
+        [InlineData(CardapioPedidoStatus.Cancelado)]
         [InlineData(CardapioPedidoStatus.Expirado)]
         public async Task Only_a_confirmed_order_can_be_accepted_or_declined(string status)
         {
             var f = new Fixture();
             var pedido = Pedido(status, conversa: Conversa);
             f.Repo.Setup(r => r.ObterAsync(Estabelecimento, pedido.Id)).ReturnsAsync(pedido);
+            f.Repo.Setup(r => r.IniciarAceiteAsync(Estabelecimento, pedido.Id)).ReturnsAsync(false);
+            f.Repo.Setup(r => r.RecusarAsync(Estabelecimento, pedido.Id, null)).ReturnsAsync(new CardapioDecisao(false, status, pedido, null, 0m));
             var service = f.Build();
 
             var aceitar = await Assert.ThrowsAsync<DeliveryDomainException>(() => service.AceitarAsync(Estabelecimento, 9, pedido.Id));
-            var recusar = await Assert.ThrowsAsync<DeliveryDomainException>(() => service.RecusarAsync(Estabelecimento, pedido.Id, null));
+            if (status != CardapioPedidoStatus.Recusado)
+            {
+                var recusar = await Assert.ThrowsAsync<DeliveryDomainException>(() => service.RecusarAsync(Estabelecimento, pedido.Id, null));
+                Assert.Equal(409, recusar.StatusCode);
+            }
 
             Assert.Equal(409, aceitar.StatusCode);
-            Assert.Equal(409, recusar.StatusCode);
             f.Core.Verify(c => c.CreateAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<CreatePedidoRequest>(), It.IsAny<string?>(), It.IsAny<bool>()), Times.Never);
             Assert.Empty(f.Enviadas);
+        }
+
+        [Fact]
+        public async Task Accepting_an_already_accepted_order_returns_the_same_order_without_messaging()
+        {
+            var f = new Fixture();
+            var pedido = Pedido(CardapioPedidoStatus.Aceito, conversa: Conversa);
+            pedido.IdPedido = 77;
+            f.Repo.Setup(r => r.ObterAsync(Estabelecimento, pedido.Id)).ReturnsAsync(pedido);
+
+            var resultado = await f.Build().AceitarAsync(Estabelecimento, 9, pedido.Id);
+
+            Assert.Equal(77, resultado.PedidoId);
+            f.Core.Verify(c => c.CreateAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<CreatePedidoRequest>(), It.IsAny<string?>(), It.IsAny<bool>()), Times.Never);
+            Assert.Empty(f.Enviadas);
+        }
+
+        [Fact]
+        public async Task An_online_order_without_confirmed_payment_is_never_accepted()
+        {
+            var f = new Fixture();
+            var pedido = Pedido(CardapioPedidoStatus.AguardandoAceite, conversa: Conversa);
+            pedido.PagamentoOnline = true;
+            pedido.MetodoOnline = "pix";
+            f.Repo.Setup(r => r.ObterAsync(Estabelecimento, pedido.Id)).ReturnsAsync(pedido);
+            // O repositorio real so reserva pedido online com a intencao paga.
+            f.Repo.Setup(r => r.IniciarAceiteAsync(Estabelecimento, pedido.Id)).ReturnsAsync(false);
+
+            var erro = await Assert.ThrowsAsync<DeliveryDomainException>(() => f.Build().AceitarAsync(Estabelecimento, 9, pedido.Id));
+
+            Assert.Equal("CARDAPIO_PAGAMENTO_PENDENTE", erro.Code);
+            f.Core.Verify(c => c.CreateAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<CreatePedidoRequest>(), It.IsAny<string?>(), It.IsAny<bool>()), Times.Never);
+        }
+
+        [Fact]
+        public async Task A_paid_online_order_goes_to_delivery_marked_as_paid()
+        {
+            var f = new Fixture();
+            var pedido = Pedido(CardapioPedidoStatus.AguardandoAceite, conversa: Conversa);
+            pedido.PagamentoOnline = true;
+            pedido.MetodoOnline = "cartao";
+            pedido.IdIntentPago = Guid.NewGuid();
+            f.Repo.Setup(r => r.ObterAsync(Estabelecimento, pedido.Id)).ReturnsAsync(pedido);
+            CreatePedidoRequest? enviado = null;
+            f.Core.Setup(c => c.CreateAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<CreatePedidoRequest>(), null, true))
+                .Callback<Guid, int, CreatePedidoRequest, string?, bool>((_, _, r, _, _) => enviado = r)
+                .ReturnsAsync(new CreatedPedidoDto { Id = 77, Status = "pendente", Total = 64.9m });
+            f.Repo.Setup(r => r.MarcarAceitoAsync(Estabelecimento, pedido.Id, 77)).ReturnsAsync(true);
+
+            await f.Build().AceitarAsync(Estabelecimento, 9, pedido.Id);
+
+            Assert.Equal("Pago online - cartao", enviado!.TipoPagamento);
         }
 
         [Fact]
@@ -645,6 +705,8 @@ namespace APIBack.Tests.Unit
 
             Assert.Equal("STORE_CLOSED", erro.Code);
             f.Repo.Verify(r => r.MarcarAceitoAsync(It.IsAny<Guid>(), It.IsAny<Guid>(), It.IsAny<int?>()), Times.Never);
+            // A reserva e desfeita: o pedido volta a aguardar e pode ser recusado.
+            f.Repo.Verify(r => r.DesfazerAceiteAsync(Estabelecimento, pedido.Id), Times.Once);
             Assert.Empty(f.Enviadas);
         }
 
@@ -652,9 +714,9 @@ namespace APIBack.Tests.Unit
         public async Task Declining_tells_the_client_the_reason()
         {
             var f = new Fixture();
-            var pedido = Pedido(CardapioPedidoStatus.AguardandoAceite, conversa: Conversa);
-            f.Repo.Setup(r => r.ObterAsync(Estabelecimento, pedido.Id)).ReturnsAsync(pedido);
-            f.Repo.Setup(r => r.MarcarRecusadoAsync(Estabelecimento, pedido.Id, "item em falta")).ReturnsAsync(true);
+            var pedido = Pedido(CardapioPedidoStatus.Recusado, conversa: Conversa);
+            f.Repo.Setup(r => r.RecusarAsync(Estabelecimento, pedido.Id, "item em falta"))
+                .ReturnsAsync(new CardapioDecisao(true, CardapioPedidoStatus.Recusado, pedido, null, 0m));
 
             await f.Build().RecusarAsync(Estabelecimento, pedido.Id, "  item em falta ");
 
@@ -663,12 +725,28 @@ namespace APIBack.Tests.Unit
         }
 
         [Fact]
+        public async Task Declining_a_paid_order_promises_the_full_refund()
+        {
+            var f = new Fixture();
+            var pedido = Pedido(CardapioPedidoStatus.Recusado, conversa: Conversa);
+            pedido.PagamentoOnline = true;
+            pedido.MetodoOnline = "pix";
+            pedido.IdIntentPago = Guid.NewGuid();
+            f.Repo.Setup(r => r.RecusarAsync(Estabelecimento, pedido.Id, null))
+                .ReturnsAsync(new CardapioDecisao(true, CardapioPedidoStatus.Recusado, pedido, Guid.NewGuid(), 64.9m));
+
+            await f.Build().RecusarAsync(Estabelecimento, pedido.Id, null);
+
+            Assert.Contains("devolvido integralmente", Assert.Single(f.Enviadas));
+        }
+
+        [Fact]
         public async Task Declining_twice_messages_the_client_once()
         {
             var f = new Fixture();
-            var pedido = Pedido(CardapioPedidoStatus.AguardandoAceite, conversa: Conversa);
-            f.Repo.Setup(r => r.ObterAsync(Estabelecimento, pedido.Id)).ReturnsAsync(pedido);
-            f.Repo.Setup(r => r.MarcarRecusadoAsync(Estabelecimento, pedido.Id, null)).ReturnsAsync(false);
+            var pedido = Pedido(CardapioPedidoStatus.Recusado, conversa: Conversa);
+            f.Repo.Setup(r => r.RecusarAsync(Estabelecimento, pedido.Id, null))
+                .ReturnsAsync(new CardapioDecisao(false, CardapioPedidoStatus.Recusado, pedido, null, 0m));
 
             await f.Build().RecusarAsync(Estabelecimento, pedido.Id, null);
 

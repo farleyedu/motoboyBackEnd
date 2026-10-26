@@ -12,6 +12,8 @@ using Microsoft.Extensions.Logging;
 using APIBack.Model.Cardapio;
 using APIBack.Repository.Interface;
 using APIBack.Service.Interface;
+using APIBack.Payments.MercadoPago;
+using Npgsql;
 
 namespace APIBack.Service
 {
@@ -30,6 +32,8 @@ namespace APIBack.Service
         private readonly IRestaurantSettingsRepository? _restaurant;
         private readonly IDeliveryZonaRepository? _zonas;
         private readonly IPedidoQueueRepository? _delivery;
+        private readonly ICardPaymentService? _meiosDePagamento;
+        private readonly ICardapioPedidoWebRepository? _pedidosWeb;
 
         public CardapioPublicService(
             ICardapioRepository repository,
@@ -43,7 +47,9 @@ namespace APIBack.Service
             IRestaurantSettingsRepository? restaurant = null,
             IDeliveryZonaRepository? zonas = null,
             IPedidoQueueRepository? delivery = null,
-            ISituacaoComercialService? situacoes = null)
+            ISituacaoComercialService? situacoes = null,
+            ICardPaymentService? meiosDePagamento = null,
+            ICardapioPedidoWebRepository? pedidosWeb = null)
         {
             _situacoes = situacoes;
             _repository = repository;
@@ -57,6 +63,8 @@ namespace APIBack.Service
             _restaurant = restaurant;
             _zonas = zonas;
             _delivery = delivery;
+            _meiosDePagamento = meiosDePagamento;
+            _pedidosWeb = pedidosWeb;
         }
 
         public async Task<CardapioPublicoCatalogoDto> ObterCatalogoAsync(Guid? idEstabelecimento, string? estabelecimentoSlug, string? busca)
@@ -297,6 +305,19 @@ namespace APIBack.Service
             var email = ValidationUtils.TrimToNull(request.Cliente?.Email);
             var formaPagamento = ValidationUtils.TrimToNull(request.FormaPagamento);
             var observacoes = ValidationUtils.TrimToNull(request.Observacoes);
+            var chave = ValidationUtils.TrimToNull(request.ChaveIdempotencia);
+
+            // Retentativa do mesmo checkout (rede caiu, clique duplo, pagina recarregada): o mesmo pre-pedido, nunca um segundo.
+            if (chave != null && chave.Length <= 80 && _pedidosWeb != null)
+            {
+                var existente = await _pedidosWeb.ObterPorChaveAsync(estabelecimento.Id, chave);
+                if (existente != null) return await RespostaDoExistenteAsync(existente);
+            }
+            if (chave is { Length: > 80 })
+            {
+                ValidationUtils.AddError(errors, "chaveIdempotencia", "Chave do checkout deve ter no maximo 80 caracteres.");
+            }
+            var metodoOnline = CardapioPagamentoRules.MetodoOnline(formaPagamento);
 
             // Os limites abaixo sao os do pedido do delivery (ManualOrderRules): passar daqui so falharia no aceite.
             if (string.IsNullOrWhiteSpace(nomeCliente) || nomeCliente.Length > 150)
@@ -384,6 +405,7 @@ namespace APIBack.Service
             }
 
             ValidationUtils.ThrowIfAny(errors);
+            await ExigirMeioDePagamentoAsync(estabelecimento.Id, metodoOnline);
 
             // Sem um numero de WhatsApp que atenda o cardapio web nao ha como confirmar o pedido: melhor recusar aqui do que
             // deixar o cliente esperando.
@@ -411,6 +433,16 @@ namespace APIBack.Service
                             ["raioKm"] = estabelecimento.RaioEntregaKm,
                             ["distanciaKm"] = cotacao.DistanciaKm.HasValue ? Math.Round(cotacao.DistanciaKm.Value, 1) : null
                         });
+            }
+
+            // O valor cobrado e o desta cotacao (preco, adicionais e entrega recalculados agora). Se nao bate com o que o cliente viu,
+            // ele confirma o novo total antes: ninguem paga um valor que nao conferiu.
+            if (request.TotalEsperado is { } esperado && decimal.Round(esperado, 2) != decimal.Round(cotacao.Total, 2))
+            {
+                _logger.LogInformation("[cardapio] ev=total_alterado loja={Loja} esperado={Esperado} servidor={Servidor}", estabelecimento.Id, esperado, cotacao.Total);
+                throw new DeliveryDomainException(409, "CARDAPIO_TOTAL_ALTERADO",
+                    $"O valor do pedido mudou para {CardapioConfirmacaoRules.Dinheiro(cotacao.Total)}. Confira o novo total antes de enviar.",
+                    new Dictionary<string, object?> { ["total"] = cotacao.Total, ["taxaEntrega"] = cotacao.TaxaEntrega });
             }
 
             if (enderecoArmazenado != null)
@@ -456,10 +488,23 @@ namespace APIBack.Service
                 EnderecoEntregaJson = enderecoArmazenado == null
                     ? null
                     : JsonSerializer.Serialize(enderecoArmazenado, JsonOptions),
-                StatusPagamento = "pendente"
+                StatusPagamento = "pendente",
+                PagamentoOnline = metodoOnline != null,
+                MetodoOnline = metodoOnline,
+                ChaveIdempotencia = chave
             };
 
-            entity.Id = await _repository.CriarPedidoPublicoAsync(entity);
+            try
+            {
+                entity.Id = await _repository.CriarPedidoPublicoAsync(entity);
+            }
+            catch (InvalidOperationException) when (chave != null && _pedidosWeb != null)
+            {
+                // Duas retentativas ao mesmo tempo: a outra criou primeiro.
+                var corrida = await _pedidosWeb.ObterPorChaveAsync(estabelecimento.Id, chave);
+                if (corrida == null) throw;
+                return await RespostaDoExistenteAsync(corrida);
+            }
 
             // Janela de 24h aberta: mandamos a mensagem e o pedido ja vai ao restaurante. Fechada: o cliente recebe um codigo.
             var confirmacao = await _confirmacao.IniciarConfirmacaoAsync(
@@ -469,12 +514,81 @@ namespace APIBack.Service
             {
                 Id = entity.Id,
                 Codigo = entity.Codigo,
-                Status = confirmacao.Modo == "mensagem_enviada" ? CardapioPedidoStatus.AguardandoAceite : CardapioPedidoStatus.AguardandoCodigo,
+                Status = confirmacao.Modo == "mensagem_enviada"
+                    ? CardapioPagamentoRules.StatusAposConfirmar(entity.PagamentoOnline, pago: false)
+                    : CardapioPedidoStatus.AguardandoCodigo,
                 StatusPagamento = entity.StatusPagamento,
                 FormaPagamento = entity.FormaPagamento ?? string.Empty,
                 CreatedAt = entity.CreatedAt,
                 Resumo = cotacao,
-                Confirmacao = confirmacao
+                Confirmacao = confirmacao,
+                PagamentoOnline = entity.PagamentoOnline,
+                MetodoOnline = entity.MetodoOnline
+            };
+        }
+
+        /// <summary>
+        /// Pix ou cartao online so com o meio ligado na loja e a conta Mercado Pago conectada; presencial so se a loja nao o desligou.
+        /// Sem o nucleo de pagamentos (migration pendente) vale o de antes: so presencial.
+        /// </summary>
+        private async Task ExigirMeioDePagamentoAsync(Guid estabelecimentoId, string? metodoOnline)
+        {
+            BrickConfiguracao? config = null;
+            if (_meiosDePagamento != null)
+            {
+                try
+                {
+                    config = await _meiosDePagamento.ConfiguracaoAsync(estabelecimentoId);
+                }
+                catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.UndefinedTable or PostgresErrorCodes.UndefinedColumn)
+                {
+                    config = null;
+                }
+            }
+
+            if (metodoOnline == null)
+            {
+                if (config is { PresencialAtivo: false })
+                    throw new DeliveryDomainException(422, "PAGAMENTO_PRESENCIAL_INDISPONIVEL",
+                        "Esta loja aceita só pagamento online. Escolha Pix ou cartão.");
+                return;
+            }
+
+            var ligado = metodoOnline == CardapioPagamentoRules.MetodoPix ? config?.PixAtivo == true : config?.CartaoAtivo == true;
+            if (!ligado)
+                throw new DeliveryDomainException(422, "PAGAMENTO_ONLINE_INDISPONIVEL",
+                    "Esse meio de pagamento online não está disponível agora. Escolha outra forma de pagamento.");
+        }
+
+        /// <summary>Resposta de uma retentativa: o pre-pedido ja existente, no ponto em que esta (sem mandar mensagem de novo).</summary>
+        private async Task<CardapioPedidoPublicoCriadoDto> RespostaDoExistenteAsync(CardapioPedidoPublico existente)
+        {
+            var status = await _confirmacao.ObterStatusAsync(existente.Id);
+            return new CardapioPedidoPublicoCriadoDto
+            {
+                Id = existente.Id,
+                Codigo = existente.Codigo,
+                Status = status?.Status ?? existente.Status,
+                StatusPagamento = existente.StatusPagamento,
+                FormaPagamento = existente.FormaPagamento ?? string.Empty,
+                CreatedAt = existente.CreatedAt,
+                Resumo = new CardapioCotacaoDto
+                {
+                    EstabelecimentoId = existente.IdEstabelecimento,
+                    TipoEntrega = existente.TipoEntrega,
+                    SubtotalProdutos = existente.SubtotalProdutos,
+                    SubtotalAdicionais = existente.SubtotalAdicionais,
+                    TaxaEntrega = existente.TaxaEntrega,
+                    TaxaEntregaCalculada = true,
+                    PedidoMinimoAtingido = true,
+                    AceitaPedidos = true,
+                    DentroDoRaio = true,
+                    Total = existente.Total
+                },
+                Confirmacao = status?.Confirmacao ?? new CardapioConfirmacaoDto { Modo = "mensagem_enviada" },
+                PagamentoOnline = existente.PagamentoOnline,
+                MetodoOnline = existente.MetodoOnline,
+                Reaproveitado = true
             };
         }
 

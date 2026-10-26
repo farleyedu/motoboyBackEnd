@@ -46,6 +46,8 @@ namespace APIBack.Tests.Unit
             public Mock<IAtendimentoRepository> Atendimento { get; } = new();
             public Mock<IRestaurantSettingsRepository> Restaurant { get; } = new();
             public Mock<IDeliveryZonaRepository> Zonas { get; } = new();
+            public Mock<APIBack.Payments.MercadoPago.ICardPaymentService> Meios { get; } = new();
+            public Mock<ICardapioPedidoWebRepository> PedidosWeb { get; } = new();
             /// <summary>Quarta-feira, 15h no Brasil (18h UTC): ajustavel por teste.</summary>
             public DateTimeOffset Agora { get; set; } = new(2026, 10, 7, 18, 0, 0, TimeSpan.Zero);
             /// <summary>Sem horario a loja fica fechada; o padrao dos testes e aberta o dia todo.</summary>
@@ -103,7 +105,8 @@ namespace APIBack.Tests.Unit
 
                 return new(Cardapio.Object, Localizacao.Object, Waba.Object, Confirmacao.Object,
                     new PedidosAbertosService(Atendimento.Object, NullLogger<PedidosAbertosService>.Instance, new RelogioFixo(Agora)),
-                    NullLogger<CardapioPublicService>.Instance, Acesso.Object, Enderecos.Object, Restaurant.Object, Zonas.Object);
+                    NullLogger<CardapioPublicService>.Instance, Acesso.Object, Enderecos.Object, Restaurant.Object, Zonas.Object,
+                    meiosDePagamento: Meios.Object, pedidosWeb: PedidosWeb.Object);
             }
         }
 
@@ -633,6 +636,114 @@ namespace APIBack.Tests.Unit
             Assert.False(catalogo.Estabelecimento.AceitaPedidos);
             Assert.Equal("fora_horario", catalogo.Estabelecimento.MotivoFechado);
             Assert.Equal("hoje às 18:00", catalogo.Estabelecimento.AbreEm);
+        }
+
+        // =====================================================================
+        // Pagamento online: valor do servidor, idempotencia e meio ligado na loja
+        // =====================================================================
+
+        private static void LigarOnline(Fixture f, bool pix = true, bool cartao = true, bool presencial = true) =>
+            f.Meios.Setup(m => m.ConfiguracaoAsync(Estabelecimento, It.IsAny<System.Threading.CancellationToken>()))
+                .ReturnsAsync(new APIBack.Payments.MercadoPago.BrickConfiguracao
+                {
+                    ContaConectada = true, PixAtivo = pix, CartaoAtivo = cartao, PresencialAtivo = presencial, PublicKey = "TEST-pk", ParcelasMax = 3
+                });
+
+        [Fact]
+        public async Task O_valor_cobrado_e_recalculado_no_servidor_e_o_navegador_nao_escolhe_preco()
+        {
+            var f = new Fixture();
+            LigarOnline(f);
+            var request = Pedido(adicionais: GrupoBacon);
+            request.FormaPagamento = "pix_online";
+            request.TotalEsperado = 74m;
+
+            var criado = await f.Build().CriarPedidoAsync(request);
+
+            // 2 x (30 + 4,50) + 5 de entrega: o que o banco tem, nao o que a tela somou.
+            Assert.Equal(74m, f.Gravado!.Total);
+            Assert.Equal(74m, criado.Resumo.Total);
+            Assert.True(f.Gravado.PagamentoOnline);
+            Assert.Equal("pix", f.Gravado.MetodoOnline);
+            Assert.True(criado.PagamentoOnline);
+        }
+
+        [Fact]
+        public async Task Total_diferente_do_que_o_cliente_viu_barra_o_pedido_antes_de_cobrar()
+        {
+            var f = new Fixture();
+            LigarOnline(f);
+            var request = Pedido(adicionais: GrupoBacon);
+            request.FormaPagamento = "cartao_online";
+            // A tela mostrou o preco antigo do X-Bacon.
+            request.TotalEsperado = 59.9m;
+
+            var erro = await Assert.ThrowsAsync<DeliveryDomainException>(() => f.Build().CriarPedidoAsync(request));
+
+            Assert.Equal(409, erro.StatusCode);
+            Assert.Equal("CARDAPIO_TOTAL_ALTERADO", erro.Code);
+            Assert.Null(f.Gravado);
+            f.Confirmacao.Verify(c => c.IniciarConfirmacaoAsync(It.IsAny<CardapioPedidoPublico>(), It.IsAny<string>()), Times.Never);
+        }
+
+        [Fact]
+        public async Task A_mesma_chave_do_checkout_devolve_o_mesmo_pedido_sem_criar_outro()
+        {
+            var f = new Fixture();
+            LigarOnline(f);
+            var existente = new CardapioPedidoPublico
+            {
+                Id = Guid.NewGuid(), IdEstabelecimento = Estabelecimento, Codigo = "CDP-AAA", Status = CardapioPedidoStatus.AguardandoPagamento,
+                Total = 74m, PagamentoOnline = true, MetodoOnline = "pix", ChaveIdempotencia = "chk-1", TipoEntrega = "entrega"
+            };
+            f.PedidosWeb.Setup(r => r.ObterPorChaveAsync(Estabelecimento, "chk-1")).ReturnsAsync(existente);
+            f.Confirmacao.Setup(c => c.ObterStatusAsync(existente.Id))
+                .ReturnsAsync(new CardapioPedidoPublicoStatusDto { Id = existente.Id, Status = CardapioPedidoStatus.AguardandoPagamento });
+            var request = Pedido();
+            request.FormaPagamento = "pix_online";
+            request.ChaveIdempotencia = "chk-1";
+
+            var criado = await f.Build().CriarPedidoAsync(request);
+
+            Assert.True(criado.Reaproveitado);
+            Assert.Equal(existente.Id, criado.Id);
+            Assert.Equal(74m, criado.Resumo.Total);
+            Assert.Null(f.Gravado);
+            f.Confirmacao.Verify(c => c.IniciarConfirmacaoAsync(It.IsAny<CardapioPedidoPublico>(), It.IsAny<string>()), Times.Never);
+        }
+
+        [Fact]
+        public async Task Pagamento_online_desligado_na_loja_e_recusado_e_o_presencial_continua()
+        {
+            var f = new Fixture();
+            LigarOnline(f, pix: false, cartao: false);
+            var online = Pedido();
+            online.FormaPagamento = "pix_online";
+
+            var erro = await Assert.ThrowsAsync<DeliveryDomainException>(() => f.Build().CriarPedidoAsync(online));
+            await f.Build().CriarPedidoAsync(Pedido());
+
+            Assert.Equal("PAGAMENTO_ONLINE_INDISPONIVEL", erro.Code);
+            Assert.False(f.Gravado!.PagamentoOnline);
+            Assert.Null(f.Gravado.MetodoOnline);
+            Assert.Equal("Pix", f.Gravado.FormaPagamento);
+        }
+
+        [Fact]
+        public async Task Pedido_online_confirmado_pela_janela_espera_o_pagamento_e_nao_vai_ao_restaurante()
+        {
+            var f = new Fixture();
+            LigarOnline(f);
+            f.Confirmacao.Setup(c => c.IniciarConfirmacaoAsync(It.IsAny<CardapioPedidoPublico>(), It.IsAny<string>()))
+                .ReturnsAsync(new CardapioConfirmacaoDto { Modo = "mensagem_enviada" });
+            var request = Pedido();
+            request.FormaPagamento = "cartao_online";
+
+            var online = await f.Build().CriarPedidoAsync(request);
+            var presencial = await f.Build().CriarPedidoAsync(Pedido());
+
+            Assert.Equal(CardapioPedidoStatus.AguardandoPagamento, online.Status);
+            Assert.Equal(CardapioPedidoStatus.AguardandoAceite, presencial.Status);
         }
     }
 }

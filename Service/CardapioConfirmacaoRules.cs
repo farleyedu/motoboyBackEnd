@@ -14,10 +14,16 @@ namespace APIBack.Service
         /// <summary>Linhas antigas, anteriores a confirmacao pelo WhatsApp.</summary>
         public const string Pendente = "pendente";
         public const string AguardandoCodigo = "aguardando_codigo";
+        /// <summary>Pedido online com o numero confirmado esperando o dinheiro: o restaurante ainda nao ve.</summary>
+        public const string AguardandoPagamento = "aguardando_pagamento";
         public const string AguardandoAceite = "aguardando_aceite";
+        /// <summary>O atendente clicou em aceitar e o pedido real esta sendo criado: cancelar ou recusar nao passam mais.</summary>
+        public const string Aceitando = "aceitando";
         public const string Aceito = "aceito";
         public const string Recusado = "recusado";
         public const string Expirado = "expirado";
+        /// <summary>O cliente desistiu, a confirmacao foi abandonada depois de pagar ou a loja cancelou depois do aceite.</summary>
+        public const string Cancelado = "cancelado";
     }
 
     public static class CardapioCanalConfirmacao
