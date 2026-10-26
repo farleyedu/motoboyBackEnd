@@ -34,27 +34,23 @@ namespace APIBack.Tests.Unit
         public const string Phone2 = "800000000000002";
         public const string Code = "CODIGO-DO-EMBEDDED-SIGNUP-abc";
         public const string Token = "EAAG-token-de-integracao-do-cliente";
-        public const string Origem = "https://admin.zippy.test";
         public static readonly Guid Loja = Guid.NewGuid();
         public static readonly Guid OutraLoja = Guid.NewGuid();
 
         public static AtendimentoAtor Dono(Guid? loja = null, int usuario = 2) =>
             new(usuario, false, loja ?? Loja, (m, a) => m == "WhatsApp" && a == "configurar");
 
-        public static IConfiguration Config(bool habilitado = true, string? appReview = "aprovada", bool coexistencia = true, string? wabasZippy = null) =>
+        public static IConfiguration Config(string? wabasZippy = null) =>
             new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["Atendimento:ChaveToken"] = "chave-de-teste",
-                ["WhatsApp:EmbeddedSignup:Habilitado"] = habilitado ? "true" : "false",
-                ["WhatsApp:EmbeddedSignup:AppId"] = AppId,
-                ["WhatsApp:EmbeddedSignup:ConfigurationId"] = ConfigId,
-                ["WhatsApp:EmbeddedSignup:AppSecret"] = AppSecret,
-                ["WhatsApp:EmbeddedSignup:AppReview"] = appReview,
-                ["WhatsApp:EmbeddedSignup:CoexistenciaHabilitada"] = coexistencia ? "true" : "false",
-                ["WhatsApp:EmbeddedSignup:OrigensPermitidas"] = Origem,
-                ["WhatsApp:EmbeddedSignup:BusinessIdIntegrador"] = "600000000000999",
-                ["WhatsApp:WabaIds"] = wabasZippy
+                ["Atendimento:ChaveToken"] = "chave-de-teste", ["WhatsApp:WabaIds"] = wabasZippy
             }).Build();
+
+        /// <summary>O app ZippyGo como a Gestao cadastra na tela (o App Secret vai cifrado).</summary>
+        public static AppMetaConfig App(ITokenProtector p, bool aprovado = true) => new()
+        {
+            AppId = AppId, ConfigurationId = ConfigId, AppSecretCifrado = p.Proteger(AppSecret), AppReviewAprovado = aprovado, BusinessIdIntegrador = "600000000000999"
+        };
 
         public static NumeroMeta Numero(string id = Phone, string telefone = "+55 34 99821-0001", string? estado = "PENDING",
             string? verificacao = "VERIFIED", bool? noApp = null) => new(id, telefone, "Pizzaria Teste", estado, verificacao, "NOT_APPLICABLE", noApp);
@@ -174,6 +170,7 @@ namespace APIBack.Tests.Unit
         public readonly Dictionary<Guid, AutorizacaoMeta> Autorizacoes = new();
         public CanaisEmMemoria? Canais { get; set; }
         public bool RecusarReserva { get; set; }
+        public AppMetaConfig? App { get; set; }
 
         private static T Copia<T>(T v) => JsonSerializer.Deserialize<T>(JsonSerializer.Serialize(v))!;
 
@@ -225,6 +222,9 @@ namespace APIBack.Tests.Unit
             Task.FromResult(Autorizacoes.Values.Count(a => a.WabaId == waba && a.Id != exceto && a.Estado == EstadoAutorizacao.Ativa));
         public Task<int> ContarCanaisDaAutorizacaoAsync(Guid id, Guid exceto) =>
             Task.FromResult(Canais?.Itens.Values.Count(c => c.IdAutorizacaoMeta == id && c.Id != exceto && c.Status != StatusCanal.Inativo) ?? 0);
+
+        public Task<AppMetaConfig?> ObterAppAsync() => Task.FromResult(App == null ? null : Copia(App));
+        public Task SalvarAppAsync(AppMetaConfig app) { App = Copia(app); return Task.CompletedTask; }
 
         public Task<int> RevogarPorWabaAsync(string waba, string? app, string motivo)
         {
@@ -334,15 +334,6 @@ namespace APIBack.Tests.Unit
         }
 
         [Fact]
-        public void Origem_do_painel_confere_quando_configurada()
-        {
-            Assert.True(ConexaoMetaRegras.OrigemPermitida(new[] { Es.Origem }, Es.Origem + "/"));
-            Assert.False(ConexaoMetaRegras.OrigemPermitida(new[] { Es.Origem }, "https://evil.test"));
-            Assert.False(ConexaoMetaRegras.OrigemPermitida(new[] { Es.Origem }, ""));
-            Assert.True(ConexaoMetaRegras.OrigemPermitida(Array.Empty<string>(), null));
-        }
-
-        [Fact]
         public void Debug_token_le_permissoes_e_wabas_autorizadas_dos_granular_scopes()
         {
             using var doc = JsonDocument.Parse(@"{""app_id"":""900000000000001"",""is_valid"":true,""expires_at"":0,
@@ -372,19 +363,29 @@ namespace APIBack.Tests.Unit
         }
 
         [Fact]
-        public void Configuracao_ausente_fica_indisponivel_e_lista_as_pendencias_sem_inventar_valores()
+        public void Sem_cadastro_na_tela_fica_indisponivel_e_lista_as_pendencias_sem_inventar_valores()
         {
-            var cfg = ConfigEmbeddedSignup.Ler(new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
-            {
-                ["WhatsApp:EmbeddedSignup:Habilitado"] = "true",
-                ["WhatsApp:EmbeddedSignup:AppId"] = "__SET_IN_ENV__"
-            }).Build());
+            var cfg = ConfigEmbeddedSignup.De(null, Es.Config(), WaTeste.Protetor());
 
             Assert.False(cfg.Configurado);
             Assert.Null(cfg.AppId);
             Assert.False(cfg.PermissoesAprovadas);
-            Assert.Contains(cfg.Pendencias(), p => p.Contains("ConfigurationId"));
-            Assert.Contains(cfg.Pendencias(), p => p.Contains("App Review"));
+            Assert.Contains(cfg.Pendencias(), p => p.Contains("Configuration ID"));
+            Assert.Contains(cfg.Pendencias(), p => p.Contains("aprovou"));
+        }
+
+        [Fact]
+        public void App_secret_vazio_na_tela_usa_o_do_webhook_global()
+        {
+            var p = WaTeste.Protetor();
+            var servidor = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?> { ["Automation:Meta:AppSecret"] = "segredo-do-webhook-global-123" }).Build();
+
+            var semNaTela = ConfigEmbeddedSignup.De(new AppMetaConfig { AppId = Es.AppId, ConfigurationId = Es.ConfigId }, servidor, p);
+            var naTela = ConfigEmbeddedSignup.De(Es.App(p), servidor, p);
+
+            Assert.Equal(("segredo-do-webhook-global-123", "servidor"), (semNaTela.AppSecret, semNaTela.AppSecretOrigem));
+            Assert.True(semNaTela.Configurado);
+            Assert.Equal((Es.AppSecret, "tela"), (naTela.AppSecret, naTela.AppSecretOrigem));
         }
     }
 
@@ -405,6 +406,7 @@ namespace APIBack.Tests.Unit
             public Fixture()
             {
                 Repo.Canais = Canais;
+                Repo.App = Es.App(Protetor);
                 Canais.Autorizacao = id => id.HasValue && Repo.Autorizacoes.TryGetValue(id.Value, out var a) ? a : null;
                 Catalogo.Setup(c => c.LojaExisteAsync(It.IsAny<Guid>())).ReturnsAsync(true);
                 Catalogo.Setup(c => c.ListarServicosDaLojaAsync(It.IsAny<Guid>())).ReturnsAsync(new[] { new ServicoDaLoja { Codigo = "delivery", Ativo = true } });
@@ -419,6 +421,9 @@ namespace APIBack.Tests.Unit
                     .Callback<string, string, string>((_, _, pin) => Registros.Add(pin)).ReturnsAsync(MetaResultado<bool>.Sucesso(true));
                 Meta.Setup(m => m.SincronizarAppBusinessAsync(It.IsAny<string>(), Es.Token, It.IsAny<string>())).ReturnsAsync(MetaResultado<bool>.Sucesso(true));
                 Meta.Setup(m => m.DesinscreverAppAsync(It.IsAny<string>(), Es.Token)).ReturnsAsync(MetaResultado<bool>.Sucesso(true));
+                Meta.Setup(m => m.ObterAppAsync(It.IsAny<string>(), It.IsAny<string>()))
+                    .ReturnsAsync((string app, string segredo) => app == Es.AppId && segredo == Es.AppSecret
+                        ? MetaResultado<string>.Sucesso("ZippyGo") : MetaResultado<string>.Erro(new MetaFalha(false, 400, 190, null, "Invalid OAuth access token", null)));
                 Meta.Setup(m => m.AssinaturasDoAppAsync(Es.AppId, Es.AppSecret)).ReturnsAsync(MetaResultado<IReadOnlyList<AssinaturaApp>>.Sucesso(new[]
                 {
                     new AssinaturaApp("whatsapp_business_account", true, new[] { "messages", "account_update", "smb_message_echoes", "history", "smb_app_state_sync" })
@@ -440,7 +445,7 @@ namespace APIBack.Tests.Unit
             public async Task<(ConexaoMetaService S, TentativaIniciadaView T)> IniciarAsync(Guid? canalId = null, bool coexistencia = false)
             {
                 var s = Build();
-                return (s, await s.IniciarAsync(Es.Dono(), Es.Loja, new IniciarConexaoMetaRequest(canalId, coexistencia), Es.Origem));
+                return (s, await s.IniciarAsync(Es.Dono(), Es.Loja, new IniciarConexaoMetaRequest(canalId, coexistencia)));
             }
 
             public static ConcluirConexaoMetaRequest Fim(TentativaIniciadaView t, string evento = EventoFluxo.Finish, string? waba = Es.Waba,
@@ -462,8 +467,10 @@ namespace APIBack.Tests.Unit
         [Fact]
         public async Task App_review_pendente_fica_em_modo_teste_e_sem_config_fica_indisponivel()
         {
-            var teste = new Fixture { Config = Es.Config(appReview: "em_andamento") };
-            var semConfig = new Fixture { Config = Es.Config(habilitado: false) };
+            var teste = new Fixture();
+            teste.Repo.App = Es.App(teste.Protetor, aprovado: false);
+            var semConfig = new Fixture();
+            semConfig.Repo.App = null;
 
             var a = await teste.Build().ConfiguracaoAsync(Es.Dono(), Es.Loja);
             var b = await semConfig.Build().ConfiguracaoAsync(Es.Dono(), Es.Loja);
@@ -473,25 +480,22 @@ namespace APIBack.Tests.Unit
             Assert.False(b.Disponivel);
             Assert.Null(b.AppId);
             var erro = await Assert.ThrowsAsync<WhatsappException>(() =>
-                semConfig.Build().IniciarAsync(Es.Dono(), Es.Loja, new IniciarConexaoMetaRequest(), Es.Origem));
+                semConfig.Build().IniciarAsync(Es.Dono(), Es.Loja, new IniciarConexaoMetaRequest()));
             Assert.Equal((ConexaoMetaCodigos.Indisponivel, 503), (erro.Erro.Codigo, erro.Http));
         }
 
         [Fact]
-        public async Task Iniciar_exige_permissao_e_origem_do_painel_e_guarda_so_o_hash_do_state()
+        public async Task Iniciar_exige_permissao_e_guarda_so_o_hash_do_state()
         {
             var f = new Fixture();
             var s = f.Build();
 
             await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-                s.IniciarAsync(new AtendimentoAtor(9, false, Es.Loja, (_, _) => false), Es.Loja, new IniciarConexaoMetaRequest(), Es.Origem));
+                s.IniciarAsync(new AtendimentoAtor(9, false, Es.Loja, (_, _) => false), Es.Loja, new IniciarConexaoMetaRequest()));
             await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
-                s.IniciarAsync(Es.Dono(Es.OutraLoja), Es.Loja, new IniciarConexaoMetaRequest(), Es.Origem));
-            var origem = await Assert.ThrowsAsync<WhatsappException>(() =>
-                s.IniciarAsync(Es.Dono(), Es.Loja, new IniciarConexaoMetaRequest(), "https://evil.test"));
-            Assert.Equal(ConexaoMetaCodigos.OrigemInvalida, origem.Erro.Codigo);
+                s.IniciarAsync(Es.Dono(Es.OutraLoja), Es.Loja, new IniciarConexaoMetaRequest()));
 
-            var t = await s.IniciarAsync(Es.Dono(), Es.Loja, new IniciarConexaoMetaRequest(), Es.Origem);
+            var t = await s.IniciarAsync(Es.Dono(), Es.Loja, new IniciarConexaoMetaRequest());
             var gravada = f.Repo.Tentativas[t.TentativaId];
             Assert.NotEqual(t.State, gravada.StateHash);
             Assert.DoesNotContain(t.State, JsonSerializer.Serialize(gravada));
@@ -504,7 +508,7 @@ namespace APIBack.Tests.Unit
             var f = new Fixture();
             var (s, t) = await f.IniciarAsync();
 
-            var estado = await s.ConcluirAsync(Es.Dono(), Es.Loja, Fixture.Fim(t), Es.Origem);
+            var estado = await s.ConcluirAsync(Es.Dono(), Es.Loja, Fixture.Fim(t));
 
             var canal = Assert.Single(f.Canais.Itens.Values);
             Assert.Equal(OrigemCanal.Autorizado, canal.Origem);
@@ -541,11 +545,11 @@ namespace APIBack.Tests.Unit
             var (s, t) = await f.IniciarAsync();
 
             var state = await Assert.ThrowsAsync<WhatsappException>(() =>
-                s.ConcluirAsync(Es.Dono(), Es.Loja, Fixture.Fim(t) with { State = "forjado" }, Es.Origem));
+                s.ConcluirAsync(Es.Dono(), Es.Loja, Fixture.Fim(t) with { State = "forjado" }));
             var usuario = await Assert.ThrowsAsync<WhatsappException>(() =>
-                s.ConcluirAsync(Es.Dono(usuario: 77), Es.Loja, Fixture.Fim(t), Es.Origem));
+                s.ConcluirAsync(Es.Dono(usuario: 77), Es.Loja, Fixture.Fim(t)));
             var loja = await Assert.ThrowsAsync<WhatsappException>(() =>
-                s.ConcluirAsync(Es.Dono(Es.OutraLoja), Es.OutraLoja, Fixture.Fim(t), Es.Origem));
+                s.ConcluirAsync(Es.Dono(Es.OutraLoja), Es.OutraLoja, Fixture.Fim(t)));
 
             Assert.Equal(403, state.Http);
             Assert.Equal(403, usuario.Http);
@@ -558,9 +562,9 @@ namespace APIBack.Tests.Unit
         {
             var f = new Fixture();
             var (s, t) = await f.IniciarAsync();
-            await s.ConcluirAsync(Es.Dono(), Es.Loja, Fixture.Fim(t), Es.Origem);
+            await s.ConcluirAsync(Es.Dono(), Es.Loja, Fixture.Fim(t));
 
-            var replay = await Assert.ThrowsAsync<WhatsappException>(() => s.ConcluirAsync(Es.Dono(), Es.Loja, Fixture.Fim(t), Es.Origem));
+            var replay = await Assert.ThrowsAsync<WhatsappException>(() => s.ConcluirAsync(Es.Dono(), Es.Loja, Fixture.Fim(t)));
 
             Assert.Equal((ConexaoMetaCodigos.TentativaEmUso, 409), (replay.Erro.Codigo, replay.Http));
             f.Meta.Verify(m => m.TrocarCodigoAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()), Times.Once);
@@ -573,7 +577,7 @@ namespace APIBack.Tests.Unit
             var (s, t) = await f.IniciarAsync();
             f.Repo.RecusarReserva = true;
 
-            var erro = await Assert.ThrowsAsync<WhatsappException>(() => s.ConcluirAsync(Es.Dono(), Es.Loja, Fixture.Fim(t), Es.Origem));
+            var erro = await Assert.ThrowsAsync<WhatsappException>(() => s.ConcluirAsync(Es.Dono(), Es.Loja, Fixture.Fim(t)));
 
             Assert.Equal(ConexaoMetaCodigos.TentativaEmUso, erro.Erro.Codigo);
         }
@@ -585,7 +589,7 @@ namespace APIBack.Tests.Unit
             var (s, t) = await f.IniciarAsync();
             f.Repo.Tentativas[t.TentativaId].ExpiraEm = DateTime.UtcNow.AddSeconds(-1);
 
-            var erro = await Assert.ThrowsAsync<WhatsappException>(() => s.ConcluirAsync(Es.Dono(), Es.Loja, Fixture.Fim(t), Es.Origem));
+            var erro = await Assert.ThrowsAsync<WhatsappException>(() => s.ConcluirAsync(Es.Dono(), Es.Loja, Fixture.Fim(t)));
 
             Assert.Equal((ConexaoMetaCodigos.TentativaExpirada, 410), (erro.Erro.Codigo, erro.Http));
             Assert.Equal(EstadoTentativa.Expirada, f.Repo.Tentativas[t.TentativaId].Estado);
@@ -598,7 +602,7 @@ namespace APIBack.Tests.Unit
             var (s, t) = await f.IniciarAsync();
 
             var estado = await s.ConcluirAsync(Es.Dono(), Es.Loja,
-                new ConcluirConexaoMetaRequest(t.TentativaId, t.State, EventoFluxo.Cancel, EtapaCancelada: "PHONE_NUMBER_SETUP"), Es.Origem);
+                new ConcluirConexaoMetaRequest(t.TentativaId, t.State, EventoFluxo.Cancel, EtapaCancelada: "PHONE_NUMBER_SETUP"));
 
             Assert.Equal(EstadoTentativa.Cancelada, estado.EstadoTentativa);
             Assert.Equal(ConexaoMetaCodigos.FluxoCancelado, estado.ErroCodigo);
@@ -615,7 +619,7 @@ namespace APIBack.Tests.Unit
                 .ReturnsAsync(MetaResultado<TokenTrocado>.Erro(new MetaFalha(false, 400, 100, null, "code expired", null)));
             var (s, t) = await f.IniciarAsync();
 
-            var erro = await Assert.ThrowsAsync<WhatsappException>(() => s.ConcluirAsync(Es.Dono(), Es.Loja, Fixture.Fim(t), Es.Origem));
+            var erro = await Assert.ThrowsAsync<WhatsappException>(() => s.ConcluirAsync(Es.Dono(), Es.Loja, Fixture.Fim(t)));
 
             Assert.Equal(ConexaoMetaCodigos.CodigoInvalido, erro.Erro.Codigo);
             Assert.Empty(f.Repo.Autorizacoes);
@@ -631,7 +635,7 @@ namespace APIBack.Tests.Unit
                 var f = new Fixture();
                 preparar(f);
                 var (s, t) = await f.IniciarAsync();
-                var erro = await Assert.ThrowsAsync<WhatsappException>(() => s.ConcluirAsync(Es.Dono(), Es.Loja, (pedido ?? (x => Fixture.Fim(x)))(t), Es.Origem));
+                var erro = await Assert.ThrowsAsync<WhatsappException>(() => s.ConcluirAsync(Es.Dono(), Es.Loja, (pedido ?? (x => Fixture.Fim(x)))(t)));
                 Assert.Empty(f.Canais.Itens);
                 f.Meta.Verify(m => m.RegistrarNumeroAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>()), Times.Never);
                 return erro.Erro.Codigo;
@@ -653,7 +657,7 @@ namespace APIBack.Tests.Unit
             f.Numeros(Es.Numero(Es.Phone), Es.Numero(Es.Phone2, "+55 34 99821-0002", "CONNECTED"));
             var (s, t) = await f.IniciarAsync();
 
-            var estado = await s.ConcluirAsync(Es.Dono(), Es.Loja, Fixture.Fim(t, phone: null), Es.Origem);
+            var estado = await s.ConcluirAsync(Es.Dono(), Es.Loja, Fixture.Fim(t, phone: null));
 
             Assert.Equal(EstadoTentativa.Autorizada, estado.EstadoTentativa);
             Assert.Contains("escolher_numero", estado.Acoes);
@@ -682,7 +686,7 @@ namespace APIBack.Tests.Unit
             var (s, t) = await f.IniciarAsync();
 
             // O navegador aponta o numero da outra loja: nao e escolhido sozinho; o unico livre e.
-            var estado = await s.ConcluirAsync(Es.Dono(), Es.Loja, Fixture.Fim(t, phone: Es.Phone), Es.Origem);
+            var estado = await s.ConcluirAsync(Es.Dono(), Es.Loja, Fixture.Fim(t, phone: Es.Phone));
 
             Assert.False(estado.Numeros.Single(n => n.PhoneNumberId == Es.Phone).Selecionavel);
             Assert.Equal(Es.OutraLoja, f.Canais.Itens[deOutra.Id].IdEstabelecimento);
@@ -700,7 +704,7 @@ namespace APIBack.Tests.Unit
                 IdEstabelecimento = Es.OutraLoja, PhoneNumberId = Es.Phone, NumeroE164 = "+5534998210001", Status = StatusCanal.Ativo
             };
             var (s, t) = await f.IniciarAsync();
-            await s.ConcluirAsync(Es.Dono(), Es.Loja, Fixture.Fim(t, phone: null), Es.Origem);
+            await s.ConcluirAsync(Es.Dono(), Es.Loja, Fixture.Fim(t, phone: null));
             // Libera a tentativa para a escolha manual (o concluir ativou o unico livre).
             f.Repo.Tentativas[t.TentativaId].Estado = EstadoTentativa.Autorizada;
 
@@ -718,7 +722,7 @@ namespace APIBack.Tests.Unit
             var (s, t) = await f.IniciarAsync(coexistencia: true);
             Assert.Equal("whatsapp_business_app_onboarding", t.Extras["featureType"]);
 
-            var estado = await s.ConcluirAsync(Es.Dono(), Es.Loja, Fixture.Fim(t, EventoFluxo.FinishCoexistencia), Es.Origem);
+            var estado = await s.ConcluirAsync(Es.Dono(), Es.Loja, Fixture.Fim(t, EventoFluxo.FinishCoexistencia));
 
             var canal = Assert.Single(f.Canais.Itens.Values);
             Assert.True(canal.Coexistencia);
@@ -730,15 +734,46 @@ namespace APIBack.Tests.Unit
         }
 
         [Fact]
-        public async Task Coexistencia_desligada_explica_antes_de_qualquer_alteracao()
+        public async Task So_a_gestao_cadastra_o_app_e_o_app_secret_nunca_volta()
         {
-            var f = new Fixture { Config = Es.Config(coexistencia: false) };
+            var f = new Fixture();
+            f.Repo.App = null;
+            var s = f.Build();
+            var pedido = new SalvarAppMetaRequest(Es.AppId, Es.ConfigId, Es.AppSecret, true, null);
+
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() => s.SalvarAppAsync(Es.Dono(), pedido));
+            await Assert.ThrowsAsync<UnauthorizedAccessException>(() => s.ObterAppAsync(Es.Dono()));
+
+            var salvo = await s.SalvarAppAsync(WaTeste.Gestao, pedido);
+
+            Assert.True(salvo.Disponivel);
+            Assert.True(salvo.TemAppSecret);
+            Assert.Equal("tela", salvo.AppSecretOrigem);
+            Assert.DoesNotContain(Es.AppSecret, JsonSerializer.Serialize(salvo));
+            Assert.NotEqual(Es.AppSecret, f.Repo.App!.AppSecretCifrado);
+            // Agora a loja ja consegue conectar.
+            Assert.True((await s.ConfiguracaoAsync(Es.Dono(), Es.Loja)).Disponivel);
+        }
+
+        [Fact]
+        public async Task App_secret_errado_nao_e_gravado_e_vazio_mantem_o_atual()
+        {
+            var f = new Fixture();
+            var s = f.Build();
+            var antes = f.Repo.App!.AppSecretCifrado;
 
             var erro = await Assert.ThrowsAsync<WhatsappException>(() =>
-                f.Build().IniciarAsync(Es.Dono(), Es.Loja, new IniciarConexaoMetaRequest(Coexistencia: true), Es.Origem));
+                s.SalvarAppAsync(WaTeste.Gestao, new SalvarAppMetaRequest(Es.AppId, Es.ConfigId, "chave-errada-0123456789abcdef", true, null)));
+            Assert.Equal(("appSecret", WhatsappCodigos.AppSecretInvalido), (erro.Erro.Campo, erro.Erro.Codigo));
+            Assert.Equal(antes, f.Repo.App!.AppSecretCifrado);
 
-            Assert.Equal(ConexaoMetaCodigos.CoexistenciaIndisponivel, erro.Erro.Codigo);
-            Assert.Empty(f.Repo.Tentativas);
+            await s.SalvarAppAsync(WaTeste.Gestao, new SalvarAppMetaRequest(Es.AppId, "900000000000099", "", false, "600000000000001"));
+            Assert.Equal(antes, f.Repo.App!.AppSecretCifrado);
+            Assert.Equal(("900000000000099", false), (f.Repo.App.ConfigurationId, f.Repo.App.AppReviewAprovado));
+
+            var campo = await Assert.ThrowsAsync<WhatsappException>(() =>
+                s.SalvarAppAsync(WaTeste.Gestao, new SalvarAppMetaRequest("abc", Es.ConfigId, null, true, null)));
+            Assert.Equal("appId", campo.Erro.Campo);
         }
 
         [Fact]
@@ -750,7 +785,7 @@ namespace APIBack.Tests.Unit
                 .ReturnsAsync(MetaResultado<bool>.Sucesso(true));
             var (s, t) = await f.IniciarAsync();
 
-            var estado = await s.ConcluirAsync(Es.Dono(), Es.Loja, Fixture.Fim(t), Es.Origem);
+            var estado = await s.ConcluirAsync(Es.Dono(), Es.Loja, Fixture.Fim(t));
 
             Assert.Equal(EstadoTentativa.Autorizada, estado.EstadoTentativa);
             Assert.Contains("informar_pin", estado.Acoes);
@@ -768,13 +803,13 @@ namespace APIBack.Tests.Unit
         {
             var f = new Fixture();
             var (s, t) = await f.IniciarAsync();
-            await s.ConcluirAsync(Es.Dono(), Es.Loja, Fixture.Fim(t), Es.Origem);
+            await s.ConcluirAsync(Es.Dono(), Es.Loja, Fixture.Fim(t));
             var canalId = Assert.Single(f.Canais.Itens.Keys);
             f.Repo.Autorizacoes.Values.Single().Estado = EstadoAutorizacao.Revogada;
 
-            var r = await s.ReconectarAsync(Es.Dono(), Es.Loja, canalId, Es.Origem);
+            var r = await s.ReconectarAsync(Es.Dono(), Es.Loja, canalId);
             var estado = await s.ConcluirAsync(Es.Dono(), Es.Loja,
-                new ConcluirConexaoMetaRequest(r.TentativaId, r.State, EventoFluxo.Finish, Es.Code, Es.Waba, null), Es.Origem);
+                new ConcluirConexaoMetaRequest(r.TentativaId, r.State, EventoFluxo.Finish, Es.Code, Es.Waba, null));
 
             Assert.Equal("reconectar", r.Modo);
             Assert.Equal(canalId, Assert.Single(f.Canais.Itens.Keys));
@@ -792,7 +827,7 @@ namespace APIBack.Tests.Unit
             };
             var (s, t) = await f.IniciarAsync();
 
-            var estado = await s.ConcluirAsync(Es.Dono(), Es.Loja, Fixture.Fim(t), Es.Origem);
+            var estado = await s.ConcluirAsync(Es.Dono(), Es.Loja, Fixture.Fim(t));
 
             Assert.Equal(ConexaoMetaCodigos.ConexaoExistente, estado.ErroCodigo);
             Assert.Equal(OrigemCanal.Proprio, Assert.Single(f.Canais.Itens.Values).Origem);
@@ -803,7 +838,7 @@ namespace APIBack.Tests.Unit
         {
             var f = new Fixture();
             var (s, t) = await f.IniciarAsync();
-            await s.ConcluirAsync(Es.Dono(), Es.Loja, Fixture.Fim(t), Es.Origem);
+            await s.ConcluirAsync(Es.Dono(), Es.Loja, Fixture.Fim(t));
             var canalId = Assert.Single(f.Canais.Itens.Keys);
             // Outro numero (de outra loja) usa a mesma WABA.
             f.Canais.Itens[Guid.NewGuid()] = new CanalWhatsapp
@@ -825,14 +860,14 @@ namespace APIBack.Tests.Unit
         {
             var livre = new Fixture();
             var (s, t) = await livre.IniciarAsync();
-            await s.ConcluirAsync(Es.Dono(), Es.Loja, Fixture.Fim(t), Es.Origem);
+            await s.ConcluirAsync(Es.Dono(), Es.Loja, Fixture.Fim(t));
             var r = await s.DesconectarAsync(Es.Dono(), Es.Loja, livre.Canais.Itens.Keys.Single());
             Assert.True(r.InscricaoRemovida);
             Assert.Equal(EstadoAutorizacao.Revogada, livre.Repo.Autorizacoes.Values.Single().Estado);
 
-            var daZippy = new Fixture { Config = Es.Config(wabasZippy: Es.Waba) };
+            var daZippy = new Fixture { Config = Es.Config(Es.Waba) };
             var (s2, t2) = await daZippy.IniciarAsync();
-            await s2.ConcluirAsync(Es.Dono(), Es.Loja, Fixture.Fim(t2), Es.Origem);
+            await s2.ConcluirAsync(Es.Dono(), Es.Loja, Fixture.Fim(t2));
             var r2 = await s2.DesconectarAsync(Es.Dono(), Es.Loja, daZippy.Canais.Itens.Keys.Single());
             Assert.False(r2.InscricaoRemovida);
             Assert.Equal("waba_da_zippy", r2.MotivoInscricaoMantida);
@@ -844,7 +879,7 @@ namespace APIBack.Tests.Unit
         {
             var f = new Fixture();
             var (s, t) = await f.IniciarAsync();
-            await s.ConcluirAsync(Es.Dono(), Es.Loja, Fixture.Fim(t), Es.Origem);
+            await s.ConcluirAsync(Es.Dono(), Es.Loja, Fixture.Fim(t));
             f.Meta.Setup(m => m.DepurarTokenAsync(Es.AppId, Es.AppSecret, Es.Token)).ReturnsAsync(MetaResultado<TokenInfo>.Sucesso(Es.Info(valido: false)));
 
             var d = await s.RevalidarAsync(Es.Dono(), Es.Loja, f.Canais.Itens.Keys.Single(), new RevalidarCanalRequest());
@@ -859,7 +894,7 @@ namespace APIBack.Tests.Unit
         {
             var f = new Fixture();
             var (s, t) = await f.IniciarAsync();
-            await s.ConcluirAsync(Es.Dono(), Es.Loja, Fixture.Fim(t), Es.Origem);
+            await s.ConcluirAsync(Es.Dono(), Es.Loja, Fixture.Fim(t));
             var canalId = f.Canais.Itens.Keys.Single();
             f.Meta.Invocations.Clear();
 
@@ -880,7 +915,7 @@ namespace APIBack.Tests.Unit
 
             await Assert.ThrowsAsync<KeyNotFoundException>(() => f.Build().RevalidarAsync(Es.Dono(), Es.Loja, canal.Id, new RevalidarCanalRequest()));
             await Assert.ThrowsAsync<KeyNotFoundException>(() => f.Build().DesconectarAsync(Es.Dono(), Es.Loja, canal.Id));
-            await Assert.ThrowsAsync<KeyNotFoundException>(() => f.Build().ReconectarAsync(Es.Dono(), Es.Loja, canal.Id, Es.Origem));
+            await Assert.ThrowsAsync<KeyNotFoundException>(() => f.Build().ReconectarAsync(Es.Dono(), Es.Loja, canal.Id));
         }
     }
 

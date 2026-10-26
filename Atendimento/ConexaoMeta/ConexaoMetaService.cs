@@ -14,13 +14,13 @@ namespace APIBack.Atendimento.ConexaoMeta
     {
         /// <summary>O que o painel precisa para abrir o Embedded Signup (App ID, Configuration ID, modo). Nunca segredos.</summary>
         Task<ConfiguracaoConexaoMetaView> ConfiguracaoAsync(AtendimentoAtor ator, Guid estabelecimentoId);
-        /// <summary>Cria a tentativa (state contra CSRF, prazo) para esta loja. <paramref name="origem"/> e o cabecalho Origin.</summary>
-        Task<TentativaIniciadaView> IniciarAsync(AtendimentoAtor ator, Guid estabelecimentoId, IniciarConexaoMetaRequest request, string? origem);
+        /// <summary>Cria a tentativa (state contra CSRF, prazo) para esta loja.</summary>
+        Task<TentativaIniciadaView> IniciarAsync(AtendimentoAtor ator, Guid estabelecimentoId, IniciarConexaoMetaRequest request);
         /// <summary>
         /// Recebe o fim do Embedded Signup: confere state/loja/usuario/prazo, troca o codigo (so aqui, no servidor), confere token,
         /// permissoes e WABA na Meta e grava a autorizacao. Com um numero claro, ja ativa; senao devolve os numeros para escolher.
         /// </summary>
-        Task<EstadoConexaoMetaView> ConcluirAsync(AtendimentoAtor ator, Guid estabelecimentoId, ConcluirConexaoMetaRequest request, string? origem);
+        Task<EstadoConexaoMetaView> ConcluirAsync(AtendimentoAtor ator, Guid estabelecimentoId, ConcluirConexaoMetaRequest request);
         /// <summary>Escolhe (ou tenta de novo) o numero de uma tentativa ja autorizada: sem repetir a autorizacao na Meta.</summary>
         Task<EstadoConexaoMetaView> AtivarAsync(AtendimentoAtor ator, Guid estabelecimentoId, AtivarNumeroMetaRequest request);
         /// <summary>Andamento da tentativa (a informada ou a mais recente da loja).</summary>
@@ -28,9 +28,13 @@ namespace APIBack.Atendimento.ConexaoMeta
         /// <summary>Diagnostico real do canal (qualquer origem); com Reparar, refaz so as etapas seguras que faltam.</summary>
         Task<DiagnosticoConexaoView> RevalidarAsync(AtendimentoAtor ator, Guid estabelecimentoId, Guid canalId, RevalidarCanalRequest request);
         /// <summary>Nova autorizacao para um canal existente: mesmo id, conversas e configuracoes.</summary>
-        Task<TentativaIniciadaView> ReconectarAsync(AtendimentoAtor ator, Guid estabelecimentoId, Guid canalId, string? origem);
+        Task<TentativaIniciadaView> ReconectarAsync(AtendimentoAtor ator, Guid estabelecimentoId, Guid canalId);
         /// <summary>Desconecta do Zippy sem excluir nada na Meta e sem afetar outra loja que use a mesma WABA.</summary>
         Task<DesconexaoView> DesconectarAsync(AtendimentoAtor ator, Guid estabelecimentoId, Guid canalId);
+        /// <summary>Gestao: o app ZippyGo cadastrado na tela (sem o App Secret) e as verificacoes de agora na Meta.</summary>
+        Task<AppMetaView> ObterAppAsync(AtendimentoAtor ator);
+        /// <summary>Gestao: grava o app ZippyGo. Confere App ID + App Secret na Meta antes de gravar.</summary>
+        Task<AppMetaView> SalvarAppAsync(AtendimentoAtor ator, SalvarAppMetaRequest request);
     }
 
     public sealed class ConexaoMetaService : IConexaoMetaService
@@ -66,25 +70,25 @@ namespace APIBack.Atendimento.ConexaoMeta
             _agora = agora ?? (() => DateTime.UtcNow);
         }
 
-        private ConfigEmbeddedSignup Config => ConfigEmbeddedSignup.Ler(_configuration);
+        private async Task<ConfigEmbeddedSignup> ConfigAsync() => ConfigEmbeddedSignup.De(await _repo.ObterAppAsync(), _configuration, _token);
 
         // ---- configuracao -------------------------------------------------------------------------------------------
 
-        public Task<ConfiguracaoConexaoMetaView> ConfiguracaoAsync(AtendimentoAtor ator, Guid estabelecimentoId)
+        public async Task<ConfiguracaoConexaoMetaView> ConfiguracaoAsync(AtendimentoAtor ator, Guid estabelecimentoId)
         {
             ServicosDaLojaService.ExigirLeitura(ator, estabelecimentoId);
-            var cfg = Config;
+            var cfg = await ConfigAsync();
             var disponivel = cfg.Configurado && _token.Configurado;
             var pendencias = cfg.Pendencias().ToList();
             if (!_token.Configurado) pendencias.Add("Atendimento__ChaveToken nao configurada: o servidor nao consegue guardar o token com seguranca.");
             var modo = !disponivel ? "indisponivel" : cfg.PermissoesAprovadas ? "producao" : "teste";
 
-            return Task.FromResult(new ConfiguracaoConexaoMetaView(
+            return new ConfiguracaoConexaoMetaView(
                 disponivel, modo, disponivel ? cfg.AppId : null, disponivel ? cfg.ConfigurationId : null, cfg.SdkVersion,
-                disponivel && cfg.CoexistenciaHabilitada, ConfigEmbeddedSignup.PermissoesExigidas,
-                // A loja ve o que a impede; detalhes de variavel de ambiente so para a Gestao.
+                disponivel, ConfigEmbeddedSignup.PermissoesExigidas,
+                // A loja ve o que a impede; o detalhe do que falta configurar so para a Gestao.
                 ator.Gestao || pendencias.Count == 0 ? pendencias : new List<string> { ResumoPendencia(cfg, disponivel) },
-                PodeConfigurar(ator, estabelecimentoId)));
+                PodeConfigurar(ator, estabelecimentoId));
         }
 
         private static string ResumoPendencia(ConfigEmbeddedSignup cfg, bool disponivel) =>
@@ -94,17 +98,17 @@ namespace APIBack.Atendimento.ConexaoMeta
 
         // ---- iniciar / reconectar ------------------------------------------------------------------------------------
 
-        public Task<TentativaIniciadaView> IniciarAsync(AtendimentoAtor ator, Guid estabelecimentoId, IniciarConexaoMetaRequest request, string? origem) =>
-            CriarTentativaAsync(ator, estabelecimentoId, request.CanalId, request.Coexistencia, origem);
+        public Task<TentativaIniciadaView> IniciarAsync(AtendimentoAtor ator, Guid estabelecimentoId, IniciarConexaoMetaRequest request) =>
+            CriarTentativaAsync(ator, estabelecimentoId, request.CanalId, request.Coexistencia);
 
-        public Task<TentativaIniciadaView> ReconectarAsync(AtendimentoAtor ator, Guid estabelecimentoId, Guid canalId, string? origem) =>
-            CriarTentativaAsync(ator, estabelecimentoId, canalId, null, origem);
+        public Task<TentativaIniciadaView> ReconectarAsync(AtendimentoAtor ator, Guid estabelecimentoId, Guid canalId) =>
+            CriarTentativaAsync(ator, estabelecimentoId, canalId, null);
 
         private async Task<TentativaIniciadaView> CriarTentativaAsync(
-            AtendimentoAtor ator, Guid estabelecimentoId, Guid? canalId, bool? coexistenciaPedida, string? origem)
+            AtendimentoAtor ator, Guid estabelecimentoId, Guid? canalId, bool? coexistenciaPedida)
         {
             ExigirDonoOuGestao(ator, "meta_iniciar", estabelecimentoId);
-            var cfg = ExigirDisponivel(origem);
+            var cfg = await ExigirDisponivelAsync();
             if (!await _catalogo.LojaExisteAsync(estabelecimentoId)) throw new KeyNotFoundException("Estabelecimento nao encontrado.");
 
             CanalWhatsapp? canal = null;
@@ -117,14 +121,13 @@ namespace APIBack.Atendimento.ConexaoMeta
 
             // Reconectar mantem a escolha de coexistencia do numero (desligar a coexistencia nao e algo que o Zippy faca sozinho).
             var coexistencia = coexistenciaPedida ?? canal?.Coexistencia ?? false;
-            if (coexistencia && !cfg.CoexistenciaHabilitada) throw ConexaoMetaErros.Excecao(ConexaoMetaErros.CoexistenciaIndisponivel(), 422);
 
             var state = ConexaoMetaRegras.GerarState();
             var tentativa = new TentativaConexao
             {
                 Id = Guid.NewGuid(), IdEstabelecimento = estabelecimentoId, UsuarioId = ator.UsuarioId, StateHash = ConexaoMetaRegras.HashState(state),
                 Modo = canal != null ? "reconectar" : "conectar", IdCanal = canal?.Id, Coexistencia = coexistencia,
-                ExpiraEm = _agora().AddMinutes(cfg.MinutosParaAutorizar)
+                ExpiraEm = _agora().AddMinutes(ConfigEmbeddedSignup.MinutosParaAutorizar)
             };
 
             if (!await _repo.CriarTentativaAsync(tentativa)) throw ConexaoMetaErros.Excecao(ConexaoMetaErros.TentativaEmUso(), 409);
@@ -142,10 +145,10 @@ namespace APIBack.Atendimento.ConexaoMeta
         // ---- concluir --------------------------------------------------------------------------------------------------
 
         public async Task<EstadoConexaoMetaView> ConcluirAsync(
-            AtendimentoAtor ator, Guid estabelecimentoId, ConcluirConexaoMetaRequest request, string? origem)
+            AtendimentoAtor ator, Guid estabelecimentoId, ConcluirConexaoMetaRequest request)
         {
             ExigirDonoOuGestao(ator, "meta_concluir", estabelecimentoId);
-            var cfg = ExigirDisponivel(origem);
+            var cfg = await ExigirDisponivelAsync();
             var t = await TentativaDaLojaAsync(estabelecimentoId, request.TentativaId);
 
             // Mesma loja, mesmo usuario e o state que so este navegador recebeu: sem isso nada acontece (CSRF/troca de loja).
@@ -223,7 +226,6 @@ namespace APIBack.Atendimento.ConexaoMeta
             if (string.IsNullOrEmpty(code) || code.Length > 2048) throw ConexaoMetaErros.Excecao(ConexaoMetaErros.CodigoInvalido(), 422);
 
             var coexistencia = t.Coexistencia || t.EventoFluxo == EventoFluxo.FinishCoexistencia;
-            if (coexistencia && !cfg.CoexistenciaHabilitada) throw ConexaoMetaErros.Excecao(ConexaoMetaErros.CoexistenciaIndisponivel(), 422);
 
             // 1) codigo -> token (30 s de validade: e a primeira coisa a fazer).
             var troca = await _meta.TrocarCodigoAsync(cfg.AppId!, cfg.AppSecret!, code);
@@ -280,7 +282,7 @@ namespace APIBack.Atendimento.ConexaoMeta
             t.Etapa = EtapaConexao.Numero;
             t.ErroCodigo = null;
             t.ErroMensagem = null;
-            t.ExpiraEm = _agora().AddHours(cfg.HorasParaAtivar);
+            t.ExpiraEm = _agora().AddHours(ConfigEmbeddedSignup.HorasParaAtivar);
 
             await _canais.RegistrarAuditoriaAsync(t.IdCanal, "meta_autorizado", null, t.IdEstabelecimento, ator.UsuarioId,
                 JsonSerializer.Serialize(new { tentativa = t.Id, autorizacao = autorizacaoId, waba, evento = t.EventoFluxo, coexistencia,
@@ -344,7 +346,7 @@ namespace APIBack.Atendimento.ConexaoMeta
         public async Task<EstadoConexaoMetaView> AtivarAsync(AtendimentoAtor ator, Guid estabelecimentoId, AtivarNumeroMetaRequest request)
         {
             ExigirDonoOuGestao(ator, "meta_ativar", estabelecimentoId);
-            var cfg = ExigirDisponivel(null);
+            var cfg = await ExigirDisponivelAsync();
             var t = await TentativaDaLojaAsync(estabelecimentoId, request.TentativaId);
             if (t.UsuarioId != ator.UsuarioId && !ator.Gestao) throw ConexaoMetaErros.Excecao(ConexaoMetaErros.TentativaInvalida(), 403);
 
@@ -878,7 +880,7 @@ namespace APIBack.Atendimento.ConexaoMeta
 
         private async Task<(List<EtapaConexaoView>, CanalWhatsapp)> RevalidarAutorizadoAsync(CanalWhatsapp canal, bool reparar, string? pin)
         {
-            var cfg = Config;
+            var cfg = await ConfigAsync();
             var autorizacao = canal.IdAutorizacaoMeta.HasValue ? await _repo.ObterAutorizacaoAsync(canal.IdAutorizacaoMeta.Value) : null;
             var revogada = new List<EtapaConexaoView>
             {
@@ -1016,7 +1018,7 @@ namespace APIBack.Atendimento.ConexaoMeta
         /// </summary>
         private async Task<(bool Removida, string? Motivo)> TalvezRemoverInscricaoAsync(CanalWhatsapp canal)
         {
-            var cfg = Config;
+            var cfg = await ConfigAsync();
             var autorizacao = canal.IdAutorizacaoMeta.HasValue ? await _repo.ObterAutorizacaoAsync(canal.IdAutorizacaoMeta.Value) : null;
             if (autorizacao == null || string.IsNullOrWhiteSpace(canal.WabaId)) return (false, "sem_autorizacao");
 
@@ -1040,18 +1042,94 @@ namespace APIBack.Atendimento.ConexaoMeta
             return remover.Ok ? (true, null) : (false, remover.Falha!.SemResposta ? "meta_indisponivel" : "meta_recusou");
         }
 
+        // ---- app ZippyGo (Gestao) ----------------------------------------------------------------------------------------
+
+        public async Task<AppMetaView> ObterAppAsync(AtendimentoAtor ator)
+        {
+            ExigirGestao(ator, "meta_app_ler");
+            return await VerAppAsync(await _repo.ObterAppAsync(), verificar: true);
+        }
+
+        public async Task<AppMetaView> SalvarAppAsync(AtendimentoAtor ator, SalvarAppMetaRequest request)
+        {
+            ExigirGestao(ator, "meta_app_salvar");
+            var appId = request.AppId?.Trim() ?? string.Empty;
+            var configId = request.ConfigurationId?.Trim() ?? string.Empty;
+            var business = string.IsNullOrWhiteSpace(request.BusinessIdIntegrador) ? null : request.BusinessIdIntegrador.Trim();
+            var segredo = request.AppSecret?.Trim();
+            if (!ConfigEmbeddedSignup.Digitos(appId)) throw CampoApp("appId", "O ID do app tem so digitos.");
+            if (!ConfigEmbeddedSignup.Digitos(configId)) throw CampoApp("configurationId", "O Configuration ID tem so digitos.");
+            if (business != null && !ConfigEmbeddedSignup.Digitos(business)) throw CampoApp("businessIdIntegrador", "O Business ID tem so digitos.");
+            if (!string.IsNullOrEmpty(segredo) && (segredo.Length is < 16 or > 128 || segredo.Any(char.IsWhiteSpace)))
+            {
+                throw CampoApp("appSecret", "A chave secreta do app tem 32 letras e numeros, sem espacos.");
+            }
+
+            if (!string.IsNullOrEmpty(segredo) && !_token.Configurado) throw new WhatsappException(WhatsappErros.ChaveCifragemAusente());
+
+            var atual = await _repo.ObterAppAsync() ?? new AppMetaConfig();
+            var novo = new AppMetaConfig
+            {
+                AppId = appId, ConfigurationId = configId, BusinessIdIntegrador = business, AppReviewAprovado = request.AppReviewAprovado,
+                AppSecretCifrado = string.IsNullOrEmpty(segredo) ? atual.AppSecretCifrado : _token.Proteger(segredo), AtualizadoPor = ator.UsuarioId
+            };
+
+            // Antes de gravar: a Meta reconhece este App ID com este App Secret (token de app). Errado nao entra.
+            var cfg = ConfigEmbeddedSignup.De(novo, _configuration, _token);
+            if (!string.IsNullOrEmpty(cfg.AppSecret))
+            {
+                var app = await _meta.ObterAppAsync(appId, cfg.AppSecret);
+                if (!app.Ok)
+                {
+                    if (app.Falha!.SemResposta) throw new WhatsappException(WhatsappErros.MetaIndisponivel());
+                    throw new WhatsappException(WhatsappErros.AppSecretInvalido() with
+                    {
+                        Mensagem = "A Meta nao reconheceu este ID do app com esta chave secreta.",
+                        ComoResolver = "Confira o ID do app e a chave secreta em developers.facebook.com > app ZippyGo > Configuracoes do app > Basico.",
+                        Campo = string.IsNullOrEmpty(segredo) ? "appId" : "appSecret"
+                    });
+                }
+            }
+
+            await _repo.SalvarAppAsync(novo);
+            await _canais.RegistrarAuditoriaAsync(null, "meta_app_salvo", null, null, ator.UsuarioId,
+                JsonSerializer.Serialize(new { appId, configId, business, request.AppReviewAprovado, segredoNovo = !string.IsNullOrEmpty(segredo) }));
+            _logger.LogInformation("[wa.meta] ev=app_salvo usuario={Usuario} app={App} review={Review} segredo_novo={Segredo}",
+                ator.UsuarioId, appId, request.AppReviewAprovado, !string.IsNullOrEmpty(segredo));
+            return await VerAppAsync(await _repo.ObterAppAsync(), verificar: true);
+        }
+
+        private async Task<AppMetaView> VerAppAsync(AppMetaConfig? app, bool verificar)
+        {
+            var cfg = ConfigEmbeddedSignup.De(app, _configuration, _token);
+            var verificacoes = new List<EtapaConexaoView>();
+            if (verificar && cfg.Configurado)
+            {
+                var credenciais = await _meta.ObterAppAsync(cfg.AppId!, cfg.AppSecret!);
+                verificacoes.Add(credenciais.Ok
+                    ? ConexaoMetaRegras.Ok(EtapaConexao.Autorizacao, $"App {credenciais.Valor} reconhecido pela Meta com esta chave secreta.")
+                    : ConexaoMetaRegras.EtapaDaFalha(EtapaConexao.Autorizacao, credenciais.Falha!) with
+                    {
+                        Mensagem = credenciais.Falha!.SemResposta ? "Nao foi possivel falar com a Meta agora." : "A Meta nao reconheceu o ID do app com a chave secreta.",
+                        Responsavel = ResponsavelPendencia.Zippy
+                    });
+                if (credenciais.Ok) verificacoes.Add(await EtapaWebhookGlobalAsync(cfg, coexistencia: true));
+            }
+
+            return new AppMetaView(cfg.AppId, cfg.ConfigurationId, cfg.AppSecret != null, cfg.AppSecretOrigem, cfg.PermissoesAprovadas,
+                cfg.BusinessIdIntegrador, app?.AtualizadoEm, cfg.Configurado && _token.Configurado, cfg.Pendencias(), verificacoes);
+        }
+
+        private static WhatsappException CampoApp(string campo, string mensagem) =>
+            new(new WhatsappErro(WhatsappCodigos.CampoInvalido, mensagem, "Corrija o campo indicado e salve de novo.", campo));
+
         // ---- internos --------------------------------------------------------------------------------------------------
 
-        private ConfigEmbeddedSignup ExigirDisponivel(string? origem)
+        private async Task<ConfigEmbeddedSignup> ExigirDisponivelAsync()
         {
-            var cfg = Config;
+            var cfg = await ConfigAsync();
             if (!cfg.Configurado) throw ConexaoMetaErros.Excecao(ConexaoMetaErros.Indisponivel(), 503);
             if (!_token.Configurado) throw new WhatsappException(WhatsappErros.ChaveCifragemAusente());
-            if (origem != null && !ConexaoMetaRegras.OrigemPermitida(cfg.OrigensPermitidas, origem))
-            {
-                _logger.LogWarning("[wa.meta] ev=origem_recusada");
-                throw ConexaoMetaErros.Excecao(ConexaoMetaErros.OrigemInvalida(), 403);
-            }
 
             return cfg;
         }
@@ -1115,7 +1193,7 @@ namespace APIBack.Atendimento.ConexaoMeta
             if (ator.Gestao) return;
 
             _logger.LogWarning("[wa.meta] ev=negado acao={Acao} motivo=so_gestao usuario={Usuario}", acao, ator.UsuarioId);
-            throw new UnauthorizedAccessException("Somente a Gestao mexe no numero central de testes.");
+            throw new UnauthorizedAccessException("Somente a Gestao faz isso.");
         }
 
         private static string? Limpar(string? texto)

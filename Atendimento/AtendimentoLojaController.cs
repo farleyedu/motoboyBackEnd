@@ -109,13 +109,13 @@ namespace APIBack.Atendimento
         /// <summary>Cria a tentativa (state + prazo) antes de abrir o FB.login.</summary>
         [HttpPost("conexao-meta/iniciar")]
         public Task<IActionResult> IniciarConexaoMeta(Guid estabelecimentoId, [FromBody] IniciarConexaoMetaRequest? request) =>
-            Executar(ator => _conexaoMeta.IniciarAsync(ator, estabelecimentoId, request ?? new IniciarConexaoMetaRequest(), Origem()),
+            Executar(ator => _conexaoMeta.IniciarAsync(ator, estabelecimentoId, request ?? new IniciarConexaoMetaRequest()),
                 StatusCodes.Status201Created);
 
         /// <summary>Fim do Embedded Signup (FINISH*, CANCEL ou ERROR). O codigo vale 30 s: o painel envia assim que recebe.</summary>
         [HttpPost("conexao-meta/concluir")]
         public Task<IActionResult> ConcluirConexaoMeta(Guid estabelecimentoId, [FromBody] ConcluirConexaoMetaRequest request) =>
-            Executar(ator => _conexaoMeta.ConcluirAsync(ator, estabelecimentoId, request, Origem()));
+            Executar(ator => _conexaoMeta.ConcluirAsync(ator, estabelecimentoId, request));
 
         /// <summary>Escolhe o numero (quando a conta tem mais de um) ou repete a etapa que falhou, sem autorizar de novo.</summary>
         [HttpPost("conexao-meta/ativar")]
@@ -134,9 +134,7 @@ namespace APIBack.Atendimento
         /// <summary>Nova autorizacao na Meta para o mesmo canal (mantem conversas e configuracoes). Responde como o iniciar.</summary>
         [HttpPost("canais/{canalId:guid}/reconectar")]
         public Task<IActionResult> ReconectarCanal(Guid estabelecimentoId, Guid canalId) =>
-            Executar(ator => _conexaoMeta.ReconectarAsync(ator, estabelecimentoId, canalId, Origem()), StatusCodes.Status201Created);
-
-        private string Origem() => Request.Headers.Origin.ToString();
+            Executar(ator => _conexaoMeta.ReconectarAsync(ator, estabelecimentoId, canalId), StatusCodes.Status201Created);
 
         [HttpGet("servicos")]
         public Task<IActionResult> ObterServicos(Guid estabelecimentoId) =>

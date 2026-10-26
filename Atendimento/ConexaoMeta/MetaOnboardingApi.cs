@@ -55,6 +55,8 @@ namespace APIBack.Atendimento.ConexaoMeta
         Task<MetaResultado<bool>> SincronizarAppBusinessAsync(string phoneNumberId, string token, string tipo);
         /// <summary>GET /{app}/subscriptions com token de app: so le a configuracao global do webhook (nunca altera).</summary>
         Task<MetaResultado<IReadOnlyList<AssinaturaApp>>> AssinaturasDoAppAsync(string appId, string appSecret);
+        /// <summary>GET /{app}?fields=id,name com token de app: confere se o App ID e o App Secret sao do mesmo app. Devolve o nome.</summary>
+        Task<MetaResultado<string>> ObterAppAsync(string appId, string appSecret);
     }
 
     public sealed class MetaOnboardingApi : IMetaOnboardingApi
@@ -257,6 +259,13 @@ namespace APIBack.Atendimento.ConexaoMeta
 
                 return lista;
             });
+        }
+
+        public async Task<MetaResultado<string>> ObterAppAsync(string appId, string appSecret)
+        {
+            var (texto, falha) = await EnviarAsync("app", HttpMethod.Get, $"{Base}/{appId}?fields=id,name", $"{appId}|{appSecret}", null);
+            if (falha != null) return MetaResultado<string>.Erro(falha);
+            return Ler(texto!, r => Texto(r, "id") == appId ? Texto(r, "name") ?? appId : null);
         }
 
         // ---- internos --------------------------------------------------------------------------------------------

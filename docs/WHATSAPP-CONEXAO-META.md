@@ -53,7 +53,6 @@ Nunca guardar `state`, `code` ou qualquer dado da Meta em localStorage/sessionSt
 | code | HTTP | Quando |
 |---|---|---|
 | `WA_META_CONEXAO_INDISPONIVEL` | 503 | Embedded Signup não configurado no servidor |
-| `WA_META_ORIGEM_INVALIDA` | 403 | `Origin` fora de `OrigensPermitidas` |
 | `WA_META_TENTATIVA_INVALIDA` | 403/404 | state errado, outro usuário ou tentativa de outra loja |
 | `WA_META_TENTATIVA_EXPIRADA` | 410 | prazo de 15 min (autorizar) ou 24 h (ativar) passou |
 | `WA_META_TENTATIVA_EM_USO` | 409 | repetição/replay ou outra aba processando |
@@ -68,7 +67,6 @@ Nunca guardar `state`, `code` ou qualquer dado da Meta em localStorage/sessionSt
 | `WA_META_PIN_NECESSARIO` | (no estado) | o número já tem PIN de duas etapas |
 | `WA_META_REGISTRO_LIMITE` | (no estado) | limite de registros da Meta |
 | `WA_META_NUMERO_NAO_VERIFICADO` | (no estado) | número não verificado no WhatsApp Manager |
-| `WA_META_COEXISTENCIA_INDISPONIVEL` | 422 | coexistência pedida e não liberada |
 | `WA_META_CONEXAO_EXISTENTE` | 409 | o número já está conectado nesta loja de outra forma → reconectar |
 | `WA_NUMERO_OUTRA_LOJA` | 409 | número de outra loja (nunca apropriado) |
 
@@ -85,27 +83,25 @@ Nunca guardar `state`, `code` ou qualquer dado da Meta em localStorage/sessionSt
 
 ## Implantação
 
-Configuração (`WhatsApp__EmbeddedSignup__*`), sem valores padrão inventados:
+Nada no servidor: a Gestão cadastra o app em **Gestão > Plataforma > Conectar com a Meta** (`GET/PUT /api/v2/atendimento/conexao-meta/app`, só super admin). Fica na tabela `whatsapp_meta_app` (linha única, App Secret cifrado).
 
-| Variável | Valor |
+| Campo na tela | O que é |
 |---|---|
-| `Habilitado` | `true` quando tudo abaixo estiver pronto |
-| `AppId` | ID do app ZippyGo |
-| `ConfigurationId` | ID da configuração do Facebook Login for Business (WhatsApp Embedded Signup, v4) — **pendente** |
-| `AppSecret` | App Secret do ZippyGo (ou cai em `Automation__Meta__AppSecret`) |
-| `AppReview` | `aprovada` só depois da aprovação de `whatsapp_business_messaging` e `whatsapp_business_management` — **em andamento** |
-| `CoexistenciaHabilitada` | `true` para oferecer manter o app WhatsApp Business |
-| `OrigensPermitidas` | domínio(s) https do painel, separados por vírgula — **pendente** (o mesmo de Allowed domains / Valid OAuth redirect URIs) |
-| `BusinessIdIntegrador` | Business ID do portfólio Zippy Food |
-| `MinutosParaAutorizar` / `HorasParaAtivar` | 15 / 24 |
+| ID do app | App ID do ZippyGo |
+| Configuration ID | Configuração do Facebook Login for Business (WhatsApp Embedded Signup v4) |
+| App Secret | Opcional. Vazio = usa o do webhook global (`Automation__Meta__AppSecret`), que é o mesmo app. Ao salvar, o servidor confere ID + segredo na Meta. |
+| Aprovado pela Meta | Ligue quando o App Review das duas permissões for aprovado. Desligado = modo teste. |
+| Business ID da Zippy | Opcional. Portfólio Zippy Food: suas WABAs nunca perdem a inscrição ao desconectar uma loja. |
+
+Fixos (sem configuração): fluxo ligado assim que os três primeiros estiverem preenchidos, coexistência oferecida, 15 min para autorizar e 24 h para escolher o número, sem conferência de domínio. A tela da Gestão mostra também a verificação ao vivo (credenciais e campos do webhook do app).
 
 No painel da Meta (app ZippyGo), pendências que o código não resolve:
 - Criar a configuração do **Facebook Login for Business** com o produto WhatsApp Embedded Signup (v4) e copiar o Configuration ID.
-- Cadastrar o domínio https do painel em **Allowed domains** e **Valid OAuth redirect URIs** (sem isso o evento `WA_EMBEDDED_SIGNUP` não chega ao painel).
+- Cadastrar o domínio https do painel em **Allowed domains** e **Valid OAuth redirect URIs** do Login for Business (exigência da Meta; sem isso o evento `WA_EMBEDDED_SIGNUP` não chega ao painel).
 - Webhook do app (objeto `whatsapp_business_account`): assinar `messages` e `account_update`; com coexistência, também `smb_message_echoes`, `history` e `smb_app_state_sync`. O diagnóstico confere isso (só leitura) e acusa o que faltar.
-- Concluir o App Review das duas permissões. Até lá, `AppReview` fica diferente de `aprovada` e o painel mostra modo teste.
+- Concluir o App Review das duas permissões. Até lá, deixe "Aprovado pela Meta" desligado: o painel mostra modo teste.
 - O modo Ao vivo do app não basta para onboarding de terceiros.
 
 Migração: `Migrations/Delivery/20261030_01_whatsapp_conexao_meta.sql` (aditiva; o serviço de migração aplica na subida). Verificação em `20261030_02_whatsapp_conexao_meta_verify.sql`; rollback em `rollback/20261030_01_whatsapp_conexao_meta.down.sql` (recusa se já houver canal `autorizado`). Canais `zippy`, `proprio` e `central` não mudam.
 
-Teste controlado com conta real: com `AppReview` ainda pendente, só um usuário com função no app ZippyGo conclui o fluxo. Use uma WABA de teste e confira no diagnóstico: autorização, inscrição, registro e a primeira mensagem recebida.
+Teste controlado com conta real: com a aprovação ainda pendente, só um usuário com função no app ZippyGo conclui o fluxo. Use uma WABA de teste e confira no diagnóstico: autorização, inscrição, registro e a primeira mensagem recebida.

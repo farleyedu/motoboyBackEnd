@@ -41,15 +41,6 @@ namespace APIBack.Atendimento.ConexaoMeta
             return CryptographicOperations.FixedTimeEquals(Encoding.ASCII.GetBytes(HashState(state)), Encoding.ASCII.GetBytes(hashGuardado));
         }
 
-        /// <summary>Confere o cabecalho Origin contra as origens do painel. Sem lista configurada, nao bloqueia (a tela avisa a pendencia).</summary>
-        public static bool OrigemPermitida(IReadOnlyList<string> permitidas, string? origem)
-        {
-            if (permitidas.Count == 0) return true;
-            if (string.IsNullOrWhiteSpace(origem)) return false;
-            var limpa = origem.Trim().TrimEnd('/');
-            return permitidas.Any(p => string.Equals(p, limpa, StringComparison.OrdinalIgnoreCase));
-        }
-
         public static string GerarPin() => RandomNumberGenerator.GetInt32(0, 1_000_000).ToString("D6");
 
         public static bool PinValido(string? pin) => pin is { Length: 6 } && pin.All(char.IsAsciiDigit);

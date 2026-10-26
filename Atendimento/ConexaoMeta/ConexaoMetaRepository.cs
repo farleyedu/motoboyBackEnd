@@ -82,6 +82,10 @@ namespace APIBack.Atendimento.ConexaoMeta
         /// autorizados ligados a elas com erro. Devolve quantos canais foram afetados.
         /// </summary>
         Task<int> RevogarPorWabaAsync(string wabaId, string? appId, string motivo);
+
+        /// <summary>O app ZippyGo cadastrado pela Gestao (linha unica), ou nulo se ainda nao foi cadastrado.</summary>
+        Task<AppMetaConfig?> ObterAppAsync();
+        Task SalvarAppAsync(AppMetaConfig app);
     }
 
     public sealed class SqlConexaoMetaRepository : IConexaoMetaRepository
@@ -250,6 +254,27 @@ UPDATE whatsapp_autorizacao_meta
             return await connection.ExecuteScalarAsync<int>(
                 "SELECT COUNT(*) FROM canal_whatsapp WHERE id_autorizacao_meta = @Id AND id <> @Canal AND status <> 'inativo';",
                 new { Id = autorizacaoId, Canal = excetoCanal });
+        }
+
+        public async Task<AppMetaConfig?> ObterAppAsync()
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            return await connection.QueryFirstOrDefaultAsync<AppMetaConfig>(@"
+SELECT app_id AS AppId, configuration_id AS ConfigurationId, app_secret_cifrado AS AppSecretCifrado, app_review_aprovado AS AppReviewAprovado,
+       business_id_integrador AS BusinessIdIntegrador, atualizado_por AS AtualizadoPor, atualizado_em AS AtualizadoEm
+  FROM whatsapp_meta_app WHERE id = 1;");
+        }
+
+        public async Task SalvarAppAsync(AppMetaConfig app)
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.ExecuteAsync(@"
+INSERT INTO whatsapp_meta_app (id, app_id, configuration_id, app_secret_cifrado, app_review_aprovado, business_id_integrador, atualizado_por, atualizado_em)
+VALUES (1, @AppId, @ConfigurationId, @AppSecretCifrado, @AppReviewAprovado, @BusinessIdIntegrador, @AtualizadoPor, NOW())
+ON CONFLICT (id) DO UPDATE
+   SET app_id = EXCLUDED.app_id, configuration_id = EXCLUDED.configuration_id, app_secret_cifrado = EXCLUDED.app_secret_cifrado,
+       app_review_aprovado = EXCLUDED.app_review_aprovado, business_id_integrador = EXCLUDED.business_id_integrador,
+       atualizado_por = EXCLUDED.atualizado_por, atualizado_em = NOW();", app);
         }
 
         public async Task<int> RevogarPorWabaAsync(string wabaId, string? appId, string motivo)

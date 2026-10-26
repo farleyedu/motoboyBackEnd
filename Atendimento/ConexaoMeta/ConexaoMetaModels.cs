@@ -6,67 +6,72 @@ using Microsoft.Extensions.Configuration;
 namespace APIBack.Atendimento.ConexaoMeta
 {
     /// <summary>
-    /// Configuracao do Embedded Signup (secao WhatsApp:EmbeddedSignup). Nada aqui e inventado: sem App ID, Configuration ID ou App Secret
-    /// o fluxo fica indisponivel e a tela explica o que falta. O App Secret nunca sai do servidor.
+    /// O app ZippyGo como a Gestao cadastrou na tela (tabela whatsapp_meta_app, linha unica). App Secret so cifrado; vazio = usa o do
+    /// webhook global (Automation:Meta:AppSecret), que e o mesmo app.
+    /// </summary>
+    public sealed class AppMetaConfig
+    {
+        public string? AppId { get; set; }
+        public string? ConfigurationId { get; set; }
+        public string? AppSecretCifrado { get; set; }
+        public bool AppReviewAprovado { get; set; }
+        public string? BusinessIdIntegrador { get; set; }
+        public int? AtualizadoPor { get; set; }
+        public DateTime? AtualizadoEm { get; set; }
+    }
+
+    /// <summary>
+    /// Configuracao efetiva do Embedded Signup: o que a Gestao cadastrou na tela. Sem App ID, Configuration ID ou App Secret o fluxo fica
+    /// indisponivel e a tela diz o que falta. O resto e fixo (ligado, com coexistencia). O App Secret nunca sai do servidor.
     /// </summary>
     public sealed class ConfigEmbeddedSignup
     {
         /// <summary>Permissoes sem as quais o Zippy nao opera o numero (App Review da Meta).</summary>
         public static readonly IReadOnlyList<string> PermissoesExigidas = new[] { "whatsapp_business_management", "whatsapp_business_messaging" };
+        public const int MinutosParaAutorizar = 15;
+        public const int HorasParaAtivar = 24;
 
-        public bool Habilitado { get; init; }
         public string? AppId { get; init; }
         public string? ConfigurationId { get; init; }
         public string? AppSecret { get; init; }
-        /// <summary>Versao do SDK/Graph para o FB.init do navegador (a Meta pede a mais recente).</summary>
+        /// <summary>De onde veio o App Secret: tela, servidor (o do webhook global) ou nulo.</summary>
+        public string? AppSecretOrigem { get; init; }
+        /// <summary>Versao do SDK/Graph para o FB.init do navegador: a mesma da Graph API do servidor.</summary>
         public string SdkVersion { get; init; } = "v23.0";
-        /// <summary>
-        /// App Review das permissoes: "aprovada" libera qualquer restaurante; qualquer outro valor = so contas com funcao no app ZippyGo
-        /// conseguem concluir (a tela avisa que a producao ainda nao esta liberada).
-        /// </summary>
+        /// <summary>App Review aprovado: libera qualquer restaurante; senao so contas com funcao no app ZippyGo concluem.</summary>
         public bool PermissoesAprovadas { get; init; }
-        public bool CoexistenciaHabilitada { get; init; }
-        /// <summary>Origens (https://admin...) de onde o painel abre o fluxo; vazio = nao confere o cabecalho Origin.</summary>
-        public IReadOnlyList<string> OrigensPermitidas { get; init; } = Array.Empty<string>();
         /// <summary>Portfolio da Zippy (dono do app). WABAs dele nunca perdem a inscricao do app ao desconectar uma loja.</summary>
         public string? BusinessIdIntegrador { get; init; }
         /// <summary>WABAs da propria Zippy (WhatsApp:WabaIds): idem, nunca perdem a inscricao.</summary>
         public IReadOnlyList<string> WabasDaZippy { get; init; } = Array.Empty<string>();
-        public int MinutosParaAutorizar { get; init; } = 15;
-        public int HorasParaAtivar { get; init; } = 24;
 
-        public bool Configurado => Habilitado && Digitos(AppId) && Digitos(ConfigurationId) && Valor(AppSecret);
+        public bool Configurado => Digitos(AppId) && Digitos(ConfigurationId) && !string.IsNullOrEmpty(AppSecret);
 
-        /// <summary>O que falta para o fluxo ficar disponivel (pendencias de implantacao, nunca preenchidas por padrao).</summary>
+        /// <summary>O que falta, em texto para a Gestao (nunca preenchido por padrao).</summary>
         public IReadOnlyList<string> Pendencias()
         {
             var faltas = new List<string>();
-            if (!Habilitado) faltas.Add("WhatsApp__EmbeddedSignup__Habilitado nao esta ligado no servidor.");
-            if (!Digitos(AppId)) faltas.Add("WhatsApp__EmbeddedSignup__AppId (ID do app ZippyGo) nao configurado.");
-            if (!Digitos(ConfigurationId)) faltas.Add("WhatsApp__EmbeddedSignup__ConfigurationId (Facebook Login for Business, configuracao do WhatsApp Embedded Signup v4) nao configurado.");
-            if (!Valor(AppSecret)) faltas.Add("App Secret do ZippyGo nao configurado (WhatsApp__EmbeddedSignup__AppSecret ou Automation__Meta__AppSecret).");
-            if (!PermissoesAprovadas) faltas.Add("App Review de whatsapp_business_management e whatsapp_business_messaging ainda nao aprovado: so contas com funcao no app ZippyGo concluem a conexao.");
-            if (OrigensPermitidas.Count == 0) faltas.Add("WhatsApp__EmbeddedSignup__OrigensPermitidas vazio: configure o dominio https do painel (o mesmo cadastrado em Allowed domains do Login for Business).");
+            if (!Digitos(AppId)) faltas.Add("Falta o ID do app ZippyGo (Gestao > Plataforma > Conectar com a Meta).");
+            if (!Digitos(ConfigurationId)) faltas.Add("Falta o Configuration ID do Facebook Login for Business (WhatsApp Embedded Signup).");
+            if (string.IsNullOrEmpty(AppSecret)) faltas.Add("Falta o App Secret do ZippyGo.");
+            if (!PermissoesAprovadas) faltas.Add("A Meta ainda nao aprovou o app: so contas com funcao no app ZippyGo concluem a conexao.");
             return faltas;
         }
 
-        public static ConfigEmbeddedSignup Ler(IConfiguration c)
+        public static ConfigEmbeddedSignup De(AppMetaConfig? app, IConfiguration c, ITokenProtector protetor)
         {
-            var s = c.GetSection("WhatsApp:EmbeddedSignup");
+            var daTela = protetor.Revelar(app?.AppSecretCifrado);
+            var doServidor = Limpo(c["Automation:Meta:AppSecret"]);
             return new ConfigEmbeddedSignup
             {
-                Habilitado = bool.TryParse(s["Habilitado"], out var h) && h,
-                AppId = Limpo(s["AppId"]),
-                ConfigurationId = Limpo(s["ConfigurationId"]),
-                AppSecret = Limpo(s["AppSecret"]) ?? Limpo(c["Automation:Meta:AppSecret"]),
-                SdkVersion = Limpo(s["SdkVersion"]) ?? Limpo(c["WhatsApp:GraphApiVersion"]) ?? "v23.0",
-                PermissoesAprovadas = string.Equals(Limpo(s["AppReview"]), "aprovada", StringComparison.OrdinalIgnoreCase),
-                CoexistenciaHabilitada = bool.TryParse(s["CoexistenciaHabilitada"], out var co) && co,
-                OrigensPermitidas = Lista(s["OrigensPermitidas"]).Select(o => o.TrimEnd('/')).ToList(),
-                BusinessIdIntegrador = Limpo(s["BusinessIdIntegrador"]),
-                WabasDaZippy = Lista(c["WhatsApp:WabaIds"]).Concat(Lista(c["WhatsApp:WabaId"])).Where(v => v.All(char.IsAsciiDigit)).Distinct().ToList(),
-                MinutosParaAutorizar = int.TryParse(s["MinutosParaAutorizar"], out var m) && m is >= 5 and <= 60 ? m : 15,
-                HorasParaAtivar = int.TryParse(s["HorasParaAtivar"], out var hr) && hr is >= 1 and <= 72 ? hr : 24
+                AppId = Limpo(app?.AppId),
+                ConfigurationId = Limpo(app?.ConfigurationId),
+                AppSecret = daTela ?? doServidor,
+                AppSecretOrigem = daTela != null ? "tela" : doServidor != null ? "servidor" : null,
+                SdkVersion = Limpo(c["WhatsApp:GraphApiVersion"]) ?? "v23.0",
+                PermissoesAprovadas = app?.AppReviewAprovado == true,
+                BusinessIdIntegrador = Limpo(app?.BusinessIdIntegrador),
+                WabasDaZippy = Lista(c["WhatsApp:WabaIds"]).Concat(Lista(c["WhatsApp:WabaId"])).Where(v => v.All(char.IsAsciiDigit)).Distinct().ToList()
             };
         }
 
@@ -80,9 +85,16 @@ namespace APIBack.Atendimento.ConexaoMeta
         private static IEnumerable<string> Lista(string? v) =>
             (Limpo(v) ?? string.Empty).Split(new[] { ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries).Select(x => x.Trim());
 
-        private static bool Digitos(string? v) => !string.IsNullOrEmpty(v) && v.All(char.IsAsciiDigit);
-        private static bool Valor(string? v) => !string.IsNullOrEmpty(v);
+        public static bool Digitos(string? v) => !string.IsNullOrEmpty(v) && v.Length <= 32 && v.All(char.IsAsciiDigit);
     }
+
+    /// <param name="AppSecret">Vazio = mantem o atual (ou usa o do webhook global).</param>
+    public sealed record SalvarAppMetaRequest(string? AppId, string? ConfigurationId, string? AppSecret, bool AppReviewAprovado, string? BusinessIdIntegrador);
+
+    /// <summary>O app ZippyGo para a tela da Gestao. Nunca traz o App Secret, so se existe e de onde vem.</summary>
+    public sealed record AppMetaView(
+        string? AppId, string? ConfigurationId, bool TemAppSecret, string? AppSecretOrigem, bool AppReviewAprovado, string? BusinessIdIntegrador,
+        DateTime? AtualizadoEm, bool Disponivel, IReadOnlyList<string> Pendencias, IReadOnlyList<EtapaConexaoView> Verificacoes);
 
     /// <summary>Eventos que o Embedded Signup devolve ao navegador (message type WA_EMBEDDED_SIGNUP).</summary>
     public static class EventoFluxo
