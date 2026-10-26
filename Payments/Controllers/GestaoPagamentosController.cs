@@ -63,6 +63,11 @@ namespace APIBack.Payments.Controllers
         public Task<IActionResult> AtualizarAmbiente([FromBody] AtualizarAmbienteRequest body) =>
             Executar(() => _gestao.AtualizarAmbienteAsync(body, Usuario, HttpContext.RequestAborted), _logger);
 
+        /// <summary>Escolhe qual ambiente (sandbox ou producao) o servidor usa. Os dois seguem conectados.</summary>
+        [HttpPut("ambiente-ativo")]
+        public Task<IActionResult> DefinirAmbienteAtivo([FromBody] AmbienteRequest body) =>
+            Executar(() => _gestao.DefinirAmbienteAtivoAsync(body?.Ambiente, Usuario, HttpContext.RequestAborted), _logger);
+
         [HttpPut("aplicacao")]
         public Task<IActionResult> SalvarAplicacao([FromBody] SalvarAplicacaoRequest body) =>
             Executar(() => _gestao.SalvarAplicacaoAsync(body, Usuario, HttpContext.RequestAborted), _logger);

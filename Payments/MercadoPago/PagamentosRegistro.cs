@@ -28,6 +28,8 @@ namespace APIBack.Payments.MercadoPago
             });
 
             services.AddSingleton<IPagamentoSegredoProtector, PagamentoSegredoProtector>();
+            services.AddSingleton<IMercadoPagoAmbienteAtivo, MercadoPagoAmbienteAtivo>();
+            services.AddHostedService<MercadoPagoAmbienteAtivoWorker>();
             services.AddScoped<IMercadoPagoClient, MercadoPagoClient>();
             services.AddScoped<IMercadoPagoCredencialResolver, MercadoPagoCredencialResolver>();
             services.AddScoped<IContaLojaTokenRenovador, ContaLojaTokenRenovador>();

@@ -37,7 +37,7 @@ Regra origem → conta (no código `CredencialRegras.ContextoDaOrigem` e no banc
 
 - O cliente HTTP (`IMercadoPagoClient`) só aceita `CredencialRecebedora` para pagamento e `CredencialAplicacao` para OAuth: usar o token errado não compila.
 - `IMercadoPagoCredencialResolver.ParaIntentAsync(intent)` devolve **exatamente** a conta gravada na intenção (mesmo que a loja tenha conectado outra conta depois) e chama `CredencialRegras.Exigir` (loja, conta e origem conferidos).
-- **Ambientes** `sandbox` e `producao` são linhas separadas em todas as tabelas. O ambiente ativo do servidor é `Payments:MercadoPago:Ambiente`. Pagamento/aviso com `live_mode` diferente do ambiente é rejeitado (`ExigirLiveModeDoAmbiente`, padrão `true`).
+- **Ambientes** `sandbox` e `producao` são linhas separadas em todas as tabelas. O ambiente ativo do servidor é escolhido na Gestão (`PUT /api/gestao/pagamentos/ambiente-ativo`, tabela `mp_ambiente_ativo`; produção só entra em uso depois de habilitada); sem escolha gravada, vale `Payments:MercadoPago:Ambiente`. Os dois ambientes ficam conectados ao mesmo tempo. Pagamento/aviso com `live_mode` diferente do ambiente é rejeitado (`ExigirLiveModeDoAmbiente`, padrão `true`).
 - **Cifragem**: `IPagamentoSegredoProtector` (AES-256-GCM). Chave mestra em `Payments:ChaveMestra` (env `Payments__ChaveMestra`) ou `PAGAMENTOS_CHAVE_MESTRA`: **base64 de exatamente 32 bytes** (`openssl rand -base64 32`). Rotação: chave antiga em `Payments:ChaveMestraAnterior` (só abre). O contexto (AAD) é obrigatório e padronizado em `SegredoContexto`:
 
   | Coluna | Contexto |
@@ -258,7 +258,7 @@ Só intenção `pago`/`estornado_parcial`. Acima do pago → `422 PAG_ESTORNO_AC
 
 ### 5.1 `POST /api/webhooks/mercadopago` (anônimo; implementado)
 1. Lê corpo (≤ 64 KB), `x-signature` (`ts=...,v1=...`), `x-request-id`, query `data.id` e `type`.
-2. Segredo = `mp_aplicacao.webhook_secret` do ambiente ativo. Sem segredo → **503** (o MP reenvia).
+2. Segredo = `mp_aplicacao.webhook_secret`: testa o do ambiente ativo e, se não bater, o do outro; o aviso é gravado no ambiente cujo segredo bateu (teste e produção apontam para a mesma URL). Nenhum segredo configurado → **503** (o MP reenvia).
 3. Manifesto `id:{data.id};request-id:{x-request-id};ts:{ts};` (data.id alfanumérico em minúsculas; partes ausentes omitidas), HMAC-SHA256 hex, comparação em tempo constante. `ts` aceito em s ou ms, tolerância `WebhookToleranciaSegundos` (600). Falha → **401** `PAG_WEBHOOK_ASSINATURA_INVALIDA`, nada gravado.
 4. Grava `mp_webhook_evento` (`ON CONFLICT chave_dedup DO NOTHING`). Duplicado → **200** `{recebido:true, duplicado:true}`. Falha ao gravar → **5xx** (MP reenvia).
 5. Processa na hora; erro de processamento → evento `falhou` + reprocessamento, mas responde **200** (já persistido).

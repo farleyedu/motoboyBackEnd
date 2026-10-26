@@ -105,20 +105,22 @@ namespace APIBack.Payments.MercadoPago
         private readonly NpgsqlDataSource _db;
         private readonly IPagamentoSegredoProtector _protector;
         private readonly MercadoPagoOptions _options;
+        private readonly IMercadoPagoAmbienteAtivo _ambiente;
         private readonly IServiceProvider _services;
         private readonly ILogger<MercadoPagoCredencialResolver> _logger;
 
         public MercadoPagoCredencialResolver(NpgsqlDataSource db, IPagamentoSegredoProtector protector, IOptions<MercadoPagoOptions> options,
-            IServiceProvider services, ILogger<MercadoPagoCredencialResolver> logger)
+            IMercadoPagoAmbienteAtivo ambiente, IServiceProvider services, ILogger<MercadoPagoCredencialResolver> logger)
         {
             _db = db;
             _protector = protector;
             _options = options.Value;
+            _ambiente = ambiente;
             _services = services;
             _logger = logger;
         }
 
-        public string AmbienteAtivo => _options.AmbienteAtivo;
+        public string AmbienteAtivo => _ambiente.Atual;
 
         public async Task<CredencialAplicacao> AplicacaoAsync(string? ambiente = null, CancellationToken ct = default)
         {

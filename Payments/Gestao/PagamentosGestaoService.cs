@@ -27,6 +27,8 @@ namespace APIBack.Payments.Gestao
         Task<TesteContaZippyDto> TestarContaZippyAsync(string? ambiente, int usuario, CancellationToken ct = default);
         Task<VerificacaoDto> VerificarAsync(string? ambiente, int usuario, CancellationToken ct = default);
         Task<ConfiguracaoDto> AtualizarAmbienteAsync(AtualizarAmbienteRequest r, int usuario, CancellationToken ct = default);
+        /// <summary>Escolhe qual ambiente o servidor usa agora (os dois podem ficar conectados). Producao exige ambiente habilitado.</summary>
+        Task<ConfiguracaoDto> DefinirAmbienteAtivoAsync(string? ambiente, int usuario, CancellationToken ct = default);
         Task<ResumoGestaoDto> ResumoAsync(DateOnly? mes = null, CancellationToken ct = default);
         Task<Pagina<ConexaoLojaGestaoDto>> ConexoesAsync(string? busca, string? estado, int pagina, CancellationToken ct = default);
         Task<TransacoesGestaoDto> TransacoesAsync(string? conta, Guid? loja, string? origem, string? status, DateTime? de, DateTime? ate, int pagina, CancellationToken ct = default);
@@ -51,6 +53,7 @@ namespace APIBack.Payments.Gestao
 
         private readonly NpgsqlDataSource _db;
         private readonly IMercadoPagoCredencialResolver _credenciais;
+        private readonly IMercadoPagoAmbienteAtivo _ambienteAtivo;
         private readonly IMercadoPagoClient _client;
         private readonly IPagamentoSegredoProtector _protector;
         private readonly IMercadoPagoWebhookService _webhook;
@@ -58,11 +61,13 @@ namespace APIBack.Payments.Gestao
         private readonly MercadoPagoOptions _options;
         private readonly ILogger<PagamentosGestaoService> _logger;
 
-        public PagamentosGestaoService(NpgsqlDataSource db, IMercadoPagoCredencialResolver credenciais, IMercadoPagoClient client, IPagamentoSegredoProtector protector,
-            IMercadoPagoWebhookService webhook, IServiceProvider services, IOptions<MercadoPagoOptions> options, ILogger<PagamentosGestaoService> logger)
+        public PagamentosGestaoService(NpgsqlDataSource db, IMercadoPagoCredencialResolver credenciais, IMercadoPagoAmbienteAtivo ambienteAtivo, IMercadoPagoClient client,
+            IPagamentoSegredoProtector protector, IMercadoPagoWebhookService webhook, IServiceProvider services, IOptions<MercadoPagoOptions> options,
+            ILogger<PagamentosGestaoService> logger)
         {
             _db = db;
             _credenciais = credenciais;
+            _ambienteAtivo = ambienteAtivo;
             _client = client;
             _protector = protector;
             _webhook = webhook;
@@ -141,8 +146,7 @@ namespace APIBack.Payments.Gestao
 
             var comunicacao = Passou("webhook_recebido");
             Add("comunicacao", "Testar comunicação", !urlsOk ? "bloqueada" : comunicacao ? "ok" : "pendente",
-                c.Ambiente != c.AmbienteAtivo ? "O servidor está em outro ambiente: o webhook de teste só pode ser recebido com o servidor neste ambiente."
-                : Erro("webhook_recebido") ?? "Use \"Simular notificação\" no painel do Mercado Pago e depois verifique de novo.");
+                Erro("webhook_recebido") ?? "Use \"Simular notificação\" no painel do Mercado Pago e depois verifique de novo.");
 
             var verificado = v is { Aprovada: true };
             Add("ambiente", "Habilitar ambiente", !verificado ? "bloqueada" : c.AmbienteEstado.Habilitado ? "ok" : "pendente",
@@ -328,16 +332,13 @@ ON CONFLICT (ambiente) DO UPDATE SET mp_user_id = EXCLUDED.mp_user_id, mp_user_i
             await VerificarZippyAsync(amb, etapas, ct);
 
             await using var cx = await _db.OpenConnectionAsync(ct);
-            // Comunicacao: um aviso com assinatura valida so e gravado se o segredo bate. Simular notificacao no painel basta.
-            if (amb == _credenciais.AmbienteAtivo)
-            {
-                var ultimo = await cx.ExecuteScalarAsync<DateTime?>(new CommandDefinition(
-                    "SELECT max(recebido_em) FROM mp_webhook_evento WHERE ambiente = @Amb AND recebido_em > NOW() - INTERVAL '7 days'", new { Amb = amb }, cancellationToken: ct));
-                Add("webhook_recebido", ultimo != null, "webhook_sem_eventos", ultimo != null
-                    ? $"Último aviso do Mercado Pago recebido e conferido em {ultimo:dd/MM HH:mm} (UTC)."
-                    : "Nenhum aviso do Mercado Pago chegou nos últimos 7 dias. Use \"Simular notificação\" no painel e verifique de novo.");
-            }
-            else Add("webhook_recebido", false, "ambiente_inativo", "O servidor está em outro ambiente; o webhook deste ambiente não pode ser testado agora.");
+            // Comunicacao: um aviso com assinatura valida so e gravado se o segredo bate. Simular notificacao no painel basta
+            // (o webhook aceita o segredo dos dois ambientes, entao vale mesmo com o servidor usando o outro).
+            var ultimo = await cx.ExecuteScalarAsync<DateTime?>(new CommandDefinition(
+                "SELECT max(recebido_em) FROM mp_webhook_evento WHERE ambiente = @Amb AND recebido_em > NOW() - INTERVAL '7 days'", new { Amb = amb }, cancellationToken: ct));
+            Add("webhook_recebido", ultimo != null, "webhook_sem_eventos", ultimo != null
+                ? $"Último aviso do Mercado Pago recebido e conferido em {ultimo:dd/MM HH:mm} (UTC)."
+                : "Nenhum aviso do Mercado Pago chegou nos últimos 7 dias. Use \"Simular notificação\" no painel e verifique de novo.");
 
             var v = new VerificacaoDto { Id = Guid.NewGuid(), Ambiente = amb, Aprovada = etapas.All(e => e.Ok), Etapas = etapas, CriadoEm = DateTime.UtcNow };
             await using var tx = await cx.BeginTransactionAsync(ct);
@@ -447,6 +448,26 @@ ON CONFLICT (ambiente) DO UPDATE SET habilitado = EXCLUDED.habilitado, lojas_pod
                 ambiente = amb, antes = new { atual.Habilitado, atual.LojasPodemConectar }, depois = new { r.Habilitado, r.LojasPodemConectar }, verificacao
             }, ct);
             await tx.CommitAsync(ct);
+            return await ConfiguracaoAsync(amb, ct);
+        }
+
+        public async Task<ConfiguracaoDto> DefinirAmbienteAtivoAsync(string? ambiente, int usuario, CancellationToken ct = default)
+        {
+            if (string.IsNullOrWhiteSpace(ambiente)) throw PagamentoException.Invalida("Informe o ambiente.", "ambiente");
+            var amb = Amb(ambiente);
+            var antes = _credenciais.AmbienteAtivo;
+            if (amb != antes)
+            {
+                await using var cx = await _db.OpenConnectionAsync(ct);
+                // Producao movimenta dinheiro de verdade: so entra em uso depois de habilitada (o que exige verificacao aprovada).
+                if (amb == Ambientes.Producao && !await cx.ExecuteScalarAsync<bool>(new CommandDefinition(
+                        "SELECT COALESCE((SELECT habilitado FROM mp_ambiente_estado WHERE ambiente = @Amb), FALSE)", new { Amb = amb }, cancellationToken: ct)))
+                    throw PagamentoException.Regra(ConexaoCodigos.VerificacaoPendente, "Habilite a produção (com a verificação aprovada) antes de usá-la.");
+
+                await _ambienteAtivo.DefinirAsync(amb, usuario, ct);
+                await PagamentoAuditoria.RegistrarAsync(cx, null, null, "ambiente", amb, "ambiente_em_uso_alterado", "usuario", usuario, new { antes, depois = amb }, ct);
+                _logger.LogInformation("[pag.gestao] ev=ambiente_em_uso antes={Antes} depois={Depois}", antes, amb);
+            }
             return await ConfiguracaoAsync(amb, ct);
         }
 

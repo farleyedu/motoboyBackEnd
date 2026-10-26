@@ -19,10 +19,10 @@ namespace APIBack.Service
     {
         private readonly IWabaPhoneRepository _waba;
         private readonly IConfiguration _configuration;
-        private readonly IOptions<MercadoPagoOptions> _payments;
+        private readonly IMercadoPagoAmbienteAtivo _payments;
         private readonly IPagamentoSegredoProtector _segredos;
 
-        public SimuladorIntegracoes(IWabaPhoneRepository waba, IConfiguration configuration, IOptions<MercadoPagoOptions> payments,
+        public SimuladorIntegracoes(IWabaPhoneRepository waba, IConfiguration configuration, IMercadoPagoAmbienteAtivo payments,
             IPagamentoSegredoProtector segredos)
         {
             _waba = waba;
@@ -60,7 +60,7 @@ namespace APIBack.Service
                     Chave = "pagamento", Nome = "Mercado Pago", Descricao = "Pix e cartao do cardapio e do chat",
                     Status = _segredos.Configurado ? "ok" : "atencao",
                     Detalhe = _segredos.Configurado
-                        ? $"Ambiente {_payments.Value.AmbienteAtivo}. O simulador nao cobra: o pagamento e so um status."
+                        ? $"Ambiente {_payments.Atual}. O simulador nao cobra: o pagamento e so um status."
                         : "Chave mestra de pagamentos (PAGAMENTOS_CHAVE_MESTRA) nao configurada."
                 },
                 new()

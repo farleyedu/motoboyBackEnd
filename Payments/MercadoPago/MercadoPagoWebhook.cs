@@ -167,18 +167,31 @@ namespace APIBack.Payments.MercadoPago
             var topico = (Texto(corpo?.Type) ?? Texto(e.QueryTipo) ?? Texto(corpo?.Topic))?.ToLowerInvariant();
             if (dataId == null || topico == null || dataId.Length > 64 || topico.Length > 64) return new(WebhookDesfecho.Invalido, null, "sem_data_id_ou_topico", null);
 
-            var ambiente = _credenciais.AmbienteAtivo;
-            CredencialAplicacao app;
-            try { app = await _credenciais.AplicacaoAsync(ambiente, ct); }
-            catch (PagamentoException) { return new(WebhookDesfecho.NaoConfigurado, null, "aplicacao_nao_configurada", null); }
-            if (!app.TemWebhookSecret) return new(WebhookDesfecho.NaoConfigurado, null, "segredo_webhook_ausente", null);
-
-            // O manifesto usa o data.id da URL (query); sem ele, o do corpo.
-            var assinatura = MercadoPagoAssinatura.Validar(e.Assinatura, e.RequestId, Texto(e.QueryDataId) ?? dataId, app.WebhookSecret, _agora(), _options.WebhookToleranciaSegundos);
-            if (!assinatura.Valida)
+            // Os dois ambientes mandam para a mesma URL, cada um assinado com o seu segredo: testa o do ambiente ativo e depois o outro.
+            // O aviso e gravado no ambiente cujo segredo bateu (teste da Gestao funciona mesmo com o servidor no outro ambiente).
+            var ativo = _credenciais.AmbienteAtivo;
+            var candidatos = new[] { ativo, ativo == Ambientes.Producao ? Ambientes.Sandbox : Ambientes.Producao };
+            string? ambiente = null;
+            MercadoPagoAssinatura.Resultado? assinatura = null;
+            MercadoPagoAssinatura.Resultado? primeiraFalha = null;
+            var motivoSemSegredo = "aplicacao_nao_configurada";
+            foreach (var candidato in candidatos)
             {
-                _logger.LogWarning("[mp.webhook] ev=nao_autorizado motivo={Motivo} topico={Topico}", assinatura.Motivo, topico);
-                return new(WebhookDesfecho.NaoAutorizado, null, assinatura.Motivo, null);
+                CredencialAplicacao app;
+                try { app = await _credenciais.AplicacaoAsync(candidato, ct); }
+                catch (PagamentoException) { continue; }
+                if (!app.TemWebhookSecret) { motivoSemSegredo = "segredo_webhook_ausente"; continue; }
+
+                // O manifesto usa o data.id da URL (query); sem ele, o do corpo.
+                var tentativa = MercadoPagoAssinatura.Validar(e.Assinatura, e.RequestId, Texto(e.QueryDataId) ?? dataId, app.WebhookSecret, _agora(), _options.WebhookToleranciaSegundos);
+                if (tentativa.Valida) { ambiente = candidato; assinatura = tentativa; break; }
+                primeiraFalha ??= tentativa;
+            }
+            if (assinatura == null)
+            {
+                if (primeiraFalha == null) return new(WebhookDesfecho.NaoConfigurado, null, motivoSemSegredo, null);
+                _logger.LogWarning("[mp.webhook] ev=nao_autorizado motivo={Motivo} topico={Topico}", primeiraFalha.Motivo, topico);
+                return new(WebhookDesfecho.NaoAutorizado, null, primeiraFalha.Motivo, null);
             }
 
             var notificacaoId = Texto(corpo?.Id?.ToString());
