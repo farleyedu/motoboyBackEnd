@@ -1,6 +1,6 @@
 # Mercado Pago — status (handoff curto)
 
-Atualizado em 2026-10-26. Contrato completo: `docs/pagamentos/CONTRATOS.md` (fonte de verdade — ler só a seção da parte em que for trabalhar).
+Atualizado em 2026-10-26 (Orders API). Contrato completo: `docs/pagamentos/CONTRATOS.md` (fonte de verdade — ler só a seção da parte em que for trabalhar).
 Repositórios: backend `motoboyBackEnd` (master), frontend `../zippy-admin` (main).
 
 ## Feito
@@ -11,6 +11,17 @@ Repositórios: backend `motoboyBackEnd` (master), frontend `../zippy-admin` (mai
 | MP 3 — Cardápio web: backend (pagamento antes do aceite, estorno, worker) | backend | ✅ commit `f566809` (build ok, testes unitários ok) |
 | MP 3 — Cardápio web: tipos + cliente `pagamentoOnlineApi.ts` | zippy-admin | ✅ commit `f796f2a` (tsc ok) |
 | MP 5 — Cobrança Pix no chat (backend) | backend | ✅ commit `f566809` (`Payments/Chat/*`, build ok, testes unitários ok; testes de banco não rodados) |
+| Migração `v1/payments` → Orders API (`v1/orders`) | backend | ✅ 2026-10-26 — ver "Orders API" abaixo. Build ok, 2143 testes unitários ok; testes de banco ajustados (MP falso em `Tests/Integration/MpOrdersFalso.cs`) mas **não rodados** (sem `TEST_DELIVERY_DATABASE`). |
+
+## Orders API (Checkout Transparente)
+- **Aplicar no banco:** `Migrations/Delivery/20261102_60_mercadopago_orders.sql` (coluna `pagamento.mp_order_id`; verify `_61`, rollback em `rollback/`).
+- **Painel do MP (aplicação ZippyGo):** habilitar o tópico **`order`** em Webhooks (além de `payment`, que as assinaturas ainda usam) e usar a mesma URL/segredo.
+- Criação: `POST v1/orders` (`type=online`, `processing_mode=automatic`, valores em string `"0.00"`, 1 pagamento por order, `X-Idempotency-Key` = chave da tentativa). Pix: `payment_method {id:pix,type:bank_transfer}` + `expiration_time` ISO 8601 (mínimo 30 min no MP; validade menor vale só localmente). Cartão: `{id:<bandeira>,type:credit_card|debit_card,token,installments,statement_descriptor}`; `issuer_id`, `notification_url` e `metadata` não existem na Orders (o webhook vem da aplicação; a intenção é achada pelo `external_reference`). `paymentTypeId` do Brick é opcional na rota pública do cartão (padrão `credit_card`).
+- Consulta `GET v1/orders/{id}`; cancelar Pix `POST v1/orders/{id}/cancel`; estorno `POST v1/orders/{id}/refund` (total: corpo vazio; parcial: `{transactions:[{id:"PAY...",amount:"x.xx"}]}`, o `PAY...` vem de um GET da order).
+- Modelo interno: o cliente traduz a order para o `MpPagamento` de antes (`MpOrder.ParaPagamento`). `mp_payment_id` = `reference_id` do pagamento da order (numérico; sem ele, hash estável do `PAY...`), `mp_order_id` = `ORD...`. Status da Orders entram em `PagamentoStatusRules.Traduzir`; recusas de cartão voltam como `cc_rejected_*` (`DetalheCompativel`) para o front não mudar. Contratos públicos (`CONTRATOS.md`) sem mudança.
+- Mantido na API v1: `GET v1/payments/{id}` e `.../refunds` só para pagamentos sem `mp_order_id` (cobranças recorrentes das assinaturas), chargebacks, OAuth, `users/me`, `payment_methods`, preapproval.
+- Sem busca por `external_reference` na Orders: o conciliador não recupera mais tentativa `criando` por busca; o aviso `order` cria o pagamento e o conciliador só vincula a tentativa (ou a marca `falhou` após 30 min sem order).
+- **Não validado contra o sandbox do MP** (doc consultada: criação, status, webhook, refund total; confirmar no sandbox: corpo do refund parcial, `reference_id` presente em Pix e cartão, `live_mode`/moeda na resposta, resposta do `cancel`, expiração do Pix).
 
 ## Pendente (todas as sessões 2–6 pararam por limite de uso)
 | Parte | O que falta | Contrato |

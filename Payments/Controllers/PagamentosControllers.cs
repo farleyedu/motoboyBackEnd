@@ -181,6 +181,8 @@ SELECT i.id, i.origem, i.status, i.versao, i.valor, i.valor_pago, i.valor_estorn
         public string? Token { get; set; }
         public string? PaymentMethodId { get; set; }
         public string? IssuerId { get; set; }
+        /// <summary>Opcional: paymentTypeId do Payment Brick (credit_card ou debit_card). Ausente = credit_card.</summary>
+        public string? PaymentTypeId { get; set; }
         public int Parcelas { get; set; } = 1;
         public PagadorInfo? Pagador { get; set; }
     }

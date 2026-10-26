@@ -1,5 +1,8 @@
 using System;
+using System.Linq;
 using System.Security.Cryptography;
+using System.Text.Json;
+using System.Text.Json.Nodes;
 using APIBack.Payments.MercadoPago;
 using Xunit;
 
@@ -77,6 +80,99 @@ public sealed class MercadoPagoNucleoTests
     [InlineData("rejected", "cc_rejected_other_reason", 0, StatusPagamento.Recusado)]
     public void TraduzStatusDoMercadoPago(string mp, string? detalhe, decimal estornado, string esperado) =>
         Assert.Equal(esperado, PagamentoStatusRules.Traduzir(mp, detalhe, 10m, estornado));
+
+    [Theory]
+    [InlineData("created", "created", 0, StatusPagamento.Pendente)]
+    [InlineData("action_required", "waiting_transfer", 0, StatusPagamento.Pendente)]
+    [InlineData("action_required", "waiting_capture", 0, StatusPagamento.Autorizado)]
+    [InlineData("processing", "in_process", 0, StatusPagamento.EmProcesso)]
+    [InlineData("in_review", "in_review", 0, StatusPagamento.EmProcesso)]
+    [InlineData("processed", "accredited", 0, StatusPagamento.Aprovado)]
+    [InlineData("processed", "partially_refunded", 4, StatusPagamento.EstornadoParcial)]
+    [InlineData("processed", "partially_refunded", 0, StatusPagamento.EstornadoParcial)]
+    [InlineData("refunded", "refunded", 10, StatusPagamento.Estornado)]
+    [InlineData("canceled", "canceled", 0, StatusPagamento.Cancelado)]
+    [InlineData("canceled", "expired", 0, StatusPagamento.Expirado)]
+    [InlineData("expired", "expired", 0, StatusPagamento.Expirado)]
+    [InlineData("failed", "expired", 0, StatusPagamento.Expirado)]
+    [InlineData("failed", "cc_rejected_other_reason", 0, StatusPagamento.Recusado)]
+    [InlineData("charged_back", "in_process", 0, StatusPagamento.Contestado)]
+    [InlineData("charged_back", "settled", 0, StatusPagamento.Contestado)]
+    [InlineData("charged_back", "reimbursed", 0, StatusPagamento.Aprovado)]
+    public void TraduzStatusDaOrdersApi(string mp, string? detalhe, decimal estornado, string esperado) =>
+        Assert.Equal(esperado, PagamentoStatusRules.Traduzir(mp, detalhe, 10m, estornado));
+
+    [Theory]
+    [InlineData("failed", "insufficient_amount", "cc_rejected_insufficient_amount")]
+    [InlineData("failed", "card_insufficient_amount", "cc_rejected_insufficient_amount")]
+    [InlineData("failed", "bad_filled_card_data", "cc_rejected_bad_filled_other")]
+    [InlineData("failed", "required_call_for_authorize", "cc_rejected_call_for_authorize")]
+    [InlineData("failed", "rejected_by_issuer", "cc_rejected_other_reason")]
+    [InlineData("failed", "expired", "expired")]
+    [InlineData("processed", "accredited", "accredited")]
+    public void RecusaDaOrdersViraCodigoQueOFrontJaConhece(string status, string detalhe, string esperado) =>
+        Assert.Equal(esperado, PagamentoStatusRules.DetalheCompativel(status, detalhe));
+
+    [Fact]
+    public void OrderDoPixViraORetratoInternoComIdNumericoDoReferenceId()
+    {
+        const string json = @"{""id"":""ORD01J67CQQ"",""type"":""online"",""status"":""action_required"",""status_detail"":""waiting_transfer"",
+            ""external_reference"":""zp_s_cardapio_x"",""total_amount"":""50.00"",""user_id"":""77"",""created_date"":""2026-11-02T10:00:00Z"",
+            ""last_updated_date"":""2026-11-02T10:00:01Z"",""transactions"":{""payments"":[{""id"":""PAY01J67"",""reference_id"":""1234567890"",
+            ""status"":""action_required"",""status_detail"":""waiting_transfer"",""amount"":""50.00"",
+            ""payment_method"":{""id"":""pix"",""type"":""bank_transfer"",""ticket_url"":""https://mp/t"",""qr_code"":""00020126pix"",""qr_code_base64"":""iVBOR""}}]}}";
+        var mp = JsonSerializer.Deserialize<MpOrder>(json)!.ParaPagamento(liveModePadrao: true);
+
+        Assert.Equal(1234567890L, mp.Id);
+        Assert.Equal("ORD01J67CQQ", mp.OrderId);
+        Assert.Equal(77, mp.CollectorId);
+        Assert.Equal(50m, mp.TransactionAmount);
+        Assert.True(mp.LiveMode);
+        Assert.Equal("pix", mp.PaymentMethodId);
+        Assert.Equal("00020126pix", mp.TransactionData!.QrCode);
+        Assert.Equal(StatusPagamento.Pendente, PagamentoStatusRules.Traduzir(mp.Status, mp.StatusDetail, mp.TransactionAmount, mp.TransactionAmountRefunded));
+    }
+
+    [Fact]
+    public void OrderEstornadaTrazOValorEstornadoPelosRefunds()
+    {
+        const string json = @"{""id"":""ORD1"",""status"":""processed"",""status_detail"":""partially_refunded"",""total_amount"":""10.00"",""user_id"":""77"",
+            ""transactions"":{""payments"":[{""id"":""PAY1"",""reference_id"":""55"",""status"":""processed"",""status_detail"":""partially_refunded"",""amount"":""10.00"",
+            ""payment_method"":{""id"":""master"",""type"":""credit_card"",""installments"":3}}],
+            ""refunds"":[{""id"":""REF1"",""reference_id"":""900"",""amount"":""4.00"",""status"":""processed""},{""id"":""REF2"",""amount"":""1.00"",""status"":""failed""}]}}";
+        var mp = JsonSerializer.Deserialize<MpOrder>(json)!.ParaPagamento(false);
+
+        Assert.Equal(4m, mp.TransactionAmountRefunded);
+        Assert.Equal(900, Assert.Single(mp.Refunds!, r => r.Status == "approved").Id);
+        Assert.Equal(3, mp.Installments);
+        Assert.Equal(StatusPagamento.EstornadoParcial, PagamentoStatusRules.Traduzir(mp.Status, mp.StatusDetail, mp.TransactionAmount, mp.TransactionAmountRefunded));
+    }
+
+    [Fact]
+    public void SemReferenceIdOIdNumericoSaiDeUmHashEstavel()
+    {
+        var a = MpOrder.IdNumerico(null, "PAY01J67CQQ");
+        Assert.True(a > 0);
+        Assert.Equal(a, MpOrder.IdNumerico("", "PAY01J67CQQ"));
+        Assert.NotEqual(a, MpOrder.IdNumerico(null, "PAY01J67CQR"));
+    }
+
+    [Fact]
+    public void CorpoDaCriacaoDaOrderUsaValoresEmTextoEOsCamposDaOrdersApi()
+    {
+        var pedido = new MpCriarOrderRequest { TotalAmount = MpCriarOrderRequest.Moeda(50m), ExternalReference = "zp_s_cardapio_x" };
+        pedido.Pagamento.Amount = pedido.TotalAmount;
+        pedido.Pagamento.PaymentMethod = new MpOrderMetodoRequest { Id = "master", Type = "credit_card", Token = "tok", Installments = 2 };
+        var corpo = JsonNode.Parse(JsonSerializer.Serialize(pedido))!;
+
+        Assert.Equal("online", corpo["type"]!.GetValue<string>());
+        Assert.Equal("automatic", corpo["processing_mode"]!.GetValue<string>());
+        Assert.Equal("50.00", corpo["total_amount"]!.GetValue<string>());
+        Assert.Equal("50.00", corpo["transactions"]!["payments"]![0]!["amount"]!.GetValue<string>());
+        Assert.Equal("tok", corpo["transactions"]!["payments"]![0]!["payment_method"]!["token"]!.GetValue<string>());
+        Assert.Null(corpo["transactions"]!["payments"]![0]!["expiration_time"]);
+        Assert.Null(corpo["marketplace_fee"]);
+    }
 
     [Fact]
     public void EventoForaDeOrdemNaoRetrocede()

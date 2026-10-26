@@ -30,6 +30,8 @@ namespace APIBack.Payments.MercadoPago
     public interface IPagamentoSincronizador
     {
         Task<SincronizacaoResultado> SincronizarAsync(CredencialRecebedora credencial, long mpPaymentId, string ator, CancellationToken ct = default);
+        /// <summary>Aviso do topico 'order': busca a order (ORD...) no MP e aplica o retrato do pagamento dela.</summary>
+        Task<SincronizacaoResultado> SincronizarOrderAsync(CredencialRecebedora credencial, string orderId, string ator, CancellationToken ct = default);
         Task<SincronizacaoResultado> AplicarAsync(CredencialRecebedora credencial, MpPagamento mp, Guid? idTentativa, string ator, CancellationToken ct = default);
         /// <summary>Mesmo que <see cref="AplicarAsync"/>, dentro de uma transacao do chamador (intencao ja travada por ele).</summary>
         Task<SincronizacaoResultado> AplicarNaTransacaoAsync(NpgsqlConnection cx, NpgsqlTransaction tx, PagamentoIntent intent, CredencialRecebedora credencial,
@@ -57,10 +59,32 @@ namespace APIBack.Payments.MercadoPago
 
         public async Task<SincronizacaoResultado> SincronizarAsync(CredencialRecebedora credencial, long mpPaymentId, string ator, CancellationToken ct = default)
         {
+            // Pagamento que nasceu numa order se consulta pela order; os da API v1 (assinaturas) seguem em v1/payments.
+            string? orderId;
+            await using (var cx = await _db.OpenConnectionAsync(ct))
+                orderId = await cx.ExecuteScalarAsync<string?>(new CommandDefinition(
+                    "SELECT mp_order_id FROM pagamento WHERE ambiente = @Amb AND mp_payment_id = @Mp", new { Amb = credencial.Ambiente, Mp = mpPaymentId }, cancellationToken: ct));
+
             MpPagamento mp;
             try
             {
-                mp = await _client.ObterPagamentoAsync(credencial, mpPaymentId, ct);
+                mp = orderId != null
+                    ? await _client.ObterOrderAsync(credencial, orderId, ct)
+                    : await _client.ObterPagamentoAsync(credencial, mpPaymentId, ct);
+            }
+            catch (MercadoPagoApiException ex) when (ex.StatusHttp == 404)
+            {
+                return new SincronizacaoResultado(ResultadoSincronizacao.Desconhecido, null, null, null, "pagamento_inexistente_na_conta");
+            }
+            return await AplicarAsync(credencial, mp, null, ator, ct);
+        }
+
+        public async Task<SincronizacaoResultado> SincronizarOrderAsync(CredencialRecebedora credencial, string orderId, string ator, CancellationToken ct = default)
+        {
+            MpPagamento mp;
+            try
+            {
+                mp = await _client.ObterOrderAsync(credencial, orderId, ct);
             }
             catch (MercadoPagoApiException ex) when (ex.StatusHttp == 404)
             {
@@ -128,14 +152,14 @@ namespace APIBack.Payments.MercadoPago
                 pag = new PagamentoRegistro
                 {
                     Id = Guid.NewGuid(), IdIntent = intent.Id, IdTentativa = idTentativa, IdEstabelecimento = intent.IdEstabelecimento, Ambiente = intent.Ambiente,
-                    MpPaymentId = mp.Id, Metodo = metodo, Versao = 1
+                    MpPaymentId = mp.Id, MpOrderId = mp.OrderId, Metodo = metodo, Versao = 1
                 };
                 Preencher(pag, mp, statusNovo, estornadoMp);
                 await cx.ExecuteAsync(new CommandDefinition(@"
-INSERT INTO pagamento (id, id_intent, id_tentativa, id_estabelecimento, ambiente, mp_payment_id, mp_collector_id, metodo, payment_method_id, payment_type_id,
+INSERT INTO pagamento (id, id_intent, id_tentativa, id_estabelecimento, ambiente, mp_payment_id, mp_order_id, mp_collector_id, metodo, payment_method_id, payment_type_id,
                        status, mp_status, mp_status_detail, valor, valor_estornado, moeda, pix_copia_cola, pix_qr_code_base64, pix_ticket_url, cartao_bandeira,
                        cartao_final, parcelas, live_mode, expira_em, aprovado_em, mp_atualizado_em, versao, conciliado_em)
-VALUES (@Id, @IdIntent, @IdTentativa, @IdEstabelecimento, @Ambiente, @MpPaymentId, @MpCollectorId, @Metodo, @PaymentMethodId, @PaymentTypeId,
+VALUES (@Id, @IdIntent, @IdTentativa, @IdEstabelecimento, @Ambiente, @MpPaymentId, @MpOrderId, @MpCollectorId, @Metodo, @PaymentMethodId, @PaymentTypeId,
         @Status, @MpStatus, @MpStatusDetail, @Valor, @ValorEstornado, @Moeda, @PixCopiaCola, @PixQrCodeBase64, @PixTicketUrl, @CartaoBandeira,
         @CartaoFinal, @Parcelas, @LiveMode, @ExpiraEm, @AprovadoEm, @MpAtualizadoEm, 1, NOW())", pag, tx, cancellationToken: ct));
                 if (idTentativa.HasValue)
@@ -152,7 +176,7 @@ UPDATE pagamento_tentativa SET status = 'criada', mp_payment_id = @Mp, concluida
                 pag.Versao++;
                 await cx.ExecuteAsync(new CommandDefinition(@"
 UPDATE pagamento SET status = @Status, mp_status = @MpStatus, mp_status_detail = @MpStatusDetail, valor_estornado = @ValorEstornado,
-       aprovado_em = COALESCE(aprovado_em, @AprovadoEm), mp_atualizado_em = @MpAtualizadoEm, versao = @Versao,
+       mp_order_id = COALESCE(mp_order_id, @MpOrderId), aprovado_em = COALESCE(aprovado_em, @AprovadoEm), mp_atualizado_em = @MpAtualizadoEm, versao = @Versao,
        pix_copia_cola = COALESCE(pix_copia_cola, @PixCopiaCola), pix_qr_code_base64 = COALESCE(pix_qr_code_base64, @PixQrCodeBase64),
        pix_ticket_url = COALESCE(pix_ticket_url, @PixTicketUrl), cartao_final = COALESCE(cartao_final, @CartaoFinal),
        conciliado_em = NOW(), updated_at = NOW()
@@ -236,6 +260,7 @@ UPDATE pagamento_intent SET status = @Status, versao = @Versao, valor_pago = @Va
         private static void Preencher(PagamentoRegistro pag, MpPagamento mp, string status, decimal estornado)
         {
             pag.Status = status;
+            pag.MpOrderId = mp.OrderId ?? pag.MpOrderId;
             pag.MpStatus = mp.Status;
             pag.MpStatusDetail = mp.StatusDetail;
             pag.MpCollectorId = mp.CollectorId;

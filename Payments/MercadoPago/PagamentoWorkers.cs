@@ -59,11 +59,10 @@ namespace APIBack.Payments.MercadoPago
                 var webhook = scope.ServiceProvider.GetRequiredService<IMercadoPagoWebhookService>();
                 var credenciais = scope.ServiceProvider.GetRequiredService<IMercadoPagoCredencialResolver>();
                 var sync = scope.ServiceProvider.GetRequiredService<IPagamentoSincronizador>();
-                var client = scope.ServiceProvider.GetRequiredService<IMercadoPagoClient>();
 
                 await ReprocessarWebhooksAsync(webhook, ct);
                 await ConsultarAbertosAsync(credenciais, sync, ct);
-                await RecuperarTentativasAsync(credenciais, sync, client, ct);
+                await RecuperarTentativasAsync(ct);
             }
             finally
             {
@@ -112,7 +111,7 @@ SELECT p.id_intent, p.mp_payment_id FROM pagamento p
             }
         }
 
-        private async Task RecuperarTentativasAsync(IMercadoPagoCredencialResolver credenciais, IPagamentoSincronizador sync, IMercadoPagoClient client, CancellationToken ct)
+        private async Task RecuperarTentativasAsync(CancellationToken ct)
         {
             await using var cx = await _db.OpenConnectionAsync(ct);
             var presas = (await cx.QueryAsync<(Guid Id, Guid IntentId, DateTime CreatedAt)>(new CommandDefinition(@"
@@ -123,17 +122,14 @@ SELECT id, id_intent, created_at FROM pagamento_tentativa
             {
                 try
                 {
-                    var intent = await PagamentoIntentSql.ObterAsync(cx, null, intentId, false, ct);
-                    var cred = await credenciais.ParaIntentAsync(intent!, ct);
-                    var achados = await client.BuscarPorReferenciaAsync(cred, intent!.ExternalReference, ct);
-                    var conhecidos = (await cx.QueryAsync<long>(new CommandDefinition(
-                        "SELECT mp_payment_id FROM pagamento WHERE id_intent = @I", new { I = intentId }, cancellationToken: ct))).ToHashSet();
-                    var novo = achados.FirstOrDefault(p => !conhecidos.Contains(p.Id));
-                    if (novo != null)
-                    {
-                        await sync.AplicarAsync(cred, novo, id, "conciliador", ct);
-                    }
-                    else if (criada < DateTime.UtcNow.AddMinutes(-30))
+                    // A Orders API nao tem busca por external_reference: se a order chegou a existir no MP, o aviso 'order' dela
+                    // (que traz o external_reference) cria o pagamento pelo webhook e aqui a tentativa so e vinculada a ele.
+                    var vinculada = await cx.ExecuteAsync(new CommandDefinition(@"
+UPDATE pagamento_tentativa t SET status = 'criada', mp_payment_id = p.mp_payment_id, concluida_em = NOW()
+  FROM (SELECT mp_payment_id FROM pagamento WHERE id_intent = @I AND id_tentativa IS NULL AND created_at >= @Criada
+         ORDER BY created_at LIMIT 1) p
+ WHERE t.id = @Id AND t.status = 'criando'", new { Id = id, I = intentId, Criada = criada }, cancellationToken: ct));
+                    if (vinculada == 0 && criada < DateTime.UtcNow.AddMinutes(-30))
                     {
                         await cx.ExecuteAsync(new CommandDefinition(@"
 UPDATE pagamento_tentativa SET status = 'falhou', erro_codigo = 'sem_resposta', concluida_em = NOW() WHERE id = @Id AND status = 'criando'",

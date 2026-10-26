@@ -121,6 +121,8 @@ namespace APIBack.Payments.MercadoPago
     public sealed class MercadoPagoWebhookService : IMercadoPagoWebhookService
     {
         public static readonly string[] TopicosPagamento = { "payment", "payments" };
+        /// <summary>Orders API: data.id e o id da order (ORD...), nao do pagamento.</summary>
+        public static readonly string[] TopicosOrder = { "order", "orders" };
         public static readonly string[] TopicosChargeback = { "chargebacks", "topic_chargebacks_wh" };
 
         private readonly NpgsqlDataSource _db;
@@ -160,7 +162,8 @@ namespace APIBack.Payments.MercadoPago
                 catch (JsonException) { return new(WebhookDesfecho.Invalido, null, "json_invalido", null); }
             }
 
-            var dataId = Texto(e.QueryDataId) ?? Texto(corpo?.Data?.Id?.ToString());
+            // O corpo traz o id como o MP o emite (ORD... em maiusculas); a query vem em minusculas e so serve ao manifesto da assinatura.
+            var dataId = Texto(corpo?.Data?.Id?.ToString()) ?? Texto(e.QueryDataId);
             var topico = (Texto(corpo?.Type) ?? Texto(e.QueryTipo) ?? Texto(corpo?.Topic))?.ToLowerInvariant();
             if (dataId == null || topico == null || dataId.Length > 64 || topico.Length > 64) return new(WebhookDesfecho.Invalido, null, "sem_data_id_ou_topico", null);
 
@@ -267,6 +270,20 @@ UPDATE mp_webhook_evento SET status = @S, ultimo_erro = @M, processado_em = NOW(
                 };
             }
 
+            if (TopicosOrder.Contains(evento.Topico))
+            {
+                var cred = await CredencialDaOrderAsync(evento, ct);
+                if (cred == null) return ("ignorado", "conta_desconhecida");
+                var r = await _sync.SincronizarOrderAsync(cred, evento.DataId, "webhook", ct);
+                return r.Resultado switch
+                {
+                    ResultadoSincronizacao.Aplicado => ("processado", null),
+                    ResultadoSincronizacao.SemMudanca => ("processado", "sem_mudanca"),
+                    ResultadoSincronizacao.Rejeitado => ("rejeitado", r.Motivo),
+                    _ => ("ignorado", r.Motivo)
+                };
+            }
+
             if (TopicosChargeback.Contains(evento.Topico))
                 return await ChargebackAsync(evento, ct);
 
@@ -280,6 +297,20 @@ UPDATE mp_webhook_evento SET status = @S, ultimo_erro = @M, processado_em = NOW(
             await using var cx = await _db.OpenConnectionAsync(ct);
             var intentId = await cx.ExecuteScalarAsync<Guid?>(new CommandDefinition(
                 "SELECT id_intent FROM pagamento WHERE ambiente = @Amb AND mp_payment_id = @Mp", new { Amb = evento.Ambiente, Mp = mpId }, cancellationToken: ct));
+            if (intentId.HasValue)
+            {
+                var intent = await PagamentoIntentSql.ObterAsync(cx, null, intentId.Value, false, ct);
+                return await _credenciais.ParaIntentAsync(intent!, ct);
+            }
+            return evento.MpUserId.HasValue ? await _credenciais.PorMpUserIdAsync(evento.Ambiente, evento.MpUserId.Value, ct) : null;
+        }
+
+        /// <summary>Order conhecida: a conta gravada na intencao. Desconhecida (ex.: criacao sem resposta): a conta dona do user_id do aviso.</summary>
+        private async Task<CredencialRecebedora?> CredencialDaOrderAsync(MpWebhookEvento evento, CancellationToken ct)
+        {
+            await using var cx = await _db.OpenConnectionAsync(ct);
+            var intentId = await cx.ExecuteScalarAsync<Guid?>(new CommandDefinition(
+                "SELECT id_intent FROM pagamento WHERE ambiente = @Amb AND mp_order_id = @Ord", new { Amb = evento.Ambiente, Ord = evento.DataId }, cancellationToken: ct));
             if (intentId.HasValue)
             {
                 var intent = await PagamentoIntentSql.ObterAsync(cx, null, intentId.Value, false, ct);

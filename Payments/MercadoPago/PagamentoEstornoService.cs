@@ -124,11 +124,15 @@ SELECT id, id_estabelecimento, conversa_id, id_intent, pedido_id, status, versao
             var cred = await _credenciais.ParaIntentAsync(intent, ct);
             try
             {
-                var refund = await _client.EstornarAsync(cred, pag.MpPaymentId, valor == pag.Valor ? null : valor, Chave(r), ct);
+                var parcial = valor == pag.Valor ? (decimal?)null : valor;
+                // Order (Pix/cartao do checkout) estorna pela order; pagamento da API v1 (assinatura) segue em v1/payments.
+                var refund = pag.MpOrderId != null
+                    ? await _client.EstornarOrderAsync(cred, pag.MpOrderId, parcial, Chave(r), ct)
+                    : await _client.EstornarAsync(cred, pag.MpPaymentId, parcial, Chave(r), ct);
                 status = refund.Status is null or "approved" ? StatusEstorno.Concluido : StatusEstorno.Processando;
                 await cx.ExecuteAsync(new CommandDefinition(@"
 UPDATE pagamento_estorno SET status = @S, mp_refund_id = @R, concluido_em = CASE WHEN @S = 'concluido' THEN NOW() END
- WHERE id = @Id AND status IN ('solicitado', 'processando')", new { Id = estornoId, S = status, R = refund.Id }, cancellationToken: ct));
+ WHERE id = @Id AND status IN ('solicitado', 'processando')", new { Id = estornoId, S = status, R = refund.Id == 0 ? (long?)null : refund.Id }, cancellationToken: ct));
             }
             catch (MercadoPagoApiException ex) when (!ex.Indisponivel)
             {

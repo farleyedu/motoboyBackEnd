@@ -9,12 +9,29 @@ namespace APIBack.Payments.MercadoPago
     /// </summary>
     public static class PagamentoStatusRules
     {
-        /// <summary>Status do MP -> status local. Estorno parcial nao muda o status do MP (continua approved).</summary>
+        /// <summary>
+        /// Status do MP -> status local. Entende a API v1 (pending/approved/cancelled...) e a Orders API (created/action_required/processed/canceled/failed...).
+        /// Estorno parcial nao muda o status da v1 (continua approved); na Orders ele vem como processed + partially_refunded.
+        /// </summary>
         public static string Traduzir(string mpStatus, string? statusDetail, decimal valor, decimal? valorEstornado)
         {
             var estornado = valorEstornado ?? 0m;
             return mpStatus switch
             {
+                "created" => StatusPagamento.Pendente,
+                "action_required" when statusDetail == "waiting_capture" => StatusPagamento.Autorizado,
+                "action_required" => StatusPagamento.Pendente,
+                "processing" or "in_review" => StatusPagamento.EmProcesso,
+                "processed" when statusDetail == "partially_refunded" || (estornado > 0 && estornado < valor) => StatusPagamento.EstornadoParcial,
+                "processed" when estornado >= valor && valor > 0 => StatusPagamento.Estornado,
+                "processed" => StatusPagamento.Aprovado,
+                "canceled" when statusDetail == "expired" => StatusPagamento.Expirado,
+                "canceled" => StatusPagamento.Cancelado,
+                "expired" => StatusPagamento.Expirado,
+                "failed" when statusDetail == "expired" => StatusPagamento.Expirado,
+                "failed" => StatusPagamento.Recusado,
+                // Chargeback ganho pela loja: o dinheiro ficou com ela.
+                "charged_back" when statusDetail == "reimbursed" => StatusPagamento.Aprovado,
                 "pending" => StatusPagamento.Pendente,
                 "in_process" => StatusPagamento.EmProcesso,
                 "authorized" => StatusPagamento.Autorizado,
@@ -31,6 +48,30 @@ namespace APIBack.Payments.MercadoPago
                 _ => throw new PagamentoException(PagamentoCodigos.MercadoPagoRespostaInconsistente, 502, $"Status desconhecido do Mercado Pago: {mpStatus}.")
             };
         }
+
+        private static readonly Dictionary<string, string> RecusaCompativel = new()
+        {
+            ["bad_filled_card_data"] = "cc_rejected_bad_filled_other",
+            ["invalid_card_token"] = "cc_rejected_bad_filled_other",
+            ["high_risk"] = "cc_rejected_high_risk",
+            ["rejected_by_issuer"] = "cc_rejected_other_reason",
+            ["required_call_for_authorize"] = "cc_rejected_call_for_authorize",
+            ["max_attempts_exceeded"] = "cc_rejected_max_attempts",
+            ["card_disabled"] = "cc_rejected_card_disabled",
+            ["insufficient_amount"] = "cc_rejected_insufficient_amount",
+            ["card_insufficient_amount"] = "cc_rejected_insufficient_amount",
+            ["amount_limit_exceeded"] = "cc_rejected_other_reason",
+            ["processing_error"] = "cc_rejected_other_reason",
+            ["invalid_installments"] = "cc_rejected_invalid_installments",
+            ["3ds_challenge_expired"] = "cc_rejected_3ds_challenge"
+        };
+
+        /// <summary>
+        /// status_detail da Orders API -> codigo cc_rejected_* da API v1, que e o que o front (Payment Brick) ja conhece
+        /// (contrato de statusDetail em docs/pagamentos/CONTRATOS.md). So recusa muda; o resto passa como veio.
+        /// </summary>
+        public static string? DetalheCompativel(string mpStatus, string? statusDetail) =>
+            mpStatus == "failed" && statusDetail != null && RecusaCompativel.TryGetValue(statusDetail, out var v) ? v : statusDetail;
 
         /// <summary>Peso para desempate quando o MP nao manda data (ou manda a mesma): estado mais "avancado" ganha.</summary>
         public static int Peso(string status) => status switch

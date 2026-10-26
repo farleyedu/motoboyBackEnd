@@ -335,6 +335,7 @@ INSERT INTO pedido VALUES (101, @L, @Cli, @C, 6, 'Pendente', 'PIX', '80.00'), (1
                 new { L = db.Loja, O = db.OutraLoja, C = db.Conversa, Cli = db.Cliente, Outro = Guid.NewGuid() });
             var migracoes = Path.Combine(AppContext.BaseDirectory, "Migrations", "Delivery");
             await db.Execute(File.ReadAllText(Path.Combine(migracoes, "20261031_01_mercadopago_nucleo.sql")));
+            await db.Execute(File.ReadAllText(Path.Combine(migracoes, "20261102_60_mercadopago_orders.sql")));
             await db.Execute(File.ReadAllText(Path.Combine(migracoes, "20261101_50_cobranca_chat_atendente.sql")));
             // Idempotente: aplicar de novo nao quebra.
             await db.Execute(File.ReadAllText(Path.Combine(migracoes, "20261101_50_cobranca_chat_atendente.sql")));
@@ -426,7 +427,7 @@ INSERT INTO pagamento_preferencia_loja (id_estabelecimento, pix_ativo) VALUES (@
             var corpo = request.Content == null ? null : JsonNode.Parse(await request.Content.ReadAsStringAsync(ct))?.AsObject();
             var chave = request.Headers.TryGetValues("X-Idempotency-Key", out var v) ? v.First() : null;
 
-            if (request.Method == HttpMethod.Post && caminho == "v1/payments")
+            if (request.Method == HttpMethod.Post && caminho == "v1/orders")
             {
                 var id = _porChave.GetOrAdd(chave!, _ =>
                 {
@@ -435,27 +436,21 @@ INSERT INTO pagamento_preferencia_loja (id_estabelecimento, pix_ativo) VALUES (@
                     Pagamentos[novo] = new MpPagamento
                     {
                         Id = novo, Status = "pending", StatusDetail = "pending_waiting_transfer", CollectorId = Collector,
-                        TransactionAmount = corpo!["transaction_amount"]!.GetValue<decimal>(), CurrencyId = "BRL", LiveMode = false,
-                        ExternalReference = corpo["external_reference"]!.GetValue<string>(), PaymentMethodId = "pix", PaymentTypeId = "bank_transfer",
-                        DateCreated = DateTimeOffset.UtcNow, DateLastUpdated = DateTimeOffset.UtcNow, DateOfExpiration = DateTimeOffset.UtcNow.AddMinutes(30),
+                        TransactionAmount = MpOrdersFalso.Valor(corpo!), CurrencyId = "BRL", LiveMode = false,
+                        ExternalReference = MpOrdersFalso.Referencia(corpo!), PaymentMethodId = "pix", PaymentTypeId = "bank_transfer",
+                        DateCreated = DateTimeOffset.UtcNow, DateLastUpdated = DateTimeOffset.UtcNow,
                         PointOfInteraction = new MpPointOfInteraction { TransactionData = new MpTransactionData { QrCode = "00020126pix" + novo, QrCodeBase64 = "iVBOR", TicketUrl = "https://mp/t" } }
                     };
                     return novo;
                 });
-                return Json(Pagamentos[id]);
-            }
-
-            if (request.Method == HttpMethod.Get && caminho == "v1/payments/search")
-            {
-                var referencia = Uri.UnescapeDataString(request.RequestUri.Query.Split('&')[0].Split('=')[1]);
-                return Json(new MpBuscaPagamentos { Results = Pagamentos.Values.Where(p => p.ExternalReference == referencia).ToList() });
+                return MpOrdersFalso.Resposta(Pagamentos[id]);
             }
 
             var partes = caminho.Split('/');
-            if (partes.Length >= 3 && partes[1] == "payments" && long.TryParse(partes[2], out var pid) && Pagamentos.TryGetValue(pid, out var pag))
+            if (partes.Length >= 3 && partes[1] == "orders" && MpOrdersFalso.TentaPagamento(partes[2], out var pid) && Pagamentos.TryGetValue(pid, out var pag))
             {
-                if (request.Method == HttpMethod.Get) return Json(pag);
-                if (request.Method == HttpMethod.Put) { Mudar(pid, "cancelled", "by_collector", DateTimeOffset.UtcNow); return Json(pag); }
+                if (request.Method == HttpMethod.Get && partes.Length == 3) return MpOrdersFalso.Resposta(pag);
+                if (request.Method == HttpMethod.Post && partes.Length == 4 && partes[3] == "cancel") { Mudar(pid, "cancelled", "by_collector", DateTimeOffset.UtcNow); return MpOrdersFalso.Resposta(pag); }
             }
             return new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent("{\"error\":\"not_found\"}") };
         }

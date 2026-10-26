@@ -98,7 +98,7 @@ namespace APIBack.Service
                 IdEstabelecimento = pedido.IdEstabelecimento, Origem = OrigensPagamento.Cardapio, Valor = pedido.Total,
                 Descricao = $"Pedido {pedido.Codigo}", IdempotencyKey = chave, PrePedidoId = prePedidoId,
                 Token = request.Token ?? string.Empty, PaymentMethodId = request.PaymentMethodId ?? string.Empty, IssuerId = request.IssuerId,
-                Parcelas = request.Parcelas, Pagador = request.Pagador
+                TipoCartao = request.PaymentTypeId, Parcelas = request.Parcelas, Pagador = request.Pagador
             }, ct);
             await _repository.VincularIntentAsync(prePedidoId, r.IntentId);
             _logger.LogInformation("[cardapio.pag] ev=cartao pre={Pre} intent={Intent} status={Status} detalhe={Detalhe}",

@@ -37,10 +37,14 @@ namespace APIBack.Payments.MercadoPago
     /// </summary>
     public interface IMercadoPagoClient
     {
-        Task<MpPagamento> CriarPagamentoAsync(CredencialRecebedora credencial, MpCriarPagamentoRequest request, string idempotencyKey, CancellationToken ct = default);
+        // Orders API (Pix e cartao do checkout). Todas devolvem o retrato interno do pagamento da order (MpOrder.ParaPagamento).
+        Task<MpPagamento> CriarOrderAsync(CredencialRecebedora credencial, MpCriarOrderRequest request, string idempotencyKey, CancellationToken ct = default);
+        Task<MpPagamento> ObterOrderAsync(CredencialRecebedora credencial, string orderId, CancellationToken ct = default);
+        Task<MpPagamento> CancelarOrderAsync(CredencialRecebedora credencial, string orderId, CancellationToken ct = default);
+        /// <summary><paramref name="valor"/> null = estorno total. O refund devolvido tem Id 0 quando o MP ainda nao o listou (o sincronizador concilia).</summary>
+        Task<MpRefund> EstornarOrderAsync(CredencialRecebedora credencial, string orderId, decimal? valor, string idempotencyKey, CancellationToken ct = default);
+        // API v1: so para pagamentos que nao nascem em order (cobrancas recorrentes das assinaturas).
         Task<MpPagamento> ObterPagamentoAsync(CredencialRecebedora credencial, long mpPaymentId, CancellationToken ct = default);
-        Task<IReadOnlyList<MpPagamento>> BuscarPorReferenciaAsync(CredencialRecebedora credencial, string externalReference, CancellationToken ct = default);
-        Task<MpPagamento> CancelarPagamentoAsync(CredencialRecebedora credencial, long mpPaymentId, CancellationToken ct = default);
         Task<MpRefund> EstornarAsync(CredencialRecebedora credencial, long mpPaymentId, decimal? valor, string idempotencyKey, CancellationToken ct = default);
         Task<MpChargeback> ObterChargebackAsync(CredencialRecebedora credencial, string chargebackId, CancellationToken ct = default);
         Task<MpOAuthToken> TrocarCodigoOAuthAsync(CredencialAplicacao app, string code, string redirectUri, string? codeVerifier, CancellationToken ct = default);
@@ -66,25 +70,40 @@ namespace APIBack.Payments.MercadoPago
             _logger = logger;
         }
 
-        public Task<MpPagamento> CriarPagamentoAsync(CredencialRecebedora c, MpCriarPagamentoRequest request, string idempotencyKey, CancellationToken ct = default)
+        public async Task<MpPagamento> CriarOrderAsync(CredencialRecebedora c, MpCriarOrderRequest request, string idempotencyKey, CancellationToken ct = default)
         {
             if (string.IsNullOrWhiteSpace(idempotencyKey)) throw new ArgumentException("Chave de idempotencia obrigatoria.", nameof(idempotencyKey));
-            return EnviarAsync<MpPagamento>(c.AccessToken, HttpMethod.Post, "v1/payments", request, idempotencyKey, "criar_pagamento", ct);
+            var order = await EnviarAsync<MpOrder>(c.AccessToken, HttpMethod.Post, "v1/orders", request, idempotencyKey, "criar_order", ct);
+            return order.ParaPagamento(Ambientes.LiveMode(c.Ambiente));
         }
+
+        public async Task<MpPagamento> ObterOrderAsync(CredencialRecebedora c, string orderId, CancellationToken ct = default) =>
+            (await EnviarAsync<MpOrder>(c.AccessToken, HttpMethod.Get, CaminhoOrder(orderId), null, null, "obter_order", ct)).ParaPagamento(Ambientes.LiveMode(c.Ambiente));
+
+        public async Task<MpPagamento> CancelarOrderAsync(CredencialRecebedora c, string orderId, CancellationToken ct = default) =>
+            (await EnviarAsync<MpOrder>(c.AccessToken, HttpMethod.Post, $"{CaminhoOrder(orderId)}/cancel", null, $"cancel:{orderId}", "cancelar_order", ct))
+                .ParaPagamento(Ambientes.LiveMode(c.Ambiente));
+
+        public async Task<MpRefund> EstornarOrderAsync(CredencialRecebedora c, string orderId, decimal? valor, string idempotencyKey, CancellationToken ct = default)
+        {
+            object? corpo = null;
+            if (valor.HasValue)
+            {
+                // Estorno parcial: o MP quer o id do pagamento (PAY...) dentro da order; estorno total vai com o corpo vazio.
+                var atual = await EnviarAsync<MpOrder>(c.AccessToken, HttpMethod.Get, CaminhoOrder(orderId), null, null, "obter_order", ct);
+                var pay = atual.Pagamento ?? throw new MercadoPagoApiException(502, "order_sem_pagamento", "Order do Mercado Pago sem pagamento.");
+                corpo = new { transactions = new[] { new { id = pay.Id, amount = MpCriarOrderRequest.Moeda(valor.Value) } } };
+            }
+            var order = await EnviarAsync<MpOrder>(c.AccessToken, HttpMethod.Post, $"{CaminhoOrder(orderId)}/refund", corpo, idempotencyKey, "estornar_order", ct);
+            var snapshot = order.ParaPagamento(Ambientes.LiveMode(c.Ambiente));
+            // O refund novo e o ultimo da lista; sem lista, Id 0 e o sincronizador casa o estorno pelo valor.
+            return snapshot.Refunds?.LastOrDefault() ?? new MpRefund { Id = 0, Amount = valor ?? snapshot.TransactionAmount, Status = "pending" };
+        }
+
+        private static string CaminhoOrder(string orderId) => $"v1/orders/{Uri.EscapeDataString(orderId)}";
 
         public Task<MpPagamento> ObterPagamentoAsync(CredencialRecebedora c, long id, CancellationToken ct = default) =>
             EnviarAsync<MpPagamento>(c.AccessToken, HttpMethod.Get, $"v1/payments/{id}", null, null, "obter_pagamento", ct);
-
-        public async Task<IReadOnlyList<MpPagamento>> BuscarPorReferenciaAsync(CredencialRecebedora c, string externalReference, CancellationToken ct = default)
-        {
-            var r = await EnviarAsync<MpBuscaPagamentos>(c.AccessToken, HttpMethod.Get,
-                $"v1/payments/search?external_reference={Uri.EscapeDataString(externalReference)}&sort=date_created&criteria=desc&limit=20",
-                null, null, "buscar_pagamentos", ct);
-            return r.Results;
-        }
-
-        public Task<MpPagamento> CancelarPagamentoAsync(CredencialRecebedora c, long id, CancellationToken ct = default) =>
-            EnviarAsync<MpPagamento>(c.AccessToken, HttpMethod.Put, $"v1/payments/{id}", new { status = "cancelled" }, null, "cancelar_pagamento", ct);
 
         public Task<MpRefund> EstornarAsync(CredencialRecebedora c, long id, decimal? valor, string idempotencyKey, CancellationToken ct = default) =>
             EnviarAsync<MpRefund>(c.AccessToken, HttpMethod.Post, $"v1/payments/{id}/refunds",

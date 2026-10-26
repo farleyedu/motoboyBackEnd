@@ -55,7 +55,7 @@ public sealed class CardapioPagamentoDatabaseTests
 
         Assert.Equal(pix1.CopiaECola, pix2.CopiaECola);
         var criacao = Assert.Single(db.Mp.Criacoes);
-        Assert.Equal(42.90m, criacao.Corpo["transaction_amount"]!.GetValue<decimal>());
+        Assert.Equal(42.90m, MpOrdersFalso.Valor(criacao.Corpo));
         Assert.Equal(42.90m, pix1.Valor);
         // Codigo errado = 404 (nao revela o pedido).
         Assert.Equal(404, (await Assert.ThrowsAsync<PagamentoException>(() => pagamentos.CriarPixAsync(pre, "CDP-OUTRO"))).Http);
@@ -249,7 +249,7 @@ CREATE TABLE cardapio_pedido_publico (
     codigo_confirmacao text, codigo_expira_em timestamptz, canal_confirmacao text, telefone_contato text, id_conversa uuid, confirmado_em timestamptz,
     aceito_em timestamptz, recusado_em timestamptz, motivo_recusa text, id_pedido int);
 INSERT INTO estabelecimentos VALUES (@L, 'Loja Teste');", new { L = db.Loja });
-            foreach (var migration in new[] { "20261031_01_mercadopago_nucleo.sql", "20261101_30_cardapio_pagamento_online.sql" })
+            foreach (var migration in new[] { "20261031_01_mercadopago_nucleo.sql", "20261102_60_mercadopago_orders.sql", "20261101_30_cardapio_pagamento_online.sql" })
                 await db.Execute(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Migrations", "Delivery", migration)));
 
             var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
@@ -356,7 +356,7 @@ VALUES (@Id, @L, 'CDP-TESTE' || substr(@Id::text, 1, 0), @S, 'Maria', '+55349912
             var corpo = request.Content == null ? null : JsonNode.Parse(await request.Content.ReadAsStringAsync(ct))?.AsObject();
             var chave = request.Headers.TryGetValues("X-Idempotency-Key", out var v) ? v.First() : null;
 
-            if (request.Method == HttpMethod.Post && caminho == "v1/payments")
+            if (request.Method == HttpMethod.Post && caminho == "v1/orders")
             {
                 lock (Criacoes) Criacoes.Add(new Criacao(chave, corpo!));
                 var id = _porChave.GetOrAdd(chave!, _ =>
@@ -365,29 +365,28 @@ VALUES (@Id, @L, 'CDP-TESTE' || substr(@Id::text, 1, 0), @S, 'Maria', '+55349912
                     Pagamentos[novo] = new MpPagamento
                     {
                         Id = novo, Status = "pending", StatusDetail = "pending_waiting_transfer", CollectorId = Collector,
-                        TransactionAmount = corpo!["transaction_amount"]!.GetValue<decimal>(), CurrencyId = "BRL", LiveMode = false,
-                        ExternalReference = corpo["external_reference"]!.GetValue<string>(), PaymentMethodId = corpo["payment_method_id"]!.GetValue<string>(),
+                        TransactionAmount = MpOrdersFalso.Valor(corpo!), CurrencyId = "BRL", LiveMode = false,
+                        ExternalReference = MpOrdersFalso.Referencia(corpo!), PaymentMethodId = MpOrdersFalso.Metodo(corpo!)["id"]!.GetValue<string>(),
                         PaymentTypeId = "bank_transfer", DateCreated = DateTimeOffset.UtcNow, DateLastUpdated = DateTimeOffset.UtcNow,
-                        DateOfExpiration = DateTimeOffset.UtcNow.AddMinutes(30),
                         PointOfInteraction = new MpPointOfInteraction { TransactionData = new MpTransactionData { QrCode = "00020126pix" + novo, QrCodeBase64 = "iVBOR", TicketUrl = "https://mp/t" } }
                     };
                     return novo;
                 });
-                return Json(Pagamentos[id]);
+                return MpOrdersFalso.Resposta(Pagamentos[id]);
             }
 
             var partes = caminho.Split('/');
-            if (partes.Length >= 3 && partes[1] == "payments" && long.TryParse(partes[2], out var pid) && Pagamentos.TryGetValue(pid, out var pag))
+            if (partes.Length >= 3 && partes[1] == "orders" && MpOrdersFalso.TentaPagamento(partes[2], out var pid) && Pagamentos.TryGetValue(pid, out var pag))
             {
-                if (request.Method == HttpMethod.Get) return Json(pag);
-                if (request.Method == HttpMethod.Put)
+                if (request.Method == HttpMethod.Get && partes.Length == 3) return MpOrdersFalso.Resposta(pag);
+                if (request.Method == HttpMethod.Post && partes.Length == 4 && partes[3] == "cancel")
                 {
                     if (pag.Status == "pending") Mudar(pid, "cancelled", "by_collector", DateTimeOffset.UtcNow);
-                    return Json(pag);
+                    return MpOrdersFalso.Resposta(pag);
                 }
-                if (request.Method == HttpMethod.Post && partes.Length == 4 && partes[3] == "refunds")
+                if (request.Method == HttpMethod.Post && partes.Length == 4 && partes[3] == "refund")
                 {
-                    var valor = corpo?["amount"]?.GetValue<decimal>();
+                    var valor = MpOrdersFalso.ValorEstorno(corpo);
                     var jaEstornado = (pag.Refunds ?? new()).Sum(x => x.Amount);
                     var refund = new MpRefund { Id = Interlocked.Increment(ref _proximo), Amount = valor ?? pag.TransactionAmount - jaEstornado, Status = "approved" };
                     lock (Estornos) Estornos.Add((pid, valor));
@@ -395,7 +394,7 @@ VALUES (@Id, @L, 'CDP-TESTE' || substr(@Id::text, 1, 0), @S, 'Maria', '+55349912
                     pag.TransactionAmountRefunded = pag.Refunds.Sum(x => x.Amount);
                     if (pag.TransactionAmountRefunded >= pag.TransactionAmount) pag.Status = "refunded";
                     pag.DateLastUpdated = DateTimeOffset.UtcNow.AddMilliseconds(1);
-                    return Json(refund);
+                    return MpOrdersFalso.Resposta(pag);
                 }
             }
             return new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent("{\"error\":\"not_found\"}") };

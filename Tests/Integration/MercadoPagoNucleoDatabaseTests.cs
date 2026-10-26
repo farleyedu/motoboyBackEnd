@@ -51,7 +51,7 @@ public sealed class MercadoPagoNucleoDatabaseTests
         var chamada = Assert.Single(db.Mp.Criacoes);
         Assert.Equal("Bearer TOKEN-DA-LOJA", chamada.Authorization);
         Assert.False(string.IsNullOrEmpty(chamada.Idempotencia));
-        Assert.Equal(42.90m, chamada.Corpo["transaction_amount"]!.GetValue<decimal>());
+        Assert.Equal(42.90m, MpOrdersFalso.Valor(chamada.Corpo));
         Assert.Equal(r1.ExternalReference, chamada.Corpo["external_reference"]!.GetValue<string>());
 
         // Mesma chave: devolve o mesmo Pix, sem nova chamada ao MP.
@@ -241,6 +241,7 @@ INSERT INTO estabelecimentos VALUES (@L, 'Loja Teste');
 INSERT INTO conversas VALUES (@C);
 INSERT INTO cardapio_pedido_publico (id, id_estabelecimento) VALUES (@P, @L);", new { L = db.Loja, C = db.Conversa, P = db.PrePedido });
             await db.Execute(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Migrations", "Delivery", "20261031_01_mercadopago_nucleo.sql")));
+            await db.Execute(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Migrations", "Delivery", "20261102_60_mercadopago_orders.sql")));
 
             var chave = Convert.ToBase64String(RandomNumberGenerator.GetBytes(32));
             var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
@@ -331,7 +332,7 @@ INSERT INTO pagamento_preferencia_loja (id_estabelecimento, pix_ativo, cartao_at
             var corpo = request.Content == null ? null : JsonNode.Parse(await request.Content.ReadAsStringAsync(ct))?.AsObject();
             var chave = request.Headers.TryGetValues("X-Idempotency-Key", out var v) ? v.First() : null;
 
-            if (request.Method == HttpMethod.Post && caminho == "v1/payments")
+            if (request.Method == HttpMethod.Post && caminho == "v1/orders")
             {
                 lock (Criacoes) Criacoes.Add(new Criacao(request.Headers.Authorization?.ToString(), chave, corpo!));
                 var id = _porChave.GetOrAdd(chave!, _ =>
@@ -340,32 +341,29 @@ INSERT INTO pagamento_preferencia_loja (id_estabelecimento, pix_ativo, cartao_at
                     Pagamentos[novo] = new MpPagamento
                     {
                         Id = novo, Status = "pending", StatusDetail = "pending_waiting_transfer", CollectorId = CollectorForcado ?? Collector,
-                        TransactionAmount = corpo!["transaction_amount"]!.GetValue<decimal>(), CurrencyId = "BRL", LiveMode = false,
-                        ExternalReference = corpo["external_reference"]!.GetValue<string>(), PaymentMethodId = corpo["payment_method_id"]!.GetValue<string>(),
+                        TransactionAmount = MpOrdersFalso.Valor(corpo!), CurrencyId = "BRL", LiveMode = false,
+                        ExternalReference = MpOrdersFalso.Referencia(corpo!), PaymentMethodId = MpOrdersFalso.Metodo(corpo!)["id"]!.GetValue<string>(),
                         PaymentTypeId = "bank_transfer", DateCreated = DateTimeOffset.UtcNow, DateLastUpdated = DateTimeOffset.UtcNow,
-                        DateOfExpiration = DateTimeOffset.UtcNow.AddMinutes(30),
                         PointOfInteraction = new MpPointOfInteraction { TransactionData = new MpTransactionData { QrCode = "00020126pix" + novo, QrCodeBase64 = "iVBOR", TicketUrl = "https://mp/t" } }
                     };
                     return novo;
                 });
                 if (PerderProximaResposta) { PerderProximaResposta = false; throw new HttpRequestException("conexao caiu"); }
-                return Json(Pagamentos[id]);
-            }
-
-            if (request.Method == HttpMethod.Get && caminho == "v1/payments/search")
-            {
-                var referencia = Uri.UnescapeDataString(request.RequestUri.Query.Split('&')[0].Split('=')[1]);
-                return Json(new MpBuscaPagamentos { Results = Pagamentos.Values.Where(p => p.ExternalReference == referencia).ToList() });
+                return MpOrdersFalso.Resposta(Pagamentos[id]);
             }
 
             var partes = caminho.Split('/');
-            if (partes.Length >= 3 && partes[1] == "payments" && long.TryParse(partes[2], out var pid) && Pagamentos.TryGetValue(pid, out var pag))
+            if (partes.Length >= 3 && partes[1] == "orders" && MpOrdersFalso.TentaPagamento(partes[2], out var pid) && Pagamentos.TryGetValue(pid, out var pag))
             {
-                if (request.Method == HttpMethod.Get) return Json(pag);
-                if (request.Method == HttpMethod.Put) { Mudar(pid, "cancelled", "by_collector", DateTimeOffset.UtcNow); return Json(pag); }
-                if (request.Method == HttpMethod.Post && partes.Length == 4 && partes[3] == "refunds")
+                if (request.Method == HttpMethod.Get && partes.Length == 3) return MpOrdersFalso.Resposta(pag);
+                if (request.Method == HttpMethod.Post && partes.Length == 4 && partes[3] == "cancel")
                 {
-                    var valor = corpo?["amount"]?.GetValue<decimal>();
+                    Mudar(pid, "cancelled", "by_collector", DateTimeOffset.UtcNow);
+                    return MpOrdersFalso.Resposta(pag);
+                }
+                if (request.Method == HttpMethod.Post && partes.Length == 4 && partes[3] == "refund")
+                {
+                    var valor = MpOrdersFalso.ValorEstorno(corpo);
                     var jaEstornado = (pag.Refunds ?? new()).Sum(x => x.Amount);
                     var refund = new MpRefund { Id = Interlocked.Increment(ref _proximo), Amount = valor ?? pag.TransactionAmount - jaEstornado, Status = "approved" };
                     lock (Estornos) Estornos.Add((pid, valor));
@@ -373,7 +371,7 @@ INSERT INTO pagamento_preferencia_loja (id_estabelecimento, pix_ativo, cartao_at
                     pag.TransactionAmountRefunded = pag.Refunds.Sum(x => x.Amount);
                     if (pag.TransactionAmountRefunded >= pag.TransactionAmount) pag.Status = "refunded";
                     pag.DateLastUpdated = DateTimeOffset.UtcNow;
-                    return Json(refund);
+                    return MpOrdersFalso.Resposta(pag);
                 }
             }
             return new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent("{\"error\":\"not_found\"}") };

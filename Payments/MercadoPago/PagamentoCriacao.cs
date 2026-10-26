@@ -5,6 +5,7 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
+using System.Xml;
 using System.Threading.Tasks;
 using Dapper;
 using Microsoft.Extensions.Logging;
@@ -89,6 +90,8 @@ namespace APIBack.Payments.MercadoPago
         public string Token { get; set; } = string.Empty;
         public string PaymentMethodId { get; set; } = string.Empty;
         public string? IssuerId { get; set; }
+        /// <summary>credit_card (padrao) ou debit_card: o paymentTypeId que o Payment Brick informa.</summary>
+        public string? TipoCartao { get; set; }
         public int Parcelas { get; set; } = 1;
     }
 
@@ -230,15 +233,15 @@ UPDATE pagamento_tentativa SET status = 'falhou', erro_codigo = @C, erro_mensage
                 new { Id = tentativaId, C = codigo, M = mensagem.Length > 300 ? mensagem[..300] : mensagem }, cancellationToken: ct));
         }
 
-        public MpCriarPagamentoRequest NovoPedidoMp(PagamentoIntent intent, NovaCobrancaRequest r, string metodo)
+        /// <summary>Order (Orders API) de um pagamento so. O webhook vem da configuracao da aplicacao no MP (topico 'order'), nao do pedido.</summary>
+        public MpCriarOrderRequest NovaOrderMp(PagamentoIntent intent, NovaCobrancaRequest r)
         {
             var email = r.Pagador?.Email?.Trim();
-            var pedido = new MpCriarPagamentoRequest
+            var valor = MpCriarOrderRequest.Moeda(intent.Valor);
+            var pedido = new MpCriarOrderRequest
             {
-                TransactionAmount = intent.Valor,
-                Description = intent.Descricao,
+                TotalAmount = valor,
                 ExternalReference = intent.ExternalReference,
-                NotificationUrl = string.IsNullOrWhiteSpace(_options.NotificationUrl) ? null : _options.NotificationUrl,
                 Payer = new MpPayer
                 {
                     Email = EmailValido(email) ? email! : _options.EmailPagadorPadrao,
@@ -248,15 +251,11 @@ UPDATE pagamento_tentativa SET status = 'falhou', erro_codigo = @C, erro_mensage
                         Type = string.Equals(r.Pagador!.TipoDocumento, "CNPJ", StringComparison.OrdinalIgnoreCase) ? "CNPJ" : "CPF",
                         Number = new string(r.Pagador.NumeroDocumento!.Where(char.IsDigit).ToArray())
                     }
-                },
-                // Sem dado pessoal: so ids para conferencia.
-                Metadata = new Dictionary<string, string>
-                {
-                    ["intent_id"] = intent.Id.ToString("N"), ["estabelecimento_id"] = intent.IdEstabelecimento.ToString("N"), ["origem"] = intent.Origem
                 }
             };
+            pedido.Pagamento.Amount = valor;
             if (_options.SplitHabilitado && _options.ComissaoPercentual > 0 && intent.ContaTipo == "loja")
-                pedido.ApplicationFee = decimal.Round(intent.Valor * _options.ComissaoPercentual / 100m, 2, MidpointRounding.ToZero);
+                pedido.MarketplaceFee = MpCriarOrderRequest.Moeda(decimal.Round(intent.Valor * _options.ComissaoPercentual / 100m, 2, MidpointRounding.ToZero));
             return pedido;
         }
 
@@ -339,14 +338,16 @@ SELECT id, idempotency_key FROM pagamento_tentativa WHERE id_intent = @Id AND me
 
             var chave = await cx.ExecuteScalarAsync<string>(new CommandDefinition(
                 "SELECT idempotency_key FROM pagamento_tentativa WHERE id = @Id", new { Id = tentativaId }, cancellationToken: ct));
-            var pedido = _base.NovoPedidoMp(intent, r, MetodosPagamento.Pix);
-            pedido.PaymentMethodId = "pix";
-            pedido.DateOfExpiration = PagamentoCriacaoBase.DataMp(DateTime.UtcNow.AddMinutes(validade));
+            var pedido = _base.NovaOrderMp(intent, r);
+            pedido.Pagamento.PaymentMethod = new MpOrderMetodoRequest { Id = "pix", Type = "bank_transfer" };
+            // O MP aceita Pix de 30 min a 30 dias; validade menor vale so aqui (o aviso 'Pix pago depois de expirar' ja e tratado).
+            pedido.Pagamento.ExpirationTime = XmlConvert.ToString(TimeSpan.FromMinutes(Math.Max(30, validade)));
 
             MpPagamento mp;
             try
             {
-                mp = await _client.CriarPagamentoAsync(cred, pedido, chave!, ct);
+                mp = await _client.CriarOrderAsync(cred, pedido, chave!, ct);
+                mp.DateOfExpiration ??= DateTimeOffset.UtcNow.AddMinutes(validade);
             }
             catch (MercadoPagoApiException ex)
             {
@@ -422,15 +423,16 @@ SELECT id, idempotency_key FROM pagamento_tentativa WHERE id_intent = @Id AND me
             }
 
             var cred = await _base.CredencialAsync(intent, ct);
+            var orderId = ultimo.MpOrderId ?? throw PagamentoException.Estado("Este Pix nao foi criado como order do Mercado Pago.", intent.Status);
             MpPagamento mp;
             try
             {
-                mp = await _client.CancelarPagamentoAsync(cred, ultimo.MpPaymentId, ct);
+                mp = await _client.CancelarOrderAsync(cred, orderId, ct);
             }
             catch (MercadoPagoApiException ex) when (!ex.Indisponivel)
             {
                 // Ex.: o cliente pagou no mesmo instante. O retrato atual decide.
-                mp = await _client.ObterPagamentoAsync(cred, ultimo.MpPaymentId, ct);
+                mp = await _client.ObterOrderAsync(cred, orderId, ct);
             }
             catch (MercadoPagoApiException ex)
             {
@@ -550,17 +552,21 @@ SELECT public_key, estado FROM mp_conta_loja WHERE id_estabelecimento = @Loja AN
             }
             if (tentativa.Status == "falhou") throw PagamentoException.Estado("Este cartao ja foi tentado; gere um novo token.", intent.Status);
 
-            var pedido = _base.NovoPedidoMp(intent, r, MetodosPagamento.Cartao);
-            pedido.PaymentMethodId = r.PaymentMethodId.Trim();
-            pedido.Token = r.Token.Trim();
-            pedido.Installments = r.Parcelas;
-            pedido.IssuerId = string.IsNullOrWhiteSpace(r.IssuerId) ? null : r.IssuerId.Trim();
-            pedido.StatementDescriptor = _base.Options.StatementDescriptor;
+            // issuer_id nao existe na Orders API: o MP deduz o emissor pelo token.
+            var pedido = _base.NovaOrderMp(intent, r);
+            pedido.Pagamento.PaymentMethod = new MpOrderMetodoRequest
+            {
+                Id = r.PaymentMethodId.Trim(),
+                Type = string.Equals(r.TipoCartao, "debit_card", StringComparison.OrdinalIgnoreCase) ? "debit_card" : "credit_card",
+                Token = r.Token.Trim(),
+                Installments = r.Parcelas,
+                StatementDescriptor = _base.Options.StatementDescriptor
+            };
 
             MpPagamento mp;
             try
             {
-                mp = await _client.CriarPagamentoAsync(cred, pedido, string.Format(chave, intent.Id), ct);
+                mp = await _client.CriarOrderAsync(cred, pedido, string.Format(chave, intent.Id), ct);
             }
             catch (MercadoPagoApiException ex)
             {

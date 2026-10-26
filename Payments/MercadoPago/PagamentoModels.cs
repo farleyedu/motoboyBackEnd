@@ -119,6 +119,8 @@ namespace APIBack.Payments.MercadoPago
         public Guid IdEstabelecimento { get; set; }
         public string Ambiente { get; set; } = Ambientes.Sandbox;
         public long MpPaymentId { get; set; }
+        /// <summary>Order (ORD...) da Orders API que originou o pagamento; null nos pagamentos da API v1 (assinaturas).</summary>
+        public string? MpOrderId { get; set; }
         public long? MpCollectorId { get; set; }
         public string Metodo { get; set; } = MetodosPagamento.Pix;
         public string? PaymentMethodId { get; set; }
