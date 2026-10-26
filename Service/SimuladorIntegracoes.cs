@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using APIBack.Automation.Interfaces;
 using APIBack.DTOs.Simulador;
-using APIBack.Payments.Options;
+using APIBack.Payments.MercadoPago;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
 
@@ -19,13 +19,16 @@ namespace APIBack.Service
     {
         private readonly IWabaPhoneRepository _waba;
         private readonly IConfiguration _configuration;
-        private readonly IOptions<AsaasCheckoutOptions> _payments;
+        private readonly IOptions<MercadoPagoOptions> _payments;
+        private readonly IPagamentoSegredoProtector _segredos;
 
-        public SimuladorIntegracoes(IWabaPhoneRepository waba, IConfiguration configuration, IOptions<AsaasCheckoutOptions> payments)
+        public SimuladorIntegracoes(IWabaPhoneRepository waba, IConfiguration configuration, IOptions<MercadoPagoOptions> payments,
+            IPagamentoSegredoProtector segredos)
         {
             _waba = waba;
             _configuration = configuration;
             _payments = payments;
+            _segredos = segredos;
         }
 
         public async Task<IReadOnlyList<SimIntegracaoDto>> ListAsync(Guid estabelecimentoId)
@@ -54,11 +57,11 @@ namespace APIBack.Service
                 },
                 new()
                 {
-                    Chave = "pagamento", Nome = "Gateway de pagamento", Descricao = "Processamento de pedidos",
-                    Status = string.IsNullOrWhiteSpace(_payments.Value.ApiKey) ? "atencao" : "ok",
-                    Detalhe = string.IsNullOrWhiteSpace(_payments.Value.ApiKey)
-                        ? "Gateway sem chave configurada."
-                        : $"Ambiente {_payments.Value.Environment}. O simulador nao cobra: o pagamento e so um status."
+                    Chave = "pagamento", Nome = "Mercado Pago", Descricao = "Pix e cartao do cardapio e do chat",
+                    Status = _segredos.Configurado ? "ok" : "atencao",
+                    Detalhe = _segredos.Configurado
+                        ? $"Ambiente {_payments.Value.AmbienteAtivo}. O simulador nao cobra: o pagamento e so um status."
+                        : "Chave mestra de pagamentos (PAGAMENTOS_CHAVE_MESTRA) nao configurada."
                 },
                 new()
                 {

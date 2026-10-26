@@ -15,11 +15,7 @@ using APIBack.Automation.Repository.Interface;
 using APIBack.Automation.Services.Interface;
 using APIBack.Automation.Validators;
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
-using APIBack.Payments.Options;
-using APIBack.Payments.Repository;
-using APIBack.Payments.Repository.Interface;
-using APIBack.Payments.Services;
-using APIBack.Payments.Services.Interface;
+using APIBack.Payments.MercadoPago;
 using APIBack.Integrations.Ifood;
 using APIBack.Integrations.Ifood.Config;
 using System.Net;
@@ -275,7 +271,6 @@ builder.Services.AddHostedService<DeliveryMigrationHostedService>();
 builder.Services.AddHostedService<APIBack.Printing.PrintWorker>();
 builder.Services.AddHostedService<DeliveryTrackingMaintenanceWorker>();
 builder.Services.AddHostedService<DeliveryOutboxPublisher>();
-builder.Services.Configure<AsaasCheckoutOptions>(builder.Configuration.GetSection("Payments:Asaas"));
 
 
 // ================= ZIPPYGO AUTOMATION SECTION (BEGIN) =================
@@ -342,27 +337,9 @@ builder.Services.AddHostedService<APIBack.Atendimento.WaEventoWorker>();
 // ================= ZIPPYGO AUTOMATION SECTION (END) ===================
 
 // ================= PAYMENTS SECTION (BEGIN) ===================
-builder.Services.AddScoped<ICheckoutRepository, CheckoutRepository>();
-builder.Services.AddScoped<ICheckoutPaymentService, CheckoutPaymentService>();
-builder.Services.AddScoped<ICheckoutWebhookService, CheckoutWebhookService>();
-builder.Services.AddScoped<IPublicCheckoutService, PublicCheckoutService>();
-builder.Services.AddHttpClient<IAsaasCheckoutClient, AsaasCheckoutClient>((serviceProvider, client) =>
-{
-    var settings = serviceProvider.GetRequiredService<Microsoft.Extensions.Options.IOptions<AsaasCheckoutOptions>>().Value;
-    var baseUrl = string.IsNullOrWhiteSpace(settings.BaseUrl) ? "https://sandbox.asaas.com/api/" : settings.BaseUrl;
-
-    client.BaseAddress = new Uri(baseUrl);
-    client.DefaultRequestHeaders.Remove("access_token");
-    if (!string.IsNullOrWhiteSpace(settings.ApiKey))
-    {
-        client.DefaultRequestHeaders.Add("access_token", settings.ApiKey);
-    }
-
-    client.DefaultRequestHeaders.Accept.Clear();
-    client.DefaultRequestHeaders.Accept.Add(new System.Net.Http.Headers.MediaTypeWithQualityHeaderValue("application/json"));
-    client.DefaultRequestHeaders.UserAgent.ParseAdd("ZippyCheckout/1.0");
-    client.Timeout = TimeSpan.FromSeconds(30);
-});
+// Mercado Pago (Pix/cartao, webhook, conciliador, outbox). O Asaas saiu do caminho ativo; tabelas checkout_* ficam como historico.
+// Contrato para as demais sessoes: docs/pagamentos/CONTRATOS.md.
+builder.Services.AddPagamentosMercadoPago(builder.Configuration);
 // ================= PAYMENTS SECTION (END) ===================
 
 

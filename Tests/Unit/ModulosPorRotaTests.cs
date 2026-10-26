@@ -66,7 +66,7 @@ public class ModulosPorRotaTests
     {
         "wa", "api/auth", "api/estabelecimentos", "api/gestao", "api/admin", "api/usuario", "api/public", "api/webhooks",
         "api/v2/comercial", "api/v2/motoboys", "api/motoboys", "api/motoboy", "api/v2/atendimento/chat",
-        "api/migration", "api/localizacao", "api/entregas", "api/checkout", "api/configuracoes", "api/delivery",
+        "api/migration", "api/localizacao", "api/entregas", "api/v2/pagamentos", "api/configuracoes", "api/delivery",
         "api/cardapio/web", "api/cardapio/{estabelecimentoid:guid}/atencao-motoboy", "api/v2/ifood/config"
     };
 
