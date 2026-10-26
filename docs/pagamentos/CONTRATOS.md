@@ -6,7 +6,7 @@ Código do núcleo: `Payments/MercadoPago/` e `Payments/Controllers/PagamentosCo
 | Sessão | Escopo | Usa deste documento |
 |---|---|---|
 | 1 | Núcleo (feito): tabelas, credenciais, cliente MP, Pix, cartão, estorno, webhook, conciliador, outbox, rotas públicas do cardápio | — |
-| 2 | Gestão `/api/gestao/pagamentos/*` + OAuth da loja `/api/v2/integracoes/mercadopago*` | §1, §2.1–2.4, §4.1, §8.1, §8.2 |
+| 2 | Gestão `/api/gestao/pagamentos/*` + OAuth da loja `/api/v2/integracoes/mercadopago*` (feito: `Payments/Gestao`, `Payments/Conexao`) | §1, §2.1–2.4, §2.16–2.18, §4.1, §8.1, §8.2 |
 | 3 | Cardápio web (Pix + cartão com Payment Brick) | §4.2, §4.3, §6, §8.3 |
 | 4 | Assinaturas Zippy `/api/v2/comercial/*` | §2.5, §4.2, §5.3, §8.4 |
 | 5 | Cobrança Pix do atendente no chat (backend) | §2.6, §3.3, §4.2, §4.4, §6, §8.5 |
@@ -109,6 +109,17 @@ Somente inserção (trigger bloqueia UPDATE/DELETE). `entidade`, `entidade_id`, 
 
 ### 2.14 `pagamento_outbox`
 `event_id`, `id_estabelecimento`, `evento` (`pagamentoAtualizado|cobrancaAtualizada`), `grupo`, `payload`, `tentativas`, `ultimo_erro`, `publicado_em`. Gravada na **mesma transação** da mudança; `PagamentoOutboxPublisher` publica depois do commit.
+
+### 2.16 `mp_ambiente_estado` (sessão 2, migration `20261101_20_pagamentos_gestao_oauth.sql`)
+PK `ambiente`; `habilitado`, `lojas_podem_conectar` (CHECK: só com `habilitado`), `id_verificacao`, `habilitado_por/em`. Linhas `sandbox` e `producao` criadas desligadas.
+- Ligar `habilitado` exige a **última** `mp_verificacao` do ambiente **aprovada** e mais nova que a última troca em `mp_aplicacao`/`mp_conta_zippy` (vale para sandbox e produção). Desligar é livre.
+- `POST /api/v2/integracoes/mercadopago/conectar` só funciona com `habilitado AND lojas_podem_conectar` no ambiente ativo (`422 PAG_AMBIENTE_NAO_LIBERADO`).
+
+### 2.17 `mp_verificacao`
+`id`, `ambiente`, `aprovada`, `etapas jsonb` (`[{ etapa, ok, codigo, mensagem }]`, sem segredo), `executada_por`, `created_at`. Etapas: `chave_mestra`, `aplicacao` (grant `client_credentials` no MP), `callback` (redirect_uri https e igual a `{api}/api/integracoes/mercadopago/callback`), `webhook_segredo` (assinatura secreta + `NotificationUrl` https), `recebedor_zippy` (`GET /users/me`: mesmo user_id e conta ativa), `recebedor_pix` (`GET /v1/payment_methods` tem `pix`), `webhook_recebido` (algum aviso gravado nos últimos 7 dias — só é gravado com assinatura válida; "Simular notificação" do painel serve).
+
+### 2.18 `pagamento_politica` (linha única `id=1`)
+`tolerancia_dias` (7; 0–30), `avisos_antes_dias` (`{3,1}`), `avisos_depois_dias` (`{1,3,6}`), `alcada_estorno_gerente` (200: acima, só dono estorna), `alcada_estorno_confirmacao` (1000: estorno pela Gestão acima pede confirmação digitada), `alerta_falhas_webhook` (5/24 h). A sessão 2 só grava e audita; **quem aplica** é quem consome (sessão 4: tolerância e avisos; estornos: alçadas).
 
 ### 2.15 Decisão: assinaturas ficam para a sessão 4
 Não criei tabelas de assinatura, ciclo, compra de extra, solicitação de compra nem política comercial: o modelo comercial (planos em `pacotes_comerciais`, avulsos em `produtos_avulsos`) é da sessão 4 e um esqueleto aqui viraria migration para desfazer. O núcleo já entrega o que elas consomem:
@@ -304,6 +315,11 @@ Toda rota responde `ApiResponse`: sucesso `{ success: true, data }`; erro `{ suc
 | 422 | `PAG_CONTA_LOJA_REAUTORIZAR` | Token vencido/revogado: conectar de novo |
 | 422 | `PAG_PEDIDO_NAO_PAGAVEL` | Pré-pedido recusado/expirado/sem valor |
 | 422 | `PAG_ESTORNO_ACIMA_DO_PAGO` | Estorno passa do pago |
+| 409 | `PAG_CONTA_JA_CONECTADA` | Conectar com conta ativa sem `reconectar` (sessão 2) |
+| 422 | `PAG_AMBIENTE_NAO_LIBERADO` | A Gestão ainda não liberou a conexão das lojas no ambiente |
+| 422 | `PAG_VERIFICACAO_PENDENTE` | Habilitar ambiente sem verificação aprovada e atual |
+| 422 | `PAG_CONTA_MP_DE_OUTRA_LOJA` | Conta MP já recebe por outra loja (ou cadastrar loja como conta Zippy) |
+| — | `PAG_OAUTH_STATE_INVALIDO` / `PAG_OAUTH_EXPIRADO` / `PAG_OAUTH_CANCELADO` / `PAG_OAUTH_FALHOU` / `PAG_OAUTH_AMBIENTE_DIVERGENTE` | Só no redirect do callback (`?codigo=`) |
 | 429 | `RATE_LIMITED` | Política `public-payment` (30/min por IP) ou outra |
 | 500 | `PAG_CREDENCIAL_INCOMPATIVEL` | Bug: token de conta errada (nunca deve acontecer) |
 | 502 | `PAG_MP_ERRO` | MP recusou (`details.mpStatus`, `details.mpErro`) |
@@ -319,30 +335,42 @@ Erros das rotas: cada rota abaixo lista os códigos que pode devolver além de 4
 
 Legenda: ✅ implementada pelo núcleo · 🔲 a implementar pela sessão indicada (contrato fixo).
 
-### 8.1 Gestão Zippy — `/api/gestao/pagamentos/*` (🔲 sessão 2; só super admin)
+### 8.1 Gestão Zippy — `/api/gestao/pagamentos/*` (✅ sessão 2; só super admin)
+Autorização no servidor por `[SomenteSuperAdmin]` em todo o controller: sem login `401 PAG_NAO_AUTENTICADO`, logado sem ser super admin `403 PAG_SEM_PERMISSAO`; `Cache-Control: no-store`. Toda escrita grava `pagamento_auditoria` (entidades `aplicacao`, `conta_zippy`, `ambiente`, `politica`, `verificacao`, `webhook`, `conciliacao`) dizendo **o que** mudou, nunca o valor de segredo.
 | Método e rota | Corpo / query | Resposta `data` | Erros |
 |---|---|---|---|
-| `GET /api/gestao/pagamentos/configuracao?ambiente=` | — | `{ ambienteAtivo, aplicacao: { ambiente, clientId, publicKey, redirectUri, temClientSecret, temWebhookSecret, ativo, atualizadoEm }, contaZippy: { ambiente, mpUserIdMascarado, publicKey, estado, temToken, validadaEm } , chaveMestraConfigurada }` | 503 |
+| `GET /api/gestao/pagamentos/resumo` | — | `{ ambiente, recebidoZippyMes, estornadoZippyMes, cobrancasZippyAbertas, valorZippyAberto, vendasLojasMes, transacoesLojasMes, lojasConectadas, lojasComProblema, webhooksComFalha, disputasAbertas, reembolsosPendentes, pronto, ambienteHabilitado }` (Zippy e lojas em campos separados, nunca somados) | — |
+| `GET /api/gestao/pagamentos/configuracao?ambiente=` | — | `{ ambienteAtivo, ambiente, chaveMestraConfigurada, aplicacao: { ambiente, clientId, publicKey, redirectUri, temClientSecret, temWebhookSecret, ativo, origem: banco\|configuracao\|nenhuma, atualizadoEm }, contaZippy: { ambiente, mpUserIdMascarado, publicKey, estado, temToken, ultimoErro, validadaEm }, ambienteEstado: { habilitado, lojasPodemConectar, habilitadoEm }, urlCallback, urlWebhook, ultimaVerificacao: { id, aprovada, etapas, criadoEm, desatualizada } \| null, webhook: { ultimoRecebidoEm, recebidos24h, falhas24h, pendentes }, lojasConectadas, etapas: [{ numero, chave, titulo, status: ok\|pendente\|erro\|bloqueada, falta }] (8), pronto }` | 400 |
+| `PUT /api/gestao/pagamentos/configuracao` | `{ ambiente, habilitado, lojasPodemConectar }` | igual ao GET | 400, 422 (`PAG_VERIFICACAO_PENDENTE`) |
+| `POST /api/gestao/pagamentos/verificar` | `{ ambiente }` | `{ id, ambiente, aprovada, etapas, criadoEm }` (§2.17) | 400 |
 | `PUT /api/gestao/pagamentos/aplicacao` | `{ ambiente, clientId, clientSecret?, publicKey?, webhookSecret?, redirectUri }` (segredo vazio = manter) | igual `aplicacao` acima | 400, 422, 503 |
 | `PUT /api/gestao/pagamentos/conta-zippy` | `{ ambiente, accessToken, publicKey? }` (o servidor valida o token em `GET /users/me` e grava `mp_user_id`) | igual `contaZippy` | 400, 422, 502, 503 |
 | `POST /api/gestao/pagamentos/conta-zippy/testar` | `{ ambiente }` | `{ ok, mpUserIdMascarado }` | 422, 502, 503 |
-| `GET /api/gestao/pagamentos/lojas?busca=&estado=&pagina=` | — | `{ itens: [{ estabelecimentoId, nome, estado, mpUserIdMascarado, tokenExpiraEm, pixAtivo, cartaoAtivo }], total }` | — |
-| `GET /api/gestao/pagamentos/transacoes?estabelecimentoId=&origem=&status=&de=&ate=&pagina=` | — | `{ itens: [PagamentoResumoDto + estabelecimentoId], total, somaPaga, somaEstornada }` | 400 |
-| `GET /api/gestao/pagamentos/webhooks?status=&topico=&pagina=` | — | `{ itens: [{ id, topico, acao, dataId, status, tentativas, ultimoErro, recebidoEm, processadoEm }], total }` (sem payload bruto) | — |
-| `POST /api/gestao/pagamentos/webhooks/{id}/reprocessar` | — | `{ status }` (chama `IMercadoPagoWebhookService.ProcessarAsync`) | 404, 409 |
-| `GET /api/gestao/pagamentos/disputas?status=` | — | `{ itens: [{ id, tipo, status, valor, prazoRespostaEm, intentId, estabelecimentoId }] }` | — |
-| `GET /api/gestao/pagamentos/auditoria?entidade=&entidadeId=` | — | `{ itens: [{ acao, atorTipo, atorId, dados, criadoEm }] }` | 400 |
+| `GET /api/gestao/pagamentos/conexoes?busca=&estado=&pagina=` (antes `lojas`) | — | `{ itens: [{ estabelecimentoId, nome, estado (nao_conectada\|ativa\|expirada\|erro\|revogada\|desconectada), mpUserIdMascarado, tokenExpiraEm, conectadoEm, ultimoErro, pixAtivo, cartaoAtivo }], total }` (ambiente ativo; 25 por página) | — |
+| `GET /api/gestao/pagamentos/transacoes?conta=loja\|zippy&estabelecimentoId=&origem=&status=&de=&ate=&pagina=` | — | `{ conta, itens: [{ id, estabelecimentoId, lojaNome, origem, contaTipo, status, valor, valorPago, valorEstornado, descricao, metodo, statusPagamento, statusDetalhe, mpPaymentId, pagoEm, criadoEm }], total, somaPaga, somaEstornada }` — `conta` (padrão `loja`) é obrigatória na lógica: lista e somas são **sempre de uma conta só** | 400 |
+| `GET /api/gestao/pagamentos/assinaturas?status=&pagina=` | — | igual `transacoes` com `conta=zippy` e origem `assinatura\|compra_extra` (só leitura; regras na sessão 4) | — |
+| `GET /api/gestao/pagamentos/reembolsos?status=&conta=&pagina=` | — | `{ itens: [{ id, intentId, estabelecimentoId, lojaNome, contaTipo, origem, valor, status, origemEstorno, motivo, erroMensagem, criadoEm, concluidoEm }], total }` | 400 |
+| `GET /api/gestao/pagamentos/webhooks?status=&topico=&pagina=` | — | `{ itens: [{ id, ambiente, topico, acao, dataId, status, tentativas, ultimoErro, recebidoEm, processadoEm }], total, saude: { ultimoRecebidoEm, recebidos24h, falhas24h, pendentes } }` (sem payload bruto) | — |
+| `POST /api/gestao/pagamentos/webhooks/{id}/reprocessar` | — | `{ status }` — só `falhou\|ignorado\|recebido` (volta a `recebido` e chama `IMercadoPagoWebhookService.ProcessarAsync`); `rejeitado` nunca | 404, 409 |
+| `POST /api/gestao/pagamentos/reconciliar` | — | `{ pagamentosAbertosAntes, pagamentosAbertosDepois, webhooksPendentesAntes, webhooksPendentesDepois, executadaEm }` (roda o ciclo do `PagamentoConciliadorWorker` agora) | — |
+| `GET /api/gestao/pagamentos/disputas?status=` | — | `{ itens: [{ id, tipo, status, valor, prazoRespostaEm, intentId, estabelecimentoId, lojaNome, criadoEm }] }` | — |
+| `GET /api/gestao/pagamentos/auditoria?escopo=gestao\|&entidade=&entidadeId=&pagina=` | — | `{ itens: [{ id, estabelecimentoId, entidade, entidadeId, acao, atorTipo, atorId, atorNome, dados, criadoEm }], total }` (`escopo=gestao` = histórico de alterações da Gestão) | 400 |
+| `GET` / `PUT /api/gestao/pagamentos/politicas` | `{ toleranciaDias, avisosAntesDias[], avisosDepoisDias[], alcadaEstornoGerente, alcadaEstornoConfirmacao, alertaFalhasWebhook }` | as mesmas + `atualizadoEm` (§2.18) | 400 |
 
-### 8.2 OAuth da loja (🔲 sessão 2)
+### 8.2 OAuth da loja (✅ sessão 2)
+Quem pode: **gerenciar** (conectar, reconectar, desconectar, verificar, preferências) = super admin, `dono`/`gerente_empresa` da empresa ou `gerente_estabelecimento` da loja (`ConexaoMercadoPagoAcesso.PodeGerenciar`); **ver** (GET estado, preferências, transações) = quem gerencia ou `Financeiro:visualizar`. Não depende de módulo premium (Integrações vale antes de contratar módulos). Loja = a selecionada no token; sem loja `403`.
 | Método e rota | Corpo | Resposta `data` | Erros |
 |---|---|---|---|
-| `GET /api/v2/integracoes/mercadopago` (permissão `Financeiro:configurar`) | — | `{ conectada, estado, mpUserIdMascarado, liveMode, tokenExpiraEm, conectadoEm, ambiente, preferencias: { pixAtivo, cartaoAtivo, presencialAtivo, pixValidadeMinutos, cartaoParcelasMax } }` | 403 |
-| `POST /api/v2/integracoes/mercadopago/conectar` | `{ }` | `{ urlAutorizacao, tentativaId, expiraEm }` — URL `https://auth.mercadopago.com.br/authorization?client_id=..&response_type=code&platform_id=mp&state={state}&redirect_uri=..&code_challenge=..&code_challenge_method=S256` | 409 (já conectada), 503 |
-| `GET /api/integracoes/mercadopago/callback?code=&state=` (anônimo) | — | **302** para `{painel}/integracoes/mercadopago?resultado=ok|erro&codigo=PAG_*`. Valida `state_hash`, expiração (10 min), uso único; troca o code (`TrocarCodigoOAuthAsync` com PKCE); grava `mp_conta_loja` cifrada; desconecta a viva anterior; audita. Nunca mostra token. | (via redirect) |
-| `GET /api/v2/integracoes/mercadopago/tentativas/{id}` | — | `{ estado, erroCodigo }` | 404 |
-| `DELETE /api/v2/integracoes/mercadopago` | — | `{ estado: "desconectada" }` (apaga tokens; Pix abertos continuam conciliáveis enquanto houver token — avisar o usuário) | 404, 409 (cobranças abertas, `details.abertas`) |
-| `PUT /api/v2/integracoes/mercadopago/preferencias` | `{ pixAtivo, cartaoAtivo, presencialAtivo, pixValidadeMinutos, cartaoParcelasMax }` | preferências | 400, 422 (`PAG_CONTA_LOJA_NAO_CONECTADA` ao ligar Pix/cartão sem conta) |
-| Webhook `mp-connect` | — | handler `IMercadoPagoTopicoHandler`: `application.deauthorized` → conta `revogada` (tokens apagados) | — |
+| `GET /api/v2/integracoes/mercadopago` | — | `{ conectada, estado (nao_conectada\|ativa\|expirada\|erro\|revogada\|desconectada), mpUserIdMascarado, liveMode, tokenExpiraEm, conectadoEm, ultimaVerificacaoEm, ultimoErro (token_expirado\|token_invalido\|conta_suspensa\|conta_divergente\|meios_indisponiveis\|substituida\|desautorizada_no_mp), ambiente, conexaoDisponivel, preferencias: { pixAtivo, cartaoAtivo, presencialAtivo, pixValidadeMinutos, cartaoParcelasMax } }` | 403 |
+| `POST /api/v2/integracoes/mercadopago/conectar` | `{ reconectar? }` | `{ urlAutorizacao, tentativaId, expiraEm }` — URL `https://auth.mercadopago.com.br/authorization?client_id=..&response_type=code&platform_id=mp&state={state}&redirect_uri=..&code_challenge=..&code_challenge_method=S256`. State = 32 bytes base64url (só o SHA-256 no banco); verifier PKCE cifrado (`SegredoContexto.OAuthCodeVerifier`); nova tentativa cancela a anterior da loja | 409 `PAG_CONTA_JA_CONECTADA` (sem `reconectar`), 422 `PAG_AMBIENTE_NAO_LIBERADO`, 503 |
+| `GET /api/integracoes/mercadopago/callback?code=&state=&error=` (anônimo) | — | **302** para `{PainelUrl}/apps/configuracoes/integracoes?mercadopago=ok\|erro&codigo=...` (`Payments:MercadoPago:PainelUrl`, senão `Rastreio:PublicBaseUrl`). Consome a tentativa uma vez só (`UPDATE ... WHERE estado='iniciada'`), confere expiração (10 min) e ambiente, troca o code com o verifier, recusa conta MP já viva em **outra** loja (`PAG_CONTA_MP_DE_OUTRA_LOJA`), mesma conta = só troca tokens, outra conta = a anterior vira `desconectada`; audita. Códigos: `PAG_OAUTH_STATE_INVALIDO`, `PAG_OAUTH_EXPIRADO`, `PAG_OAUTH_CANCELADO`, `PAG_OAUTH_FALHOU`, `PAG_OAUTH_AMBIENTE_DIVERGENTE`, `PAG_CONTA_MP_DE_OUTRA_LOJA`, `PAG_MP_INDISPONIVEL`, `PAG_MP_RESPOSTA_INCONSISTENTE` | (via redirect) |
+| `GET /api/v2/integracoes/mercadopago/tentativas/{id}` | — | `{ estado, erroCodigo }` (só da própria loja) | 404 |
+| `POST /api/v2/integracoes/mercadopago/verificar` | — | `{ ok, estado, pixDisponivel, cartaoDisponivel, etapas: [{ etapa: acesso\|conta\|pix\|cartao, ok, codigo, mensagem }] }` — renova o token se preciso, `GET /users/me` (mesmo titular, conta ativa) e `GET /v1/payment_methods`; 401/403 → `erro`/`token_invalido`, refresh recusado → `expirada`, MP fora → não muda estado | 403, 422 (`PAG_CONTA_LOJA_NAO_CONECTADA`) |
+| `DELETE /api/v2/integracoes/mercadopago?confirmar=` | — | `{ estado: "desconectada" }` (apaga tokens, mantém a linha e **todas** as transações) | 404, 409 `PAG_COBRANCA_ABERTA` (`details.abertas` = intenções abertas na conta; repetir com `confirmar=true`) |
+| `GET` / `PUT /api/v2/integracoes/mercadopago/preferencias` | `{ pixAtivo, cartaoAtivo, presencialAtivo, pixValidadeMinutos, cartaoParcelasMax }` | preferências (auditado `preferencia_alterada` com antes/depois) | 400, 422 (`PAG_CONTA_LOJA_NAO_CONECTADA` ao ligar Pix/cartão sem conta ativa) |
+| `GET /api/v2/integracoes/mercadopago/transacoes?pagina=` | — | `{ itens: [{ id, origem, status, valor, valorPago, valorEstornado, descricao, metodo, pedidoId, pagoEm, criadoEm }] }` (conta da loja, 20 por página) | 403 |
+| Webhook `mp-connect` | — | `MpConnectTopicoHandler`: `application.deauthorized` → toda conta viva com aquele `user_id` vira `revogada` (tokens apagados), auditado | — |
+| Renovação | — | `MercadoPagoContasLojaWorker` (6 h): renova contas `ativa` que vencem em < 7 dias via `IContaLojaTokenRenovador` e expira tentativas abandonadas | — |
 
 ### 8.3 Cardápio web (✅ núcleo; anônimo; política `public-payment`)
 O valor **nunca** vem do corpo: é `cardapio_pedido_publico.total`. `codigo` = código do pedido mostrado ao cliente (segundo fator junto com o id; errado → 404).
@@ -423,6 +451,8 @@ Token: 32 bytes aleatórios em base64url (43 caracteres), só o SHA-256 fica no 
 | `Payments__MercadoPago__SplitHabilitado` / `ComissaoPercentual` | não | `false` / `0` — não ligar |
 | `Payments__MercadoPago__Conciliador*`, `WebhookMaxTentativas`, `OutboxIntervaloMilissegundos` | não | ajustes finos |
 | `Payments__MercadoPago__Bootstrap*` | não | só sandbox antes da tela da Gestão |
+| `Payments__MercadoPago__PainelUrl` | sim (OAuth) | `https://{painel}`: destino do callback OAuth (sem valor: `Rastreio__PublicBaseUrl`) |
+| `Payments__MercadoPago__ApiPublicaUrl` | não | `https://{api}` mostrado na Gestão para callback e webhook (sem valor: origem da `NotificationUrl`) |
 As variáveis `Payments__Asaas__*` podem ser apagadas do Render.
 
 ---

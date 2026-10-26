@@ -118,6 +118,26 @@ namespace APIBack.Payments.MercadoPago
         public override string ToString() => $"MpOAuthToken(user={UserId}, expires_in={ExpiresIn})";
     }
 
+    /// <summary>GET /users/me. So identificacao e situacao; nada de documento ou endereco.</summary>
+    public sealed class MpUsuario
+    {
+        [JsonPropertyName("id")] public long Id { get; set; }
+        [JsonPropertyName("site_id")] public string? SiteId { get; set; }
+        [JsonPropertyName("status")] public MpUsuarioStatus? Status { get; set; }
+    }
+
+    public sealed class MpUsuarioStatus
+    {
+        [JsonPropertyName("site_status")] public string? SiteStatus { get; set; }
+    }
+
+    public sealed class MpMeioPagamento
+    {
+        [JsonPropertyName("id")] public string Id { get; set; } = string.Empty;
+        [JsonPropertyName("payment_type_id")] public string? PaymentTypeId { get; set; }
+        [JsonPropertyName("status")] public string? Status { get; set; }
+    }
+
     /// <summary>Corpo do aviso de webhook (o estado real e sempre buscado no MP).</summary>
     public sealed class MpWebhookNotificacao
     {

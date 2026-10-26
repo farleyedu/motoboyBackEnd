@@ -50,6 +50,11 @@ namespace APIBack.Payments.MercadoPago
         public bool SplitHabilitado { get; set; }
         public decimal ComissaoPercentual { get; set; }
 
+        /// <summary>Endereco do painel (zippy-admin) para onde o callback OAuth devolve a loja. Sem valor: Rastreio:PublicBaseUrl.</summary>
+        public string? PainelUrl { get; set; }
+        /// <summary>Endereco publico desta API (mostrado na Gestao para o callback e o webhook). Sem valor: deduzido da NotificationUrl.</summary>
+        public string? ApiPublicaUrl { get; set; }
+
         public int ConciliadorIntervaloSegundos { get; set; } = 120;
         /// <summary>Pagamento aberto sem noticia ha mais que isto e consultado no MP.</summary>
         public int ConciliadorIdadeMinimaSegundos { get; set; } = 120;

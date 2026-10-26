@@ -45,6 +45,12 @@ namespace APIBack.Payments.MercadoPago
         Task<MpChargeback> ObterChargebackAsync(CredencialRecebedora credencial, string chargebackId, CancellationToken ct = default);
         Task<MpOAuthToken> TrocarCodigoOAuthAsync(CredencialAplicacao app, string code, string redirectUri, string? codeVerifier, CancellationToken ct = default);
         Task<MpOAuthToken> RenovarTokenAsync(CredencialAplicacao app, string refreshToken, CancellationToken ct = default);
+        /// <summary>GET /users/me: dono do token (id, situacao da conta). Base das verificacoes da Gestao e da loja.</summary>
+        Task<MpUsuario> ObterUsuarioAsync(CredencialRecebedora credencial, CancellationToken ct = default);
+        /// <summary>GET /v1/payment_methods: meios liberados na conta (sem chave Pix cadastrada o Pix nao aparece).</summary>
+        Task<IReadOnlyList<MpMeioPagamento>> MeiosDePagamentoAsync(CredencialRecebedora credencial, CancellationToken ct = default);
+        /// <summary>Confere client_id/secret da aplicacao (grant client_credentials). Devolve o user_id do dono; o token e descartado.</summary>
+        Task<long> ValidarAplicacaoAsync(CredencialAplicacao app, CancellationToken ct = default);
     }
 
     public sealed class MercadoPagoClient : IMercadoPagoClient
@@ -103,6 +109,21 @@ namespace APIBack.Payments.MercadoPago
             {
                 ["client_id"] = app.ClientId, ["client_secret"] = app.ClientSecret, ["grant_type"] = "refresh_token", ["refresh_token"] = refreshToken
             }, null, "oauth_refresh", ct);
+
+        public Task<MpUsuario> ObterUsuarioAsync(CredencialRecebedora c, CancellationToken ct = default) =>
+            EnviarAsync<MpUsuario>(c.AccessToken, HttpMethod.Get, "users/me", null, null, "usuario", ct);
+
+        public async Task<IReadOnlyList<MpMeioPagamento>> MeiosDePagamentoAsync(CredencialRecebedora c, CancellationToken ct = default) =>
+            await EnviarAsync<List<MpMeioPagamento>>(c.AccessToken, HttpMethod.Get, "v1/payment_methods", null, null, "meios_pagamento", ct);
+
+        public async Task<long> ValidarAplicacaoAsync(CredencialAplicacao app, CancellationToken ct = default)
+        {
+            var token = await EnviarAsync<MpOAuthToken>(null, HttpMethod.Post, "oauth/token", new Dictionary<string, string>
+            {
+                ["client_id"] = app.ClientId, ["client_secret"] = app.ClientSecret, ["grant_type"] = "client_credentials"
+            }, null, "oauth_aplicacao", ct);
+            return token.UserId;
+        }
 
         private async Task<T> EnviarAsync<T>(string? token, HttpMethod metodo, string caminho, object? corpo, string? idempotencyKey, string operacao, CancellationToken ct)
         {

@@ -41,6 +41,7 @@ namespace APIBack.Payments.MercadoPago
             services.AddScoped<IMercadoPagoWebhookService, MercadoPagoWebhookService>();
             services.AddHostedService<PagamentoConciliadorWorker>();
             services.AddHostedService<PagamentoOutboxPublisher>();
+            APIBack.Payments.Gestao.PagamentosGestaoRegistro.AddPagamentosGestaoEConexao(services);
 
             services.Configure<RateLimiterOptions>(o => o.AddPolicy(PoliticaPublica, ctx =>
                 RateLimitPartition.GetFixedWindowLimiter(ctx.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
