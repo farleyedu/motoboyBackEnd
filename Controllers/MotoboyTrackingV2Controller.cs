@@ -113,12 +113,27 @@ namespace APIBack.Controllers
                 ApiResponse<OperationalLocationBatchAckDto>.Ok(
                     await _service.ReceiveLocationsAsync(HttpContext.GetJwtPayload(), request, HttpContext.RequestAborted)));
 
+        /// <summary>
+        /// Interação humana explícita no app (toque, abrir a tela). O heartbeat e o GPS não passam por aqui e não adiam o fim do
+        /// turno. Limitada por frequência: o limite devolve 200 com recorded=false e o prazo atual.
+        /// </summary>
+        [HttpPost("activity")]
+        [RequireOperationalSession]
+        public async Task<IActionResult> Activity() =>
+            await ExecuteAsync(async () =>
+                ApiResponse<OperationalActivityResponse>.Ok(
+                    await _service.RecordActivityAsync(HttpContext.GetJwtPayload(), HttpContext.RequestAborted)));
+
+        /// <summary>
+        /// Encerra o turno. Com pedidos ativos responde 409 MOTOBOY_HAS_PENDING_WORK até o app repetir com
+        /// confirmPendingWork=true; então a loja assume os pedidos como incidente.
+        /// </summary>
         [HttpDelete]
         [RequireOperationalSession]
-        public async Task<IActionResult> End([FromQuery] string? reason) =>
+        public async Task<IActionResult> End([FromQuery] string? reason, [FromQuery] bool confirmPendingWork = false) =>
             await ExecuteAsync(async () =>
                 ApiResponse<OperationalSessionDto>.Ok(
-                    await _service.EndSessionAsync(HttpContext.GetJwtPayload(), reason ?? "client_end")));
+                    await _service.EndSessionAsync(HttpContext.GetJwtPayload(), reason ?? "client_end", confirmPendingWork)));
 
         // =====================================================================
         // Acoes do motoboy sobre a propria fila. Motoboy e estabelecimento vem do
@@ -309,6 +324,10 @@ namespace APIBack.Controllers
             {
                 return Unauthorized(ApiResponse<object>.Fail("Contexto operacional invalido.", "OPERATIONAL_TOKEN_REQUIRED"));
             }
+
+            // Consulta (GET) pode ser automática; qualquer ação do motoboy no app conta como atividade humana.
+            if (!HttpMethods.IsGet(Request.Method))
+                await _service.TouchActivityAsync(payload, HttpContext.RequestAborted);
 
             return await ExecuteAsync(async () =>
                 ApiResponse<T>.Ok(await action(estabelecimentoId, payload.MotoboyId.Value, userId)));

@@ -12,13 +12,15 @@ public partial class DeliverySyncDatabaseTests
         foreach (var platform in new[] { "native", "web" })
         {
             await using var db = await ResumeDatabase();
-            await db.Execute("UPDATE motoboy_active_sessions SET client_instance_id='aparelho', device_type=@Platform, expires_at_utc=NOW()-INTERVAL '30 days', last_heartbeat_at_utc=NOW()-INTERVAL '30 days'", new { Platform = platform == "web" ? "web" : "mobile" });
+            await db.Execute("UPDATE motoboy_active_sessions SET client_instance_id='aparelho', device_type=@Platform, expires_at_utc=NOW()+INTERVAL '3 hours', last_human_activity_at_utc=NOW()-INTERVAL '4 hours', last_seen_at=NOW()-INTERVAL '30 days', last_heartbeat_at_utc=NOW()-INTERVAL '30 days'", new { Platform = platform == "web" ? "web" : "mobile" });
             Assert.Equal(0, await db.Repository.ExpireDueSessionsAsync(100));
             Assert.Null((await db.Repository.GetSessionAsync(db.SessionId))!.EndedAtUtc);
             var renewed = await db.Repository.StartMobileSessionAsync(7, db.StoreId, Guid.NewGuid(), "aparelho", clientPlatform: platform, resumeSessionId: db.SessionId);
             Assert.Equal(db.SessionId, renewed.SessionId);
             Assert.Equal(4, renewed.SessionEpoch);
-            Assert.Equal(720, (renewed.ExpiresAtUtc - renewed.LastHeartbeatAtUtc).TotalSeconds);
+            // Retomar o turno renova conexão e credenciais, não o prazo de inatividade (ainda ~3 h).
+            Assert.InRange((renewed.ExpiresAtUtc - DateTimeOffset.UtcNow).TotalHours, 2.9, 3.0);
+            Assert.InRange((DateTimeOffset.UtcNow - renewed.LastHumanActivityAtUtc!.Value).TotalHours, 3.9, 4.1);
             Assert.Equal("en_route", await db.Scalar<string>("SELECT stop_status FROM delivery_route_stops WHERE pedido_id=23"));
             Assert.Equal(0, await db.Scalar<int>("SELECT COUNT(*)::int FROM motoboy_location_current"));
             var conflict = await Assert.ThrowsAsync<DeliveryDomainException>(() => db.Repository.StartMobileSessionAsync(7, db.StoreId, Guid.NewGuid(), "outro-aparelho", resumeSessionId: db.SessionId));

@@ -68,7 +68,7 @@ namespace APIBack.Tests.Unit
                 SessionEpoch = session.SessionEpoch
             };
             _repository
-                .Setup(r => r.EndSessionAsync(session.SessionId, session.MotoboyId, session.SessionEpoch, "client_end"))
+                .Setup(r => r.EndSessionAsync(session.SessionId, session.MotoboyId, session.SessionEpoch, "client_end", false))
                 .ThrowsAsync(new DeliveryDomainException(
                     409,
                     "MOTOBOY_HAS_PENDING_WORK",
@@ -105,6 +105,64 @@ namespace APIBack.Tests.Unit
             Assert.Equal(3600, response.ExpiresIn);
             Assert.Equal(240, response.Session.HeartbeatIntervalSeconds);
             _repository.Verify(r => r.HeartbeatAsync(session.SessionId, session.MotoboyId, session.SessionEpoch, default), Times.Once);
+        }
+
+        [Fact]
+        public async Task Heartbeat_ReportsConnectionAndInactivityDeadlinesSeparately()
+        {
+            var session = CreateSession("mobile");
+            var now = DateTimeOffset.UtcNow;
+            session.LastHeartbeatAtUtc = now;
+            session.LastSeenAtUtc = now.AddSeconds(-30);
+            session.LastHumanActivityAtUtc = now.AddHours(-2);
+            session.ExpiresAtUtc = now.AddHours(5);
+            _repository.Setup(r => r.HeartbeatAsync(session.SessionId, session.MotoboyId, session.SessionEpoch, default)).ReturnsAsync(session);
+            _jwtService.Setup(j => j.GenerateToken(It.IsAny<JwtPayload>(), It.IsAny<TimeSpan>())).Returns("t");
+
+            var response = await CreateService().HeartbeatAsync(new JwtPayload
+            {
+                TokenUse = "delivery_operational", MotoboySessionId = session.SessionId,
+                MotoboyId = session.MotoboyId, SessionEpoch = session.SessionEpoch
+            });
+
+            Assert.Equal(now.AddSeconds(_options.PresenceTtlSeconds), response.Session.PresenceExpiresAtUtc);
+            Assert.Equal(session.LastHumanActivityAtUtc, response.Session.LastHumanActivityAtUtc);
+            Assert.Equal(session.ExpiresAtUtc, response.Session.InactivityExpiresAtUtc);
+            Assert.InRange(response.Session.InactivityRemainingSeconds, 5 * 3600 - 5, 5 * 3600);
+        }
+
+        [Fact]
+        public async Task Activity_ReturnsRemainingTimeFromTheServerClock()
+        {
+            var session = CreateSession("mobile");
+            var now = DateTimeOffset.UtcNow;
+            _repository.Setup(r => r.RecordActivityAsync(session.SessionId, session.MotoboyId, session.SessionEpoch, default))
+                .ReturnsAsync(new OperationalActivityResult { Recorded = true, ServerTimeUtc = now, LastHumanActivityAtUtc = now, ExpiresAtUtc = now.AddHours(7) });
+
+            var response = await CreateService().RecordActivityAsync(new JwtPayload
+            {
+                TokenUse = "delivery_operational", MotoboySessionId = session.SessionId,
+                MotoboyId = session.MotoboyId, SessionEpoch = session.SessionEpoch
+            });
+
+            Assert.True(response.Recorded);
+            Assert.Equal(7 * 3600, response.InactivityRemainingSeconds);
+        }
+
+        [Fact]
+        public async Task EndSession_ForwardsTheExplicitConfirmationToTheRepository()
+        {
+            var session = CreateSession("mobile");
+            _repository.Setup(r => r.EndSessionAsync(session.SessionId, session.MotoboyId, session.SessionEpoch, "client_end", true))
+                .ReturnsAsync(session);
+
+            await CreateService().EndSessionAsync(new JwtPayload
+            {
+                TokenUse = "delivery_operational", MotoboySessionId = session.SessionId,
+                MotoboyId = session.MotoboyId, SessionEpoch = session.SessionEpoch
+            }, "client_end", confirmPendingWork: true);
+
+            _repository.Verify(r => r.EndSessionAsync(session.SessionId, session.MotoboyId, session.SessionEpoch, "client_end", true), Times.Once);
         }
 
         [Fact]

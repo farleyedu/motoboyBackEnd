@@ -34,7 +34,13 @@ namespace APIBack.DTOs.Tracking
         public string Origin { get; set; } = "mobile";
         public string ClientPlatform { get; set; } = "native";
         public DateTimeOffset StartedAtUtc { get; set; }
+        /// <summary>Fim da janela de conexao (ultimo contato + 12 min). Nao encerra o turno.</summary>
         public DateTimeOffset PresenceExpiresAtUtc { get; set; }
+        public DateTimeOffset? LastContactAtUtc { get; set; }
+        public DateTimeOffset? LastHumanActivityAtUtc { get; set; }
+        /// <summary>Quando o turno sera encerrado por inatividade se nenhuma acao humana ocorrer.</summary>
+        public DateTimeOffset InactivityExpiresAtUtc { get; set; }
+        public int InactivityRemainingSeconds { get; set; }
         public int HeartbeatIntervalSeconds { get; set; }
         public long Version { get; set; }
         public long NextLocationSequence { get; set; } = 1;
@@ -74,6 +80,17 @@ namespace APIBack.DTOs.Tracking
         public int ExpiresIn { get; set; }
         public DateTimeOffset ServerTimeUtc { get; set; }
         public OperationalSessionDto Session { get; set; } = new();
+    }
+
+    /// <summary>Resposta de POST /session/activity.</summary>
+    public sealed class OperationalActivityResponse
+    {
+        /// <summary>false quando o limite de frequencia ignorou o toque (a ultima atividade ja e recente).</summary>
+        public bool Recorded { get; set; }
+        public DateTimeOffset ServerTimeUtc { get; set; }
+        public DateTimeOffset LastHumanActivityAtUtc { get; set; }
+        public DateTimeOffset InactivityExpiresAtUtc { get; set; }
+        public int InactivityRemainingSeconds { get; set; }
     }
 
     public sealed class OperationalLocationRequest
@@ -150,6 +167,18 @@ namespace APIBack.DTOs.Tracking
         public long Version { get; set; }
         public string Origin { get; set; } = string.Empty;
         public DateTimeOffset PresenceExpiresAtUtc { get; set; }
+        /// <summary>"native" | "web" | "simulator".</summary>
+        public string ClientPlatform { get; set; } = "native";
+        public DateTimeOffset ShiftStartedAtUtc { get; set; }
+        public DateTimeOffset? LastHeartbeatAtUtc { get; set; }
+        public DateTimeOffset? LastContactAtUtc { get; set; }
+        public DateTimeOffset? LastHumanActivityAtUtc { get; set; }
+        /// <summary>"connected" (contato nos ultimos 12 min) | "disconnected". O turno continua ativo nos dois.</summary>
+        public string PresenceStatus { get; set; } = "connected";
+        /// <summary>"enabled" | "unavailable" | "unknown".</summary>
+        public string PushCapability { get; set; } = "unknown";
+        public DateTimeOffset InactivityDeadlineAtUtc { get; set; }
+        public int InactivityRemainingSeconds { get; set; }
         public bool HasRecentLocation { get; set; }
         public OperationalLocationDto? Location { get; set; }
     }

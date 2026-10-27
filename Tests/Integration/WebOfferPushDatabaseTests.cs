@@ -34,7 +34,7 @@ public partial class DeliverySyncDatabaseTests
         await db.Execute("""
 CREATE TABLE delivery_chat_push_subscription(token text PRIMARY KEY,estabelecimento_id uuid NOT NULL,motoboy_id int NOT NULL,
  session_id uuid NOT NULL,sound bool NOT NULL,vibration bool NOT NULL,muted bool,mention_alerts bool,updated_at_utc timestamptz DEFAULT NOW());
-UPDATE motoboy_active_sessions SET expires_at_utc='9999-12-31 00:00:00+00',last_heartbeat_at_utc=NOW()-INTERVAL '30 days';
+UPDATE motoboy_active_sessions SET expires_at_utc=NOW()+INTERVAL '6 hours',last_heartbeat_at_utc=NOW()-INTERVAL '30 days',last_seen_at=NOW()-INTERVAL '30 days';
 UPDATE delivery_route_stops SET stop_status='assigned',picked_up_at_utc=NULL,offered_at_utc=NOW(),offer_id=@Offer;
 """, new { Offer = Guid.NewGuid() });
         await ApplyCorrection(db, "20261009_03_offer_push.sql");
@@ -58,6 +58,10 @@ UPDATE delivery_route_stops SET stop_status='assigned',picked_up_at_utc=NULL,off
         await Publish();
         Assert.Equal("sent", await db.Scalar<string>("SELECT state FROM delivery_offer_push_outbox"));
         await Publish(); Assert.Equal(1, handler.Sends);
+        // Passadas as 7 h sem atividade humana o aviso deixa de sair; antes disso o heartbeat de 30 dias atrás não impedia.
+        await db.Execute("UPDATE delivery_offer_push_outbox SET state='queued';UPDATE motoboy_active_sessions SET expires_at_utc=NOW()-INTERVAL '1 second'");
+        await Publish(); Assert.Equal(1, handler.Sends);
+        await db.Execute("UPDATE delivery_offer_push_outbox SET state='queued';UPDATE motoboy_active_sessions SET expires_at_utc=NOW()+INTERVAL '6 hours'");
         await db.Execute("UPDATE delivery_offer_push_outbox SET state='queued';UPDATE motoboy_active_sessions SET ended_at_utc=NOW(),end_reason='motoboy_offline'");
         await Publish(); Assert.Equal(1, handler.Sends);
         Assert.Equal("SESSION_EXPIRED", (await Assert.ThrowsAsync<DeliveryDomainException>(() => service.RegisterAsync(new(db.StoreId, 7, 1), db.SessionId, 4, request))).Code);

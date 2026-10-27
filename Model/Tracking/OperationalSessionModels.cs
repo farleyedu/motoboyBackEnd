@@ -28,6 +28,11 @@ namespace APIBack.Model.Tracking
         public Guid? IdempotencyKey { get; set; }
         public DateTimeOffset StartedAtUtc { get; set; }
         public DateTimeOffset LastHeartbeatAtUtc { get; set; }
+        /// <summary>Ultimo sinal do aparelho (heartbeat ou GPS). Define apenas a conexao, nunca o fim do turno.</summary>
+        public DateTimeOffset? LastSeenAtUtc { get; set; }
+        /// <summary>Ultima acao humana no turno; so ela adia o encerramento por inatividade.</summary>
+        public DateTimeOffset? LastHumanActivityAtUtc { get; set; }
+        /// <summary>Turno mobile: fim por inatividade (atividade + 7 h). Simulador: sua propria validade.</summary>
         public DateTimeOffset ExpiresAtUtc { get; set; }
         public DateTimeOffset? EndedAtUtc { get; set; }
         public string? EndReason { get; set; }
@@ -42,6 +47,15 @@ namespace APIBack.Model.Tracking
         /// </summary>
         public double? LastKnownLatitude { get; set; }
         public double? LastKnownLongitude { get; set; }
+    }
+
+    public sealed class OperationalActivityResult
+    {
+        public bool Recorded { get; set; }
+        public DateTimeOffset ServerTimeUtc { get; set; }
+        public DateTimeOffset LastHumanActivityAtUtc { get; set; }
+        /// <summary>Fim do turno por inatividade.</summary>
+        public DateTimeOffset ExpiresAtUtc { get; set; }
     }
 
     public sealed class OperationalLocationWrite

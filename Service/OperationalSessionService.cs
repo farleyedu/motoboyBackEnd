@@ -128,7 +128,7 @@ namespace APIBack.Service
             };
         }
 
-        public async Task<OperationalSessionDto> EndSessionAsync(JwtPayload payload, string reason)
+        public async Task<OperationalSessionDto> EndSessionAsync(JwtPayload payload, string reason, bool confirmPendingWork = false)
         {
             EnsureEnabled();
             var context = RequireOperationalContext(payload);
@@ -136,8 +136,31 @@ namespace APIBack.Service
                 context.SessionId,
                 context.MotoboyId,
                 context.SessionEpoch,
-                reason);
+                reason,
+                confirmPendingWork);
             return MapSession(session);
+        }
+
+        public async Task<OperationalActivityResponse> RecordActivityAsync(JwtPayload payload, CancellationToken cancellationToken = default)
+        {
+            EnsureEnabled();
+            var context = RequireOperationalContext(payload);
+            var result = await _repository.RecordActivityAsync(context.SessionId, context.MotoboyId, context.SessionEpoch, cancellationToken);
+            return new OperationalActivityResponse
+            {
+                Recorded = result.Recorded,
+                ServerTimeUtc = result.ServerTimeUtc,
+                LastHumanActivityAtUtc = result.LastHumanActivityAtUtc,
+                InactivityExpiresAtUtc = result.ExpiresAtUtc,
+                InactivityRemainingSeconds = (int)Math.Max(0, (result.ExpiresAtUtc - result.ServerTimeUtc).TotalSeconds)
+            };
+        }
+
+        /// <summary>Ação explícita do motoboy no app: conta como atividade. Nunca atrapalha a própria ação.</summary>
+        public async Task TouchActivityAsync(JwtPayload payload, CancellationToken cancellationToken = default)
+        {
+            try { await RecordActivityAsync(payload, cancellationToken); }
+            catch (Exception ex) when (ex is DeliveryDomainException or Npgsql.NpgsqlException) { }
         }
 
         public async Task<OperationalLocationAckDto> ReceiveLocationAsync(
@@ -406,21 +429,32 @@ namespace APIBack.Service
             return _jwtService.GenerateToken(payload, TimeSpan.FromSeconds(OperationalTokenExpiresInSeconds(session)));
         }
 
-        private OperationalSessionDto MapSession(OperationalSessionRecord session) => new()
+        private OperationalSessionDto MapSession(OperationalSessionRecord session)
         {
+            // Conexão (heartbeat/GPS + 12 min) e fim do turno (atividade humana + 7 h) são prazos independentes.
+            var contact = session.LastSeenAtUtc.HasValue && session.LastSeenAtUtc > session.LastHeartbeatAtUtc
+                ? session.LastSeenAtUtc.Value : session.LastHeartbeatAtUtc;
+            var simulated = session.Origin == "simulator";
+            return new OperationalSessionDto
+            {
             SessionId = session.SessionId,
             Epoch = session.SessionEpoch,
             Origin = session.Origin,
             ClientPlatform = session.DeviceType == "web" ? "web" : "native",
             StartedAtUtc = session.StartedAtUtc,
-            PresenceExpiresAtUtc = session.ExpiresAtUtc,
+            PresenceExpiresAtUtc = simulated ? session.ExpiresAtUtc : contact.AddSeconds(_options.PresenceTtlSeconds),
+            LastContactAtUtc = contact,
+            LastHumanActivityAtUtc = session.LastHumanActivityAtUtc,
+            InactivityExpiresAtUtc = session.ExpiresAtUtc,
+            InactivityRemainingSeconds = (int)Math.Max(0, (session.ExpiresAtUtc - DateTimeOffset.UtcNow).TotalSeconds),
             HeartbeatIntervalSeconds = _options.HeartbeatIntervalSeconds,
             Version = session.Version,
             NextLocationSequence = session.NextLocationSequence,
             IsEnded = session.EndedAtUtc.HasValue,
             EndedAtUtc = session.EndedAtUtc,
             EndReason = session.EndReason
-        };
+            };
+        }
 
         private void EnsureEnabled()
         {

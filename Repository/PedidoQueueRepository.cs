@@ -575,7 +575,7 @@ RETURNING id;",
             return await BumpRouteVersionAsync(connection, transaction, estabelecimentoId, motoboyId);
         }
 
-        private static Task ReturnPedidoToPendingAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, int pedidoId) =>
+        internal static Task ReturnPedidoToPendingAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, int pedidoId) =>
             connection.ExecuteAsync(
                 "UPDATE pedido SET status_pedido = @Pendente, motoboy_responsavel = NULL, horario_saida = NULL WHERE id = @PedidoId;",
                 new { Pendente = (int)StatusPedido.Pendente, PedidoId = pedidoId }, transaction);
@@ -588,7 +588,7 @@ RETURNING id;",
         /// Garante e trava o cabecalho da(s) fila(s) em ordem crescente de motoboy_id.
         /// Devolve a versao da fila do primeiro motoboy informado.
         /// </summary>
-        private static async Task<long> LockQueuesAsync(
+        internal static async Task<long> LockQueuesAsync(
             NpgsqlConnection connection, NpgsqlTransaction transaction, Guid estabelecimentoId, int motoboyId, int? otherMotoboyId = null)
         {
             var ids = new List<int> { motoboyId };
@@ -618,7 +618,7 @@ RETURNING id;",
                 "SELECT version FROM delivery_motoboy_route WHERE motoboy_id = @MotoboyId AND estabelecimento_id = @EstabelecimentoId;",
                 new { MotoboyId = motoboyId, EstabelecimentoId = estabelecimentoId }, transaction, commandTimeout: 10, cancellationToken: cancellationToken)) ?? 0;
 
-        private static async Task<long> BumpRouteVersionAsync(
+        internal static async Task<long> BumpRouteVersionAsync(
             NpgsqlConnection connection, NpgsqlTransaction transaction, Guid estabelecimentoId, int motoboyId) =>
             await connection.ExecuteScalarAsync<long>(
                 "UPDATE delivery_motoboy_route SET version = version + 1, updated_at_utc = NOW() " +
@@ -678,7 +678,7 @@ RETURNING id;",
         /// Em duas fases: o indice unico de posicao e checado linha a linha, entao
         /// atribuir 1..n direto colidiria com posicoes que ainda nao foram movidas.
         /// </summary>
-        private static async Task RenumberActiveStopsAsync(
+        internal static async Task RenumberActiveStopsAsync(
             NpgsqlConnection connection, NpgsqlTransaction transaction, Guid estabelecimentoId, int motoboyId)
         {
             await ShiftPositionsOutOfRangeAsync(connection, transaction, estabelecimentoId, motoboyId);
@@ -980,7 +980,7 @@ SELECT s.id AS Id, s.pedido_id AS PedidoId, s.position AS Position, s.stop_statu
         // Eventos de tempo real (outbox)
         // =====================================================================
 
-        private static async Task EmitQueueEventAsync(
+        internal static async Task EmitQueueEventAsync(
             NpgsqlConnection connection,
             NpgsqlTransaction transaction,
             Guid estabelecimentoId,

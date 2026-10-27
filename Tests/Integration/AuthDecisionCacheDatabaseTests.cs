@@ -50,8 +50,11 @@ UPDATE delivery_route_stops SET stop_status='cancelled';
         Assert.False(await Allowed());
         await db.Execute("UPDATE empresas SET pausada=FALSE; UPDATE motoboy_active_sessions SET expires_at_utc=NOW()-INTERVAL '1 second'");
         Assert.False(await Allowed());
-        Assert.True(await Allowed("/api/v2/motoboys/me/session/heartbeat", "POST"));
-        Assert.False(await Allowed());
+        // Passadas as 7 h sem atividade humana, nem o heartbeat reabre o turno (ele só prova conexão).
+        Assert.False(await Allowed("/api/v2/motoboys/me/session/heartbeat", "POST"));
+        Assert.Equal("SESSION_EXPIRED", (await Assert.ThrowsAsync<DeliveryDomainException>(() => repository.HeartbeatAsync(db.SessionId, 1, 4))).Code);
+        // Atividade humana dentro do prazo mantém o turno; heartbeat segue funcionando.
+        await db.Execute("UPDATE motoboy_active_sessions SET expires_at_utc=NOW()+INTERVAL '3 hours'"); cache.InvalidateSession(db.SessionId);
         await repository.HeartbeatAsync(db.SessionId, 1, 4);
         Assert.True(await Allowed());
         await repository.EndSessionAsync(db.SessionId, 1, 4, "client_end");

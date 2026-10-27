@@ -144,6 +144,8 @@ builder.Services.AddSingleton<DeliverySyncMetrics>();
 builder.Services.AddSingleton<IDeliveryOutboxRepository, DeliveryOutboxRepository>();
 builder.Services.AddScoped<IPedidoQueueRepository, PedidoQueueRepository>();
 builder.Services.AddScoped<IPedidoQueueService, PedidoQueueService>();
+builder.Services.AddScoped<DisconnectIncidentRepository>();
+builder.Services.AddScoped<DisconnectIncidentService>();
 builder.Services.AddScoped<IPedidoCoreService, PedidoCoreService>();
 builder.Services.AddScoped<APIBack.Printing.PrintStore>();
 builder.Services.AddScoped<APIBack.Printing.PrintDispatcher>();

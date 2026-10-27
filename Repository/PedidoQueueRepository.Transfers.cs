@@ -570,7 +570,7 @@ RETURNING id;",
         /// entregue ou transferido pelo atendente): solicitacoes pendentes perdem o
         /// sentido e sao canceladas automaticamente.
         /// </summary>
-        private static async Task CancelPendingTransfersForPedidoAsync(
+        internal static async Task CancelPendingTransfersForPedidoAsync(
             NpgsqlConnection connection, NpgsqlTransaction transaction, Guid estabelecimentoId, int pedidoId, string note)
         {
             var cancelled = (await connection.QueryAsync<TransferEventRow>(@"

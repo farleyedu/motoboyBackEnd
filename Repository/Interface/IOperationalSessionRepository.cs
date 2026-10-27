@@ -29,6 +29,10 @@ namespace APIBack.Repository.Interface
         Task<OperationalSessionRecord?> GetSessionAsync(Guid sessionId);
         Task<OperationalSessionRecord> HeartbeatAsync(Guid sessionId, int motoboyId, long sessionEpoch, CancellationToken cancellationToken = default);
         Task<OperationalSessionRecord> EndSessionAsync(Guid sessionId, int motoboyId, long sessionEpoch, string reason);
+        /// <summary>Com <paramref name="confirmPendingWork"/> o motoboy encerra mesmo com pedidos ativos; eles viram incidente da loja.</summary>
+        Task<OperationalSessionRecord> EndSessionAsync(Guid sessionId, int motoboyId, long sessionEpoch, string reason, bool confirmPendingWork);
+        /// <summary>Interacao humana explicita: renova o prazo de inatividade (limitada por frequencia).</summary>
+        Task<OperationalActivityResult> RecordActivityAsync(Guid sessionId, int motoboyId, long sessionEpoch, CancellationToken cancellationToken = default);
         Task<OperationalLocationWriteResult> WriteLocationAsync(
             Guid sessionId,
             int motoboyId,

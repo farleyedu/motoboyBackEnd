@@ -30,6 +30,8 @@ namespace APIBack.Repository.Interface
         /// <summary>Passa a rota inteira de um motoboy para outro, atomicamente (vira uma oferta para o destino).</summary>
         Task<RouteTransferResultDto> TransferRouteByOperatorAsync(Guid estabelecimentoId, int operatorUserId, int fromMotoboyId, int toMotoboyId, string? motivo);
         Task<MotoboyQueueDto> ResumeAsync(Guid estabelecimentoId, int actorUserId, int motoboyId);
+        /// <summary>Incidente de desconexao: devolucao fisica confirmada; libera a parada coletada e volta o pedido a pendente. Null = ja estava livre.</summary>
+        Task<MotoboyQueueDto?> ReleaseCollectedAfterReturnAsync(Guid estabelecimentoId, int actorUserId, int pedidoId, string? motivo) => throw new NotSupportedException();
         Task<MotoboyQueueDto> CancelAsync(Guid estabelecimentoId, int actorUserId, int pedidoId, string? motivo);
         /// <summary>Entrega manual (sem app do motoboy): a loja marca a saida. Devolve o status novo.</summary>
         Task<string> MarcarSaiuManualAsync(Guid estabelecimentoId, int actorUserId, int pedidoId, string? entregadorNome);

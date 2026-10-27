@@ -23,7 +23,11 @@ namespace APIBack.Service.Interface
             StartSimulatorSessionRequest request);
 
         Task<OperationalHeartbeatResponse> HeartbeatAsync(JwtPayload payload, CancellationToken cancellationToken = default);
-        Task<OperationalSessionDto> EndSessionAsync(JwtPayload payload, string reason);
+        Task<OperationalSessionDto> EndSessionAsync(JwtPayload payload, string reason, bool confirmPendingWork = false);
+        /// <summary>Interacao humana explicita: renova o prazo de inatividade (limitada por frequencia).</summary>
+        Task<OperationalActivityResponse> RecordActivityAsync(JwtPayload payload, CancellationToken cancellationToken = default);
+        /// <summary>Acao do motoboy no app: mesma atividade, sem nunca falhar a acao que a originou.</summary>
+        Task TouchActivityAsync(JwtPayload payload, CancellationToken cancellationToken = default);
         Task<OperationalLocationAckDto> ReceiveLocationAsync(JwtPayload payload, OperationalLocationRequest request, CancellationToken cancellationToken = default);
         Task<OperationalLocationBatchAckDto> ReceiveLocationsAsync(JwtPayload payload, OperationalLocationBatchRequest request, CancellationToken cancellationToken = default);
         Task<OperationalSessionDto?> GetSessionAsync(JwtPayload payload);

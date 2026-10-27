@@ -71,7 +71,8 @@ public partial class DeliverySyncDatabaseTests
         await using var db = await Database.Create();
         var session = await db.Repository.HeartbeatAsync(db.SessionId, 1, 4);
         Assert.Equal(2, session.Version); Assert.Equal("Teste", session.Nome); Assert.Equal(7, session.UsuarioId);
-        Assert.Equal(720, (session.ExpiresAtUtc - session.LastHeartbeatAtUtc).TotalSeconds);
+        // Turno mobile: o heartbeat prova conexão, mas o prazo de inatividade (expires_at_utc) não é renovado por ele.
+        Assert.InRange((session.ExpiresAtUtc - session.LastHeartbeatAtUtc).TotalSeconds, 80, 91);
         Assert.Equal("SESSION_EXPIRED", (await Assert.ThrowsAsync<DeliveryDomainException>(() =>
             db.Repository.HeartbeatAsync(db.SessionId, 1, 99))).Code);
         await db.Execute("UPDATE motoboy_estabelecimento SET ativo = FALSE");
@@ -259,13 +260,14 @@ VALUES(1,23,1,@StoreId,1,'en_route',NOW(),FALSE),(2,24,1,@StoreId,2,'assigned',N
             SqlMapper.AddTypeHandler(new DateTimeOffsetTypeHandler());
             await db.Execute(@"
 CREATE TABLE motoboy(id int PRIMARY KEY, nome text, avatar text, status int, canonical_motoboy_id int, is_simulated bool, id_usuario int);
-CREATE TABLE estabelecimentos(id uuid PRIMARY KEY, ativo bool, status text);
+CREATE TABLE estabelecimentos(id uuid PRIMARY KEY, ativo bool, status text, situacao_comercial text DEFAULT 'ativo', bloqueado_em timestamptz);
 CREATE TABLE motoboy_estabelecimento(motoboy_id int, estabelecimento_id uuid, ativo bool, simulator_enabled bool);
 CREATE TABLE usuario_estabelecimentos(id_usuario int, id_estabelecimento uuid, tipo_acesso text, ativo bool, status text);
 CREATE TABLE motoboy_active_sessions(session_id uuid PRIMARY KEY, session_epoch bigint, motoboy_id int, id_usuario int,
  id_estabelecimento uuid, origin text, device_type text DEFAULT 'mobile', client_instance_id text, started_by_user_id int, idempotency_key uuid,
  started_at_utc timestamptz, last_heartbeat_at_utc timestamptz, expires_at_utc timestamptz,
- ended_at_utc timestamptz, revoked_at timestamptz, end_reason text, revoke_reason text, last_seen_at timestamptz, version bigint,paused_at_utc timestamptz);
+ ended_at_utc timestamptz, revoked_at timestamptz, end_reason text, revoke_reason text, last_seen_at timestamptz, version bigint,paused_at_utc timestamptz,
+ last_human_activity_at_utc timestamptz);
 CREATE TABLE motoboy_location_samples(id bigserial PRIMARY KEY, sample_id uuid, session_id uuid, motoboy_id int, estabelecimento_id uuid,
  sequence bigint, latitude double precision, longitude double precision, accuracy_meters double precision, speed_mps double precision,
  heading_degrees double precision, tracking_mode text, quality text, captured_at_utc timestamptz, received_at_utc timestamptz,

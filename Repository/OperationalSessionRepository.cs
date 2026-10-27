@@ -32,6 +32,8 @@ SELECT s.session_id AS SessionId,
        s.idempotency_key AS IdempotencyKey,
        s.started_at_utc AS StartedAtUtc,
        s.last_heartbeat_at_utc AS LastHeartbeatAtUtc,
+       s.last_seen_at AS LastSeenAtUtc,
+       s.last_human_activity_at_utc AS LastHumanActivityAtUtc,
        s.expires_at_utc AS ExpiresAtUtc,
        COALESCE(s.ended_at_utc, s.revoked_at) AS EndedAtUtc,
        COALESCE(s.end_reason, s.revoke_reason) AS EndReason,
@@ -111,11 +113,11 @@ SELECT s.session_id AS SessionId,
                         throw SessionConflict(previous);
                     // Renovar o JWT mantém a identidade do turno, a fila e a sequência do GPS.
                     await connection.ExecuteAsync(@"
-UPDATE motoboy_active_sessions SET expires_at_utc=NOW()+(@PresenceTtl * INTERVAL '1 second'),
+UPDATE motoboy_active_sessions SET
  last_heartbeat_at_utc=NOW(), last_seen_at=NOW(), version=version+1,
  client_instance_id=COALESCE(client_instance_id,@ClientInstanceId)
  WHERE session_id=@SessionId AND ended_at_utc IS NULL AND revoked_at IS NULL;",
-                        new { previous.SessionId, PresenceTtl = _options.PresenceTtlSeconds, ClientInstanceId = clientInstanceId }, transaction);
+                        new { previous.SessionId, ClientInstanceId = clientInstanceId }, transaction);
                     var resumed = await connection.QuerySingleAsync<OperationalSessionRecord>(
                         SessionSelect + " WHERE s.session_id=@SessionId;", new { previous.SessionId }, transaction);
                     await CommitSessionTransactionAsync(transaction);
@@ -133,9 +135,9 @@ UPDATE motoboy_active_sessions SET expires_at_utc=NOW()+(@PresenceTtl * INTERVAL
             }
 
             var active = await GetOpenSessionForUpdateAsync(connection, transaction, identity.MotoboyId);
-            if (active != null && active.Origin != "mobile" && active.ExpiresAtUtc <= await GetServerNowAsync(connection, transaction))
+            if (active != null && active.ExpiresAtUtc <= await GetServerNowAsync(connection, transaction))
             {
-                await EndLockedSessionAsync(connection, transaction, active, "heartbeat_timeout", null);
+                await EndLockedSessionAsync(connection, transaction, active, ExpiryReason(active.Origin), null);
                 active = null;
             }
 
@@ -147,10 +149,11 @@ UPDATE motoboy_active_sessions SET expires_at_utc=NOW()+(@PresenceTtl * INTERVAL
                     string.Equals(active.ClientInstanceId, clientInstanceId, StringComparison.OrdinalIgnoreCase))
                 {
                     await connection.ExecuteAsync(@"
-UPDATE motoboy_active_sessions SET expires_at_utc=NOW()+(@PresenceTtl * INTERVAL '1 second'),
- last_heartbeat_at_utc=NOW(), last_seen_at=NOW(), version=version+1
+UPDATE motoboy_active_sessions SET
+ last_heartbeat_at_utc=NOW(), last_seen_at=NOW(), version=version+1,
+ last_human_activity_at_utc=NOW(), expires_at_utc=NOW()+(@InactivityTtl * INTERVAL '1 second')
  WHERE session_id=@SessionId AND ended_at_utc IS NULL AND revoked_at IS NULL;",
-                        new { active.SessionId, PresenceTtl = _options.PresenceTtlSeconds }, transaction);
+                        new { active.SessionId, InactivityTtl = _options.HumanInactivitySeconds }, transaction);
                     var renewed = await connection.QuerySingleAsync<OperationalSessionRecord>(
                         SessionSelect + " WHERE s.session_id=@SessionId;", new { active.SessionId }, transaction);
                     await CommitSessionTransactionAsync(transaction);
@@ -271,7 +274,7 @@ SELECT m.id AS MotoboyId,
                         throw SessionConflict(staleSession);
                     }
 
-                    await EndLockedSessionAsync(connection, transaction, staleSession, "heartbeat_timeout", null);
+                    await EndLockedSessionAsync(connection, transaction, staleSession, ExpiryReason(staleSession.Origin), null);
                 }
             }
 
@@ -334,10 +337,11 @@ SELECT latitude AS Latitude, longitude AS Longitude
 WITH updated AS (
     UPDATE motoboy_active_sessions s
        SET last_heartbeat_at_utc = NOW(), last_seen_at = NOW(),
-           expires_at_utc = NOW() + ((CASE WHEN s.origin = 'mobile' THEN @PresenceTtl ELSE @SimulatorTtl END) * INTERVAL '1 second'),
+           -- Heartbeat só prova conexão: o prazo de inatividade do turno mobile (7 h) não se mexe aqui.
+           expires_at_utc = CASE WHEN s.origin = 'mobile' THEN s.expires_at_utc ELSE NOW() + (@SimulatorTtl * INTERVAL '1 second') END,
            version = s.version + 1
      WHERE s.session_id = @SessionId AND s.motoboy_id = @MotoboyId AND s.session_epoch = @SessionEpoch
-       AND s.ended_at_utc IS NULL AND s.revoked_at IS NULL AND (s.origin = 'mobile' OR s.expires_at_utc > NOW())
+       AND s.ended_at_utc IS NULL AND s.revoked_at IS NULL AND s.expires_at_utc > NOW()
        AND EXISTS (
            SELECT 1 FROM motoboy_estabelecimento me
            JOIN estabelecimentos e ON e.id = me.estabelecimento_id
@@ -354,24 +358,65 @@ WITH updated AS (
 ) " + SessionSelect.Replace("FROM motoboy_active_sessions s", "FROM updated s");
             var session = await connection.QuerySingleOrDefaultAsync<OperationalSessionRecord>(new CommandDefinition(sql,
                 new { SessionId = sessionId, MotoboyId = motoboyId, SessionEpoch = sessionEpoch,
-                    PresenceTtl = _options.PresenceTtlSeconds, SimulatorTtl = PresenceTtlSecondsFor("simulator") },
+                    SimulatorTtl = PresenceTtlSecondsFor("simulator") },
                 transaction, commandTimeout: 10, cancellationToken: cancellationToken))
                 ?? throw new DeliveryDomainException(401, "SESSION_EXPIRED", "Sessao operacional encerrada ou expirada.");
             await InsertRealtimeEventAsync(connection, transaction, DeliveryRealtimeEvents.MotoboyStatusChanged,
-                "presence.heartbeat", session, new { status = "online", presenceExpiresAtUtc = session.ExpiresAtUtc }, cancellationToken);
+                "presence.heartbeat", session, PresenceEventData(session), cancellationToken);
             await CommitSessionTransactionAsync(transaction, cancellationToken);
             measurement?.Complete();
             return session;
+        }
+
+        public Task<OperationalSessionRecord> EndSessionAsync(
+            Guid sessionId, int motoboyId, long sessionEpoch, string reason) =>
+            EndSessionAsync(sessionId, motoboyId, sessionEpoch, reason, confirmPendingWork: false);
+
+        /// <summary>
+        /// Interação humana explícita (POST /session/activity ou ação do motoboy): renova o prazo de inatividade do turno mobile.
+        /// Limitada por frequência (ActivityMinIntervalSeconds): dentro do intervalo nada é gravado e a resposta traz o estado atual.
+        /// </summary>
+        public async Task<OperationalActivityResult> RecordActivityAsync(
+            Guid sessionId, int motoboyId, long sessionEpoch, CancellationToken cancellationToken = default)
+        {
+            await using var connection = await OpenSyncConnectionAsync("activity", cancellationToken);
+            var row = await connection.QuerySingleOrDefaultAsync<OperationalActivityResult>(new CommandDefinition(@"
+WITH target AS (
+    SELECT s.session_id, s.origin,
+           (s.origin = 'mobile' AND (s.last_human_activity_at_utc IS NULL
+             OR s.last_human_activity_at_utc <= NOW() - (@MinInterval * INTERVAL '1 second'))) AS due
+      FROM motoboy_active_sessions s
+     WHERE s.session_id = @SessionId AND s.motoboy_id = @MotoboyId AND s.session_epoch = @SessionEpoch
+       AND s.ended_at_utc IS NULL AND s.revoked_at IS NULL AND s.expires_at_utc > NOW()
+), updated AS (
+    UPDATE motoboy_active_sessions s
+       SET last_human_activity_at_utc = NOW(), expires_at_utc = NOW() + (@Inactivity * INTERVAL '1 second')
+      FROM target t
+     WHERE s.session_id = t.session_id AND t.due
+    RETURNING s.session_id
+)
+SELECT (EXISTS (SELECT 1 FROM updated)) AS Recorded, NOW() AS ServerTimeUtc,
+       -- O CTE de UPDATE não é visível ao SELECT final: o valor novo é recomposto aqui.
+       CASE WHEN EXISTS (SELECT 1 FROM updated) THEN NOW() ELSE COALESCE(s.last_human_activity_at_utc, s.started_at_utc) END AS LastHumanActivityAtUtc,
+       CASE WHEN EXISTS (SELECT 1 FROM updated) THEN NOW() + (@Inactivity * INTERVAL '1 second') ELSE s.expires_at_utc END AS ExpiresAtUtc
+  FROM motoboy_active_sessions s JOIN target t ON t.session_id = s.session_id;",
+                new { SessionId = sessionId, MotoboyId = motoboyId, SessionEpoch = sessionEpoch,
+                    MinInterval = _options.ActivityMinIntervalSeconds, Inactivity = _options.HumanInactivitySeconds },
+                commandTimeout: 10, cancellationToken: cancellationToken))
+                ?? throw new DeliveryDomainException(401, "SESSION_EXPIRED", "Sessao operacional encerrada ou expirada.");
+            return row;
         }
 
         public async Task<OperationalSessionRecord> EndSessionAsync(
             Guid sessionId,
             int motoboyId,
             long sessionEpoch,
-            string reason)
+            string reason,
+            bool confirmPendingWork)
         {
             await using var connection = await _dataSource.OpenConnectionAsync();
             await using var transaction = await connection.BeginTransactionAsync();
+            await PreLockRouteAsync(connection, transaction, sessionId);
             var session = await GetSessionForUpdateAsync(connection, transaction, sessionId)
                 ?? throw new DeliveryDomainException(401, "SESSION_EXPIRED", "Sessao operacional nao encontrada.");
             if (session.MotoboyId != motoboyId || session.SessionEpoch != sessionEpoch)
@@ -397,12 +442,14 @@ SELECT
     );",
                     new { MotoboyId = motoboyId },
                     transaction);
-                if (hasPendingWork)
+                // Com a confirmação explícita do motoboy, o servidor assume os pedidos como incidente da loja.
+                if (hasPendingWork && !confirmPendingWork)
                 {
                     throw new DeliveryDomainException(
                         409,
                         "MOTOBOY_HAS_PENDING_WORK",
-                        "O motoboy possui pedidos em rota, na fila ou transferencias pendentes e nao pode ficar offline.");
+                        "O motoboy possui pedidos em rota, na fila ou transferencias pendentes e nao pode ficar offline.",
+                        new { canConfirm = true, confirmParameter = "confirmPendingWork" });
                 }
 
                 session = await EndLockedSessionAsync(
@@ -441,7 +488,7 @@ SELECT
             var session = await GetSessionForUpdateAsync(connection, transaction, sessionId, cancellationToken)
                 ?? throw new DeliveryDomainException(401, "SESSION_EXPIRED", "Sessao operacional nao encontrada.");
             if (session.MotoboyId != motoboyId || session.SessionEpoch != sessionEpoch ||
-                session.EndedAtUtc.HasValue || (session.Origin != "mobile" && session.ExpiresAtUtc <= serverNow))
+                session.EndedAtUtc.HasValue || session.ExpiresAtUtc <= serverNow)
                 throw new DeliveryDomainException(401, "SESSION_EXPIRED", "Sessao operacional encerrada ou expirada.");
             var hasActiveLink = await connection.ExecuteScalarAsync<bool>(new CommandDefinition(@"
 SELECT EXISTS (
@@ -483,7 +530,9 @@ SELECT sequence FROM motoboy_location_current WHERE session_id = @SessionId FOR 
                 session.Version = await connection.QuerySingleAsync<long>(new CommandDefinition(@"
 WITH changed_session AS (
     UPDATE motoboy_active_sessions SET last_seen_at = @ReceivedAtUtc,
-       expires_at_utc = @ReceivedAtUtc + (@PresenceTtl * INTERVAL '1 second'), version = version + 1
+       -- GPS não é atividade humana: só o simulador renova a própria validade por posição.
+       expires_at_utc = CASE WHEN origin = 'mobile' THEN expires_at_utc ELSE @ReceivedAtUtc + (@PresenceTtl * INTERVAL '1 second') END,
+       version = version + 1
      WHERE session_id = @SessionId RETURNING version
 ), inserted_samples AS (
     INSERT INTO motoboy_location_samples (
@@ -559,6 +608,11 @@ SELECT s.motoboy_id AS MotoboyId,
        s.version AS Version,
        s.origin AS Origin,
        s.expires_at_utc AS PresenceExpiresAtUtc,
+       s.started_at_utc AS StartedAtUtc,
+       s.device_type AS DeviceType,
+       s.last_heartbeat_at_utc AS LastHeartbeatAtUtc,
+       s.last_seen_at AS LastSeenAtUtc,
+       s.last_human_activity_at_utc AS LastHumanActivityAtUtc,
        lc.latitude AS Latitude,
        lc.longitude AS Longitude,
        lc.accuracy_meters AS AccuracyMeters,
@@ -612,9 +666,15 @@ SELECT s.motoboy_id AS MotoboyId,
                 ServerNow = serverNow
             })).ToList();
             var returning = await GetReturningMotoboyIdsAsync(connection, estabelecimentoId);
+            var pushSessions = await GetPushSessionIdsAsync(connection, estabelecimentoId);
 
             var motoboys = rows.Select(row =>
             {
+                // Contato = heartbeat ou GPS. Só diz se o aparelho está conectado; o turno segue ativo até o prazo de inatividade.
+                var contact = row.LastSeenAtUtc.HasValue && row.LastSeenAtUtc > row.LastHeartbeatAtUtc
+                    ? row.LastSeenAtUtc.Value : row.LastHeartbeatAtUtc;
+                var simulated = string.Equals(row.Origin, "simulator", StringComparison.Ordinal);
+                var connected = simulated || contact >= serverNow.AddSeconds(-_options.PresenceTtlSeconds);
                 // O motoboy simulado fica onde o operador o deixou: a posicao nao "envelhece".
                 // No app real ela vem do GPS do aparelho, entao a janela de frescor continua valendo.
                 var locationAt = row.CapturedAtUtc ?? row.ReceivedAtUtc;
@@ -641,7 +701,16 @@ SELECT s.motoboy_id AS MotoboyId,
                     SessionEpoch = row.SessionEpoch,
                     Version = row.Version,
                     Origin = row.Origin,
-                    PresenceExpiresAtUtc = row.PresenceExpiresAtUtc,
+                    PresenceExpiresAtUtc = simulated ? row.PresenceExpiresAtUtc : contact.AddSeconds(_options.PresenceTtlSeconds),
+                    ClientPlatform = simulated ? "simulator" : row.DeviceType == "web" ? "web" : "native",
+                    ShiftStartedAtUtc = row.StartedAtUtc,
+                    LastHeartbeatAtUtc = row.LastHeartbeatAtUtc,
+                    LastContactAtUtc = contact,
+                    LastHumanActivityAtUtc = row.LastHumanActivityAtUtc,
+                    PresenceStatus = connected ? "connected" : "disconnected",
+                    PushCapability = pushSessions == null ? "unknown" : pushSessions.Contains(row.SessionId) ? "enabled" : "unavailable",
+                    InactivityDeadlineAtUtc = row.PresenceExpiresAtUtc,
+                    InactivityRemainingSeconds = (int)Math.Max(0, (row.PresenceExpiresAtUtc - serverNow).TotalSeconds),
                     HasRecentLocation = fresh,
                     // Uma pausa do GPS não apaga o último ponto. Frescor e turno são independentes.
                     Location = row.ReceivedAtUtc.HasValue && row.Latitude.HasValue && row.Longitude.HasValue
@@ -668,6 +737,22 @@ SELECT s.motoboy_id AS MotoboyId,
                 ServerTimeUtc = serverNow,
                 Motoboys = motoboys
             };
+        }
+
+        /// <summary>Sessões com inscrição de push registrada. Null = banco sem a tabela (capacidade desconhecida).</summary>
+        private static async Task<HashSet<Guid>?> GetPushSessionIdsAsync(NpgsqlConnection connection, Guid estabelecimentoId)
+        {
+            try
+            {
+                var ids = await connection.QueryAsync<Guid>(
+                    "SELECT DISTINCT session_id FROM delivery_chat_push_subscription WHERE estabelecimento_id = @EstabelecimentoId;",
+                    new { EstabelecimentoId = estabelecimentoId });
+                return ids.ToHashSet();
+            }
+            catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.UndefinedTable or PostgresErrorCodes.UndefinedColumn)
+            {
+                return null;
+            }
         }
 
         /// <summary>Motoboys com a rota em "retornando". Tolera o banco sem a migration da Fase 4 (coluna ausente = ninguem).</summary>
@@ -901,22 +986,25 @@ SELECT motoboy_id AS MotoboyId,
         {
             await using var connection = await _dataSource.OpenConnectionAsync();
             await using var transaction = await connection.BeginTransactionAsync();
-            var sessions = (await connection.QueryAsync<OperationalSessionRecord>(
-                SessionSelect + @"
- WHERE s.started_by_user_id = @UserId
-   AND s.origin = 'mobile'
-   AND s.ended_at_utc IS NULL
-   AND s.revoked_at IS NULL
- FOR UPDATE OF s;",
-                new { UserId = userId },
-                transaction)).ToList();
-            foreach (var session in sessions)
+            var ids = (await connection.QueryAsync<Guid>(@"
+SELECT session_id FROM motoboy_active_sessions
+ WHERE started_by_user_id = @UserId AND origin = 'mobile' AND ended_at_utc IS NULL AND revoked_at IS NULL
+ ORDER BY motoboy_id, started_at_utc;", new { UserId = userId }, transaction)).ToList();
+            var count = 0;
+            foreach (var id in ids)
             {
+                await PreLockRouteAsync(connection, transaction, id);
+                var session = await connection.QueryFirstOrDefaultAsync<OperationalSessionRecord>(
+                    SessionSelect + @"
+ WHERE s.session_id = @Id AND s.ended_at_utc IS NULL AND s.revoked_at IS NULL
+ FOR UPDATE OF s;", new { Id = id }, transaction);
+                if (session == null) continue;
                 await EndLockedSessionAsync(connection, transaction, session, reason, userId);
+                count++;
             }
 
             await CommitSessionTransactionAsync(transaction);
-            return sessions.Count;
+            return count;
         }
 
         public async Task<int> DeleteOldLocationsAsync(DateTimeOffset receivedBeforeUtc, int limit)
@@ -1047,7 +1135,10 @@ SELECT canonical.id AS MotoboyId,
                 IdempotencyKey = attemptId,
                 StartedAtUtc = serverNow,
                 LastHeartbeatAtUtc = serverNow,
-                ExpiresAtUtc = serverNow.AddSeconds(PresenceTtlSecondsFor(origin, deviceType)),
+                LastSeenAtUtc = serverNow,
+                LastHumanActivityAtUtc = serverNow,
+                // Iniciar o turno é atividade humana. Mobile: o fim por inatividade; simulador: a própria validade.
+                ExpiresAtUtc = serverNow.AddSeconds(origin == "mobile" ? _options.HumanInactivitySeconds : PresenceTtlSecondsFor(origin, deviceType)),
                 Version = 1,
                 Nome = identity.Nome,
                 Avatar = identity.Avatar,
@@ -1058,11 +1149,11 @@ SELECT canonical.id AS MotoboyId,
 INSERT INTO motoboy_active_sessions (
     session_id, session_epoch, contract_version, motoboy_id, id_usuario, id_estabelecimento,
     device_type, origin, client_instance_id, started_by_user_id, idempotency_key,
-    created_at, started_at_utc, last_seen_at, last_heartbeat_at_utc, expires_at_utc, version)
+    created_at, started_at_utc, last_seen_at, last_heartbeat_at_utc, last_human_activity_at_utc, expires_at_utc, version)
 VALUES (
     @SessionId, @SessionEpoch, 2, @MotoboyId, @UsuarioId, @EstabelecimentoId,
     @DeviceType, @Origin, @ClientInstanceId, @StartedByUserId, @IdempotencyKey,
-    @StartedAtUtc, @StartedAtUtc, @LastHeartbeatAtUtc, @LastHeartbeatAtUtc, @ExpiresAtUtc, @Version);",
+    @StartedAtUtc, @StartedAtUtc, @LastHeartbeatAtUtc, @LastHeartbeatAtUtc, @LastHumanActivityAtUtc, @ExpiresAtUtc, @Version);",
                 session,
                 transaction);
             await InsertAuditEventAsync(connection, transaction, session, "session.started", actorUserId, null);
@@ -1072,7 +1163,7 @@ VALUES (
                 DeliveryRealtimeEvents.MotoboyStatusChanged,
                 "presence.online",
                 session,
-                new { status = "online", origin, presenceExpiresAtUtc = session.ExpiresAtUtc });
+                PresenceEventData(session, origin));
             return session;
         }
 
@@ -1110,6 +1201,8 @@ UPDATE motoboy_active_sessions
             session.EndReason = reason;
             session.Version++;
             await InsertAuditEventAsync(connection, transaction, session, "session.ended", actorUserId, reason);
+            // Mesma transação do encerramento: os pedidos afetados viram um incidente da loja, uma única vez por turno.
+            await DisconnectIncidentRepository.OpenAsync(connection, transaction, session, reason, actorUserId, serverNow);
             await InsertRealtimeEventAsync(
                 connection,
                 transaction,
@@ -1120,79 +1213,115 @@ UPDATE motoboy_active_sessions
             return session;
         }
 
+        private const string InvalidLinkPredicate = @"
+NOT EXISTS (
+    SELECT 1
+      FROM motoboy_estabelecimento me
+      JOIN estabelecimentos e ON e.id = me.estabelecimento_id
+      JOIN motoboy m ON m.id = me.motoboy_id
+     WHERE me.motoboy_id = s2.motoboy_id
+       AND me.estabelecimento_id = s2.id_estabelecimento
+       AND me.ativo = TRUE
+       AND COALESCE(e.ativo, TRUE) = TRUE
+       AND LOWER(COALESCE(e.status, 'ativo')) IN ('ativo', 'trial')
+       AND ((s2.origin = 'simulator' AND me.simulator_enabled = TRUE AND m.is_simulated = TRUE)
+            OR s2.origin = 'mobile'))";
+
+        // Mobile: fim do turno por 7 h sem atividade humana. Simulador: a própria validade.
+        private const string DuePredicate = "s2.expires_at_utc <= @ServerNow";
+
         private async Task<int> ExpireDueSessionsInternalAsync(
             NpgsqlConnection connection,
             NpgsqlTransaction transaction,
             int limit)
         {
             var serverNow = await GetServerNowAsync(connection, transaction);
-            var invalidLinks = (await connection.QueryAsync<OperationalSessionRecord>(
-                SessionSelect + @"
- WHERE s.session_id IN (
-     SELECT s2.session_id
-       FROM motoboy_active_sessions s2
-      WHERE s2.ended_at_utc IS NULL
-        AND s2.revoked_at IS NULL
-        AND NOT EXISTS (
-            SELECT 1
-              FROM motoboy_estabelecimento me
-              JOIN estabelecimentos e ON e.id = me.estabelecimento_id
-              JOIN motoboy m ON m.id = me.motoboy_id
-             WHERE me.motoboy_id = s2.motoboy_id
-               AND me.estabelecimento_id = s2.id_estabelecimento
-               AND me.ativo = TRUE
-               AND COALESCE(e.ativo, TRUE) = TRUE
-               AND LOWER(COALESCE(e.status, 'ativo')) IN ('ativo', 'trial')
-               AND (
-                   (s2.origin = 'simulator' AND me.simulator_enabled = TRUE AND m.is_simulated = TRUE)
-                   OR (
-                       s2.origin = 'mobile'
-                   )
-               )
-        )
-      ORDER BY s2.started_at_utc
-      FOR UPDATE SKIP LOCKED
-      LIMIT @Limit
- );",
-                new { Limit = Math.Clamp(limit, 1, 1000) },
-                transaction)).ToList();
-            foreach (var session in invalidLinks)
-            {
-                await EndLockedSessionAsync(connection, transaction, session, "link_revoked", null);
-            }
-
-            var remaining = Math.Max(0, Math.Clamp(limit, 1, 1000) - invalidLinks.Count);
-            if (remaining == 0)
-            {
-                return invalidLinks.Count;
-            }
-
-            var sessions = (await connection.QueryAsync<OperationalSessionRecord>(
-                SessionSelect + @"
- WHERE s.session_id IN (
-     SELECT session_id
-       FROM motoboy_active_sessions
-      WHERE ended_at_utc IS NULL
-        AND revoked_at IS NULL
-        AND origin <> 'mobile'
-        AND expires_at_utc <= @ServerNow
-      ORDER BY expires_at_utc
-      FOR UPDATE SKIP LOCKED
-      LIMIT @Limit
- );",
-                new { ServerNow = serverNow, Limit = remaining },
-                transaction)).ToList();
-            foreach (var session in sessions)
-            {
-                await EndLockedSessionAsync(connection, transaction, session, "heartbeat_timeout", null);
-            }
-
-            return invalidLinks.Count + sessions.Count;
+            var cap = Math.Clamp(limit, 1, 1000);
+            var ended = await EndMatchingAsync(connection, transaction, InvalidLinkPredicate, _ => "link_revoked", cap, serverNow);
+            if (ended >= cap) return ended;
+            return ended + await EndMatchingAsync(connection, transaction, DuePredicate, s => ExpiryReason(s.Origin), cap - ended, serverNow);
         }
+
+        /// <summary>
+        /// Encerra as sessões que atendem ao predicado. Cada uma trava primeiro a fila do motoboy e só então a sessão
+        /// (mesma ordem dos comandos de fila) e revalida o predicado já travada; quem está em uso por outra transação é pulado.
+        /// </summary>
+        private async Task<int> EndMatchingAsync(
+            NpgsqlConnection connection, NpgsqlTransaction transaction, string predicate,
+            Func<OperationalSessionRecord, string> reasonFor, int limit, DateTimeOffset serverNow)
+        {
+            var candidates = (await connection.QueryAsync<Guid>($@"
+SELECT s2.session_id FROM motoboy_active_sessions s2
+ WHERE s2.ended_at_utc IS NULL AND s2.revoked_at IS NULL AND {predicate}
+ ORDER BY s2.motoboy_id, s2.started_at_utc
+ LIMIT @Limit;", new { ServerNow = serverNow, Limit = limit }, transaction)).ToList();
+            var count = 0;
+            foreach (var id in candidates)
+            {
+                await PreLockRouteAsync(connection, transaction, id);
+                var session = await connection.QueryFirstOrDefaultAsync<OperationalSessionRecord>(
+                    SessionSelect + $@"
+ WHERE s.session_id IN (
+     SELECT s2.session_id FROM motoboy_active_sessions s2
+      WHERE s2.session_id = @Id AND s2.ended_at_utc IS NULL AND s2.revoked_at IS NULL AND {predicate}
+      FOR UPDATE SKIP LOCKED
+ );", new { Id = id, ServerNow = serverNow }, transaction);
+                if (session == null) continue;
+                await EndLockedSessionAsync(connection, transaction, session, reasonFor(session), null);
+                count++;
+            }
+            return count;
+        }
+
+        private static string ExpiryReason(string origin) => origin == "mobile" ? "inactivity_7h" : "heartbeat_timeout";
+
+        /// <summary>
+        /// Trava o cabeçalho da fila do motoboy antes da sessão. Os comandos de fila (pausa, aceite...) travam a fila e depois
+        /// tocam a sessão; encerrar na ordem inversa poderia gerar deadlock. Sem o schema de fila, nada a travar.
+        /// </summary>
+        private static async Task PreLockRouteAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, Guid sessionId)
+        {
+            var peek = await connection.QueryFirstOrDefaultAsync<SessionPeek>(
+                "SELECT id_estabelecimento AS EstabelecimentoId, motoboy_id AS MotoboyId, origin AS Origin FROM motoboy_active_sessions WHERE session_id = @SessionId;",
+                new { SessionId = sessionId }, transaction);
+            if (peek == null || peek.Origin != "mobile") return;
+            if (!await connection.ExecuteScalarAsync<bool>("SELECT to_regclass('delivery_motoboy_route') IS NOT NULL;", transaction: transaction)) return;
+            await PedidoQueueRepository.LockQueuesAsync(connection, transaction, peek.EstabelecimentoId, peek.MotoboyId);
+        }
+
+        private sealed class SessionPeek
+        {
+            public Guid EstabelecimentoId { get; set; }
+            public int MotoboyId { get; set; }
+            public string Origin { get; set; } = "";
+        }
+
+        /// <summary>
+        /// Dados dos eventos de presença: o painel mostra o turno ativo e a conexão em separado. "connected" porque o evento nasce
+        /// de um contato; a desconexão por tempo não gera evento e é derivada de lastContactAtUtc + janela no cliente.
+        /// </summary>
+        private object PresenceEventData(OperationalSessionRecord session, string? origin = null)
+        {
+            var contact = session.LastSeenAtUtc.HasValue && session.LastSeenAtUtc > session.LastHeartbeatAtUtc
+                ? session.LastSeenAtUtc.Value : session.LastHeartbeatAtUtc;
+            return new
+            {
+                status = "online",
+                origin = origin ?? session.Origin,
+                presenceExpiresAtUtc = contact.AddSeconds(_options.PresenceTtlSeconds),
+                presenceStatus = "connected",
+                clientPlatform = session.Origin == "simulator" ? "simulator" : session.DeviceType == "web" ? "web" : "native",
+                shiftStartedAtUtc = session.StartedAtUtc,
+                lastContactAtUtc = contact,
+                lastHumanActivityAtUtc = session.LastHumanActivityAtUtc,
+                inactivityDeadlineAtUtc = session.ExpiresAtUtc
+            };
+        }
+
 
         private static void EnsureAttemptCanBeReturned(OperationalSessionRecord session)
         {
-            if (session.EndedAtUtc.HasValue || (session.Origin != "mobile" && session.ExpiresAtUtc <= DateTimeOffset.UtcNow))
+            if (session.EndedAtUtc.HasValue || session.ExpiresAtUtc <= DateTimeOffset.UtcNow)
             {
                 throw new DeliveryDomainException(409, "ATTEMPT_CLOSED", "O attemptId pertence a uma sessao ja encerrada.");
             }
@@ -1335,6 +1464,11 @@ VALUES (
             public long Version { get; set; }
             public string Origin { get; set; } = string.Empty;
             public DateTimeOffset PresenceExpiresAtUtc { get; set; }
+            public DateTimeOffset StartedAtUtc { get; set; }
+            public string? DeviceType { get; set; }
+            public DateTimeOffset LastHeartbeatAtUtc { get; set; }
+            public DateTimeOffset? LastSeenAtUtc { get; set; }
+            public DateTimeOffset? LastHumanActivityAtUtc { get; set; }
             public double? Latitude { get; set; }
             public double? Longitude { get; set; }
             public double? AccuracyMeters { get; set; }

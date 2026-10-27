@@ -1,5 +1,7 @@
 # Disponibilidade persistente e ofertas prioritárias — 11/10/2026
 
+> Atualização de 27/10/2026: a janela de 12 minutos abaixo deixou de encerrar a elegibilidade. O turno mobile fica online até 7 horas sem atividade humana (heartbeat/GPS só medem conexão) e os pedidos de um turno encerrado viram incidentes da loja. Ver [PRESENCA-7H-E-INCIDENTES.md](PRESENCA-7H-E-INCIDENTES.md).
+
 > Atualização de 12/10/2026: presença mobile agora vence após 12 minutos sem heartbeat ou GPS aceito. O batimento ocorre a cada 4 minutos; GPS continua fresco por 120 segundos, independentemente da presença. O turno e sua fila continuam abertos para retomada, mas contatos, ofertas, push e eventos filtrados por `expires_at_utc` deixam de considerá-lo online. Offline explícito continua imediato. JWT operacional dura 60 minutos e é renovado pelo heartbeat. Publicar API e `20261012_01_presence_window.sql` antes do app; essa migration ajusta somente a presença infinita legada. As regras abaixo descrevem a implementação anterior.
 
 O motoboy escolhe quando ficar offline. Fechar o app, suspender a web ou perder heartbeat não encerra sua disponibilidade nem sua conta. O heartbeat continua medindo conexão; a idade da localização continua baseada na captura real. Um turno online não prova que o GPS está atualizado.

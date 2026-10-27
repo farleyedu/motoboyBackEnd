@@ -17,6 +17,13 @@ namespace APIBack.Options
         /// heartbeat e nao pode derrubar a sessao. O padrao (30 dias) e "nunca" na pratica.
         /// </summary>
         public int SimulatorPresenceTtlSeconds { get; set; } = 30 * 24 * 60 * 60;
+        /// <summary>
+        /// Turno mobile (PWA e Android): permanece aberto ate o encerramento manual ou ate este tempo sem
+        /// atividade humana (aceite, retirada, pausa, toque explicito...). Heartbeat, GPS e push nao renovam.
+        /// </summary>
+        public int HumanInactivitySeconds { get; set; } = 7 * 60 * 60;
+        /// <summary>Intervalo minimo entre duas atividades humanas gravadas (evita escrita a cada toque).</summary>
+        public int ActivityMinIntervalSeconds { get; set; } = 30;
         public int HeartbeatIntervalSeconds { get; set; } = 240;
         public int LocationFreshnessSeconds { get; set; } = 120;
         public int OperationalTokenExpirationMinutes { get; set; } = 60;
