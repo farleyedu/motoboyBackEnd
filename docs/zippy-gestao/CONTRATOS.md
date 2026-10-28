@@ -245,9 +245,9 @@ Por isso a doca tem ícones de 34 px, e não os 46 px do protótipo, e o texto n
 
 ---
 
-## 9. Lógica — compras: documentos e vínculos (extensão)
+## 9. Lógica — compras, vínculos e estoque (extensão)
 
-Seção acrescentada pela Lógica (E1 e E2). Não muda nada das seções 1 a 8. Mesmo envelope `{ success, data }` e códigos da seção 6
+Seção acrescentada pela Lógica (E1 a E3). Não muda nada das seções 1 a 8. Mesmo envelope `{ success, data }` e códigos da seção 6
 (mais `NAO_ENCONTRADO`, 404). Rotas de compras e vínculos: só **gerente** com `Financeiro:criar`. Curadoria: só **super admin**.
 
 ### 9.1 Documentos (E1)
@@ -308,3 +308,37 @@ Já existe e é reaproveitado (não há outro): `ifood_produto_vinculo`, item iF
 `GET /api/v2/cardapio/ifood/pendentes?busca=` (só exceções + busca), `GET /api/v2/cardapio/ifood/resumo`,
 `POST /api/v2/cardapio/produtos/{produtoId}/ifood/vinculos`, `DELETE /api/v2/cardapio/ifood/vinculos/{vinculoId}`,
 `POST /api/v2/cardapio/ifood/pendentes/{vinculoId}/criar-produto`. Produto vendido → ficha técnica é da Gestão e Inteligência.
+
+### 9.5 Compras, conferência e estoque (E3)
+
+Compra = acontecimento `compra` (módulo compras), origem `compra:{documentoId}`, com o documento do cupom. O id da compra nas
+rotas é o **id do documento**. Rotas de compras: só gerente com `Financeiro:criar`.
+
+| Método e rota | Observação |
+| --- | --- |
+| `POST compras` | `{ documentoId, forma: a_pagar\|pago\|cartao, contaId?, parcelas?, vencimento?, dataPagamento?, categoria? ("insumos"), finalidade? }`. `pago` exige `contaId` (banco/caixa); `cartao` exige o cartão da empresa (o livro faz a fatura). Mesmo pedido de novo devolve a mesma compra |
+| `GET compras/{documentoId}` | `CompraDto`; 404 se o documento ainda não virou compra |
+| `POST compras/{documentoId}/itens/{linha}/conferencia` | `{ quantidadeRecebida? (unidade do cupom; padrão a do cupom), consumoDireto, confirmacaoHumana }`. Publica `conferencia_item` origem `compra_item:{documentoId}:{linha}` com uma `entrada` = recebida × fator do vínculo. `consumoDireto` registra sem movimento. Linha sem vínculo → `CAMPO_INVALIDO`; já conferida → `DUPLICADO`; compra estornada → `JA_ESTORNADO` |
+
+`CompraDto`: `documentoId, acontecimentoId, fornecedor, dataFato, total, estornada, conferidas, pendentes, linhas[], acontecimento`
+(o `AcontecimentoDto` da compra, com lançamentos/parcelas). `linhas[]`: `{ linha, descricao, quantidade, unidade, valorTotal,
+status (sem_vinculo|pendente|conferido|consumo_direto), vinculoId, insumoId, insumoNome, fator, unidadeBase, quantidadeEsperada,
+quantidadeEntrada (líquida, já com ajustes), conferenciaId, movimentoId }`.
+Correção de quantidade conferida = `POST ajustes` com `movimentoId` e `quantidadeNova` (seção 3). A compra existe no financeiro
+mesmo sem conferência (regra 4); a conferência registra o preço da linha no histórico do insumo.
+
+Estoque: saldo = soma dos movimentos do livro por insumo. `saldos` e as prévias são só do **gerente** (o operador conta às
+cegas). Perda, inventário e baixa aceitam o **operador** com `Estoque:contar`, só hoje (`GestaoPapeis.ValidarPublicacao`).
+
+| Método e rota | Observação |
+| --- | --- |
+| `GET estoque/saldos` | `[{ insumoId, nome, unidade, saldo }]` |
+| `POST estoque/perdas` | `{ chaveIdempotencia, insumoId, quantidade (> 0, unidade do insumo), motivo, confirmacaoHumana }` → acontecimento `perda`, sem lançamento |
+| `POST estoque/inventario/previa` | `{ contagens: [{ insumoId, contado }] }` → `[{ insumoId, nome, unidade, esperado, contado, diferenca }]` |
+| `POST estoque/inventario` | `{ chaveIdempotencia, contagens, motivo?, confirmacaoHumana }` → `inventario` com `divergencia` só onde a diferença ≠ 0 (a contagem inteira vai em `dados`). Nunca vira perda |
+| `POST estoque/baixa-vendas/previa` | `{ pedidos: [{ pedidoId, modalidade: salao\|retirada\|delivery }] }` → `{ consumo[], pedidos[], semFicha[{ pedidoId, itens[] }], jaBaixados[] }` |
+| `POST estoque/baixa-vendas` | `{ pedidos, confirmacaoHumana }` → `baixa_vendas` com uma `saida` por insumo. Pedido já baixado → `DUPLICADO`; nenhum baixável → `CAMPO_INVALIDO` |
+
+Baixa por venda: lê a ficha por `IFichaTecnicaLeitor` (componente com `modalidades` = embalagem só daquela modalidade). Pedido com
+item sem ficha ou avulso fica de fora inteiro (`semFicha`). A mesma seleção gera a mesma chave (não baixa duas vezes). Hoje a
+implementação é `FichaTecnicaPendente` (nenhuma ficha): todo pedido sai como `semFicha` até a Gestão e Inteligência ligar a dela.
