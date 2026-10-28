@@ -28,6 +28,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Anthropic" Version="13.3.0" />
     <PackageReference Include="Lib.Net.Http.WebPush" Version="3.3.1" />
     <EmbeddedResource Include="Service\communication-emojis.json" LogicalName="APIBack.communication-emojis.json" />
     <Content Include="Migrations\Delivery\*.sql" CopyToOutputDirectory="PreserveNewest" />
