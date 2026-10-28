@@ -245,9 +245,9 @@ Por isso a doca tem ícones de 34 px, e não os 46 px do protótipo, e o texto n
 
 ---
 
-## 9. Lógica — compras, vínculos, estoque, equipe e caixa (extensão)
+## 9. Lógica — compras, vínculos, estoque, equipe, caixa e despesas (extensão)
 
-Seção acrescentada pela Lógica (E1 a E5). Não muda nada das seções 1 a 8. Mesmo envelope `{ success, data }` e códigos da seção 6
+Seção acrescentada pela Lógica (E1 a E6). Não muda nada das seções 1 a 8. Mesmo envelope `{ success, data }` e códigos da seção 6
 (mais `NAO_ENCONTRADO`, 404). Rotas de compras e vínculos: só **gerente** com `Financeiro:criar`. Curadoria: só **super admin**.
 
 ### 9.1 Documentos (E1)
@@ -405,3 +405,25 @@ Escritas só no dia de hoje (dia passado se corrige pelo ajuste do fechamento).
 - Códigos novos (extensão da seção 6): `SEM_SALDO` (422), `SEM_CAIXA` (409, caixa não aberto), `FECHADO` (409, dia já fechado).
 - **Para a Integração**: a venda deve ser publicada com `dados.forma` e, em dinheiro, como receita `recebido` na conta da gaveta
   (`gestao_caixas.conta_gaveta_id`); Pix/cartão no recebível da maquininha; iFood no recebível iFood.
+
+### 9.8 Contas fixas, lembretes e finalidades (E6)
+
+Espelha `ContaFixa` do Painel (`src/features/zippy-gestao/despesas/despesasRegras.ts`) e o acontecimento que ele já lê
+(`despesa_fixa` com `dados.contaFixaId`). Rotas em `/api/gestao/despesas`, só **gerente** (escrita com `Financeiro:criar`).
+
+| Método e rota | Observação |
+| --- | --- |
+| `GET contas-fixas?todas=` | `ContaFixaDto[] { id, nome, finalidade, valorPrevisto, diaVencimento, valorVaria, arquivada, contaId, versao }` |
+| `POST contas-fixas` / `PUT contas-fixas/{id}` | `{ nome, finalidade?, valorPrevisto, diaVencimento (1–31), valorVaria, contaId?, versao? }`. Mudar o valor vale do próximo lançamento em diante |
+| `POST contas-fixas/{id}/arquivar` | Sai da lista e dos meses seguintes; o que foi lançado continua |
+| `GET contas-fixas/ocorrencias?mes=` | `[{ contaFixaId, nome, mes, vencimento, valor, estado: lancada\|prevista\|aguardando_valor, acontecimentoId?, status? }]` (a partir do mês em que a conta foi cadastrada) |
+| `POST contas-fixas/gerar?mes=` | Publica as de valor fixo que faltam no mês (até o mês que vem). `{ mes, geradas[], aguardandoValor[] }`. Repetir não duplica |
+| `POST contas-fixas/{id}/lancar` | `{ chaveIdempotencia?, mes, valor, vencimento? }` — o valor do mês (conta variável ou fixa ainda não gerada). Já lançada → `DUPLICADO` |
+| `GET lembretes?dias=3` | `[{ contaFixaId, nome, mes, vencimento, valor, estado, vencida, diasParaVencer, lancamentoId? }]`: não pago, vencendo em até N dias (0–60) ou vencido; olha o mês passado, o atual e o próximo |
+| `GET finalidades` / `POST finalidades` | Finalidades da loja (regra 7). `{ nome }`; a mesma escrita sem acento/maiúscula devolve a existente |
+
+- **Livro**: `despesa_fixa`, módulo `despesas`, origem `recorrencia:{contaFixaId}:{AAAA-MM}` (depois de estorno, `~n`), despesa
+  `a_pagar` com `mesReferencia` do mês, `dataVencimento` no dia da conta (dia 31 em mês curto = último dia), categoria
+  `Despesas fixas`, finalidade da conta, `dados: { contaFixaId, recorrencia: true, mes }`.
+- **Lançada** = qualquer `despesa_fixa` não estornada com `dados.contaFixaId` e competência no mês (vale também o que a tela lançou
+  pelo `POST acontecimentos`). Mudar o valor de um lançamento já feito é `POST ajustes`.
