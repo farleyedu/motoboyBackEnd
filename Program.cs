@@ -152,6 +152,9 @@ builder.Services.AddScoped<APIBack.Printing.PrintDispatcher>();
 builder.Services.AddScoped<IProdutoAtendimentoRepository, ProdutoAtendimentoRepository>();
 builder.Services.AddScoped<IIngredienteRepository, IngredienteRepository>();
 builder.Services.AddScoped<IIngredienteService, IngredienteService>();
+// Livro de acontecimentos da gestao (docs/zippy-gestao/CONTRATOS.md).
+builder.Services.AddScoped<APIBack.Acontecimentos.IAcontecimentosService, APIBack.Acontecimentos.AcontecimentosService>();
+Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton(builder.Services, TimeProvider.System);
 builder.Services.AddScoped<CardapioMotoboyAttentionRepository>();
 builder.Services.AddScoped<IfoodProdutoVinculoRepository>();
 builder.Services.AddScoped<IPedidoConsultaRepository, PedidoConsultaRepository>();
