@@ -19,6 +19,8 @@ namespace APIBack.Security
             ["profissional"] = "profissional",
             ["vendedor"] = "vendedor",
             ["motoboy"] = "motoboy",
+            ["operador_caixa"] = "operador_caixa",
+            ["caixa"] = "operador_caixa",
             ["admin"] = "gerente_empresa",
             ["gerente"] = "gerente_estabelecimento",
             ["gerente_empresa"] = "gerente_empresa",
@@ -37,7 +39,7 @@ namespace APIBack.Security
                 ["nautica"] = new[] { "gerente_estabelecimento", "vendedor", "atendente", "funcionario" },
                 ["hotel"] = new[] { "gerente_estabelecimento", "atendente", "funcionario" },
                 ["oficina"] = new[] { "gerente_estabelecimento", "atendente", "funcionario" },
-                ["restaurante"] = new[] { "gerente_estabelecimento", "atendente", "motoboy", "funcionario" }
+                ["restaurante"] = new[] { "gerente_estabelecimento", "atendente", "operador_caixa", "motoboy", "funcionario" }
             };
 
         public static string Normalize(string? role)
@@ -69,6 +71,7 @@ namespace APIBack.Security
                 "profissional" => 600,
                 "vendedor" => 600,
                 "motoboy" => 600,
+                "operador_caixa" => 600,
                 "funcionario" => 500,
                 "colaborador" => 300,
                 _ => 100

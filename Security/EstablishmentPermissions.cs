@@ -24,7 +24,8 @@ public static class EstablishmentPermissions
         var active = EstabelecimentoModuleMapper.ToUiModules(string.Empty, modules)
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
         return CardapioPermissionBridge.Apply(permissions, active.ToArray())
-            .Where(p => Administrative.Contains(p.Key) || active.Contains(p.Key) || IsOrderOperation(p.Key, active))
+            .Where(p => Administrative.Contains(p.Key) || active.Contains(p.Key) || IsOrderOperation(p.Key, active)
+                || IsGestaoArea(p.Key, active))
             .ToDictionary(p => p.Key, p => StripActionsOfInactiveModules(p.Key, p.Value, active), StringComparer.OrdinalIgnoreCase);
     }
 
@@ -49,6 +50,7 @@ public static class EstablishmentPermissions
             var allowed = string.Equals(entry.Key, "Configuracoes", StringComparison.OrdinalIgnoreCase)
                 || active.Contains(entry.Key)
                 || IsOrderOperation(entry.Key, active)
+                || IsGestaoArea(entry.Key, active)
                 || (isCompanyManager && Administrative.Contains(entry.Key));
             if (!allowed) continue;
 
@@ -62,6 +64,11 @@ public static class EstablishmentPermissions
     // Pedidos, mesmo sem o modulo Delivery (planos Partida e Rota). O que e de motoboy fica travado por [RequireModule("Delivery")].
     private static bool IsOrderOperation(string modulo, HashSet<string> active) =>
         string.Equals(modulo, "Delivery", StringComparison.OrdinalIgnoreCase) && active.Contains("Pedidos");
+
+    // Caixa e Estoque sao areas da gestao (GestaoPapeis): existem quando o modulo comercial Financeiro esta ativo.
+    private static bool IsGestaoArea(string modulo, HashSet<string> active) =>
+        (string.Equals(modulo, "Caixa", StringComparison.OrdinalIgnoreCase) || string.Equals(modulo, "Estoque", StringComparison.OrdinalIgnoreCase))
+        && active.Contains("Financeiro");
 
     // Acoes que moram sob a permissao "Delivery", mas pertencem a um modulo comercial proprio (plano de modulos, 3.3):
     // com o modulo desligado, a acao some e os [RequirePermission] respondem 403.
@@ -90,7 +97,9 @@ public static class EstablishmentPermissions
         var result = attributes.GroupBy(a => a.Modulo, StringComparer.OrdinalIgnoreCase)
             .ToDictionary(g => g.Key, g => g.Select(a => a.Acao).Distinct().OrderBy(a => a).ToArray(),
                 StringComparer.OrdinalIgnoreCase);
-        result["Financeiro"] = new[] { "visualizar", "criar", "editar", "cancelar", "exportar", "configurar" };
+        result["Financeiro"] = new[] { "visualizar", "criar", "editar", "cancelar", "exportar", "configurar", GestaoPapeis.AcaoFecharMes };
+        result["Caixa"] = GestaoPapeis.AcoesCaixa;
+        result["Estoque"] = GestaoPapeis.AcoesEstoque;
         // "configurar" do WhatsApp (conectar/desconectar o numero da loja) e checado no CanaisWhatsappService, sem atributo.
         result["WhatsApp"] = result.GetValueOrDefault("WhatsApp", Array.Empty<string>())
             .Append("configurar").Distinct().OrderBy(a => a).ToArray();
