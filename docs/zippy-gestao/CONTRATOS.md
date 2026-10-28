@@ -245,9 +245,9 @@ Por isso a doca tem ícones de 34 px, e não os 46 px do protótipo, e o texto n
 
 ---
 
-## 9. Lógica — compras, vínculos e estoque (extensão)
+## 9. Lógica — compras, vínculos, estoque e equipe (extensão)
 
-Seção acrescentada pela Lógica (E1 a E3). Não muda nada das seções 1 a 8. Mesmo envelope `{ success, data }` e códigos da seção 6
+Seção acrescentada pela Lógica (E1 a E4). Não muda nada das seções 1 a 8. Mesmo envelope `{ success, data }` e códigos da seção 6
 (mais `NAO_ENCONTRADO`, 404). Rotas de compras e vínculos: só **gerente** com `Financeiro:criar`. Curadoria: só **super admin**.
 
 ### 9.1 Documentos (E1)
@@ -342,3 +342,34 @@ cegas). Perda, inventário e baixa aceitam o **operador** com `Estoque:contar`, 
 Baixa por venda: lê a ficha por `IFichaTecnicaLeitor` (componente com `modalidades` = embalagem só daquela modalidade). Pedido com
 item sem ficha ou avulso fica de fora inteiro (`semFicha`). A mesma seleção gera a mesma chave (não baixa duas vezes). Hoje a
 implementação é `FichaTecnicaPendente` (nenhuma ficha): todo pedido sai como `semFicha` até a Gestão e Inteligência ligar a dela.
+
+### 9.6 Equipe e remuneração (E4)
+
+Espelha os tipos do Painel (`src/features/zippy-gestao/equipe/tipos.ts`): a Integração só troca o adaptador simulado. Rotas em
+`/api/gestao/equipe`, só **gerente** (leitura `Financeiro:visualizar`, escrita `Financeiro:criar`, desconto `Financeiro:editar`).
+Toda escrita de dinheiro pede `chaveIdempotencia`.
+
+| Método e rota | Observação |
+| --- | --- |
+| `GET pessoas?todas=` | `PessoaDto[]` (ativas; `todas=true` inclui inativas) |
+| `POST pessoas` / `PUT pessoas/{id}` | `{ nome, funcao, vinculo, regra, pagaCom (pix\|dinheiro), chavePix?, usuarioId?, cor?, escalaPadrao: [{dow, entrada, saida}], ativo, desde?, versao? }`. A regra é limpa pelo vínculo (campo de outro vínculo é descartado). `versao` velha → `IDEMPOTENCIA_CONFLITO`. Cada versão fica em `gestao_pessoas_historico` |
+| `GET semana?inicio=AAAA-MM-DD` | `{ inicio, pessoas, grade: { pessoaId: [7 × TurnoDto\|null] }, totais: { previsto, apurado, turnos, realizados, faltas } }`. Turno da escala ainda não tocado vem com `id: null` |
+| `POST turnos` | `{ pessoaId, data, status?, entrada?, saida?, entregas?, justificada?, adicionais?: [{rotulo, valor}], baseComissao?, pagamentoAvulso?: {forma: turno\|diaria\|hora\|entrega, valor}, avulso?, motivo? }` → `TurnoDto` com histórico |
+| `GET resumo?mes=AAAA-MM-01` | Por pessoa: `previsto, apurado, devido, pago, aPagar, adiantamentosAbertos, faltas, itens[], adiantamentos[]` |
+| `POST adiantamentos` | `{ chaveIdempotencia, pessoaId, valor, contaId, data?, motivo? }` → acontecimento `adiantamento` (despesa paga) |
+| `POST descontos` | `{ chaveIdempotencia, pessoaId, lancamentoId, valor, motivo }` → ajuste do item a pagar |
+| `POST pagamentos` | `{ chaveIdempotencia (até 100), pessoaId, contaId, dataPagamento?, valor? }` → `{ pago, compensado, restante, liquidados[], saldoLancamentoId?, resumo }` |
+
+- **Regra** (`RegraPagamento`, se soma = remuneração mista): `salarioMensal` (1/30 por turno), `diaria`, `porTurno`, `porHora`,
+  `porEntrega`, `adicionalNoturno` (turno com ≥ 1 h entre 22:00 e 05:00), `comissaoPercentual` (sobre `baseComissao` do turno).
+  Vínculos: fixo (salário, noturno, comissão), diarista, freelancer (turno, comissão), hora, motoboy (diária, entrega), prestador.
+- **Turno**: um por pessoa por dia (`chave = {pessoaId}:{AAAA-MM-DD}`). Cancelado = 0; falta sem justificativa = 0 (zera a
+  diária); falta justificada paga a base; entregas, comissão e adicionais só no realizado. Realizado ou falta só depois do
+  horário de entrada. Previsto acompanha a regra atual; confirmado guarda o valor do dia.
+- **Livro**: realizado (ou falta justificada) publica `turno` origem `turno:{chave}` (`~{revisao}` depois de estorno), despesa
+  `a_pagar`, categoria `equipe`, finalidade `remuneracao`, `dados.pessoaId`. Mudança de valor = ajuste; deixar de gerar despesa =
+  estorno. Turno já no livro exige `motivo` (≥ 3 letras); turno já pago não muda (`CAMPO_INVALIDO`: use desconto/adiantamento).
+- **Pagamento**: primeiro os adiantamentos em aberto abatem dos itens a pagar (ajuste "Compensação de adiantamento"); depois
+  liquida do mais antigo ao mais novo. Sem `valor`, paga tudo. Com `valor` menor, o item que não cabe é ajustado para a parte paga
+  e o resto vira `saldo_remuneracao` (a pagar). A mesma chave de novo não paga duas vezes. O pagamento **não é atômico**: se
+  falhar no meio, o que já foi liquidado fica; repita com a mesma chave.
