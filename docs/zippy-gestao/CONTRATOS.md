@@ -242,3 +242,69 @@ Resposta no envelope `{ success, data }`; erro em `{ success: false, error, code
 
 Escala: composição e cores do protótipo, nos tamanhos compactos do painel (`docs/redesign-visual/00-base-compacta.md`).
 Por isso a doca tem ícones de 34 px, e não os 46 px do protótipo, e o texto não passa de 20 px.
+
+---
+
+## 9. Lógica — compras: documentos e vínculos (extensão)
+
+Seção acrescentada pela Lógica (E1 e E2). Não muda nada das seções 1 a 8. Mesmo envelope `{ success, data }` e códigos da seção 6
+(mais `NAO_ENCONTRADO`, 404). Rotas de compras e vínculos: só **gerente** com `Financeiro:criar`. Curadoria: só **super admin**.
+
+### 9.1 Documentos (E1)
+
+| Método e rota | Observação |
+| --- | --- |
+| `POST compras/documentos/xml` | multipart, campo `arquivo` (NF-e/NFC-e, até 10 MB) |
+| `POST compras/documentos/foto` | multipart, campo `arquivo` (JPG/PNG/WEBP/GIF, até 10 MB). Lê com Claude; sem chave → `LEITURA_INDISPONIVEL` (503), falha → `LEITURA_FALHOU` (502) |
+| `GET compras/documentos/{id}` | `DocumentoDto` |
+
+`DocumentoDto`: `id, origem (xml|foto|manual), status ("lido"), fornecedor {cnpj, nome}, dataEmissao, numero, serie, chaveAcesso,
+total, itens[] {linha, descricao, quantidade, unidade, valorUnitario, desconto, valorTotal, codigo, ean, ilegivel}, avisos[],
+duplicidades[] {bloqueia, motivo, documentoId}, compraId, criadoPor, criadoEm`.
+Duplicado (mesma chave de acesso, mesmo arquivo ou mesmo CNPJ+série+número) → `DUPLICADO` (409). Mesmo fornecedor+dia+total entra,
+com aviso em `duplicidades[]` (`bloqueia: false`). O documento não mexe em financeiro nem estoque.
+
+### 9.2 Vínculos de compras (E2)
+
+Vínculo = texto da linha do cupom (por fornecedor e **embalagem**: `unidadeCupom`) → insumo da loja, com `fator` (unidades de estoque
+por unidade do cupom). Vale na hora para a loja. Nunca move estoque (a entrada é na conferência da compra).
+
+| Método e rota | Observação |
+| --- | --- |
+| `GET compras/documentos/{id}/sugestoes` | `SugestaoItem[]`, uma por linha |
+| `POST compras/documentos/{id}/itens/{linha}/vinculo` | Confirma. Corpo: `{ insumoId? , globalId? , novo?: {nome, unidade, categoria?}, fator, qualquerFornecedor? }` (uma das três escolhas). Devolve `{ vinculo, conversao, divergencia, insumoCriado }` |
+| `GET vinculos?busca=&todos=` | Vínculos da loja (busca no texto do cupom e no nome do insumo); `todos=true` inclui desfeitos |
+| `POST vinculos/{id}/desfazer` | `{ motivo }` obrigatório. Não apaga: fica `desfeito`. De novo → `JA_ESTORNADO` |
+
+`SugestaoItem`: `linha, descricao, nomeChave, sugestoes[], conversao?, pergunta?, divergencia?, vinculoId?`.
+- `sugestoes[]`: `{ origem, insumoId?, globalId?, nome, unidadeBase?, fator?, confianca (0–1), motivo }`, em ordem de confiança;
+  a última é sempre `criar_novo`. Origens: `loja` (0,98 mesmo fornecedor; 0,95 mesmo EAN; 0,90 outro fornecedor; −0,03 se a
+  embalagem é outra, e aí sem `fator`), `global` (validado pela curadoria: 0,92 por EAN, 0,88 por texto), `comunidade` (outras
+  lojas, sem curadoria: 0,6 + 0,04 por loja, até 0,8), `similar` (nome parecido, até 0,75), `criar_novo`.
+- `conversao`: `{ quantidade, unidade (g|ml|un), fator, origem (vinculo|unidade|descricao), explicacao }`. Sem pista → `null` e
+  `pergunta` diz o que perguntar ("Quantos un vêm em 1 PCT…?").
+- `divergencia`: preço por unidade de estoque ≥ 2,5× acima ou abaixo da mediana dos últimos 12 preços do insumo (só de vínculos
+  confirmados) → `{ precoBase, mediana, razao, fatorSugerido, mensagem }`. Só avisa; não bloqueia.
+- Confirmar: `insumoId` (insumo da loja), `globalId` (importa o item global: vira insumo da loja, ou reaproveita o que ela já trouxe)
+  ou `novo` (cria o insumo e um candidato para a curadoria). Mesma escolha de novo não duplica; outra escolha desfaz o vínculo
+  anterior (`Substituído por um novo vínculo.`). Sem a tabela de insumos (Gestão e Inteligência inativa) → `CAMPO_INVALIDO`.
+
+### 9.3 Curadoria do catálogo global (E2, super admin)
+
+| Método e rota | Observação |
+| --- | --- |
+| `GET curadoria/candidatos` | `CatalogoGlobalDto[]` com `status = candidato`, mais lojas primeiro |
+| `POST curadoria/{id}/validar` | `{ nome?, categoria?, ean? }`. Passa a valer para todas as lojas. Nome/EAN já validado → `DUPLICADO` |
+| `POST curadoria/{id}/rejeitar` | `{ motivo }` obrigatório |
+| `POST curadoria/{id}/mesclar` | `{ destinoId }` (validado, mesma unidade). Os vínculos das lojas passam a apontar para o destino |
+
+`CatalogoGlobalDto`: `id, nome, unidade, categoria, ean, status (candidato|validado|rejeitado|mesclado), mescladoEm, lojas,
+nomesNoCupom[], parecidos[] {id, nome, unidade, semelhanca}, criadoEm, motivoCuradoria`. Curar de novo → `DUPLICADO` (409).
+Rejeitar ou mesclar nunca desfaz o vínculo de uma loja.
+
+### 9.4 De-para de vendas
+
+Já existe e é reaproveitado (não há outro): `ifood_produto_vinculo`, item iFood → produto do cardápio. Rotas:
+`GET /api/v2/cardapio/ifood/pendentes?busca=` (só exceções + busca), `GET /api/v2/cardapio/ifood/resumo`,
+`POST /api/v2/cardapio/produtos/{produtoId}/ifood/vinculos`, `DELETE /api/v2/cardapio/ifood/vinculos/{vinculoId}`,
+`POST /api/v2/cardapio/ifood/pendentes/{vinculoId}/criar-produto`. Produto vendido → ficha técnica é da Gestão e Inteligência.
