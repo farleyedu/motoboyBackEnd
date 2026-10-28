@@ -163,6 +163,7 @@ builder.Services.AddScoped<APIBack.GestaoLogica.Compras.IComprasService, APIBack
 builder.Services.AddScoped<APIBack.GestaoLogica.Estoque.IFichaTecnicaLeitor, APIBack.GestaoLogica.Estoque.FichaTecnicaPendente>();
 builder.Services.AddScoped<APIBack.GestaoLogica.Estoque.IEstoqueService, APIBack.GestaoLogica.Estoque.EstoqueService>();
 builder.Services.AddScoped<APIBack.GestaoLogica.Equipe.IEquipeService, APIBack.GestaoLogica.Equipe.EquipeService>();
+builder.Services.AddScoped<APIBack.GestaoLogica.Caixa.ICaixaService, APIBack.GestaoLogica.Caixa.CaixaService>();
 Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton(builder.Services, TimeProvider.System);
 builder.Services.AddScoped<CardapioMotoboyAttentionRepository>();
 builder.Services.AddScoped<IfoodProdutoVinculoRepository>();
