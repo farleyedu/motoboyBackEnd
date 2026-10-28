@@ -156,6 +156,8 @@ builder.Services.AddScoped<IIngredienteService, IngredienteService>();
 builder.Services.AddScoped<APIBack.Acontecimentos.IAcontecimentosService, APIBack.Acontecimentos.AcontecimentosService>();
 builder.Services.AddScoped<APIBack.GestaoLogica.Documentos.ILeitorCupomFoto, APIBack.GestaoLogica.Documentos.LeitorCupomClaude>();
 builder.Services.AddScoped<APIBack.GestaoLogica.Documentos.IDocumentosService, APIBack.GestaoLogica.Documentos.DocumentosService>();
+builder.Services.AddScoped<APIBack.GestaoLogica.Vinculos.IVinculosService, APIBack.GestaoLogica.Vinculos.VinculosService>();
+builder.Services.AddScoped<APIBack.GestaoLogica.Vinculos.ICuradoriaService, APIBack.GestaoLogica.Vinculos.CuradoriaService>();
 Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton(builder.Services, TimeProvider.System);
 builder.Services.AddScoped<CardapioMotoboyAttentionRepository>();
 builder.Services.AddScoped<IfoodProdutoVinculoRepository>();
