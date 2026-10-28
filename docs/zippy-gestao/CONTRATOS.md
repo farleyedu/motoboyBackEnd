@@ -245,9 +245,9 @@ Por isso a doca tem ícones de 34 px, e não os 46 px do protótipo, e o texto n
 
 ---
 
-## 9. Lógica — compras, vínculos, estoque e equipe (extensão)
+## 9. Lógica — compras, vínculos, estoque, equipe e caixa (extensão)
 
-Seção acrescentada pela Lógica (E1 a E4). Não muda nada das seções 1 a 8. Mesmo envelope `{ success, data }` e códigos da seção 6
+Seção acrescentada pela Lógica (E1 a E5). Não muda nada das seções 1 a 8. Mesmo envelope `{ success, data }` e códigos da seção 6
 (mais `NAO_ENCONTRADO`, 404). Rotas de compras e vínculos: só **gerente** com `Financeiro:criar`. Curadoria: só **super admin**.
 
 ### 9.1 Documentos (E1)
@@ -373,3 +373,35 @@ Toda escrita de dinheiro pede `chaveIdempotencia`.
   liquida do mais antigo ao mais novo. Sem `valor`, paga tudo. Com `valor` menor, o item que não cabe é ajustado para a parte paga
   e o resto vira `saldo_remuneracao` (a pagar). A mesma chave de novo não paga duas vezes. O pagamento **não é atômico**: se
   falhar no meio, o que já foi liquidado fica; repita com a mesma chave.
+
+### 9.7 Caixa do dia (E5)
+
+Espelha a interface `CaixaFonte` do Painel (`src/features/zippy-gestao/caixa/caixaAdaptador.ts`): a Integração só troca o
+adaptador simulado. Rotas em `/api/gestao/caixa`. Gerente e operador de caixa; o operador só vê e registra **hoje**.
+Escritas só no dia de hoje (dia passado se corrige pelo ajuste do fechamento).
+
+| Método e rota | `CaixaFonte` | Observação |
+| --- | --- | --- |
+| `GET dias/{AAAA-MM-DD}` | `carregarDia` | `CaixaDoDia { dia, aberto, abertoEm, por, fundo, fita[], pedidosEmAberto[] (vazio por ora), fechamento? }`; `null` para dia futuro |
+| `POST abrir` | `abrir` | `{ dia, fundo }`. Põe a gaveta no fundo de troco: transferência cofre ↔ gaveta pela diferença. Abrir de novo devolve o mesmo dia |
+| `POST movimentos` | `registrarMovimento` | `{ chaveIdempotencia, dia, tipo: sang\|sup\|pag\|ret, valor, motivo, referencia? (id do pedido), contaId? }` |
+| `POST contagem` | `conferirContagem` | `{ dia, contagem: { notas: {200: n, ...}, moedas } }` → `{ esperado, contado, diferenca }`. Grava a contagem |
+| `POST fechar` | `fechar` | `{ dia, contagem, maquininha: {deb, cre, pix}, justificativa?, fica }` |
+| `GET fechamentos?mes=` | `fechamentos` | Só gerente. `FechamentoDto[]` do mais novo ao mais antigo |
+| `POST fechamentos/{dia}/ajustes` | `ajustarFechamento` | Só gerente com correção. `{ contadoNovo, motivo }` |
+
+- **Contas**: gaveta ("Gaveta do caixa") e cofre ("Cofre") são contas `caixa` do livro (sem subtipo: o livro só aceita subtipo em
+  recebível), criadas na primeira abertura; `gestao_caixas` diz qual é qual. **Esperado = saldo da gaveta no livro.**
+- **Fita** (lida do livro): `abre` (fundo), `venda` (todas as formas; a forma vem de `dados.forma` da venda: din, pix, deb, cre,
+  ifood), e o que mexeu na gaveta: `sup`, `sang`, `pag`, `canc`. Valor com sinal (saída da gaveta negativa).
+- **Movimentos**: sangria = transferência gaveta → cofre (ou `contaId`); suprimento = cofre (ou `contaId`) → gaveta; pagamento =
+  despesa paga na gaveta (`despesas_caixa`, tipo `pagamento_dinheiro`); devolução = **estorno da venda** quando `referencia` é um
+  pedido com venda em dinheiro de mesmo valor, senão despesa `devolucao_de_venda`. Saída maior que a gaveta → `SEM_SALDO`.
+- **Fechamento**: a contagem é gravada (às cegas: o esperado só vem depois de contar); diferença ≠ 0 exige justificativa; falta =
+  despesa `quebra_de_caixa`, sobra = receita `sobra_de_caixa` (na gaveta); o que não `fica` de troco é recolhido ao cofre
+  (acontecimento `recolhimento`). A maquininha é conferida contra as vendas do dia por forma (`maquininhaEsperado`, não bloqueia).
+- **Correção**: novo acontecimento `ajuste_fechamento_caixa` com a diferença (mais sobra ou mais quebra) e linha em
+  `gestao_caixa_ajustes`; o fechamento original não muda.
+- Códigos novos (extensão da seção 6): `SEM_SALDO` (422), `SEM_CAIXA` (409, caixa não aberto), `FECHADO` (409, dia já fechado).
+- **Para a Integração**: a venda deve ser publicada com `dados.forma` e, em dinheiro, como receita `recebido` na conta da gaveta
+  (`gestao_caixas.conta_gaveta_id`); Pix/cartão no recebível da maquininha; iFood no recebível iFood.
