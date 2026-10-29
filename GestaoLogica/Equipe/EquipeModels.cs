@@ -43,7 +43,7 @@ public sealed record JornadaTurno(string Entrada, string Saida, string Status, b
 
 public sealed record PessoaDto(Guid Id, string Nome, string Funcao, string Vinculo, RegraPagamento Regra, string PagaCom,
     string? ChavePix, int? UsuarioId, string? Cor, IReadOnlyList<DiaPadrao> EscalaPadrao, bool Ativo, DateOnly Desde,
-    int CriadoPor, DateTimeOffset CriadoEm, int Versao);
+    int CriadoPor, DateTimeOffset CriadoEm, int Versao, string? CriadoPorNome = null);
 
 public sealed record PessoaRequest(string? Nome, string? Funcao, string? Vinculo, RegraPagamento? Regra, string? PagaCom,
     string? ChavePix, int? UsuarioId, string? Cor, IReadOnlyList<DiaPadrao>? EscalaPadrao, bool Ativo = true, DateOnly? Desde = null,
@@ -51,7 +51,7 @@ public sealed record PessoaRequest(string? Nome, string? Funcao, string? Vinculo
 
 /// <summary>Linha do histórico do turno: nada se apaga, cada mudança é mais uma linha.</summary>
 public sealed record EventoTurno(DateTimeOffset Em, int? Por, string Acao, decimal? ValorAnterior, decimal? ValorNovo,
-    string? Motivo, string? Detalhe);
+    string? Motivo, string? Detalhe, string? PorNome = null);
 
 /// <summary>
 /// Turno de uma pessoa num dia. <c>Id</c> nulo = turno "virtual" da escala recorrente, ainda não tocado (não existe no banco).

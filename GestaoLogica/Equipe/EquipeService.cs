@@ -47,6 +47,7 @@ public sealed class EquipeService(NpgsqlDataSource dataSource, IAcontecimentosSe
         public int CriadoPor { get; set; }
         public DateTime CriadoEm { get; set; }
         public int Versao { get; set; }
+        public string? CriadoPorNome { get; set; }
     }
 
     private sealed class TurnoRow
@@ -72,7 +73,8 @@ public sealed class EquipeService(NpgsqlDataSource dataSource, IAcontecimentosSe
     }
 
     private const string ColunasPessoa = @"id, nome, funcao, vinculo, regra::text AS regra, paga_com, chave_pix, usuario_id, cor,
-       escala::text AS escala, ativo, desde, criado_por, criado_em, versao";
+       escala::text AS escala, ativo, desde, criado_por, criado_em, versao,
+       (SELECT u.nome::text FROM usuario u WHERE u.id = criado_por) AS criado_por_nome";
 
     private const string ColunasTurno = @"id, pessoa_id, data, entrada, saida, status, avulso, justificada, entregas,
        pagamento_avulso::text AS pagamento_avulso, adicionais::text AS adicionais, base_comissao, valor, previsto, itens::text AS itens,
@@ -498,10 +500,12 @@ SELECT a.id, coalesce((a.dados->>'data')::date, a.data_fato::date),
     private async Task<(IReadOnlyList<PessoaDto>, Dictionary<Guid, IReadOnlyList<TurnoDto?>>)> Grade(NpgsqlConnection c, Guid loja,
         IReadOnlyList<DateOnly> dias)
     {
-        var gravados = (await c.QueryAsync<TurnoRow>(
+        var linhas = (await c.QueryAsync<TurnoRow>(
             $"SELECT {ColunasTurno} FROM gestao_turnos WHERE estabelecimento_id = @loja AND data BETWEEN @de AND @ate",
-            new { loja, de = dias[0].ToDateTime(TimeOnly.MinValue), ate = dias[^1].ToDateTime(TimeOnly.MinValue) }))
-            .Select(t => Turno(t, Array.Empty<EventoTurno>())).ToList();
+            new { loja, de = dias[0].ToDateTime(TimeOnly.MinValue), ate = dias[^1].ToDateTime(TimeOnly.MinValue) })).ToList();
+        // O detalhe do turno mostra o histórico: vem junto com a semana.
+        var historicos = await Historicos(c, loja, linhas.Select(t => t.Id).ToArray());
+        var gravados = linhas.Select(t => Turno(t, historicos.GetValueOrDefault(t.Id) ?? new List<EventoTurno>())).ToList();
         var comTurno = gravados.Select(t => t.PessoaId).ToHashSet();
         // Quem saiu da equipe ainda aparece nos dias em que trabalhou.
         var pessoas = (await Pessoas(loja, true, CancellationToken.None)).Where(p => p.Ativo || comTurno.Contains(p.Id)).ToList();
@@ -535,12 +539,23 @@ SELECT a.id, coalesce((a.dados->>'data')::date, a.data_fato::date),
     private static async Task<TurnoDto> TurnoComHistorico(NpgsqlConnection c, Guid loja, Guid id)
     {
         var row = await c.QuerySingleAsync<TurnoRow>($"SELECT {ColunasTurno} FROM gestao_turnos WHERE estabelecimento_id = @loja AND id = @id", new { loja, id });
-        var historico = (await c.QueryAsync<(DateTime Em, int? Por, string Acao, decimal? Anterior, decimal? Novo, string? Motivo, string? Detalhe)>(@"
-SELECT em, por, acao, valor_anterior, valor_novo, motivo, detalhe FROM gestao_turnos_historico
- WHERE estabelecimento_id = @loja AND turno_id = @id ORDER BY em, id", new { loja, id }))
+        var historicos = await Historicos(c, loja, new[] { id });
+        return Turno(row, historicos.GetValueOrDefault(id) ?? new List<EventoTurno>());
+    }
+
+    /// <summary>Histórico de vários turnos numa consulta só, com o nome de quem fez cada mudança.</summary>
+    private static async Task<Dictionary<Guid, List<EventoTurno>>> Historicos(NpgsqlConnection c, Guid loja, Guid[] ids)
+    {
+        if (ids.Length == 0) return new();
+        var linhas = await c.QueryAsync<(Guid TurnoId, DateTime Em, int? Por, string Acao, decimal? Anterior, decimal? Novo, string? Motivo,
+            string? Detalhe, string? PorNome)>(@"
+SELECT h.turno_id, h.em, h.por, h.acao, h.valor_anterior, h.valor_novo, h.motivo, h.detalhe, u.nome::text AS por_nome
+  FROM gestao_turnos_historico h
+  LEFT JOIN usuario u ON u.id = h.por
+ WHERE h.estabelecimento_id = @loja AND h.turno_id = ANY(@ids) ORDER BY h.em, h.id", new { loja, ids });
+        return linhas.GroupBy(h => h.TurnoId).ToDictionary(g => g.Key, g => g
             .Select(h => new EventoTurno(new DateTimeOffset(DateTime.SpecifyKind(h.Em, DateTimeKind.Utc)), h.Por, h.Acao, h.Anterior, h.Novo,
-                h.Motivo, h.Detalhe)).ToList();
-        return Turno(row, historico);
+                h.Motivo, h.Detalhe, h.PorNome)).ToList());
     }
 
     private static TurnoDto Turno(TurnoRow t, IReadOnlyList<EventoTurno> historico)
@@ -558,7 +573,8 @@ SELECT em, por, acao, valor_anterior, valor_novo, motivo, detalhe FROM gestao_tu
 
     private static PessoaDto Pessoa(PessoaRow r) => new(r.Id, r.Nome, r.Funcao, r.Vinculo, JsonSerializer.Deserialize<RegraPagamento>(r.Regra, Json)!,
         r.PagaCom, r.ChavePix, r.UsuarioId, r.Cor, JsonSerializer.Deserialize<List<DiaPadrao>>(r.Escala, Json)!, r.Ativo,
-        DateOnly.FromDateTime(r.Desde), r.CriadoPor, new DateTimeOffset(DateTime.SpecifyKind(r.CriadoEm, DateTimeKind.Utc)), r.Versao);
+        DateOnly.FromDateTime(r.Desde), r.CriadoPor, new DateTimeOffset(DateTime.SpecifyKind(r.CriadoEm, DateTimeKind.Utc)), r.Versao,
+        r.CriadoPorNome);
 
     private static string ChaveObrigatoria(string? chave) => string.IsNullOrWhiteSpace(chave)
         ? throw Invalido("Envie a chave de idempotência (gerada uma vez por envio).")

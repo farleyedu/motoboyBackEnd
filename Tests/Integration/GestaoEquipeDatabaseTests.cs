@@ -114,11 +114,33 @@ INSERT INTO estabelecimentos VALUES (@loja, 'America/Sao_Paulo'); INSERT INTO us
             Assert.Equal("CAMPO_INVALIDO", (await Assert.ThrowsAsync<GestaoException>(() =>
                 equipe.MudarTurno(loja, 7, new MudarTurnoRequest(rafa.Id, Sexta, Entregas: 11, Motivo: "Esqueci uma"), default))).Codigo);
 
+            // A semana traz o histórico dos turnos gravados, com o nome de quem mexeu (o detalhe do turno no Painel lê daqui).
+            semana = await equipe.Semana(loja, Segunda, default);
+            var sextaNaSemana = semana.Grade[rafa.Id][4]!;
+            Assert.Equal(new[] { "realizado", "ajuste" }, sextaNaSemana.Historico.Select(h => h.Acao));
+            Assert.All(sextaNaSemana.Historico, h => Assert.Equal("Marina", h.PorNome));
+            Assert.Equal("Marina", semana.Pessoas.Single().CriadoPorNome);
+
+            // Colaborador eventual no sábado: jornada avulsa → realizado → devido → pago → saída no banco.
+            var saldoAntes = (await livro.Contas(loja, default)).Single(x => x.Id == banco).Saldo;
+            var bia = await equipe.SalvarPessoa(loja, 7, null, new PessoaRequest("Bia", "Eventual", VinculoPessoa.Freelancer,
+                new RegraPagamento(PorTurno: 90), "dinheiro", null, null, null, Array.Empty<DiaPadrao>()), default);
+            var avulso = await equipe.MudarTurno(loja, 7, new MudarTurnoRequest(bia.Id, Sabado, Entrada: "18:00", Saida: "23:00", Avulso: true,
+                PagamentoAvulso: new PagamentoAvulso("turno", 100)), default);
+            Assert.Equal(("previsto", true, (Guid?)null), (avulso.Status, avulso.Avulso, avulso.AcontecimentoId));
+            avulso = await equipe.MudarTurno(loja, 7, new MudarTurnoRequest(bia.Id, Sabado, StatusTurno.Realizado), default);
+            Assert.Equal(100m, avulso.Valor);
+            var devido = (await equipe.Resumo(loja, new DateOnly(2026, 10, 1), default)).Single(r => r.PessoaId == bia.Id);
+            Assert.Equal((100m, 100m, 0m), (devido.Devido, devido.APagar, devido.Pago));
+            var pagoBia = await equipe.Pagar(loja, 7, new PagamentoRequest("pag-bia", bia.Id, banco, new DateOnly(2026, 10, 25), null), default);
+            Assert.Equal((100m, 0m), (pagoBia.Pago, pagoBia.Restante));
+            Assert.Equal(saldoAntes - 100m, (await livro.Contas(loja, default)).Single(x => x.Id == banco).Saldo);
+
             await using (var c = await fonte.OpenConnectionAsync())
             {
                 Assert.Equal("P0001", (await Assert.ThrowsAsync<PostgresException>(() => c.ExecuteAsync("DELETE FROM gestao_turnos"))).SqlState);
                 Assert.Equal("P0001", (await Assert.ThrowsAsync<PostgresException>(() => c.ExecuteAsync("UPDATE gestao_turnos_historico SET motivo = 'x'"))).SqlState);
-                Assert.Equal(2, await c.ExecuteScalarAsync<int>("SELECT count(*) FROM gestao_pessoas_historico"));
+                Assert.Equal(3, await c.ExecuteScalarAsync<int>("SELECT count(*) FROM gestao_pessoas_historico")); // Rafa (2 versões) e Bia
             }
         }
         finally
