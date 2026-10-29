@@ -96,7 +96,8 @@ INSERT INTO gestao_catalogo_kit_itens (kit_id, global_id) VALUES (@kit, @bacon);
             Assert.Equal((OrigemCatalogo.Novo, CuradoriaLoja.EmAnalise, "1 PC = 2 kg"), (vinculado.Origem, vinculado.Curadoria, vinculado.Conversao));
             var produtos = await catalogo.Produtos(loja, default);
             var mussarela = Assert.Single(produtos);
-            Assert.Equal((["Ingrediente"], 0m), (mussarela.Finalidades, mussarela.Estoque)); // vínculo não é entrada de estoque
+            Assert.Equal(new[] { "Ingrediente" }, mussarela.Finalidades);
+            Assert.Equal(0m, mussarela.Estoque); // vínculo não é entrada de estoque
             Assert.Contains("QJO MUSS FAT 2KG", mussarela.NomesNoCupom);
 
             // "Não controlar" no desengordurante: a compra segue no financeiro, nada vai ao estoque.

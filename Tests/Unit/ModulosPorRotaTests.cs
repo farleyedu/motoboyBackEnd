@@ -64,7 +64,7 @@ public class ModulosPorRotaTests
     // falha este teste: decida o modulo (ModulosPorRota) ou registre a rota aqui com o motivo.
     private static readonly string[] AbertasDeProposito =
     {
-        "wa", "api/auth", "api/estabelecimentos", "api/gestao", "api/admin", "api/usuario", "api/public", "api/webhooks",
+        "wa", "api/auth", "api/estabelecimentos", "api/gestao", "api/curadoria", "api/admin", "api/usuario", "api/public", "api/webhooks",
         "api/v2/comercial", "api/v2/motoboys", "api/motoboys", "api/motoboy", "api/v2/atendimento/chat",
         "api/migration", "api/localizacao", "api/entregas", "api/v2/pagamentos", "api/configuracoes", "api/delivery",
         "api/cardapio/web", "api/cardapio/{estabelecimentoid:guid}/atencao-motoboy", "api/v2/ifood/config",

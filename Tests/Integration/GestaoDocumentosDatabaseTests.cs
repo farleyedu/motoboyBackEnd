@@ -52,7 +52,8 @@ INSERT INTO estabelecimentos VALUES (@loja, 'America/Sao_Paulo'); INSERT INTO us
             Assert.Empty(lido.Duplicidades);
             // A foto original fica guardada para a conferência mostrar o documento real.
             var arquivo = await service.Arquivo(loja, lido.Id, default);
-            Assert.Equal((imagem, "image/jpeg"), (arquivo!.Value.Conteudo, arquivo.Value.MediaType));
+            Assert.Equal(imagem, arquivo!.Value.Conteudo);
+            Assert.Equal("image/jpeg", arquivo.Value.MediaType);
             Assert.Null(await service.Arquivo(Guid.NewGuid(), lido.Id, default)); // outra loja não vê
 
             // Mesma foto: barrada antes de chamar a leitura de novo.
