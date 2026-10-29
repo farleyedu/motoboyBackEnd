@@ -158,6 +158,7 @@ builder.Services.AddScoped<APIBack.GestaoLogica.Documentos.ILeitorCupomFoto, API
 builder.Services.AddScoped<APIBack.GestaoLogica.Documentos.IDocumentosService, APIBack.GestaoLogica.Documentos.DocumentosService>();
 builder.Services.AddScoped<APIBack.GestaoLogica.Vinculos.IVinculosService, APIBack.GestaoLogica.Vinculos.VinculosService>();
 builder.Services.AddScoped<APIBack.GestaoLogica.Vinculos.ICuradoriaService, APIBack.GestaoLogica.Vinculos.CuradoriaService>();
+builder.Services.AddScoped<APIBack.GestaoLogica.Vinculos.ICuradoriaDecisoesService, APIBack.GestaoLogica.Vinculos.CuradoriaDecisoesService>();
 builder.Services.AddScoped<APIBack.GestaoLogica.Compras.IComprasService, APIBack.GestaoLogica.Compras.ComprasService>();
 // Sem ficha técnica no backend ainda: todo pedido fica "sem ficha" até a Gestão e Inteligência registrar a sua leitura.
 builder.Services.AddScoped<APIBack.GestaoLogica.Estoque.IFichaTecnicaLeitor, APIBack.GestaoLogica.Estoque.FichaTecnicaPendente>();
