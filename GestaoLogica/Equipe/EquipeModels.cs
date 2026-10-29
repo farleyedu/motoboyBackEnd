@@ -89,6 +89,15 @@ public sealed record DescontoRequest(string? ChaveIdempotencia, Guid PessoaId, G
 /// <summary><c>Valor</c> nulo = paga tudo o que está a pagar; menor = pagamento parcial (o restante vira saldo a pagar).</summary>
 public sealed record PagamentoRequest(string? ChaveIdempotencia, Guid PessoaId, Guid ContaId, DateOnly? DataPagamento, decimal? Valor);
 
+/// <summary>Usuário do painel com acesso à loja; <c>PessoaId</c> = colaborador da equipe já ligado a ele.</summary>
+public sealed class UsuarioDaLoja
+{
+    public int UsuarioId { get; set; }
+    public string Nome { get; set; } = "";
+    public string? Email { get; set; }
+    public Guid? PessoaId { get; set; }
+}
+
 /// <summary>Quanto a pessoa tem a receber agora (itens a pagar menos adiantamentos em aberto), em todos os meses.</summary>
 public sealed record PessoaAPagar(Guid PessoaId, string Nome, decimal APagar);
 

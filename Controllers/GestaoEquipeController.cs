@@ -27,6 +27,10 @@ public sealed class GestaoEquipeController(IEquipeService service) : ControllerB
     public Task<IActionResult> Atualizar(Guid id, [FromBody] PessoaRequest? req, CancellationToken ct) => Run(Escrita, async (loja, usuario) =>
         await service.SalvarPessoa(loja, usuario, id, req ?? throw Vazio(), ct));
 
+    /// <summary>Usuários do painel com acesso à loja, para ligar o colaborador ao Zippy (Integração 6A).</summary>
+    [HttpGet("usuarios")]
+    public Task<IActionResult> Usuarios(CancellationToken ct) => Run(Leitura, async (loja, _) => await service.UsuariosDaLoja(loja, ct));
+
     [HttpGet("semana")]
     public Task<IActionResult> Semana([FromQuery] DateOnly inicio, CancellationToken ct) => Run(Leitura, async (loja, _) =>
         await service.Semana(loja, inicio, ct));

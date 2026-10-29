@@ -22,6 +22,7 @@ public interface IEquipeService
     Task<AcontecimentoDto> Descontar(Guid loja, int usuario, DescontoRequest req, CancellationToken ct);
     Task<PagamentoFeito> Pagar(Guid loja, int usuario, PagamentoRequest req, CancellationToken ct);
     Task<IReadOnlyList<PessoaAPagar>> APagarPorPessoa(Guid loja, CancellationToken ct);
+    Task<IReadOnlyList<UsuarioDaLoja>> UsuariosDaLoja(Guid loja, CancellationToken ct);
 }
 
 public sealed class EquipeService(NpgsqlDataSource dataSource, IAcontecimentosService livro, TimeProvider? relogio = null) : IEquipeService
@@ -108,6 +109,7 @@ public sealed class EquipeService(NpgsqlDataSource dataSource, IAcontecimentosSe
             usuario, agora,
         };
         await using var c = await dataSource.OpenConnectionAsync(ct);
+        if (req.UsuarioId is { } usuarioId) await ValidarUsuario(c, loja, usuarioId, id);
         await using var tx = await c.BeginTransactionAsync(ct);
         Guid pessoaId;
         if (id is null)
@@ -142,6 +144,33 @@ VALUES (@id, @loja, @pessoaId, @Versao, CAST(@retrato AS jsonb), @usuario, @agor
             new { id = Guid.NewGuid(), loja, pessoaId, salva.Versao, retrato = JsonSerializer.Serialize(salva, Json), usuario, agora }, tx);
         await tx.CommitAsync(ct);
         return salva;
+    }
+
+    /// <summary>
+    /// Quem tem acesso ao painel nesta loja (para ligar o colaborador ao usuário do Zippy). <c>PessoaId</c> = a pessoa da equipe já
+    /// ligada a esse usuário, se houver.
+    /// </summary>
+    public async Task<IReadOnlyList<UsuarioDaLoja>> UsuariosDaLoja(Guid loja, CancellationToken ct)
+    {
+        await using var c = await dataSource.OpenConnectionAsync(ct);
+        return (await c.QueryAsync<UsuarioDaLoja>(@"
+SELECT u.id AS UsuarioId, u.nome::text AS Nome, u.email::text AS Email,
+       (SELECT p.id FROM gestao_pessoas p WHERE p.estabelecimento_id = @loja AND p.usuario_id = u.id AND p.ativo LIMIT 1) AS PessoaId
+  FROM usuario_estabelecimentos ue JOIN usuario u ON u.id = ue.id_usuario
+ WHERE ue.id_estabelecimento = @loja AND u.deleted_at IS NULL AND COALESCE(ue.ativo, TRUE)
+ ORDER BY u.nome", new { loja })).ToList();
+    }
+
+    /// <summary>O usuário precisa ter acesso a esta loja e não pode estar ligado a outra pessoa ativa da equipe.</summary>
+    private static async Task ValidarUsuario(NpgsqlConnection c, Guid loja, int usuarioId, Guid? pessoaId)
+    {
+        var daLoja = await c.ExecuteScalarAsync<bool>(@"SELECT EXISTS (SELECT 1 FROM usuario_estabelecimentos ue JOIN usuario u ON u.id = ue.id_usuario
+ WHERE ue.id_estabelecimento = @loja AND ue.id_usuario = @usuarioId AND u.deleted_at IS NULL)", new { loja, usuarioId });
+        if (!daLoja) throw Invalido("Esse usuário não tem acesso a esta loja.");
+        var outra = await c.ExecuteScalarAsync<string?>(@"SELECT nome FROM gestao_pessoas
+ WHERE estabelecimento_id = @loja AND usuario_id = @usuarioId AND ativo AND (@pessoaId::uuid IS NULL OR id <> @pessoaId) LIMIT 1",
+            new { loja, usuarioId, pessoaId });
+        if (outra is not null) throw Invalido($"Esse usuário já está ligado a {outra} na equipe.");
     }
 
     // ---------------------------------------------------------------- semana e turnos

@@ -352,6 +352,7 @@ Toda escrita de dinheiro pede `chaveIdempotencia`.
 | Método e rota | Observação |
 | --- | --- |
 | `GET pessoas?todas=` | `PessoaDto[]` (ativas; `todas=true` inclui inativas). Traz `criadoPorNome` (Integração 6A) |
+| `GET usuarios` | Usuários do painel com acesso à loja: `[{ usuarioId, nome, email, pessoaId? }]` (`pessoaId` = colaborador já ligado). Para ligar quem "vai usar o Zippy" (Integração 6A). No `POST/PUT pessoas`, `usuarioId` precisa ter acesso à loja e não estar ligado a outra pessoa ativa (`CAMPO_INVALIDO`) |
 | `POST pessoas` / `PUT pessoas/{id}` | `{ nome, funcao, vinculo, regra, pagaCom (pix\|dinheiro), chavePix?, usuarioId?, cor?, escalaPadrao: [{dow, entrada, saida}], ativo, desde?, versao? }`. A regra é limpa pelo vínculo (campo de outro vínculo é descartado). `versao` velha → `IDEMPOTENCIA_CONFLITO`. Cada versão fica em `gestao_pessoas_historico` |
 | `GET semana?inicio=AAAA-MM-DD` | `{ inicio, pessoas, grade: { pessoaId: [7 × TurnoDto\|null] }, totais: { previsto, apurado, turnos, realizados, faltas } }`. Turno da escala ainda não tocado vem com `id: null`. Turno gravado vem com o histórico, e cada linha traz `porNome` (Integração 6A) |
 | `POST turnos` | `{ pessoaId, data, status?, entrada?, saida?, entregas?, justificada?, adicionais?: [{rotulo, valor}], baseComissao?, pagamentoAvulso?: {forma: turno\|diaria\|hora\|entrega, valor}, avulso?, motivo? }` → `TurnoDto` com histórico |

@@ -150,4 +150,59 @@ INSERT INTO estabelecimentos VALUES (@loja, 'America/Sao_Paulo'); INSERT INTO us
             await admin.ExecuteAsync($"DROP SCHEMA {schema} CASCADE");
         }
     }
+
+    /// <summary>Integração 6A: o colaborador que vai usar o Zippy é ligado a um usuário com acesso à loja, e a um só.</summary>
+    [DeliveryDatabaseFact]
+    public async Task Colaborador_ligado_ao_usuario_da_loja()
+    {
+        var conexao = Environment.GetEnvironmentVariable("TEST_DELIVERY_DATABASE")!;
+        APIBack.Infrastructure.DapperConfiguration.Configure();
+        var opcoes = new NpgsqlConnectionStringBuilder(conexao);
+        if (opcoes.Host != "127.0.0.1" && opcoes.Host != "localhost") throw new InvalidOperationException("Use apenas PostgreSQL local.");
+        var schema = "gestao_eq_" + Guid.NewGuid().ToString("N");
+        await using (var admin = new NpgsqlConnection(conexao)) { await admin.OpenAsync(); await admin.ExecuteAsync($"CREATE SCHEMA {schema}"); }
+        opcoes.SearchPath = schema;
+        var fonte = NpgsqlDataSource.Create(opcoes.ConnectionString);
+        try
+        {
+            var loja = Guid.NewGuid();
+            var outraLoja = Guid.NewGuid();
+            await using (var c = await fonte.OpenConnectionAsync())
+            {
+                await c.ExecuteAsync(@"CREATE TABLE estabelecimentos(id uuid PRIMARY KEY, timezone_iana text);
+CREATE TABLE usuario(id integer PRIMARY KEY, nome text, email text, deleted_at timestamptz);
+CREATE TABLE usuario_estabelecimentos(id serial PRIMARY KEY, id_usuario integer, id_estabelecimento uuid, ativo boolean);
+INSERT INTO estabelecimentos VALUES (@loja, 'America/Sao_Paulo'), (@outraLoja, 'America/Sao_Paulo');
+INSERT INTO usuario VALUES (7, 'Marina', 'marina@x.com', null), (12, 'Júlia', 'julia@x.com', null), (13, 'Pedro', 'pedro@y.com', null);
+INSERT INTO usuario_estabelecimentos (id_usuario, id_estabelecimento, ativo) VALUES (7, @loja, true), (12, @loja, true), (13, @outraLoja, true);",
+                    new { loja, outraLoja });
+                foreach (var m in new[] { "20261105_01_gestao_fundacao.sql", "20261106_01_gestao_documentos.sql", "20261107_01_gestao_vinculos.sql",
+                             "20261109_01_gestao_equipe.sql" })
+                    await c.ExecuteAsync(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "Migrations", "Delivery", m)));
+            }
+            var livro = new AcontecimentosService(fonte, Array.Empty<IAcontecimentoAssinante>(), NullLogger<AcontecimentosService>.Instance);
+            var equipe = new EquipeService(fonte, livro);
+            PessoaRequest Julia(int? usuarioId, int? versao = null) => new("Júlia", "Caixa", VinculoPessoa.Fixo, new RegraPagamento(SalarioMensal: 1800), "pix",
+                null, usuarioId, null, Array.Empty<DiaPadrao>(), Versao: versao);
+
+            // Usuário de outra loja não serve.
+            Assert.Equal("CAMPO_INVALIDO", (await Assert.ThrowsAsync<GestaoException>(() => equipe.SalvarPessoa(loja, 7, null, Julia(13), default))).Codigo);
+            var julia = await equipe.SalvarPessoa(loja, 7, null, Julia(null), default);
+            Assert.Null((await equipe.UsuariosDaLoja(loja, default)).Single(u => u.UsuarioId == 12).PessoaId);
+            // Convite aceito: liga a Júlia ao usuário 12. Outra pessoa não pode usar o mesmo usuário; a própria pode salvar de novo.
+            julia = await equipe.SalvarPessoa(loja, 7, julia.Id, Julia(12, julia.Versao), default);
+            Assert.Equal(12, julia.UsuarioId);
+            Assert.Equal(julia.Id, (await equipe.UsuariosDaLoja(loja, default)).Single(u => u.UsuarioId == 12).PessoaId);
+            Assert.Equal("CAMPO_INVALIDO", (await Assert.ThrowsAsync<GestaoException>(() =>
+                equipe.SalvarPessoa(loja, 7, null, new PessoaRequest("Outra", "x", VinculoPessoa.Fixo, null, "pix", null, 12, null, null), default))).Codigo);
+            julia = await equipe.SalvarPessoa(loja, 7, julia.Id, Julia(12, julia.Versao), default);
+            Assert.Equal(new[] { "Júlia", "Marina" }, (await equipe.UsuariosDaLoja(loja, default)).Select(u => u.Nome));
+        }
+        finally
+        {
+            await fonte.DisposeAsync();
+            await using var admin = new NpgsqlConnection(conexao); await admin.OpenAsync();
+            await admin.ExecuteAsync($"DROP SCHEMA {schema} CASCADE");
+        }
+    }
 }
