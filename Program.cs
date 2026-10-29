@@ -169,6 +169,8 @@ builder.Services.AddScoped<APIBack.GestaoLogica.Equipe.IEquipeService, APIBack.G
 builder.Services.AddScoped<APIBack.GestaoLogica.Caixa.ICaixaService, APIBack.GestaoLogica.Caixa.CaixaService>();
 builder.Services.AddScoped<APIBack.GestaoLogica.Despesas.IRecorrenciasService, APIBack.GestaoLogica.Despesas.RecorrenciasService>();
 builder.Services.AddHostedService<APIBack.GestaoLogica.Despesas.ContasFixasWorker>();
+builder.Services.AddScoped<APIBack.GestaoLogica.Despesas.IFinalidadesService, APIBack.GestaoLogica.Despesas.FinalidadesService>();
+builder.Services.AddScoped<APIBack.GestaoLogica.Despesas.IEquipamentosService, APIBack.GestaoLogica.Despesas.EquipamentosService>();
 // Integração 6B: catálogo da loja/global, lista e compra à mão, agregados do Financeiro.
 builder.Services.AddScoped<APIBack.GestaoLogica.Catalogo.ICatalogoService, APIBack.GestaoLogica.Catalogo.CatalogoService>();
 builder.Services.AddScoped<APIBack.GestaoLogica.Compras.IComprasListaService, APIBack.GestaoLogica.Compras.ComprasListaService>();
