@@ -9,7 +9,7 @@ using Npgsql;
 namespace APIBack.Controllers;
 
 /// <summary>
-/// Recebíveis do iFood (CONTRATOS §9.10): o que falta o iFood repassar e a confirmação manual do repasse de um pedido. Só o gerente.
+/// Recebíveis do iFood (docs/zippy-gestao/6c1-b-relatorio.md): o que falta o iFood repassar e a confirmação manual do repasse de um pedido. Só o gerente.
 /// </summary>
 [ApiController]
 [Route("api/gestao/ifood")]

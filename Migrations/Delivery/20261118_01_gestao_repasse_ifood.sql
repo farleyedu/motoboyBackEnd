@@ -1,4 +1,4 @@
--- Gestao 6C1-B: repasse do iFood conferido a mao (docs/zippy-gestao/CONTRATOS.md §9.10).
+-- Gestao 6C1-B: repasse do iFood conferido a mao (docs/zippy-gestao/6c1-b-relatorio.md).
 -- O dinheiro do iFood so entra no banco quando o gerente confirma o repasse: o livro quita a receita a receber
 -- (Liquidar), sem criar outra receita. Esta tabela guarda quem confirmou, o comprovante e o valor que caiu; quando o valor
 -- nao bate com o a receber, a linha fica 'divergente' para conciliar e nada e quitado.

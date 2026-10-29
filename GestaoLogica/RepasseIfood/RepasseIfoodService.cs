@@ -41,7 +41,7 @@ public interface IRepasseIfoodService
 }
 
 /// <summary>
-/// Liquidacao manual do recebivel iFood (CONTRATOS §9.10). Nao ha fonte oficial de repasse na integracao (so pedidos e eventos),
+/// Liquidacao manual do recebivel iFood (docs/zippy-gestao/6c1-b-relatorio.md). Nao ha fonte oficial de repasse na integracao (so pedidos e eventos),
 /// entao o dinheiro so entra quando o gerente confirma. Quita, pelo <see cref="IAcontecimentosService.Liquidar"/>, somente a linha
 /// da venda que esta no recebivel iFood; o que o cliente pagou na entrega (dinheiro, maquininha) fica onde esta. Valor diferente
 /// do a receber (taxa, parcial) nao quita nem vira despesa: fica registrado como divergencia.
