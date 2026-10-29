@@ -37,7 +37,8 @@ public sealed class CuradoriaDecisoesService(NpgsqlDataSource dataSource, TimePr
     public async Task<IReadOnlyList<RegistroDecisao>> Decisoes(CancellationToken ct)
     {
         await using var c = await dataSource.OpenConnectionAsync(ct);
-        return (await LerDecisoes(c, null, null)).Select(l => l.Registro()).ToList();
+        // Correções do catálogo global têm histórico próprio (/api/curadoria/global/historico): não são casos da fila.
+        return (await LerDecisoes(c, null, null)).Where(l => l.CasoTipo != CuradoriaGlobalRegras.TipoGlobal).Select(l => l.Registro()).ToList();
     }
 
     public async Task<RegistroDecisao> Decidir(int usuario, string responsavel, DecidirCuradoriaRequest req, CancellationToken ct)
@@ -51,7 +52,8 @@ public sealed class CuradoriaDecisoesService(NpgsqlDataSource dataSource, TimePr
         var caso = (await GerarCasos(c, tx)).FirstOrDefault(x => x.Id == casoId)
             ?? throw new GestaoException("NAO_ENCONTRADO", "Caso não encontrado.", 404);
         var produto = await ProdutoEscolhido(c, tx, req.ProdutoGlobal);
-        var registro = await DecidirNoCaso(c, tx, usuario, nome, caso, req.Decisao, req.Motivo, produto, null, _relogio.GetUtcNow());
+        var criterios = await CuradoriaGlobalService.Vigentes(c, tx);
+        var registro = await DecidirNoCaso(c, tx, usuario, nome, caso, req.Decisao, req.Motivo, produto, null, _relogio.GetUtcNow(), criterios);
         await tx.CommitAsync(ct);
         return registro;
     }
@@ -68,13 +70,14 @@ public sealed class CuradoriaDecisoesService(NpgsqlDataSource dataSource, TimePr
         await Travar(c, tx, ids);
         var casos = (await GerarCasos(c, tx)).ToDictionary(x => x.Id);
         var decisoes = await LerDecisoes(c, tx, ids);
+        var criterios = await CuradoriaGlobalService.Vigentes(c, tx);
         var incluidos = new List<CasoCuradoria>();
         var excluidos = new List<ExcluidoDoLote>();
         foreach (var id in ids)
         {
             if (!casos.TryGetValue(id, out var caso)) continue;
             var estado = CuradoriaDecisoesRegras.EstadoDoCaso(id, decisoes.Select(d => d.Registro()));
-            if (CuradoriaDecisoesRegras.MotivoForaDoLote(caso, req.Decisao, estado) is { } motivo) excluidos.Add(new(caso, motivo));
+            if (CuradoriaDecisoesRegras.MotivoForaDoLote(caso, req.Decisao, estado, criterios) is { } motivo) excluidos.Add(new(caso, motivo));
             else incluidos.Add(caso);
         }
         if (incluidos.Count == 0) throw new GestaoException("SEM_CASOS", "Nenhum dos casos escolhidos pode entrar neste lote.", 422);
@@ -82,7 +85,7 @@ public sealed class CuradoriaDecisoesService(NpgsqlDataSource dataSource, TimePr
         var agora = _relogio.GetUtcNow();
         var registros = new List<RegistroDecisao>();
         foreach (var caso in incluidos)
-            registros.Add(await DecidirNoCaso(c, tx, usuario, nome, caso, req.Decisao, req.Motivo, null, lote, agora));
+            registros.Add(await DecidirNoCaso(c, tx, usuario, nome, caso, req.Decisao, req.Motivo, null, lote, agora, criterios));
         await tx.CommitAsync(ct);
         return new ResultadoDoLote(registros, new PlanoDoLote(incluidos, excluidos));
     }
@@ -97,6 +100,8 @@ public sealed class CuradoriaDecisoesService(NpgsqlDataSource dataSource, TimePr
         await Travar(c, tx, new[] { casoId });
         var doCaso = await LerDecisoes(c, tx, new[] { casoId });
         var alvo = doCaso.Single(d => d.Id == registroId);
+        if (alvo.CasoTipo == CuradoriaGlobalRegras.TipoGlobal)
+            throw new GestaoException("CAMPO_INVALIDO", "Correção do catálogo global não se reabre: corrija de novo.", 422);
         CuradoriaDecisoesRegras.ValidarReabertura(alvo.Registro(), doCaso.Select(d => d.Registro()), req.Motivo);
         await Desfazer(c, tx, Efeito.Ler(alvo.Efeito));
         var registro = new RegistroDecisao(Guid.NewGuid(), alvo.CasoId, alvo.CasoNome, alvo.CasoTipo, DecisaoCuradoria.Reabrir, nome,
@@ -125,11 +130,12 @@ public sealed class CuradoriaDecisoesService(NpgsqlDataSource dataSource, TimePr
     // ------------------------------------------------------------ decisão
 
     private async Task<RegistroDecisao> DecidirNoCaso(NpgsqlConnection c, NpgsqlTransaction tx, int usuario, string responsavel,
-        CasoCuradoria caso, string? decisao, string? motivo, (Guid Id, string Nome)? produto, Guid? lote, DateTimeOffset agora)
+        CasoCuradoria caso, string? decisao, string? motivo, (Guid Id, string Nome)? produto, Guid? lote, DateTimeOffset agora,
+        CriteriosCuradoria criterios)
     {
         var anteriores = (await LerDecisoes(c, tx, new[] { caso.Id })).Select(d => d.Registro());
         var estado = CuradoriaDecisoesRegras.EstadoDoCaso(caso.Id, anteriores);
-        var nova = CuradoriaDecisoesRegras.Montar(caso, estado, decisao, motivo, produto?.Nome);
+        var nova = CuradoriaDecisoesRegras.Montar(caso, estado, decisao, motivo, produto?.Nome, criterios);
         var efeito = await Aplicar(c, tx, usuario, caso, nova, produto?.Id);
         var registro = new RegistroDecisao(Guid.NewGuid(), caso.Id, Cortar(caso.Nome, 300), caso.Tipo, nova.Decisao, responsavel,
             nova.Motivo, agora, nova.Anterior, nova.Novo, lote, null, nova.Excecao ? true : null, nova.ConfirmacoesNoRegistro,

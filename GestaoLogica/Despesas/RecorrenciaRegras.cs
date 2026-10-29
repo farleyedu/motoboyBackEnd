@@ -9,7 +9,18 @@ public sealed record ContaFixaDto(Guid Id, string Nome, string? Finalidade, deci
     bool Arquivada, Guid? ContaId, int Versao);
 
 public sealed record ContaFixaRequest(string? Nome, string? Finalidade, decimal? ValorPrevisto, int? DiaVencimento, bool ValorVaria = false,
-    Guid? ContaId = null, int? Versao = null);
+    Guid? ContaId = null, int? Versao = null, string? Motivo = null);
+
+public static class AcaoContaFixa
+{
+    public const string Criada = "criada", Editada = "editada", Arquivada = "arquivada", Reativada = "reativada";
+}
+
+/// <summary>Uma mudança na conta fixa: antes, depois e o mês em que passa a valer (o que já está no livro não muda).</summary>
+public sealed record ContaFixaHistoricoDto(Guid Id, int Versao, string Acao, ContaFixaDto? Antes, ContaFixaDto Depois, DateOnly ValeAPartir,
+    string? Motivo, int Por, string? PorNome, DateTimeOffset Em);
+
+public sealed record MotivoRequest(string? Motivo);
 
 public static class EstadoOcorrencia
 {
@@ -41,8 +52,19 @@ public static class RecorrenciaRegras
         if (string.IsNullOrWhiteSpace(r.Nome) || r.Nome.Trim().Length < 2) throw Invalido("Dê um nome à conta (ex.: Aluguel do salão).");
         if (r.ValorPrevisto is not > 0 || decimal.Round(r.ValorPrevisto.Value, 2) != r.ValorPrevisto) throw Invalido("Informe o valor previsto (até 2 casas).");
         if (r.DiaVencimento is not (>= 1 and <= 31)) throw Invalido("O dia do vencimento vai de 1 a 31.");
-        return r with { Nome = r.Nome.Trim(), Finalidade = string.IsNullOrWhiteSpace(r.Finalidade) ? null : r.Finalidade.Trim() };
+        if (r.Motivo is { Length: > 300 }) throw Invalido("Motivo com até 300 letras.");
+        return r with { Nome = r.Nome.Trim(), Finalidade = string.IsNullOrWhiteSpace(r.Finalidade) ? null : r.Finalidade.Trim(),
+            Motivo = string.IsNullOrWhiteSpace(r.Motivo) ? null : r.Motivo.Trim() };
     }
+
+    /// <summary>Mudança na conta vale no mês atual se ele ainda não foi lançado; senão, do mês que vem.</summary>
+    public static DateOnly ValeAPartir(DateOnly hoje, bool mesAtualLancado) => mesAtualLancado ? Mes(hoje).AddMonths(1) : Mes(hoje);
+
+    /// <summary>Muda algo além da versão? Salvar igual não vira histórico.</summary>
+    public static bool Mudou(ContaFixaDto? antes, ContaFixaDto depois) => antes is null || antes with { Versao = 0 } != depois with { Versao = 0 };
+
+    public static string? Motivo(string? m) =>
+        string.IsNullOrWhiteSpace(m) ? null : m.Trim().Length > 300 ? throw Invalido("Motivo com até 300 letras.") : m.Trim();
 
     /// <summary>Gerar só até o mês seguinte: conta de dois meses à frente ainda pode mudar.</summary>
     public static void ValidarMesDeGeracao(DateOnly mes, DateOnly hoje)

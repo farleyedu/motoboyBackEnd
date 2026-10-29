@@ -16,6 +16,8 @@ public interface IRecorrenciasService
     Task<IReadOnlyList<ContaFixaDto>> Listar(Guid loja, bool incluirArquivadas, CancellationToken ct);
     Task<ContaFixaDto> Salvar(Guid loja, int usuario, Guid? id, ContaFixaRequest req, CancellationToken ct);
     Task<ContaFixaDto> Arquivar(Guid loja, int usuario, Guid id, CancellationToken ct);
+    Task<ContaFixaDto> Reativar(Guid loja, int usuario, Guid id, string? motivo, CancellationToken ct);
+    Task<IReadOnlyList<ContaFixaHistoricoDto>> Historico(Guid loja, Guid id, CancellationToken ct);
     Task<IReadOnlyList<OcorrenciaDto>> Ocorrencias(Guid loja, DateOnly mes, CancellationToken ct);
     Task<GeracaoDto> Gerar(Guid loja, int usuario, DateOnly mes, CancellationToken ct);
     Task<OcorrenciaDto> Lancar(Guid loja, int usuario, Guid id, LancarOcorrenciaRequest req, CancellationToken ct);
@@ -31,7 +33,7 @@ public sealed class RecorrenciasService(NpgsqlDataSource dataSource, IAcontecime
 
     public const string TipoDespesaFixa = "despesa_fixa", CategoriaFixas = "Despesas fixas";
 
-    private const string Colunas = "id, nome, finalidade, valor_previsto, dia_vencimento, valor_varia, arquivada, conta_id, versao, criado_em";
+    private const string Colunas = "id, nome, finalidade, valor_previsto, dia_vencimento, valor_varia, arquivada, conta_id, versao, criado_em, ativa_desde";
 
     private sealed class FixaRow
     {
@@ -45,6 +47,7 @@ public sealed class RecorrenciasService(NpgsqlDataSource dataSource, IAcontecime
         public Guid? ContaId { get; set; }
         public int Versao { get; set; }
         public DateTime CriadoEm { get; set; }
+        public DateTime? AtivaDesde { get; set; }
         public ContaFixaDto Dto() => new(Id, Nome, Finalidade, ValorPrevisto, DiaVencimento, ValorVaria, Arquivada, ContaId, Versao);
     }
 
@@ -60,35 +63,91 @@ public sealed class RecorrenciasService(NpgsqlDataSource dataSource, IAcontecime
     public async Task<ContaFixaDto> Salvar(Guid loja, int usuario, Guid? id, ContaFixaRequest req, CancellationToken ct)
     {
         var r = RecorrenciaRegras.Validar(req);
+        var hoje = await Hoje(loja, ct);
         await using var c = await dataSource.OpenConnectionAsync(ct);
+        await using var tx = await c.BeginTransactionAsync(ct);
         var p = new
         {
             loja, id = id ?? Guid.NewGuid(), nome = Cortar(r.Nome!, 120), finalidade = r.Finalidade is null ? null : Cortar(r.Finalidade, 60),
             valor = r.ValorPrevisto, dia = (short)r.DiaVencimento!.Value, varia = r.ValorVaria, r.ContaId, usuario, agora = _relogio.GetUtcNow(), r.Versao,
         };
+        ContaFixaDto? antes = null;
         if (id is null)
             await c.ExecuteAsync(@"
 INSERT INTO gestao_contas_fixas (id, estabelecimento_id, nome, finalidade, valor_previsto, dia_vencimento, valor_varia, conta_id, criado_por,
     criado_em, atualizado_por, atualizado_em)
-VALUES (@id, @loja, @nome, @finalidade, @valor, @dia, @varia, @ContaId, @usuario, @agora, @usuario, @agora)", p);
-        // Mudar o valor vale do próximo lançamento em diante; o que já está no livro não muda.
-        else if (await c.ExecuteAsync(@"
+VALUES (@id, @loja, @nome, @finalidade, @valor, @dia, @varia, @ContaId, @usuario, @agora, @usuario, @agora)", p, tx);
+        else
+        {
+            antes = await Obter(c, loja, id.Value, tx, travar: true) ?? throw NaoEncontrada();
+            if (r.Versao is { } v && v != antes.Versao)
+                throw new GestaoException("IDEMPOTENCIA_CONFLITO", "Outra pessoa alterou esta conta. Atualize a tela.", 409);
+            // Mudar o valor vale do próximo lançamento em diante; o que já está no livro não muda.
+            await c.ExecuteAsync(@"
 UPDATE gestao_contas_fixas SET nome = @nome, finalidade = @finalidade, valor_previsto = @valor, dia_vencimento = @dia, valor_varia = @varia,
        conta_id = @ContaId, versao = versao + 1, atualizado_por = @usuario, atualizado_em = @agora
- WHERE estabelecimento_id = @loja AND id = @id AND (@Versao::int IS NULL OR versao = @Versao)", p) == 0)
-            throw await Obter(c, loja, id.Value) is null
-                ? new GestaoException("NAO_ENCONTRADO", "Conta fixa não encontrada.", 404)
-                : new GestaoException("IDEMPOTENCIA_CONFLITO", "Outra pessoa alterou esta conta. Atualize a tela.", 409);
-        return (await Obter(c, loja, p.id))!;
+ WHERE estabelecimento_id = @loja AND id = @id", p, tx);
+        }
+        var depois = (await Obter(c, loja, p.id, tx))!;
+        if (RecorrenciaRegras.Mudou(antes, depois))
+            await RegistrarMudanca(c, tx, loja, usuario, antes is null ? AcaoContaFixa.Criada : AcaoContaFixa.Editada, antes, depois, hoje, r.Motivo);
+        await tx.CommitAsync(ct);
+        return depois;
     }
 
-    public async Task<ContaFixaDto> Arquivar(Guid loja, int usuario, Guid id, CancellationToken ct)
+    public Task<ContaFixaDto> Arquivar(Guid loja, int usuario, Guid id, CancellationToken ct) => MudarArquivo(loja, usuario, id, true, null, ct);
+
+    /// <summary>A conta volta a lembrar e a ser gerada do mês atual em diante; os meses em que ficou arquivada não viram pendência.</summary>
+    public Task<ContaFixaDto> Reativar(Guid loja, int usuario, Guid id, string? motivo, CancellationToken ct) =>
+        MudarArquivo(loja, usuario, id, false, RecorrenciaRegras.Motivo(motivo), ct);
+
+    private async Task<ContaFixaDto> MudarArquivo(Guid loja, int usuario, Guid id, bool arquivar, string? motivo, CancellationToken ct)
+    {
+        var hoje = await Hoje(loja, ct);
+        await using var c = await dataSource.OpenConnectionAsync(ct);
+        await using var tx = await c.BeginTransactionAsync(ct);
+        var antes = await Obter(c, loja, id, tx, travar: true) ?? throw NaoEncontrada();
+        if (antes.Arquivada == arquivar) { await tx.CommitAsync(ct); return antes; }
+        await c.ExecuteAsync(@"UPDATE gestao_contas_fixas SET arquivada = @arquivar, versao = versao + 1, atualizado_por = @usuario, atualizado_em = @agora,
+       ativa_desde = CASE WHEN @arquivar THEN ativa_desde ELSE @mes::date END
+ WHERE estabelecimento_id = @loja AND id = @id", new { loja, id, usuario, arquivar, agora = _relogio.GetUtcNow(), mes = RecorrenciaRegras.Mes(hoje).ToDateTime(TimeOnly.MinValue) }, tx);
+        var depois = (await Obter(c, loja, id, tx))!;
+        await RegistrarMudanca(c, tx, loja, usuario, arquivar ? AcaoContaFixa.Arquivada : AcaoContaFixa.Reativada, antes, depois, hoje, motivo);
+        await tx.CommitAsync(ct);
+        return depois;
+    }
+
+    public async Task<IReadOnlyList<ContaFixaHistoricoDto>> Historico(Guid loja, Guid id, CancellationToken ct)
     {
         await using var c = await dataSource.OpenConnectionAsync(ct);
-        await c.ExecuteAsync(@"UPDATE gestao_contas_fixas SET arquivada = true, versao = versao + 1, atualizado_por = @usuario, atualizado_em = @agora
- WHERE estabelecimento_id = @loja AND id = @id AND NOT arquivada", new { loja, id, usuario, agora = _relogio.GetUtcNow() });
-        return await Obter(c, loja, id) ?? throw new GestaoException("NAO_ENCONTRADO", "Conta fixa não encontrada.", 404);
+        if (await Obter(c, loja, id) is null) throw NaoEncontrada();
+        return (await c.QueryAsync<(Guid Id, int Versao, string Acao, string? Antes, string Depois, DateTime ValeAPartir, string? Motivo, int Por,
+                string? PorNome, DateTime Em)>(@"
+SELECT h.id, h.versao, h.acao, h.antes::text, h.depois::text, h.vale_a_partir, h.motivo, h.por, u.nome::text, h.em
+  FROM gestao_contas_fixas_historico h LEFT JOIN usuario u ON u.id = h.por
+ WHERE h.estabelecimento_id = @loja AND h.conta_fixa_id = @id ORDER BY h.em DESC, h.versao DESC", new { loja, id }))
+            .Select(h => new ContaFixaHistoricoDto(h.Id, h.Versao, h.Acao, h.Antes is null ? null : JsonSerializer.Deserialize<ContaFixaDto>(h.Antes, Json),
+                JsonSerializer.Deserialize<ContaFixaDto>(h.Depois, Json)!, DateOnly.FromDateTime(h.ValeAPartir), h.Motivo, h.Por, h.PorNome,
+                new DateTimeOffset(DateTime.SpecifyKind(h.Em, DateTimeKind.Utc))))
+            .ToList();
     }
+
+    private async Task RegistrarMudanca(NpgsqlConnection c, NpgsqlTransaction tx, Guid loja, int usuario, string acao, ContaFixaDto? antes,
+        ContaFixaDto depois, DateOnly hoje, string? motivo)
+    {
+        var mes = RecorrenciaRegras.Mes(hoje);
+        var lancado = (await Lancadas(c, loja, mes)).Any(l => l.FixaId == depois.Id);
+        await c.ExecuteAsync(@"
+INSERT INTO gestao_contas_fixas_historico (id, estabelecimento_id, conta_fixa_id, versao, acao, antes, depois, vale_a_partir, motivo, por, em)
+VALUES (@id, @loja, @conta, @versao, @acao, @antes::jsonb, @depois::jsonb, @vale, @motivo, @usuario, @agora)", new
+        {
+            id = Guid.NewGuid(), loja, conta = depois.Id, versao = depois.Versao, acao,
+            antes = antes is null ? null : JsonSerializer.Serialize(antes, Json), depois = JsonSerializer.Serialize(depois, Json),
+            vale = RecorrenciaRegras.ValeAPartir(hoje, lancado).ToDateTime(TimeOnly.MinValue), motivo, usuario, agora = _relogio.GetUtcNow(),
+        }, tx);
+    }
+
+    private static GestaoException NaoEncontrada() => new("NAO_ENCONTRADO", "Conta fixa não encontrada.", 404);
 
     public async Task<IReadOnlyList<OcorrenciaDto>> Ocorrencias(Guid loja, DateOnly mes, CancellationToken ct)
     {
@@ -142,23 +201,11 @@ UPDATE gestao_contas_fixas SET nome = @nome, finalidade = @finalidade, valor_pre
         return RecorrenciaRegras.Lembretes(ocorrencias, lancadas.ToDictionary(l => l.AcontecimentoId, l => l.LancamentoId), hoje, dias);
     }
 
-    public async Task<IReadOnlyList<string>> Finalidades(Guid loja, CancellationToken ct)
-    {
-        await using var c = await dataSource.OpenConnectionAsync(ct);
-        return (await c.QueryAsync<string>("SELECT nome FROM gestao_finalidades WHERE estabelecimento_id = @loja ORDER BY nome", new { loja })).ToList();
-    }
+    // Finalidades: o cadastro com id fica em FinalidadesService; aqui só o atalho que as telas antigas e os testes usam.
+    public Task<IReadOnlyList<string>> Finalidades(Guid loja, CancellationToken ct) => new FinalidadesService(dataSource, _relogio).Ativas(loja, ct);
 
-    /// <summary>Finalidade é da loja (regra 7); a mesma escrita de outro jeito ("Gás", "gas") é a mesma finalidade.</summary>
-    public async Task<string> CriarFinalidade(Guid loja, int usuario, string? nome, CancellationToken ct)
-    {
-        var limpo = nome?.Trim() ?? "";
-        if (limpo.Length is < 2 or > 60) throw Invalido("Finalidade com 2 a 60 letras.");
-        var chave = DocumentoRegras.NomeChave(limpo);
-        await using var c = await dataSource.OpenConnectionAsync(ct);
-        await c.ExecuteAsync(@"INSERT INTO gestao_finalidades (estabelecimento_id, nome, chave, criado_por) VALUES (@loja, @limpo, @chave, @usuario)
-ON CONFLICT DO NOTHING", new { loja, limpo, chave, usuario });
-        return await c.ExecuteScalarAsync<string>("SELECT nome FROM gestao_finalidades WHERE estabelecimento_id = @loja AND chave = @chave", new { loja, chave }) ?? limpo;
-    }
+    public Task<string> CriarFinalidade(Guid loja, int usuario, string? nome, CancellationToken ct) =>
+        new FinalidadesService(dataSource, _relogio).Criar(loja, usuario, nome, ct);
 
     // ---------------------------------------------------------------- apoio
 
@@ -210,8 +257,9 @@ ON CONFLICT DO NOTHING", new { loja, limpo, chave, usuario });
             var venc = RecorrenciaRegras.Vencimento(mes, f.DiaVencimento);
             if (lancadas.TryGetValue(f.Id, out var l))
                 r.Add(new OcorrenciaDto(f.Id, f.Nome, mes, l.Vencimento ?? venc, l.Valor, EstadoOcorrencia.Lancada, l.AcontecimentoId, l.Status));
-            // Antes do mês em que a conta foi cadastrada não há o que lembrar.
-            else if ((!f.Arquivada || incluirArquivadas) && mes >= RecorrenciaRegras.Mes(DateOnly.FromDateTime(f.CriadoEm.AddHours(-3))))
+            // Antes do mês em que a conta foi cadastrada (ou reativada) não há o que lembrar.
+            else if ((!f.Arquivada || incluirArquivadas) && mes >= RecorrenciaRegras.Mes(DateOnly.FromDateTime(f.CriadoEm.AddHours(-3)))
+                     && (f.AtivaDesde is not { } desde || mes >= DateOnly.FromDateTime(desde)))
                 r.Add(new OcorrenciaDto(f.Id, f.Nome, mes, venc, f.ValorPrevisto, RecorrenciaRegras.EstadoSemLancamento(f.ValorVaria), null, null));
         }
         return r;
@@ -232,9 +280,9 @@ SELECT a.dados->>'contaFixaId', a.id, s.id,
         .Select(x => new Lancada(Guid.Parse(x.FixaId), x.AcontecimentoId, x.LancamentoId, x.Valor, x.Status,
             x.Vencimento is { } v ? DateOnly.FromDateTime(v) : null)).ToList();
 
-    private static async Task<ContaFixaDto?> Obter(NpgsqlConnection c, Guid loja, Guid id) =>
-        (await c.QuerySingleOrDefaultAsync<FixaRow>($"SELECT {Colunas} FROM gestao_contas_fixas WHERE estabelecimento_id = @loja AND id = @id",
-            new { loja, id }))?.Dto();
+    private static async Task<ContaFixaDto?> Obter(NpgsqlConnection c, Guid loja, Guid id, NpgsqlTransaction? tx = null, bool travar = false) =>
+        (await c.QuerySingleOrDefaultAsync<FixaRow>($"SELECT {Colunas} FROM gestao_contas_fixas WHERE estabelecimento_id = @loja AND id = @id{(travar ? " FOR UPDATE" : "")}",
+            new { loja, id }, tx))?.Dto();
 
     private async Task<DateOnly> Hoje(Guid loja, CancellationToken ct) =>
         AcontecimentoRegras.DiaLocal(_relogio.GetUtcNow(), await livro.Fuso(loja, ct));

@@ -33,7 +33,7 @@ public class GestaoRecorrenciasDatabaseTests
 CREATE TABLE usuario(id integer PRIMARY KEY, nome text);
 INSERT INTO estabelecimentos VALUES (@loja, 'America/Sao_Paulo'); INSERT INTO usuario VALUES (7, 'Marina');", new { loja });
                 foreach (var m in new[] { "20261105_01_gestao_fundacao.sql", "20261106_01_gestao_documentos.sql", "20261107_01_gestao_vinculos.sql",
-                             "20261111_01_gestao_recorrencias.sql", "20261111_01_gestao_recorrencias.sql" })
+                             "20261111_01_gestao_recorrencias.sql", "20261111_01_gestao_recorrencias.sql", "20261115_10_gestao_despesas_cadastros.sql" })
                     await c.ExecuteAsync(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "Migrations", "Delivery", m)));
             }
             var livro = new AcontecimentosService(fonte, Array.Empty<IAcontecimentoAssinante>(), NullLogger<AcontecimentosService>.Instance);

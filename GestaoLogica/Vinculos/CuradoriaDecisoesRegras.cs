@@ -56,6 +56,13 @@ public sealed record SinalDeVinculo(string NomeChave, string Descricao, Guid Loj
 public sealed record ItemGlobal(Guid Id, string Nome, string Unidade, string? Categoria, string Status, DateTimeOffset CriadoEm,
     int Lojas, int Confirmacoes, int Cidades);
 
+/// <summary>Critérios de promoção. Os vigentes são do super admin (gestao_curadoria_criterios); sem registro, vale o padrão.</summary>
+public sealed record CriteriosCuradoria(int Lojas, int Confirmacoes, decimal DivergenciaMax)
+{
+    public static readonly CriteriosCuradoria Padrao = new(CuradoriaDecisoesRegras.CriterioLojas,
+        CuradoriaDecisoesRegras.CriterioConfirmacoes, CuradoriaDecisoesRegras.CriterioDivergenciaMax);
+}
+
 public static class CuradoriaDecisoesRegras
 {
     public const int CriterioLojas = 5, CriterioConfirmacoes = 10;
@@ -74,8 +81,11 @@ public static class CuradoriaDecisoesRegras
 
     public static decimal TaxaDeDivergencia(CasoCuradoria c) => (decimal)c.Divergencias / Math.Max(c.Confirmacoes, 1);
 
-    public static bool AtingeCriterios(CasoCuradoria c) =>
-        c.Lojas >= CriterioLojas && c.Confirmacoes >= CriterioConfirmacoes && TaxaDeDivergencia(c) <= CriterioDivergenciaMax;
+    public static bool AtingeCriterios(CasoCuradoria c, CriteriosCuradoria? k = null)
+    {
+        k ??= CriteriosCuradoria.Padrao;
+        return c.Lojas >= k.Lojas && c.Confirmacoes >= k.Confirmacoes && TaxaDeDivergencia(c) <= k.DivergenciaMax;
+    }
 
     public static string EstadoApos(string decisao) => decisao switch
     {
@@ -112,24 +122,26 @@ public static class CuradoriaDecisoesRegras
     // ------------------------------------------------------------ validação da decisão (regra 2)
 
     /// <summary>Aprovar dentro dos critérios dispensa o motivo (usa o padrão). Todo o resto pede motivo.</summary>
-    public static bool MotivoObrigatorio(CasoCuradoria c, string decisao) => !(decisao == DecisaoCuradoria.Aprovar && AtingeCriterios(c));
+    public static bool MotivoObrigatorio(CasoCuradoria c, string decisao, CriteriosCuradoria? k = null) =>
+        !(decisao == DecisaoCuradoria.Aprovar && AtingeCriterios(c, k));
 
     public sealed record NovaDecisao(string Decisao, string Motivo, string Anterior, string Novo, bool Excecao, int? ConfirmacoesNoRegistro);
 
     /// <summary>Monta o que vai ser gravado. Só decide caso aberto ou em observação; responsável vem do login.</summary>
-    public static NovaDecisao Montar(CasoCuradoria c, string estadoAtual, string? decisao, string? motivo, string? produtoEscolhido)
+    public static NovaDecisao Montar(CasoCuradoria c, string estadoAtual, string? decisao, string? motivo, string? produtoEscolhido,
+        CriteriosCuradoria? k = null)
     {
         if (!DecisaoCuradoria.Valida(decisao)) throw Invalido("Escolha aprovar, observar, corrigir ou rejeitar.");
         if (estadoAtual is not ("aberto" or "observacao"))
             throw new GestaoException("CASO_JA_DECIDIDO", "Este caso já foi decidido. Reabra a decisão para mudar.", 409);
         var m = (motivo ?? "").Trim();
-        if (m.Length == 0 && !MotivoObrigatorio(c, decisao!)) m = MotivoPadraoAprovacao;
+        if (m.Length == 0 && !MotivoObrigatorio(c, decisao!, k)) m = MotivoPadraoAprovacao;
         if (m.Length == 0) throw Invalido("Conte o motivo da decisão.", "MOTIVO_OBRIGATORIO");
         if (decisao == DecisaoCuradoria.Corrigir && string.IsNullOrWhiteSpace(produtoEscolhido))
             throw Invalido("Escolha o produto global do vínculo corrigido.", "ALVO_OBRIGATORIO");
         var (anterior, novo) = AntesEDepois(c, decisao!, produtoEscolhido);
         return new NovaDecisao(decisao!, Cortar(m, 500), Cortar(anterior, 300), Cortar(novo, 300),
-            decisao == DecisaoCuradoria.Aprovar && !AtingeCriterios(c),
+            decisao == DecisaoCuradoria.Aprovar && !AtingeCriterios(c, k),
             decisao == DecisaoCuradoria.Observar ? c.Confirmacoes : null);
     }
 
@@ -144,12 +156,12 @@ public static class CuradoriaDecisoesRegras
     /// <summary>Tipos que pedem uma escolha humana (qual lado vale, o que mesclar): nunca entram em lote.</summary>
     public static bool ExigeEscolha(string tipo) => tipo is TipoCaso.Contra or TipoCaso.Duplicidade or "inc";
 
-    public static string? MotivoForaDoLote(CasoCuradoria c, string decisao, string estado)
+    public static string? MotivoForaDoLote(CasoCuradoria c, string decisao, string estado, CriteriosCuradoria? k = null)
     {
         if (estado is not ("aberto" or "observacao")) return "Já foi decidido.";
         if (decisao == DecisaoCuradoria.Observar) return null;
         if (ExigeEscolha(c.Tipo)) return "Pede uma escolha sua (qual lado vale). Decida no caso.";
-        if (!AtingeCriterios(c)) return "Ainda não cumpre os critérios de promoção.";
+        if (!AtingeCriterios(c, k)) return "Ainda não cumpre os critérios de promoção.";
         return null;
     }
 
