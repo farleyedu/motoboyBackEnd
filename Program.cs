@@ -168,6 +168,10 @@ builder.Services.AddScoped<APIBack.GestaoLogica.Equipe.IEquipeService, APIBack.G
 builder.Services.AddScoped<APIBack.GestaoLogica.Caixa.ICaixaService, APIBack.GestaoLogica.Caixa.CaixaService>();
 builder.Services.AddScoped<APIBack.GestaoLogica.Despesas.IRecorrenciasService, APIBack.GestaoLogica.Despesas.RecorrenciasService>();
 builder.Services.AddHostedService<APIBack.GestaoLogica.Despesas.ContasFixasWorker>();
+// Integração 6B: catálogo da loja/global, lista e compra à mão, agregados do Financeiro.
+builder.Services.AddScoped<APIBack.GestaoLogica.Catalogo.ICatalogoService, APIBack.GestaoLogica.Catalogo.CatalogoService>();
+builder.Services.AddScoped<APIBack.GestaoLogica.Compras.IComprasListaService, APIBack.GestaoLogica.Compras.ComprasListaService>();
+builder.Services.AddScoped<APIBack.GestaoLogica.Financeiro.IFinanceiroService, APIBack.GestaoLogica.Financeiro.FinanceiroService>();
 Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddSingleton(builder.Services, TimeProvider.System);
 builder.Services.AddScoped<CardapioMotoboyAttentionRepository>();
 builder.Services.AddScoped<IfoodProdutoVinculoRepository>();

@@ -346,4 +346,19 @@ SELECT k.id, k.tipo, k.subtipo, k.nome, k.dia_fechamento, k.dia_vencimento, k.at
 
     private static LiquidacaoDto Dto(LiquidacaoRow r) => new(r.Id, r.AcontecimentoId, r.LancamentoId, r.ContaId, r.Valor,
         r.DataPagamento, r.CorrigeLiquidacaoId);
+
+    /// <summary>
+    /// Despesas ainda a pagar com vencimento até <paramref name="ate"/>, de qualquer mês (inclui as atrasadas há meses), mais as
+    /// correções que apontam para elas (para o valor líquido). Integração 6B: "vencendo em breve" sem limite de um mês.
+    /// </summary>
+    public static async Task<List<LancamentoDto>> DespesasEmAberto(NpgsqlConnection c, Guid loja, DateOnly ate) =>
+        (await c.QueryAsync<LancamentoRow>($@"
+WITH abertos AS (
+    SELECT s.id FROM gestao_lancamentos_situacao s
+     WHERE s.estabelecimento_id = @loja AND s.natureza = 'despesa' AND s.status = 'a_pagar'
+       AND s.corrige_lancamento_id IS NULL AND s.data_vencimento <= @ate)
+SELECT {LancamentoColunas} FROM gestao_lancamentos_situacao s
+ WHERE s.estabelecimento_id = @loja AND (s.id IN (SELECT id FROM abertos) OR s.corrige_lancamento_id IN (SELECT id FROM abertos))
+ ORDER BY s.data_vencimento NULLS LAST, s.linha
+ LIMIT 1000;", new { loja, ate })).Select(Dto).ToList();
 }
