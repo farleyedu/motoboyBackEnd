@@ -56,7 +56,7 @@ INSERT INTO usuario VALUES (7, 'Marina'), (1, 'Zippy');", new { loja });
                     await c.ExecuteAsync(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "Migrations", m)));
                 await c.ExecuteAsync(@"
 INSERT INTO gestao_catalogo_global (id, nome, nome_chave, unidade, categoria, status, criado_por, curado_por, curado_em, ilustracao)
-VALUES (@bacon, 'Bacon fatiado', 'BACON FATIADO', 'g', 'Carnes', 'validado', 1, 1, now(), 'bacon.webp');
+VALUES (@bacon, 'Bacon fatiado', 'BACON FATIADO', 'g', 'Carnes', 'validado', 1, 1, now(), 'bacon');
 INSERT INTO gestao_catalogo_kits (id, nome) VALUES (@kit, 'Hamburgueria');
 INSERT INTO gestao_catalogo_kit_itens (kit_id, global_id) VALUES (@kit, @bacon);", new { bacon, kit = Guid.NewGuid() });
             }
@@ -106,7 +106,7 @@ INSERT INTO gestao_catalogo_kit_itens (kit_id, global_id) VALUES (@kit, @bacon);
 
             // Importar do global e de novo: DUPLICADO. O kit diz que já existia.
             var importado = await catalogo.Importar(loja, 7, bacon, ["Ingrediente"], default);
-            Assert.Equal((OrigemCatalogo.Global, "bacon.webp", "Carnes"), (importado.Origem, importado.Ilustracao, importado.Categoria));
+            Assert.Equal((OrigemCatalogo.Global, "bacon", "Carnes"), (importado.Origem, importado.Ilustracao, importado.Categoria));
             Assert.Equal("DUPLICADO", (await Assert.ThrowsAsync<GestaoException>(() => catalogo.Importar(loja, 7, bacon, null, default))).Codigo);
             var global = await catalogo.Global(loja, "bac", default);
             Assert.True(Assert.Single(global.Produtos).NaLoja);

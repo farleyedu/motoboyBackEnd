@@ -12,9 +12,9 @@ ALTER TABLE gestao_catalogo_global ADD COLUMN IF NOT EXISTS ilustracao varchar(1
 DO $$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'ck_gestao_catalogo_ilustracao_arquivo') THEN
-        -- Nome de arquivo do Painel (/zippy-gestao/ilustracoes), nunca URL: foto de cliente nao cabe aqui.
+        -- Nome do arquivo no Painel, sem extensao (/zippy-gestao/ilustracoes/{nome}.webp), nunca URL: foto de cliente nao cabe aqui.
         ALTER TABLE gestao_catalogo_global ADD CONSTRAINT ck_gestao_catalogo_ilustracao_arquivo
-            CHECK (ilustracao IS NULL OR ilustracao ~ '^[a-z0-9][a-z0-9_-]*\.(svg|png|webp)$');
+            CHECK (ilustracao IS NULL OR ilustracao ~ '^[a-z0-9][a-z0-9_-]*$');
     END IF;
 END $$;
 
