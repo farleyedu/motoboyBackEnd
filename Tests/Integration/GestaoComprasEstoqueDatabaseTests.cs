@@ -112,6 +112,8 @@ INSERT INTO pedido_item (pedido_id, produto_id, nome, quantidade) VALUES
             Assert.Equal((StatusLinha.Conferido, 24m), (compra.Linhas[0].Status, compra.Linhas[0].QuantidadeEntrada));
             Assert.Equal(StatusLinha.ConsumoDireto, compra.Linhas[2].Status);
             Assert.Null(compra.Linhas[2].MovimentoId);
+            Assert.Equal((7, "Marina"), (compra.Linhas[0].ConfirmadoPor, compra.Linhas[0].ConfirmadoPorNome));
+            Assert.Null(compra.Linhas[1].ConfirmadoPor);
             Assert.Equal("DUPLICADO", (await Assert.ThrowsAsync<GestaoException>(() =>
                 compras.Conferir(loja, 7, doc.Id, 1, new ConferirItemRequest(4, false, true), default))).Codigo);
             var estoque = new EstoqueService(fonte, livro, new FichaFake(new()

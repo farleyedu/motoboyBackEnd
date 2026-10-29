@@ -17,19 +17,28 @@ public sealed record RegistrarCompraRequest(Guid DocumentoId, string Forma, Guid
     DateOnly? DataPagamento = null, string? Categoria = null, string? Finalidade = null);
 
 /// <summary>
-/// Conferência de uma linha. <c>QuantidadeRecebida</c> na unidade do cupom (padrão: a do cupom). <c>ConsumoDireto</c> = item que
-/// não vai para o estoque (desengordurante): registra a conferência sem movimento.
+/// Conferência de uma linha. <c>QuantidadeRecebida</c> na unidade do cupom (padrão: a do cupom). Fora do estoque, <c>Destino</c>
+/// diz por quê: <c>consumo</c> (gasto na hora, como o desengordurante) ou <c>nao_controlar</c> (a loja não controla esse item).
+/// <c>ConsumoDireto = true</c> sem destino continua valendo como <c>consumo</c>. Nenhum dos dois gera movimento.
 /// </summary>
-public sealed record ConferirItemRequest(decimal? QuantidadeRecebida, bool ConsumoDireto, bool ConfirmacaoHumana);
+public sealed record ConferirItemRequest(decimal? QuantidadeRecebida, bool ConsumoDireto, bool ConfirmacaoHumana, string? Destino = null);
+
+public static class DestinoLinha
+{
+    public const string Estoque = "estoque", Consumo = "consumo", NaoControlar = "nao_controlar";
+}
 
 public static class StatusLinha
 {
-    public const string SemVinculo = "sem_vinculo", Pendente = "pendente", Conferido = "conferido", ConsumoDireto = "consumo_direto";
+    public const string SemVinculo = "sem_vinculo", Pendente = "pendente", Conferido = "conferido", ConsumoDireto = "consumo_direto",
+        NaoControlar = "nao_controlar";
 }
 
+/// <summary><c>ConfirmadoPor</c>/<c>ConfirmadoPorNome</c>/<c>ConfirmadoEm</c>: quem conferiu a linha e quando (null se pendente).</summary>
 public sealed record LinhaCompraDto(int Linha, string Descricao, decimal Quantidade, string Unidade, decimal ValorTotal, string Status,
     Guid? VinculoId, Guid? InsumoId, string? InsumoNome, decimal? Fator, string? UnidadeBase, decimal? QuantidadeEsperada,
-    decimal? QuantidadeEntrada, Guid? ConferenciaId, Guid? MovimentoId);
+    decimal? QuantidadeEntrada, Guid? ConferenciaId, Guid? MovimentoId, int? ConfirmadoPor = null, string? ConfirmadoPorNome = null,
+    DateTimeOffset? ConfirmadoEm = null);
 
 public sealed record CompraDto(Guid DocumentoId, Guid AcontecimentoId, FornecedorLido Fornecedor, DateTimeOffset DataFato, decimal Total,
     bool Estornada, int Conferidas, int Pendentes, IReadOnlyList<LinhaCompraDto> Linhas, AcontecimentoDto Acontecimento);
@@ -53,7 +62,8 @@ public sealed class ComprasService(NpgsqlDataSource dataSource, IAcontecimentosS
     public const string TipoCompra = "compra", TipoConferencia = "conferencia_item";
 
     private sealed record Documento(Guid Id, DocumentoLido Lido, DateTimeOffset CriadoEm);
-    private sealed record Conferencia(string OrigemId, Guid Id, string Dados, Guid? MovimentoId, decimal? Quantidade);
+    private sealed record Conferencia(string OrigemId, Guid Id, string Dados, Guid? MovimentoId, decimal? Quantidade, int? ResponsavelId,
+        string? ResponsavelNome, DateTimeOffset RegistradoEm);
     private sealed record VinculoAtivo(Guid Id, Guid InsumoId, string? InsumoNome, decimal Fator, string UnidadeBase);
 
     public async Task<CompraDto> Registrar(Guid loja, int usuario, RegistrarCompraRequest req, CancellationToken ct)
@@ -115,7 +125,9 @@ SELECT id FROM gestao_acontecimentos WHERE estabelecimento_id = @loja AND tipo =
         var conferencias = (await c.QueryAsync<Conferencia>(@"
 SELECT a.origem_id AS OrigemId, a.id, a.dados::text AS Dados, m.id AS MovimentoId,
        m.quantidade + coalesce((SELECT sum(x.quantidade) FROM gestao_movimentos_estoque x
-                                 WHERE x.estabelecimento_id = m.estabelecimento_id AND x.corrige_movimento_id = m.id), 0) AS Quantidade
+                                 WHERE x.estabelecimento_id = m.estabelecimento_id AND x.corrige_movimento_id = m.id), 0) AS Quantidade,
+       a.responsavel_id AS ResponsavelId, (SELECT u.nome FROM usuario u WHERE u.id = a.responsavel_id) AS ResponsavelNome,
+       a.registrado_em AS RegistradoEm
   FROM gestao_acontecimentos a
   LEFT JOIN gestao_movimentos_estoque m ON m.estabelecimento_id = a.estabelecimento_id AND m.acontecimento_id = a.id AND m.linha = 1
  WHERE a.estabelecimento_id = @loja AND a.tipo = 'conferencia_item' AND a.origem_tipo = 'compra_item' AND a.origem_id LIKE @prefixo
@@ -127,17 +139,17 @@ SELECT a.origem_id AS OrigemId, a.id, a.dados::text AS Dados, m.id AS MovimentoI
             var esperado = v is null ? (decimal?)null : Math.Round(item.Quantidade * v.Fator, 4);
             if (conferencias.TryGetValue(item.Linha, out var conf))
             {
-                var consumo = JsonDocument.Parse(conf.Dados).RootElement.TryGetProperty("consumoDireto", out var cd) && cd.GetBoolean();
                 linhas.Add(new LinhaCompraDto(item.Linha, item.Descricao, item.Quantidade, item.Unidade, item.ValorTotal,
-                    consumo ? StatusLinha.ConsumoDireto : StatusLinha.Conferido, v?.Id, v?.InsumoId, v?.InsumoNome, v?.Fator,
-                    v?.UnidadeBase, esperado, conf.Quantidade, conf.Id, conf.MovimentoId));
+                    StatusDaConferencia(conf.Dados), v?.Id, v?.InsumoId, v?.InsumoNome, v?.Fator,
+                    v?.UnidadeBase, esperado, conf.Quantidade, conf.Id, conf.MovimentoId, conf.ResponsavelId, conf.ResponsavelNome,
+                    conf.RegistradoEm));
             }
             else
                 linhas.Add(new LinhaCompraDto(item.Linha, item.Descricao, item.Quantidade, item.Unidade, item.ValorTotal,
                     v is null ? StatusLinha.SemVinculo : StatusLinha.Pendente, v?.Id, v?.InsumoId, v?.InsumoNome, v?.Fator,
                     v?.UnidadeBase, esperado, null, null, null));
         }
-        var conferidas = linhas.Count(l => l.Status is StatusLinha.Conferido or StatusLinha.ConsumoDireto);
+        var conferidas = linhas.Count(l => l.Status is StatusLinha.Conferido or StatusLinha.ConsumoDireto or StatusLinha.NaoControlar);
         return new CompraDto(doc.Id, id, doc.Lido.Fornecedor, acontecimento.DataFato, doc.Lido.Total, estornada,
             conferidas, linhas.Count - conferidas, linhas, acontecimento);
     }
@@ -153,9 +165,13 @@ SELECT a.origem_id AS OrigemId, a.id, a.dados::text AS Dados, m.id AS MovimentoI
         if (alvo.ConferenciaId is not null)
             throw new GestaoException("DUPLICADO", "Esta linha já foi conferida. Para corrigir a quantidade, faça um ajuste do movimento.", 409);
 
+        var destino = req.Destino?.Trim() is { Length: > 0 } d ? d : req.ConsumoDireto ? DestinoLinha.Consumo : DestinoLinha.Estoque;
+        if (destino is not (DestinoLinha.Estoque or DestinoLinha.Consumo or DestinoLinha.NaoControlar))
+            throw Invalido("Destino deve ser estoque, consumo ou nao_controlar.");
+        var foraDoEstoque = destino != DestinoLinha.Estoque;
         var recebida = Math.Round(req.QuantidadeRecebida ?? alvo.Quantidade, 4);
         var movimentos = new List<MovimentoRequest>();
-        if (!req.ConsumoDireto)
+        if (!foraDoEstoque)
         {
             if (alvo.VinculoId is null || alvo.InsumoId is null || alvo.Fator is null)
                 throw Invalido("Vincule a linha a um insumo antes de conferir (ou marque como consumo direto).");
@@ -170,12 +186,16 @@ SELECT a.origem_id AS OrigemId, a.id, a.dados::text AS Dados, m.id AS MovimentoI
         await livro.Publicar(loja, usuario, new PublicarAcontecimentoRequest
         {
             ChaveIdempotencia = $"compras:conferencia:{documentoId}:{linha}", Tipo = TipoConferencia, Modulo = ModuloGestao.Compras,
-            DataFato = agora, Descricao = Cortar((req.ConsumoDireto ? "Consumo direto: " : "Conferência: ") + alvo.Descricao, 300),
+            DataFato = agora, Descricao = Cortar(destino switch
+            {
+                DestinoLinha.Consumo => "Consumo direto: ", DestinoLinha.NaoControlar => "Sem controle de estoque: ", _ => "Conferência: ",
+            } + alvo.Descricao, 300),
             Origem = new OrigemRef { Tipo = "compra_item", Id = $"{documentoId}:{linha}" },
             Dados = JsonSerializer.SerializeToElement(new
             {
                 documentoId, compraId = compra.AcontecimentoId, linha, quantidadeCupom = alvo.Quantidade, quantidadeRecebida = recebida,
-                unidadeCupom = alvo.Unidade, fator = alvo.Fator, vinculoId = alvo.VinculoId, consumoDireto = req.ConsumoDireto,
+                unidadeCupom = alvo.Unidade, fator = alvo.Fator, vinculoId = alvo.VinculoId, consumoDireto = destino == DestinoLinha.Consumo,
+                destino,
             }, Json),
             Movimentos = movimentos, ConfirmacaoHumana = true,
         }, ct);
@@ -196,6 +216,18 @@ ON CONFLICT (vinculo_id, documento_id, linha) WHERE documento_id IS NOT NULL DO 
             });
         }
         return (await Obter(loja, documentoId, ct))!;
+    }
+
+    /// <summary>Status de uma linha conferida. Conferências antigas só têm <c>consumoDireto</c>.</summary>
+    public static string StatusDaConferencia(string dados)
+    {
+        var raiz = JsonDocument.Parse(dados).RootElement;
+        if (raiz.TryGetProperty("destino", out var d) && d.ValueKind == JsonValueKind.String)
+            return d.GetString() switch
+            {
+                DestinoLinha.Consumo => StatusLinha.ConsumoDireto, DestinoLinha.NaoControlar => StatusLinha.NaoControlar, _ => StatusLinha.Conferido,
+            };
+        return raiz.TryGetProperty("consumoDireto", out var cd) && cd.ValueKind == JsonValueKind.True ? StatusLinha.ConsumoDireto : StatusLinha.Conferido;
     }
 
     /// <summary>Vínculo ativo da linha: o do fornecedor vence o de "qualquer fornecedor"; a embalagem precisa ser a mesma.</summary>

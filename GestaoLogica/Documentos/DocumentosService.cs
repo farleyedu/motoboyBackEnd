@@ -13,6 +13,7 @@ public interface IDocumentosService
     Task<DocumentoDto> RegistrarFoto(Guid loja, int usuario, byte[] imagem, string mediaType, CancellationToken ct);
     Task<DocumentoDto> Registrar(Guid loja, int usuario, DocumentoLido lido, string? hashArquivo, CancellationToken ct);
     Task<DocumentoDto?> Obter(Guid loja, Guid id, CancellationToken ct);
+    Task<(byte[] Conteudo, string MediaType)?> Arquivo(Guid loja, Guid id, CancellationToken ct);
 }
 
 public sealed class DocumentosService(NpgsqlDataSource dataSource, ILeitorCupomFoto leitorFoto, TimeProvider? relogio = null)
@@ -21,8 +22,12 @@ public sealed class DocumentosService(NpgsqlDataSource dataSource, ILeitorCupomF
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private readonly TimeProvider _relogio = relogio ?? TimeProvider.System;
 
-    public Task<DocumentoDto> RegistrarXml(Guid loja, int usuario, byte[] arquivo, CancellationToken ct) =>
-        Registrar(loja, usuario, DocumentoRegras.LerXml(System.Text.Encoding.UTF8.GetString(arquivo)), DocumentoRegras.Hash(arquivo), ct);
+    public async Task<DocumentoDto> RegistrarXml(Guid loja, int usuario, byte[] arquivo, CancellationToken ct)
+    {
+        var doc = await Registrar(loja, usuario, DocumentoRegras.LerXml(System.Text.Encoding.UTF8.GetString(arquivo)), DocumentoRegras.Hash(arquivo), ct);
+        await GuardarArquivo(loja, doc.Id, arquivo, "application/xml", ct);
+        return doc;
+    }
 
     public async Task<DocumentoDto> RegistrarFoto(Guid loja, int usuario, byte[] imagem, string mediaType, CancellationToken ct)
     {
@@ -32,7 +37,27 @@ public sealed class DocumentosService(NpgsqlDataSource dataSource, ILeitorCupomF
             if (await c.ExecuteScalarAsync<Guid?>("SELECT id FROM gestao_documentos WHERE estabelecimento_id = @loja AND hash_arquivo = @hash",
                     new { loja, hash }) is { } existente)
                 throw Duplicado("Esta foto já foi enviada.", existente);
-        return await Registrar(loja, usuario, await leitorFoto.Ler(imagem, mediaType, ct), hash, ct);
+        var doc = await Registrar(loja, usuario, await leitorFoto.Ler(imagem, mediaType, ct), hash, ct);
+        await GuardarArquivo(loja, doc.Id, imagem, mediaType, ct);
+        return doc;
+    }
+
+    /// <summary>O arquivo original (foto do cupom ou XML), para a conferência mostrar o documento de verdade.</summary>
+    public async Task<(byte[] Conteudo, string MediaType)?> Arquivo(Guid loja, Guid id, CancellationToken ct)
+    {
+        await using var c = await dataSource.OpenConnectionAsync(ct);
+        var row = await c.QuerySingleOrDefaultAsync<(byte[]? Conteudo, string? MediaType)>(
+            "SELECT conteudo, media_type FROM gestao_documento_arquivos WHERE estabelecimento_id = @loja AND documento_id = @id", new { loja, id });
+        return row.Conteudo is null ? null : (row.Conteudo, row.MediaType!);
+    }
+
+    private async Task GuardarArquivo(Guid loja, Guid documentoId, byte[] conteudo, string mediaType, CancellationToken ct)
+    {
+        await using var c = await dataSource.OpenConnectionAsync(ct);
+        await c.ExecuteAsync(@"
+INSERT INTO gestao_documento_arquivos (documento_id, estabelecimento_id, media_type, conteudo, criado_em)
+VALUES (@documentoId, @loja, @mediaType, @conteudo, @agora) ON CONFLICT (documento_id) DO NOTHING",
+            new { documentoId, loja, mediaType, conteudo, agora = _relogio.GetUtcNow() });
     }
 
     public async Task<DocumentoDto> Registrar(Guid loja, int usuario, DocumentoLido lido, string? hashArquivo, CancellationToken ct)

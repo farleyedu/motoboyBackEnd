@@ -38,7 +38,8 @@ public class GestaoDocumentosDatabaseTests
                 await c.ExecuteAsync(@"CREATE TABLE estabelecimentos(id uuid PRIMARY KEY, timezone_iana text);
 CREATE TABLE usuario(id integer PRIMARY KEY, nome text);
 INSERT INTO estabelecimentos VALUES (@loja, 'America/Sao_Paulo'); INSERT INTO usuario VALUES (7, 'Marina');", new { loja });
-                foreach (var m in new[] { "20261105_01_gestao_fundacao.sql", "20261106_01_gestao_documentos.sql", "20261106_01_gestao_documentos.sql" })
+                foreach (var m in new[] { "20261105_01_gestao_fundacao.sql", "20261106_01_gestao_documentos.sql", "20261106_01_gestao_documentos.sql",
+                             "20261112_02_gestao_documento_arquivos.sql" })
                     await c.ExecuteAsync(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "Migrations", "Delivery", m)));
             }
             var chave = "31261075315333011807650030001845521000000001";
@@ -49,6 +50,10 @@ INSERT INTO estabelecimentos VALUES (@loja, 'America/Sao_Paulo'); INSERT INTO us
             var lido = await service.RegistrarFoto(loja, 7, imagem, "image/jpeg", default);
             Assert.Equal(chave, lido.ChaveAcesso);
             Assert.Empty(lido.Duplicidades);
+            // A foto original fica guardada para a conferência mostrar o documento real.
+            var arquivo = await service.Arquivo(loja, lido.Id, default);
+            Assert.Equal((imagem, "image/jpeg"), (arquivo!.Value.Conteudo, arquivo.Value.MediaType));
+            Assert.Null(await service.Arquivo(Guid.NewGuid(), lido.Id, default)); // outra loja não vê
 
             // Mesma foto: barrada antes de chamar a leitura de novo.
             var mesmaFoto = await Assert.ThrowsAsync<GestaoException>(() => service.RegistrarFoto(loja, 7, imagem, "image/jpeg", default));

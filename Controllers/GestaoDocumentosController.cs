@@ -36,6 +36,20 @@ public sealed class GestaoDocumentosController(IDocumentosService service) : Con
     public Task<IActionResult> Obter(Guid id, CancellationToken ct) => Run(async (loja, _) =>
         await service.Obter(loja, id, ct) ?? throw new GestaoException("NAO_ENCONTRADO", "Documento não encontrado.", 404));
 
+    /// <summary>Arquivo original (foto/XML). Documentos lançados antes da Integração 6B não têm arquivo guardado: 404.</summary>
+    [HttpGet("{id:guid}/arquivo")]
+    public async Task<IActionResult> Arquivo(Guid id, CancellationToken ct)
+    {
+        Response.Headers.CacheControl = "private, max-age=3600";
+        if (HttpContext.GetEstabelecimentoId() is not Guid loja || HttpContext.GetUserId() is null) return Unauthorized();
+        var acesso = GestaoPapeis.Resolver(HttpContext.TemPermissao, HttpContext.IsSuperAdmin());
+        if (acesso.Papel != GestaoPapeis.Gerente)
+            return StatusCode(403, ApiResponse<object>.Fail("Só o gerente vê os documentos de compra.", "SEM_PERMISSAO"));
+        return await service.Arquivo(loja, id, ct) is { } a
+            ? File(a.Conteudo, a.MediaType)
+            : NotFound(ApiResponse<object>.Fail("Este documento não tem o arquivo original guardado.", "NAO_ENCONTRADO"));
+    }
+
     private static async Task<byte[]> Ler(IFormFile? arquivo, CancellationToken ct)
     {
         if (arquivo is null || arquivo.Length == 0) throw new GestaoException("CAMPO_INVALIDO", "Envie o arquivo.", 422);
