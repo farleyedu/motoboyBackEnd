@@ -52,13 +52,15 @@ public static class GestaoPapeis
     {
         if (acesso.Papel == Gerente) return filtro;
         if (acesso.Papel != OperadorCaixa) throw SemPermissao("Você não tem acesso à gestão desta loja.");
-        if (filtro.Mes is { } mes && AcontecimentoRegras.Mes(mes) != AcontecimentoRegras.Mes(hoje) || filtro.Dia is { } dia && dia != hoje)
+        if (filtro.Mes is { } mes && AcontecimentoRegras.Mes(mes) != AcontecimentoRegras.Mes(hoje) || filtro.Dia is { } dia && dia != hoje
+            || filtro.Ate is { } ate && ate != hoje)
             throw SemPermissao("O operador de caixa vê só o dia de hoje.");
         var modulo = filtro.Modulo ?? ModuloGestao.Caixa;
         if (modulo is not (ModuloGestao.Caixa or ModuloGestao.Estoque) || !acesso.Areas.Contains(modulo))
             throw SemPermissao("O operador de caixa vê só o Caixa e o Estoque.");
         filtro.Mes = AcontecimentoRegras.Mes(hoje);
         filtro.Dia = hoje;
+        filtro.Ate = null;
         filtro.Modulo = modulo;
         return filtro;
     }

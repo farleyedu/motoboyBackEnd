@@ -163,11 +163,13 @@ public sealed class ContaRequest
     public int? DiaVencimento { get; set; }
 }
 
-/// <summary>Filtro comum das leituras: mes obrigatorio (historico de todos os meses), dia opcional.</summary>
+/// <summary>Filtro comum das leituras: mes obrigatorio (historico de todos os meses), dia opcional. Com <c>Ate</c>, o dia vira o
+/// inicio de um intervalo dentro do mes (quinzena ou semana): <c>Dia</c> a <c>Ate</c>, inclusive.</summary>
 public sealed class PeriodoFiltro
 {
     public DateOnly? Mes { get; set; }
     public DateOnly? Dia { get; set; }
+    public DateOnly? Ate { get; set; }
     public string? Modulo { get; set; }
     public string? Tipo { get; set; }
     public string? OrigemTipo { get; set; }

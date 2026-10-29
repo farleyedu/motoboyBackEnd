@@ -259,7 +259,7 @@ SELECT a.id, a.tipo, a.modulo, a.data_fato, a.registrado_em, a.mes_referencia, a
    AND (@mes::date IS NULL OR a.mes_referencia = @mes
         OR EXISTS (SELECT 1 FROM gestao_lancamentos l WHERE l.estabelecimento_id = a.estabelecimento_id
                    AND l.acontecimento_id = a.id AND l.mes_referencia = @mes))
-   AND (@dia::date IS NULL OR (a.data_fato AT TIME ZONE @fuso)::date = @dia)
+   AND (@dia::date IS NULL OR (a.data_fato AT TIME ZONE @fuso)::date BETWEEN @dia AND coalesce(@ate::date, @dia))
    AND (@modulo::text IS NULL OR a.modulo = @modulo)
    AND (@tipo::text IS NULL OR a.tipo = @tipo)
    AND (@origemTipo::text IS NULL OR a.origem_tipo = @origemTipo)
@@ -268,7 +268,7 @@ SELECT a.id, a.tipo, a.modulo, a.data_fato, a.registrado_em, a.mes_referencia, a
  LIMIT @limite;",
             new
             {
-                loja, ids = ids?.ToArray(), mes = f?.Mes, dia = f?.Dia, fuso = fuso ?? "America/Sao_Paulo", modulo = f?.Modulo,
+                loja, ids = ids?.ToArray(), mes = f?.Mes, dia = f?.Dia, ate = f?.Ate, fuso = fuso ?? "America/Sao_Paulo", modulo = f?.Modulo,
                 tipo = f?.Tipo, origemTipo = f?.OrigemTipo, origemId = f?.OrigemId, limite = Math.Clamp(f?.Limite ?? 200, 1, 500)
             }, tx)).ToList();
         if (rows.Count == 0) return new();
@@ -299,7 +299,9 @@ SELECT {LancamentoColunas} FROM gestao_lancamentos_situacao s
  WHERE s.estabelecimento_id = @loja
    AND (@mes::date IS NULL OR s.mes_referencia = @mes OR date_trunc('month', s.data_vencimento)::date = @mes
         OR date_trunc('month', s.data_pagamento)::date = @mes)
-   AND (@dia::date IS NULL OR s.data_pagamento = @dia OR s.data_vencimento = @dia OR (a.data_fato AT TIME ZONE @fuso)::date = @dia)
+   AND (@dia::date IS NULL OR s.data_pagamento BETWEEN @dia AND coalesce(@ate::date, @dia)
+        OR s.data_vencimento BETWEEN @dia AND coalesce(@ate::date, @dia)
+        OR (a.data_fato AT TIME ZONE @fuso)::date BETWEEN @dia AND coalesce(@ate::date, @dia))
    AND (@conta::uuid IS NULL OR s.conta_id = @conta OR s.conta_pagamento_id = @conta)
    AND (@status::text IS NULL OR s.status = @status)
    AND (@modulo::text IS NULL OR a.modulo = @modulo)
@@ -307,7 +309,7 @@ SELECT {LancamentoColunas} FROM gestao_lancamentos_situacao s
  LIMIT @limite;",
             new
             {
-                loja, mes = f.Mes, dia = f.Dia, fuso = fuso ?? "America/Sao_Paulo", conta = f.ContaId, status = f.Status,
+                loja, mes = f.Mes, dia = f.Dia, ate = f.Ate, fuso = fuso ?? "America/Sao_Paulo", conta = f.ContaId, status = f.Status,
                 modulo = f.Modulo, limite = Math.Clamp(f.Limite, 1, 1000)
             })).Select(Dto).ToList();
 
@@ -316,10 +318,10 @@ SELECT {LancamentoColunas} FROM gestao_lancamentos_situacao s
 SELECT m.* FROM gestao_movimentos_estoque m
  WHERE m.estabelecimento_id = @loja
    AND (@mes::date IS NULL OR m.mes_referencia = @mes)
-   AND (@dia::date IS NULL OR (m.confirmado_em AT TIME ZONE @fuso)::date = @dia)
+   AND (@dia::date IS NULL OR (m.confirmado_em AT TIME ZONE @fuso)::date BETWEEN @dia AND coalesce(@ate::date, @dia))
    AND (@item::uuid IS NULL OR m.item_id = @item)
  ORDER BY m.confirmado_em DESC, m.linha LIMIT @limite;",
-            new { loja, mes = f.Mes, dia = f.Dia, fuso = fuso ?? "America/Sao_Paulo", item = f.ItemId, limite = Math.Clamp(f.Limite, 1, 1000) }))
+            new { loja, mes = f.Mes, dia = f.Dia, ate = f.Ate, fuso = fuso ?? "America/Sao_Paulo", item = f.ItemId, limite = Math.Clamp(f.Limite, 1, 1000) }))
         .Select(Dto).ToList();
 
     /// <summary>Saldo de cada conta = lancamentos ja pagos/recebidos nela + liquidacoes que entraram/sairam dela.</summary>

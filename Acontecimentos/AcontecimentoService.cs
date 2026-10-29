@@ -286,6 +286,8 @@ public sealed class AcontecimentosService(NpgsqlDataSource dataSource, IEnumerab
         if (f.Mes is { } mes) f.Mes = AcontecimentoRegras.Mes(mes);
         if (f.Dia is { } dia && f.Mes is { } m && AcontecimentoRegras.Mes(dia) != m)
             throw new GestaoException("CAMPO_INVALIDO", "O dia precisa estar dentro do mês escolhido.", 422);
+        if (f.Ate is { } ate && (f.Dia is not { } inicio || ate < inicio || f.Mes is { } mm && AcontecimentoRegras.Mes(ate) != mm))
+            throw new GestaoException("CAMPO_INVALIDO", "O fim do intervalo precisa vir depois do início e ficar no mesmo mês.", 422);
         if (f.Mes == null && f.Dia == null && f.OrigemId == null)
             throw new GestaoException("CAMPO_INVALIDO", "Escolha o mês.", 422);
         return f;

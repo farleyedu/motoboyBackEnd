@@ -278,4 +278,26 @@ VALUES (gen_random_uuid(), @Loja, @Id, 9, 'despesa', 'saida', 1, 'a_pagar', '202
         Assert.Single(await db.Service.LinhaDoTempo(db.Loja, new PeriodoFiltro { Mes = new DateOnly(2026, 9, 1) }, default));
         Assert.Equal("CAMPO_INVALIDO", (await Falha(() => db.Service.LinhaDoTempo(db.Loja, new PeriodoFiltro(), default))).Codigo);
     }
+
+    [DeliveryDatabaseFact]
+    public async Task IntervaloDeDiasPegaQuinzenaOuSemanaDentroDoMes()
+    {
+        await using var db = await Livro.Criar();
+        var outubro = new DateOnly(2026, 10, 1);
+        DateTimeOffset Dia(int d) => new(2026, 10, d, 12, 0, 0, TimeSpan.FromHours(-3));
+        await db.Service.Publicar(db.Loja, 7, Compra("d05", 10m, fato: Dia(5)), default);
+        await db.Service.Publicar(db.Loja, 7, Compra("d15", 10m, fato: Dia(15)), default);
+        await db.Service.Publicar(db.Loja, 7, Compra("d16", 10m, fato: Dia(16)), default);
+        await db.Service.Publicar(db.Loja, 7, Compra("d27", 10m, fato: Dia(27)), default);
+
+        async Task<int> Quantos(int de, int ate) => (await db.Service.LinhaDoTempo(db.Loja,
+            new PeriodoFiltro { Mes = outubro, Dia = new DateOnly(2026, 10, de), Ate = new DateOnly(2026, 10, ate) }, default)).Count;
+        Assert.Equal(2, await Quantos(1, 15));   // 1ª quinzena
+        Assert.Equal(2, await Quantos(16, 31));  // 2ª quinzena
+        Assert.Equal(1, await Quantos(26, 31));  // semana de 26 a 31
+        Assert.Equal(2, (await db.Service.Lancamentos(db.Loja, new PeriodoFiltro { Mes = outubro, Dia = new DateOnly(2026, 10, 1), Ate = new DateOnly(2026, 10, 15) }, default)).Count);
+        Assert.Equal("CAMPO_INVALIDO", (await Falha(() => Quantos(20, 10))).Codigo);
+        Assert.Equal("CAMPO_INVALIDO", (await Falha(() => db.Service.LinhaDoTempo(db.Loja,
+            new PeriodoFiltro { Mes = outubro, Dia = new DateOnly(2026, 10, 20), Ate = new DateOnly(2026, 11, 2) }, default))).Codigo);
+    }
 }

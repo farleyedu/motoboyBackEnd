@@ -60,6 +60,7 @@ public class GestaoPapeisTests
         Assert.Equal(ModuloGestao.Caixa, f.Modulo);
         Assert.Equal("SEM_PERMISSAO", Codigo(() => GestaoPapeis.RestringirLeitura(Operador, new PeriodoFiltro { Dia = Hoje.AddDays(-1) }, Hoje)));
         Assert.Equal("SEM_PERMISSAO", Codigo(() => GestaoPapeis.RestringirLeitura(Operador, new PeriodoFiltro { Mes = new DateOnly(2026, 9, 1) }, Hoje)));
+        Assert.Equal("SEM_PERMISSAO", Codigo(() => GestaoPapeis.RestringirLeitura(Operador, new PeriodoFiltro { Dia = Hoje, Ate = Hoje.AddDays(3) }, Hoje)));
         Assert.Equal("SEM_PERMISSAO", Codigo(() => GestaoPapeis.RestringirLeitura(Operador, new PeriodoFiltro { Modulo = "financeiro" }, Hoje)));
         Assert.Equal(ModuloGestao.Estoque, GestaoPapeis.RestringirLeitura(Operador, new PeriodoFiltro { Modulo = "estoque" }, Hoje).Modulo);
         Assert.Equal("SEM_PERMISSAO", Codigo(() => GestaoPapeis.RestringirLeitura(GestaoPapeis.Resolver(Com(), false), new PeriodoFiltro(), Hoje)));
