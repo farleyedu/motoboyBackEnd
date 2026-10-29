@@ -89,5 +89,8 @@ public sealed record DescontoRequest(string? ChaveIdempotencia, Guid PessoaId, G
 /// <summary><c>Valor</c> nulo = paga tudo o que está a pagar; menor = pagamento parcial (o restante vira saldo a pagar).</summary>
 public sealed record PagamentoRequest(string? ChaveIdempotencia, Guid PessoaId, Guid ContaId, DateOnly? DataPagamento, decimal? Valor);
 
+/// <summary>Quanto a pessoa tem a receber agora (itens a pagar menos adiantamentos em aberto), em todos os meses.</summary>
+public sealed record PessoaAPagar(Guid PessoaId, string Nome, decimal APagar);
+
 public sealed record PagamentoFeito(decimal Pago, decimal Compensado, decimal Restante, IReadOnlyList<Guid> Liquidados,
     Guid? SaldoLancamentoId, ResumoPessoa Resumo);

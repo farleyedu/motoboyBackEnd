@@ -1,5 +1,6 @@
 using System.Text.Json;
 using APIBack.Acontecimentos;
+using APIBack.GestaoLogica.Equipe;
 using APIBack.Security;
 using Dapper;
 using Npgsql;
@@ -22,9 +23,11 @@ public interface ICaixaService
     Task<IReadOnlyList<FechamentoDto>> Fechamentos(Guid loja, DateOnly mes, CancellationToken ct);
     Task<FechamentoDto> AjustarFechamento(Guid loja, int usuario, DateOnly dia, AjustarFechamentoRequest req, CancellationToken ct);
     Task<DateOnly> Hoje(Guid loja, CancellationToken ct);
+    Task<APagarNaGaveta> APagar(Guid loja, CancellationToken ct);
 }
 
-public sealed class CaixaService(NpgsqlDataSource dataSource, IAcontecimentosService livro, TimeProvider? relogio = null) : ICaixaService
+public sealed class CaixaService(NpgsqlDataSource dataSource, IAcontecimentosService livro, TimeProvider? relogio = null,
+    IEquipeService? equipe = null) : ICaixaService
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private readonly TimeProvider _relogio = relogio ?? TimeProvider.System;
@@ -51,10 +54,14 @@ public sealed class CaixaService(NpgsqlDataSource dataSource, IAcontecimentosSer
         public string? Justificativa { get; set; }
         public decimal? Fica { get; set; }
         public decimal? Cofre { get; set; }
+        public string? AbertoPorNome { get; set; }
+        public string? FechadoPorNome { get; set; }
     }
 
     private const string ColunasDia = @"dia, fundo, aberto_por, aberto_em, fechado_por, fechado_em, fechamento_id, esperado, contado,
-       maquininha::text AS maquininha, maquininha_esperado::text AS maquininha_esperado, justificativa, fica, cofre";
+       maquininha::text AS maquininha, maquininha_esperado::text AS maquininha_esperado, justificativa, fica, cofre,
+       (SELECT u.nome::text FROM usuario u WHERE u.id = aberto_por) AS aberto_por_nome,
+       (SELECT u.nome::text FROM usuario u WHERE u.id = fechado_por) AS fechado_por_nome";
 
     public async Task<DateOnly> Hoje(Guid loja, CancellationToken ct) =>
         AcontecimentoRegras.DiaLocal(_relogio.GetUtcNow(), await livro.Fuso(loja, ct));
@@ -68,7 +75,7 @@ public sealed class CaixaService(NpgsqlDataSource dataSource, IAcontecimentosSer
         var contas = await ContasDoCaixa(c, loja, null, ct);
         var fita = await Fita(loja, dia, contas.Gaveta, ct);
         return new CaixaDoDia(dia, row.FechadoEm is null, Utc(row.AbertoEm), row.AbertoPor, row.Fundo, fita, Array.Empty<PedidoEmAberto>(),
-            row.FechadoEm is null ? null : await Fechamento(c, loja, row));
+            row.FechadoEm is null ? null : await Fechamento(c, loja, row), row.AbertoPorNome);
     }
 
     public async Task<CaixaDoDia> Abrir(Guid loja, int usuario, GestaoPapeis.Acesso acesso, AbrirCaixaRequest req, CancellationToken ct)
@@ -132,6 +139,14 @@ VALUES (@loja, @dia, @Fundo, @usuario, @agora, @id) ON CONFLICT DO NOTHING",
             return (await CarregarDia(loja, hoje, ct))!;
         }
 
+        if (req.Tipo == MovimentoCaixa.Pagamento && (req.PessoaId is not null || req.LancamentoId is not null))
+        {
+            // Diária ou compra paga pela gaveta: quita o que já está a pagar (não cria outra despesa) e o dinheiro sai da gaveta.
+            if (!acesso.PodeLancar) throw new GestaoException("SEM_PERMISSAO", "Você não pode registrar no caixa.", 403);
+            await PagarPelaGaveta(loja, usuario, req, hoje, contas.Gaveta, motivo, ct);
+            return (await CarregarDia(loja, hoje, ct))!;
+        }
+
         var pedido = new PublicarAcontecimentoRequest
         {
             ChaveIdempotencia = req.ChaveIdempotencia.Trim(), Modulo = ModuloGestao.Caixa, DataFato = agora, Dados = dados,
@@ -164,6 +179,60 @@ VALUES (@loja, @dia, @Fundo, @usuario, @agora, @id) ON CONFLICT DO NOTHING",
         GestaoPapeis.ValidarPublicacao(acesso, pedido, hoje, hoje);
         await livro.Publicar(loja, usuario, pedido, ct);
         return (await CarregarDia(loja, hoje, ct))!;
+    }
+
+    public async Task<APagarNaGaveta> APagar(Guid loja, CancellationToken ct) =>
+        new(equipe is null ? Array.Empty<PessoaAPagar>() : await equipe.APagarPorPessoa(loja, ct), await ComprasAPagar(loja, ct));
+
+    private async Task PagarPelaGaveta(Guid loja, int usuario, MovimentoCaixaRequest req, DateOnly hoje, Guid gaveta, string? motivo,
+        CancellationToken ct)
+    {
+        var chave = req.ChaveIdempotencia!.Trim();
+        if (req.PessoaId is { } pessoaId)
+        {
+            if (equipe is null) throw new GestaoException("NAO_ENCONTRADO", "A Equipe não está disponível.", 404);
+            var devido = (await equipe.APagarPorPessoa(loja, ct)).FirstOrDefault(p => p.PessoaId == pessoaId);
+            // Nova tentativa com a mesma chave (o primeiro envio pode já ter pago): a Equipe não paga duas vezes.
+            if (devido is null && !await ChaveUsada(loja, chave)) throw Invalido("Esta pessoa não tem nada a receber.");
+            if (devido is not null && req.Valor > devido.APagar) throw Invalido($"{devido.Nome} tem {devido.APagar:N2} a receber: pague até esse valor.");
+            await equipe.Pagar(loja, usuario, new PagamentoRequest(chave, pessoaId, gaveta, hoje, req.Valor), ct);
+            return;
+        }
+        var compra = (await ComprasAPagar(loja, ct)).FirstOrDefault(x => x.LancamentoId == req.LancamentoId);
+        if (compra is null && !await ChaveUsada(loja, chave)) throw Invalido("Esta compra não está a pagar.");
+        if (compra is not null && compra.Valor != req.Valor) throw Invalido($"A compra se paga inteira: {compra.Valor:N2}.");
+        await livro.Liquidar(loja, usuario, new LiquidarRequest
+        {
+            ChaveIdempotencia = chave, LancamentoId = req.LancamentoId!.Value, ContaId = gaveta, DataPagamento = hoje,
+            Descricao = Cortar(motivo is null ? null : $"{motivo} · pago em dinheiro", 300),
+        }, ct);
+    }
+
+    private async Task<bool> ChaveUsada(Guid loja, string chave)
+    {
+        await using var c = await dataSource.OpenConnectionAsync();
+        return await c.ExecuteScalarAsync<bool>(@"SELECT EXISTS (SELECT 1 FROM gestao_acontecimentos WHERE estabelecimento_id = @loja
+   AND (chave_idempotencia = @chave OR left(chave_idempotencia, @n) = @prefixo))", new { loja, chave, prefixo = chave + ":", n = chave.Length + 1 });
+    }
+
+    /// <summary>Compras a pagar fora do cartão (o cartão vai para a fatura), com o valor líquido, das mais antigas às mais novas.</summary>
+    private async Task<IReadOnlyList<CompraAPagar>> ComprasAPagar(Guid loja, CancellationToken ct)
+    {
+        await using var c = await dataSource.OpenConnectionAsync(ct);
+        return (await c.QueryAsync<(Guid Id, Guid AcontecimentoId, string Descricao, decimal Valor, DateTime? Vencimento)>(@"
+SELECT s.id, a.id, coalesce(s.descricao, a.descricao),
+       s.valor + coalesce((SELECT sum(x.valor) FROM gestao_lancamentos x
+                            WHERE x.estabelecimento_id = s.estabelecimento_id AND x.corrige_lancamento_id = s.id), 0),
+       s.data_vencimento
+  FROM gestao_acontecimentos a
+  JOIN gestao_lancamentos_situacao s ON s.estabelecimento_id = a.estabelecimento_id AND s.acontecimento_id = a.id AND s.corrige_lancamento_id IS NULL
+ WHERE a.estabelecimento_id = @loja AND a.modulo = 'compras' AND a.corrige_id IS NULL
+   AND s.status = 'a_pagar' AND s.natureza = 'despesa' AND s.fatura_mes IS NULL
+ ORDER BY s.data_vencimento NULLS LAST, a.data_fato, s.linha
+ LIMIT 100", new { loja }))
+            .Where(x => x.Valor > 0)
+            .Select(x => new CompraAPagar(x.Id, x.AcontecimentoId, x.Descricao, x.Valor, x.Vencimento is { } v ? DateOnly.FromDateTime(v) : null))
+            .ToList();
     }
 
     public async Task<ConferenciaDaContagem> ConferirContagem(Guid loja, int usuario, DateOnly dia, ContagemCaixa contagem, CancellationToken ct)
@@ -331,8 +400,25 @@ VALUES (@ajusteId, @loja, @dia, @usuario, @agora, @atual, @ContadoNovo, @motivo,
             foreach (var l in a.Lancamentos.Where(l => l.ContaId == gaveta))
                 fita.Add(new LinhaFita($"{a.Id}:{l.Linha}", hora, tipo, a.Descricao, FormaCaixa.Dinheiro,
                     l.Sentido == Sentido.Entrada ? l.Valor : -l.Valor));
+            // Algo que estava a pagar (diária, compra) quitado com dinheiro da gaveta: o esperado já conta, a fita mostra.
+            var naGaveta = a.Liquidacoes.Where(q => q.ContaId == gaveta).ToList();
+            var sentidos = naGaveta.Count == 0 ? null : await SentidosLiquidados(loja, naGaveta);
+            foreach (var q in naGaveta)
+            {
+                var entra = sentidos!.GetValueOrDefault(q.LancamentoId) == Sentido.Entrada;
+                var valor = entra ? q.Valor : -q.Valor;
+                fita.Add(new LinhaFita($"{a.Id}:q:{q.Id}", hora, q.CorrigeLiquidacaoId is null ? (entra ? "sup" : "pag") : "canc", a.Descricao,
+                    FormaCaixa.Dinheiro, valor));
+            }
         }
         return fita;
+    }
+
+    private async Task<Dictionary<Guid, string>> SentidosLiquidados(Guid loja, IReadOnlyList<LiquidacaoDto> liquidacoes)
+    {
+        await using var c = await dataSource.OpenConnectionAsync();
+        return (await c.QueryAsync<(Guid Id, string Sentido)>("SELECT id, sentido FROM gestao_lancamentos WHERE estabelecimento_id = @loja AND id = ANY(@ids)",
+            new { loja, ids = liquidacoes.Select(q => q.LancamentoId).Distinct().ToArray() })).ToDictionary(x => x.Id, x => x.Sentido);
     }
 
     /// <summary>A venda do pedido, em dinheiro na gaveta, com o mesmo valor: devolver tudo = estornar a venda.</summary>
@@ -350,15 +436,17 @@ VALUES (@ajusteId, @loja, @dia, @usuario, @agora, @atual, @ContadoNovo, @motivo,
     private async Task<FechamentoDto> Fechamento(NpgsqlConnection c, Guid loja, DiaRow d)
     {
         var dia = DateOnly.FromDateTime(d.Dia);
-        var ajustes = (await c.QueryAsync<(Guid Id, DateTime Em, int Por, decimal Anterior, decimal Novo, string Motivo)>(@"
-SELECT id, em, por, contado_anterior, contado_novo, motivo FROM gestao_caixa_ajustes
- WHERE estabelecimento_id = @loja AND dia = @dia ORDER BY em, id", new { loja, dia = d.Dia }))
-            .Select(a => new AjusteFechamento(a.Id, Utc(a.Em), a.Por, a.Anterior, a.Novo, a.Motivo)).ToList();
+        var ajustes = (await c.QueryAsync<(Guid Id, DateTime Em, int Por, decimal Anterior, decimal Novo, string Motivo, string? PorNome)>(@"
+SELECT a.id, a.em, a.por, a.contado_anterior, a.contado_novo, a.motivo, u.nome::text AS por_nome
+  FROM gestao_caixa_ajustes a
+  LEFT JOIN usuario u ON u.id = a.por
+ WHERE a.estabelecimento_id = @loja AND a.dia = @dia ORDER BY a.em, a.id", new { loja, dia = d.Dia }))
+            .Select(a => new AjusteFechamento(a.Id, Utc(a.Em), a.Por, a.Anterior, a.Novo, a.Motivo, a.PorNome)).ToList();
         var vazio = new Dictionary<string, decimal>();
         return new FechamentoDto(dia.ToString("yyyy-MM-dd"), dia, d.FechadoPor!.Value, Utc(d.AbertoEm), Utc(d.FechadoEm!.Value), d.Esperado!.Value,
             d.Contado!.Value, d.Maquininha is null ? vazio : JsonSerializer.Deserialize<Dictionary<string, decimal>>(d.Maquininha)!,
             d.MaquininhaEsperado is null ? vazio : JsonSerializer.Deserialize<Dictionary<string, decimal>>(d.MaquininhaEsperado)!,
-            d.Justificativa, d.Fica ?? 0, d.Cofre ?? 0, ajustes);
+            d.Justificativa, d.Fica ?? 0, d.Cofre ?? 0, ajustes, d.FechadoPorNome);
     }
 
     /// <summary>Gaveta e cofre da loja, criados na primeira abertura (contas "caixa" do livro, idempotentes pela chave).</summary>

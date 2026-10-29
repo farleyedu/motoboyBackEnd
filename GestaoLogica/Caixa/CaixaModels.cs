@@ -23,14 +23,15 @@ public sealed record LinhaFita(string Id, string Hora, string Tipo, string Descr
 
 public sealed record PedidoEmAberto(string Numero, string Onde, decimal Valor, string Situacao);
 
-public sealed record AjusteFechamento(Guid Id, DateTimeOffset Em, int Por, decimal ContadoAnterior, decimal ContadoNovo, string Motivo);
+public sealed record AjusteFechamento(Guid Id, DateTimeOffset Em, int Por, decimal ContadoAnterior, decimal ContadoNovo, string Motivo,
+    string? PorNome = null);
 
 public sealed record FechamentoDto(string Id, DateOnly Dia, int Operador, DateTimeOffset Abertura, DateTimeOffset Fechamento,
     decimal Esperado, decimal Contado, IReadOnlyDictionary<string, decimal> Maquininha, IReadOnlyDictionary<string, decimal> MaquininhaEsperado,
-    string? Justificativa, decimal Fica, decimal Cofre, IReadOnlyList<AjusteFechamento> Ajustes);
+    string? Justificativa, decimal Fica, decimal Cofre, IReadOnlyList<AjusteFechamento> Ajustes, string? OperadorNome = null);
 
 public sealed record CaixaDoDia(DateOnly Dia, bool Aberto, DateTimeOffset? AbertoEm, int? Por, decimal Fundo, IReadOnlyList<LinhaFita> Fita,
-    IReadOnlyList<PedidoEmAberto> PedidosEmAberto, FechamentoDto? Fechamento);
+    IReadOnlyList<PedidoEmAberto> PedidosEmAberto, FechamentoDto? Fechamento, string? PorNome = null);
 
 /// <summary>Contagem por cédula (200, 100, 50, 20, 10, 5, 2) mais o total em moedas.</summary>
 public sealed record ContagemCaixa(IReadOnlyDictionary<int, int>? Notas, decimal Moedas);
@@ -39,11 +40,20 @@ public sealed record ConferenciaDaContagem(decimal Esperado, decimal Contado, de
 
 public sealed record AbrirCaixaRequest(DateOnly Dia, decimal Fundo);
 
-/// <summary><c>Referencia</c> = id do pedido na devolução (estorna a venda inteira quando o valor bate).</summary>
+/// <summary>
+/// <c>Referencia</c> = id do pedido na devolução (estorna a venda inteira quando o valor bate). No pagamento (<c>pag</c>):
+/// <c>PessoaId</c> paga a remuneração da pessoa pela gaveta (Equipe); <c>LancamentoId</c> quita uma compra a pagar (valor inteiro).
+/// </summary>
 public sealed record MovimentoCaixaRequest(string? ChaveIdempotencia, DateOnly Dia, string Tipo, decimal Valor, string? Motivo, string? Referencia,
-    Guid? ContaId = null);
+    Guid? ContaId = null, Guid? PessoaId = null, Guid? LancamentoId = null);
 
 public sealed record FecharCaixaRequest(DateOnly Dia, ContagemCaixa Contagem, IReadOnlyDictionary<string, decimal>? Maquininha, string? Justificativa,
     decimal Fica);
 
 public sealed record AjustarFechamentoRequest(decimal ContadoNovo, string? Motivo);
+
+/// <summary>Compra a pagar (fora do cartão) que pode ser paga em dinheiro pela gaveta. <c>Valor</c> = líquido, com correções.</summary>
+public sealed record CompraAPagar(Guid LancamentoId, Guid AcontecimentoId, string Descricao, decimal Valor, DateOnly? Vencimento);
+
+/// <summary>O que dá para pagar em dinheiro pela gaveta: remuneração da equipe e compras a pagar.</summary>
+public sealed record APagarNaGaveta(IReadOnlyList<APIBack.GestaoLogica.Equipe.PessoaAPagar> Equipe, IReadOnlyList<CompraAPagar> Compras);

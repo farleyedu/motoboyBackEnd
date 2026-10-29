@@ -120,6 +120,98 @@ INSERT INTO estabelecimentos VALUES (@loja, 'America/Sao_Paulo'); INSERT INTO us
         }
     }
 
+    /// <summary>
+    /// Integração 6A: diária e compra pagas em dinheiro pela gaveta quitam o que já estava a pagar (Equipe e Compras), sem criar outra
+    /// despesa; pagamento avulso vira despesa; o fechamento recolhe ao cofre; a fita mostra tudo com o nome de quem abriu.
+    /// </summary>
+    [DeliveryDatabaseFact]
+    public async Task Diaria_e_compra_pagas_pela_gaveta()
+    {
+        var conexao = Environment.GetEnvironmentVariable("TEST_DELIVERY_DATABASE")!;
+        APIBack.Infrastructure.DapperConfiguration.Configure();
+        var opcoes = new NpgsqlConnectionStringBuilder(conexao);
+        if (opcoes.Host != "127.0.0.1" && opcoes.Host != "localhost") throw new InvalidOperationException("Use apenas PostgreSQL local.");
+        var schema = "gestao_cx_" + Guid.NewGuid().ToString("N");
+        await using (var admin = new NpgsqlConnection(conexao)) { await admin.OpenAsync(); await admin.ExecuteAsync($"CREATE SCHEMA {schema}"); }
+        opcoes.SearchPath = schema;
+        var fonte = NpgsqlDataSource.Create(opcoes.ConnectionString);
+        try
+        {
+            var loja = Guid.NewGuid();
+            await using (var c = await fonte.OpenConnectionAsync())
+            {
+                await c.ExecuteAsync(@"CREATE TABLE estabelecimentos(id uuid PRIMARY KEY, timezone_iana text);
+CREATE TABLE usuario(id integer PRIMARY KEY, nome text);
+INSERT INTO estabelecimentos VALUES (@loja, 'America/Sao_Paulo'); INSERT INTO usuario VALUES (7, 'Marina'), (8, 'Júlia do caixa');", new { loja });
+                foreach (var m in new[] { "20261105_01_gestao_fundacao.sql", "20261106_01_gestao_documentos.sql", "20261107_01_gestao_vinculos.sql",
+                             "20261109_01_gestao_equipe.sql", "20261110_01_gestao_caixa.sql" })
+                    await c.ExecuteAsync(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "Migrations", "Delivery", m)));
+            }
+            var livro = new AcontecimentosService(fonte, Array.Empty<IAcontecimentoAssinante>(), NullLogger<AcontecimentosService>.Instance);
+            var equipe = new APIBack.GestaoLogica.Equipe.EquipeService(fonte, livro);
+            var caixa = new CaixaService(fonte, livro, null, equipe);
+            var operador = GestaoPapeis.Resolver((m, _) => m is "Caixa", false);
+            var hoje = await caixa.Hoje(loja, default);
+
+            // Ontem a Bia (eventual) fez um turno de R$ 100, confirmado pela gerente: está a pagar na Equipe.
+            var bia = await equipe.SalvarPessoa(loja, 7, null, new APIBack.GestaoLogica.Equipe.PessoaRequest("Bia", "Eventual", "freelancer",
+                new APIBack.GestaoLogica.Equipe.RegraPagamento(PorTurno: 100), "dinheiro", null, null, null, Array.Empty<APIBack.GestaoLogica.Equipe.DiaPadrao>()), default);
+            await equipe.MudarTurno(loja, 7, new APIBack.GestaoLogica.Equipe.MudarTurnoRequest(bia.Id, hoje.AddDays(-1), Entrada: "10:00", Saida: "15:00", Avulso: true), default);
+            await equipe.MudarTurno(loja, 7, new APIBack.GestaoLogica.Equipe.MudarTurnoRequest(bia.Id, hoje.AddDays(-1), "realizado"), default);
+            // Uma compra de hortifruti a pagar (Compras publica assim).
+            var compra = await livro.Publicar(loja, 7, new PublicarAcontecimentoRequest
+            {
+                ChaveIdempotencia = "compra-hf", Tipo = "compra", Modulo = ModuloGestao.Compras, DataFato = DateTimeOffset.UtcNow.AddHours(-1),
+                Descricao = "Compra · Hortifruti do Zé", Origem = new OrigemRef { Tipo = "compra", Id = "hf-1" },
+                Lancamentos = new() { new LancamentoRequest { Natureza = Natureza.Despesa, Valor = 30, Status = StatusLancamento.APagar, Categoria = "insumos" } },
+            }, default);
+            var lancCompra = compra.Acontecimento.Lancamentos[0].Id;
+
+            var dia = await caixa.Abrir(loja, 8, operador, new AbrirCaixaRequest(hoje, 200), default);
+            Assert.Equal("Júlia do caixa", dia.PorNome);
+            var aPagar = await caixa.APagar(loja, default);
+            Assert.Equal(("Bia", 100m), (aPagar.Equipe.Single().Nome, aPagar.Equipe.Single().APagar));
+            Assert.Equal((lancCompra, 30m), (aPagar.Compras.Single().LancamentoId, aPagar.Compras.Single().Valor));
+
+            // Diária paga pela operadora na gaveta: quita o turno na Equipe (não cria outra despesa).
+            Assert.Equal("CAMPO_INVALIDO", (await Assert.ThrowsAsync<GestaoException>(() => caixa.RegistrarMovimento(loja, 8, operador,
+                new MovimentoCaixaRequest("pg-bia", hoje, MovimentoCaixa.Pagamento, 150, "Diária · Bia", null, PessoaId: bia.Id), default))).Codigo);
+            await caixa.RegistrarMovimento(loja, 8, operador, new MovimentoCaixaRequest("pg-bia", hoje, MovimentoCaixa.Pagamento, 100, "Diária · Bia", null, PessoaId: bia.Id), default);
+            await caixa.RegistrarMovimento(loja, 8, operador, new MovimentoCaixaRequest("pg-bia", hoje, MovimentoCaixa.Pagamento, 100, "Diária · Bia", null, PessoaId: bia.Id), default);
+            var resumoBia = (await equipe.Resumo(loja, new DateOnly(hoje.AddDays(-1).Year, hoje.AddDays(-1).Month, 1), default)).Single();
+            Assert.Equal((100m, 0m), (resumoBia.Pago, resumoBia.APagar));
+            Assert.Empty((await caixa.APagar(loja, default)).Equipe);
+
+            // Compra paga inteira pela gaveta; valor diferente é recusado; repetir a chave não paga de novo.
+            Assert.Equal("CAMPO_INVALIDO", (await Assert.ThrowsAsync<GestaoException>(() => caixa.RegistrarMovimento(loja, 8, operador,
+                new MovimentoCaixaRequest("pg-hf", hoje, MovimentoCaixa.Pagamento, 20, "Hortifruti", null, LancamentoId: lancCompra), default))).Codigo);
+            await caixa.RegistrarMovimento(loja, 8, operador, new MovimentoCaixaRequest("pg-hf", hoje, MovimentoCaixa.Pagamento, 30, "Hortifruti", null, LancamentoId: lancCompra), default);
+            await caixa.RegistrarMovimento(loja, 8, operador, new MovimentoCaixaRequest("pg-hf", hoje, MovimentoCaixa.Pagamento, 30, "Hortifruti", null, LancamentoId: lancCompra), default);
+            Assert.Empty((await caixa.APagar(loja, default)).Compras);
+
+            // Pagamento avulso em dinheiro vira despesa da gaveta.
+            dia = await caixa.RegistrarMovimento(loja, 8, operador, new MovimentoCaixaRequest("pg-gas", hoje, MovimentoCaixa.Pagamento, 15, "Entregador de gás", null), default);
+            Assert.Equal(15m, await Scalar<decimal>(fonte, "SELECT sum(valor) FROM gestao_lancamentos WHERE categoria = 'despesas_caixa' AND natureza = 'despesa'"));
+            Assert.Equal(new[] { "abre", "pag", "pag", "pag" }, dia.Fita.Select(l => l.Tipo));
+            Assert.Equal(55m, dia.Fita.Sum(l => l.Valor)); // 200 − 100 − 30 − 15
+            // Só duas despesas a pagar existiram (turno e compra): o pagamento pela gaveta não criou outra.
+            Assert.Equal(1, await Scalar<int>(fonte, "SELECT count(*) FROM gestao_lancamentos WHERE categoria = 'equipe'"));
+
+            // Fecha certinho com R$ 55, deixa R$ 20 de troco: R$ 35 recolhidos ao cofre.
+            dia = await caixa.Fechar(loja, 8, operador, new FecharCaixaRequest(hoje, new ContagemCaixa(new Dictionary<int, int> { [50] = 1, [5] = 1 }, 0),
+                new Dictionary<string, decimal>(), null, 20), default);
+            Assert.Equal((55m, 35m, "Júlia do caixa"), (dia.Fechamento!.Esperado, dia.Fechamento.Cofre, dia.Fechamento.OperadorNome));
+            var saldos = (await livro.Contas(loja, default)).ToDictionary(x => x.Nome, x => x.Saldo);
+            Assert.Equal((20m, -165m), (saldos["Gaveta do caixa"], saldos["Cofre"])); // cofre: −200 da abertura + 35 recolhidos
+        }
+        finally
+        {
+            await fonte.DisposeAsync();
+            await using var admin = new NpgsqlConnection(conexao); await admin.OpenAsync();
+            await admin.ExecuteAsync($"DROP SCHEMA {schema} CASCADE");
+        }
+    }
+
     private static async Task<T> Scalar<T>(NpgsqlDataSource fonte, string sql)
     {
         await using var c = await fonte.OpenConnectionAsync();

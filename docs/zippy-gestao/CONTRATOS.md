@@ -384,7 +384,8 @@ Escritas só no dia de hoje (dia passado se corrige pelo ajuste do fechamento).
 | --- | --- | --- |
 | `GET dias/{AAAA-MM-DD}` | `carregarDia` | `CaixaDoDia { dia, aberto, abertoEm, por, fundo, fita[], pedidosEmAberto[] (vazio por ora), fechamento? }`; `null` para dia futuro |
 | `POST abrir` | `abrir` | `{ dia, fundo }`. Põe a gaveta no fundo de troco: transferência cofre ↔ gaveta pela diferença. Abrir de novo devolve o mesmo dia |
-| `POST movimentos` | `registrarMovimento` | `{ chaveIdempotencia, dia, tipo: sang\|sup\|pag\|ret, valor, motivo, referencia? (id do pedido), contaId? }` |
+| `POST movimentos` | `registrarMovimento` | `{ chaveIdempotencia, dia, tipo: sang\|sup\|pag\|ret, valor, motivo, referencia? (id do pedido), contaId?, pessoaId?, lancamentoId? }`. No `pag`: `pessoaId` paga a remuneração da pessoa pela gaveta (Equipe, até o que ela tem a receber); `lancamentoId` quita uma compra a pagar (valor inteiro). Os dois quitam o que já existe, sem criar outra despesa (Integração 6A) |
+| `GET a-pagar` | `aPagar` | Gerente e operador. `{ equipe: [{ pessoaId, nome, aPagar }], compras: [{ lancamentoId, acontecimentoId, descricao, valor, vencimento }] }`: o que dá para pagar em dinheiro pela gaveta (compras fora do cartão; adiantamento já abatido) (Integração 6A) |
 | `POST contagem` | `conferirContagem` | `{ dia, contagem: { notas: {200: n, ...}, moedas } }` → `{ esperado, contado, diferenca }`. Grava a contagem |
 | `POST fechar` | `fechar` | `{ dia, contagem, maquininha: {deb, cre, pix}, justificativa?, fica }` |
 | `GET fechamentos?mes=` | `fechamentos` | Só gerente. `FechamentoDto[]` do mais novo ao mais antigo |
@@ -402,6 +403,9 @@ Escritas só no dia de hoje (dia passado se corrige pelo ajuste do fechamento).
   (acontecimento `recolhimento`). A maquininha é conferida contra as vendas do dia por forma (`maquininhaEsperado`, não bloqueia).
 - **Correção**: novo acontecimento `ajuste_fechamento_caixa` com a diferença (mais sobra ou mais quebra) e linha em
   `gestao_caixa_ajustes`; o fechamento original não muda.
+- **Nomes** (Integração 6A): `CaixaDoDia.porNome`, `FechamentoDto.operadorNome` e `ajustes[].porNome`, além dos ids. O id do
+  fechamento é o dia (`AAAA-MM-DD`), o mesmo da rota de ajuste.
+- **Fita** (Integração 6A): a liquidação feita com dinheiro da gaveta (diária, compra) também entra (`pag`; estorno dela = `canc`).
 - Códigos novos (extensão da seção 6): `SEM_SALDO` (422), `SEM_CAIXA` (409, caixa não aberto), `FECHADO` (409, dia já fechado).
 - **Para a Integração**: a venda deve ser publicada com `dados.forma` e, em dinheiro, como receita `recebido` na conta da gaveta
   (`gestao_caixas.conta_gaveta_id`); Pix/cartão no recebível da maquininha; iFood no recebível iFood.

@@ -44,6 +44,10 @@ public sealed class GestaoCaixaController(ICaixaService service) : ControllerBas
     public Task<IActionResult> Fechar([FromBody] FecharCaixaRequest? req, CancellationToken ct) => Run(false, async (loja, usuario, acesso) =>
         await service.Fechar(loja, usuario, acesso, req ?? throw Vazio(), ct));
 
+    /// <summary>O que dá para pagar em dinheiro pela gaveta (diárias e compras a pagar). Gerente e operador.</summary>
+    [HttpGet("a-pagar")]
+    public Task<IActionResult> APagar(CancellationToken ct) => Run(false, async (loja, _, _) => await service.APagar(loja, ct));
+
     [HttpGet("fechamentos")]
     public Task<IActionResult> Fechamentos([FromQuery] DateOnly mes, CancellationToken ct) => Run(true, async (loja, _, _) =>
         await service.Fechamentos(loja, mes, ct));

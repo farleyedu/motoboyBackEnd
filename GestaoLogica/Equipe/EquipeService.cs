@@ -21,6 +21,7 @@ public interface IEquipeService
     Task<AcontecimentoDto> Adiantar(Guid loja, int usuario, AdiantamentoRequest req, CancellationToken ct);
     Task<AcontecimentoDto> Descontar(Guid loja, int usuario, DescontoRequest req, CancellationToken ct);
     Task<PagamentoFeito> Pagar(Guid loja, int usuario, PagamentoRequest req, CancellationToken ct);
+    Task<IReadOnlyList<PessoaAPagar>> APagarPorPessoa(Guid loja, CancellationToken ct);
 }
 
 public sealed class EquipeService(NpgsqlDataSource dataSource, IAcontecimentosService livro, TimeProvider? relogio = null) : IEquipeService
@@ -467,6 +468,20 @@ SELECT coalesce(sum(q.valor), 0) FROM gestao_liquidacoes q
         }, ct);
 
     // ---------------------------------------------------------------- leitura
+
+    /// <summary>Quem tem algo a receber, sem filtro de mês (o Caixa paga diária pela gaveta). Adiantamento em aberto já abate.</summary>
+    public async Task<IReadOnlyList<PessoaAPagar>> APagarPorPessoa(Guid loja, CancellationToken ct)
+    {
+        await using var c = await dataSource.OpenConnectionAsync(ct);
+        var lista = new List<PessoaAPagar>();
+        foreach (var p in await Pessoas(loja, true, ct))
+        {
+            var aPagar = (await Itens(c, loja, p.Id)).Where(i => i.Status == StatusLancamento.APagar && i.Valor > 0).Sum(i => i.Valor);
+            var adiantado = (await Adiantamentos(c, loja, p.Id)).Sum(a => a.Aberto);
+            if (aPagar - adiantado > 0) lista.Add(new PessoaAPagar(p.Id, p.Nome, aPagar - adiantado));
+        }
+        return lista;
+    }
 
     /// <summary>Itens de turno e de saldo da pessoa no livro, com o valor líquido (original + ajustes + estorno) e o status atual.</summary>
     private static async Task<List<ItemDevido>> Itens(NpgsqlConnection c, Guid loja, Guid pessoaId) =>
