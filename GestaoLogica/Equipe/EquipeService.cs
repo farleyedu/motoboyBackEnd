@@ -23,6 +23,7 @@ public interface IEquipeService
     Task<PagamentoFeito> Pagar(Guid loja, int usuario, PagamentoRequest req, CancellationToken ct);
     Task<IReadOnlyList<PessoaAPagar>> APagarPorPessoa(Guid loja, CancellationToken ct);
     Task<IReadOnlyList<UsuarioDaLoja>> UsuariosDaLoja(Guid loja, CancellationToken ct);
+    Task<IReadOnlyList<PessoaVersaoDto>> HistoricoDaPessoa(Guid loja, Guid pessoaId, CancellationToken ct);
 }
 
 public sealed class EquipeService(NpgsqlDataSource dataSource, IAcontecimentosService livro, TimeProvider? relogio = null) : IEquipeService
@@ -146,6 +147,23 @@ VALUES (@id, @loja, @pessoaId, @Versao, CAST(@retrato AS jsonb), @usuario, @agor
         return salva;
     }
 
+    /// <summary>Versões do cadastro, da mais nova para a mais antiga (a tela mostra desde quando a regra vale e a anterior).</summary>
+    public async Task<IReadOnlyList<PessoaVersaoDto>> HistoricoDaPessoa(Guid loja, Guid pessoaId, CancellationToken ct)
+    {
+        await using var c = await dataSource.OpenConnectionAsync(ct);
+        await ObterPessoa(c, loja, pessoaId);
+        return (await c.QueryAsync<(int Versao, DateTime Em, int Por, string? PorNome, string Retrato)>(@"
+SELECT h.versao, h.em, h.por, u.nome::text, h.retrato::text
+  FROM gestao_pessoas_historico h LEFT JOIN usuario u ON u.id = h.por
+ WHERE h.estabelecimento_id = @loja AND h.pessoa_id = @pessoaId ORDER BY h.versao DESC", new { loja, pessoaId }))
+            .Select(h =>
+            {
+                var r = JsonSerializer.Deserialize<PessoaDto>(h.Retrato, Json)!;
+                return new PessoaVersaoDto(h.Versao, new DateTimeOffset(DateTime.SpecifyKind(h.Em, DateTimeKind.Utc)), h.Por, h.PorNome, r.Nome,
+                    r.Vinculo, r.Regra ?? new RegraPagamento());
+            }).ToList();
+    }
+
     /// <summary>
     /// Quem tem acesso ao painel nesta loja (para ligar o colaborador ao usuário do Zippy). <c>PessoaId</c> = a pessoa da equipe já
     /// ligada a esse usuário, se houver.
@@ -251,6 +269,12 @@ SELECT u.id AS UsuarioId, u.nome::text AS Nome, u.email::text AS Email,
             throw Invalido("Este turno já está no livro: diga o motivo da mudança (mínimo de 3 letras).");
 
         var plano = EquipeRegras.PlanoDoLivro(temRegistro, antes?.Valor ?? 0, status, justificada, rem.Valor);
+        // Mês fechado só aceita ajuste: o turno que ainda não estava no livro entra no mês de hoje, apontando para o dia original.
+        var mesDoTurno = AcontecimentoRegras.Mes(req.Data);
+        var hoje = AcontecimentoRegras.DiaLocal(_relogio.GetUtcNow(), fuso);
+        var ajusteMesFechado = plano == EquipeRegras.Plano.Publicar && (await livro.MesesFechados(loja, ct)).Contains(mesDoTurno);
+        if (ajusteMesFechado && (motivo is null || motivo.Length < 3))
+            throw Invalido($"{AcontecimentoRegras.MesTexto(mesDoTurno)} está fechado: diga o motivo do ajuste (mínimo de 3 letras).");
         if (plano != EquipeRegras.Plano.Nada && temRegistro
             && await c.ExecuteScalarAsync<string>("SELECT status FROM gestao_lancamentos_situacao WHERE id = @id", new { id = antes!.LancamentoId }) == StatusLancamento.Pago)
             throw Invalido("Este turno já foi pago: corrija com desconto ou adiantamento no próximo pagamento.");
@@ -285,20 +309,24 @@ SELECT u.id AS UsuarioId, u.nome::text AS Nome, u.email::text AS Email,
             // Publica junto com a gravação do turno: ou os dois, ou nenhum.
             var r = await livro.Publicar(c, tx, loja, usuario, new PublicarAcontecimentoRequest
             {
-                ChaveIdempotencia = $"equipe:turno:{origem}", Tipo = TipoTurno, Modulo = ModuloGestao.Equipe, DataFato = inicio,
-                Descricao = Cortar($"Turno · {pessoa.Nome} · {req.Data:dd/MM} · {entrada}–{saida}", 300)!,
+                ChaveIdempotencia = $"equipe:turno:{origem}", Tipo = TipoTurno, Modulo = ModuloGestao.Equipe,
+                DataFato = ajusteMesFechado ? _relogio.GetUtcNow() : inicio,
+                Descricao = Cortar($"Turno · {pessoa.Nome} · {req.Data:dd/MM} · {entrada}–{saida}"
+                    + (ajusteMesFechado ? $" · ajuste ({AcontecimentoRegras.MesTexto(mesDoTurno)} fechado)" : ""), 300)!,
                 Origem = new OrigemRef { Tipo = TipoTurno, Id = origem },
                 Dados = JsonSerializer.SerializeToElement(new
                 {
                     pessoaId = pessoa.Id, pessoaNome = pessoa.Nome, turnoId = chave, data = req.Data, entrada, saida, entregas = jornada.Entregas,
                     avulso = baseTurno.Avulso, status, justificada, itens = rem.Itens,
+                    mesFechado = ajusteMesFechado ? mesDoTurno : (DateOnly?)null, lancadoEm = ajusteMesFechado ? hoje : (DateOnly?)null,
+                    motivo = ajusteMesFechado ? motivo : null,
                 }, Json),
                 Lancamentos = new()
                 {
                     new LancamentoRequest
                     {
                         Natureza = Natureza.Despesa, Valor = rem.Valor, Status = StatusLancamento.APagar,
-                        MesReferencia = new DateOnly(req.Data.Year, req.Data.Month, 1), Categoria = "equipe", Finalidade = "remuneracao",
+                        MesReferencia = ajusteMesFechado ? AcontecimentoRegras.Mes(hoje) : mesDoTurno, Categoria = "equipe", Finalidade = "remuneracao",
                         Descricao = Cortar($"Turno · {pessoa.Nome} · {req.Data:dd/MM}", 300),
                     },
                 },
@@ -328,6 +356,7 @@ ON CONFLICT (estabelecimento_id, pessoa_id, data) DO UPDATE SET entrada = EXCLUD
         if (antes is not null && antes.Entregas != jornada.Entregas) detalhes.Add($"entregas {antes.Entregas} → {jornada.Entregas}");
         if (antes is not null && antes.Justificada != justificada) detalhes.Add(justificada ? "falta justificada" : "falta sem justificativa");
         if (antes is not null && !antes.Adicionais.SequenceEqual(adicionais)) detalhes.Add("adicionais: " + (adicionais.Count == 0 ? "nenhum" : string.Join(", ", adicionais.Select(a => a.Rotulo))));
+        if (ajusteMesFechado) detalhes.Add($"{AcontecimentoRegras.MesTexto(mesDoTurno)} fechado: lançado em {AcontecimentoRegras.MesTexto(AcontecimentoRegras.Mes(hoje))}");
         var acao = antes is null && baseTurno.Avulso ? "avulso" : antes is null || antes.Status != status ? status : "ajuste";
         await c.ExecuteAsync(@"
 INSERT INTO gestao_turnos_historico (id, estabelecimento_id, turno_id, em, por, acao, valor_anterior, valor_novo, motivo, detalhe)

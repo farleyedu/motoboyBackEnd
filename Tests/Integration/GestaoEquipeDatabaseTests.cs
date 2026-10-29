@@ -151,6 +151,87 @@ INSERT INTO estabelecimentos VALUES (@loja, 'America/Sao_Paulo'); INSERT INTO us
         }
     }
 
+    private sealed class Relogio(DateTimeOffset agora) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => agora;
+    }
+
+    /// <summary>
+    /// L5: turno de setembro (fechado) confirmado em outubro vira ajuste no mês de hoje, ligado ao dia original; nome e vínculo
+    /// mudam e cada versão fica no histórico (a regra mostra desde quando vale e qual era a anterior).
+    /// </summary>
+    [DeliveryDatabaseFact]
+    public async Task Turno_de_mes_fechado_vira_ajuste_e_cadastro_guarda_versoes()
+    {
+        var conexao = Environment.GetEnvironmentVariable("TEST_DELIVERY_DATABASE")!;
+        APIBack.Infrastructure.DapperConfiguration.Configure();
+        var opcoes = new NpgsqlConnectionStringBuilder(conexao);
+        if (opcoes.Host != "127.0.0.1" && opcoes.Host != "localhost") throw new InvalidOperationException("Use apenas PostgreSQL local.");
+        var schema = "gestao_eq_" + Guid.NewGuid().ToString("N");
+        await using (var admin = new NpgsqlConnection(conexao)) { await admin.OpenAsync(); await admin.ExecuteAsync($"CREATE SCHEMA {schema}"); }
+        opcoes.SearchPath = schema;
+        var fonte = NpgsqlDataSource.Create(opcoes.ConnectionString);
+        try
+        {
+            var loja = Guid.NewGuid();
+            await using (var c = await fonte.OpenConnectionAsync())
+            {
+                await c.ExecuteAsync(@"CREATE TABLE estabelecimentos(id uuid PRIMARY KEY, timezone_iana text);
+CREATE TABLE usuario(id integer PRIMARY KEY, nome text);
+INSERT INTO estabelecimentos VALUES (@loja, 'America/Sao_Paulo'); INSERT INTO usuario VALUES (7, 'Marina');", new { loja });
+                foreach (var m in new[] { "20261105_01_gestao_fundacao.sql", "20261106_01_gestao_documentos.sql", "20261107_01_gestao_vinculos.sql",
+                             "20261109_01_gestao_equipe.sql" })
+                    await c.ExecuteAsync(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "Migrations", "Delivery", m)));
+            }
+            var livro = new AcontecimentosService(fonte, Array.Empty<IAcontecimentoAssinante>(), NullLogger<AcontecimentosService>.Instance);
+            var equipe = new EquipeService(fonte, livro, new Relogio(new DateTimeOffset(2026, 10, 29, 15, 0, 0, TimeSpan.Zero)));
+
+            var bia = await equipe.SalvarPessoa(loja, 7, null, new PessoaRequest("Bia Sousa", "Cozinha", VinculoPessoa.Diarista,
+                new RegraPagamento(Diaria: 90), "pix", null, null, null, new[] { new DiaPadrao(2, "10:00", "16:00") }, true, new DateOnly(2026, 9, 1)), default);
+            var setembro = new DateOnly(2026, 9, 15); // terça
+            await livro.FecharMes(loja, 7, new DateOnly(2026, 9, 1), new FecharMesRequest { ChaveIdempotencia = "fecha-set" }, default);
+
+            // Sem motivo não; com motivo entra em outubro, apontando para 15/09.
+            var erro = await Assert.ThrowsAsync<GestaoException>(() =>
+                equipe.MudarTurno(loja, 7, new MudarTurnoRequest(bia.Id, setembro, StatusTurno.Realizado), default));
+            Assert.Contains("09/2026 está fechado", erro.Message);
+            var turno = await equipe.MudarTurno(loja, 7, new MudarTurnoRequest(bia.Id, setembro, StatusTurno.Realizado, Motivo: "Esqueci de confirmar"), default);
+            Assert.Equal(90m, turno.Valor);
+            Assert.Equal("09/2026 fechado: lançado em 10/2026", turno.Historico.Single().Detalhe);
+            var publicado = (await livro.Obter(loja, turno.AcontecimentoId!.Value, default))!;
+            Assert.Equal(new DateOnly(2026, 10, 1), publicado.Lancamentos.Single().MesReferencia);
+            Assert.Contains("ajuste (09/2026 fechado)", publicado.Descricao);
+            Assert.Equal(("2026-09-15", "2026-10-29", "2026-09-01"), (publicado.Dados.GetProperty("data").GetString(),
+                publicado.Dados.GetProperty("lancadoEm").GetString(), publicado.Dados.GetProperty("mesFechado").GetString()));
+            // Aparece no resumo de outubro (onde entrou), não no de setembro.
+            Assert.Equal(90m, (await equipe.Resumo(loja, new DateOnly(2026, 10, 1), default)).Single().APagar);
+            Assert.Equal(0m, (await equipe.Resumo(loja, new DateOnly(2026, 9, 1), default)).Single().APagar);
+            // Corrigir depois é ajuste comum (com motivo) sobre o lançamento de outubro.
+            turno = await equipe.MudarTurno(loja, 7, new MudarTurnoRequest(bia.Id, setembro, Saida: "18:00", Motivo: "Ficou até as 18h"), default);
+            Assert.Equal(90m, turno.Valor); // diária não muda com a hora
+            Assert.Equal(2, turno.Historico.Count);
+
+            // Nome e vínculo mudam; a regra nova vale para o que ainda não foi lançado.
+            var nova = await equipe.SalvarPessoa(loja, 7, bia.Id, new PessoaRequest("Beatriz Sousa", "Cozinha", VinculoPessoa.Hora,
+                new RegraPagamento(PorHora: 20), "pix", null, null, null, bia.EscalaPadrao, Versao: bia.Versao), default);
+            Assert.Equal(("Beatriz Sousa", VinculoPessoa.Hora), (nova.Nome, nova.Vinculo));
+            var outubro = await equipe.MudarTurno(loja, 7, new MudarTurnoRequest(bia.Id, new DateOnly(2026, 10, 27), StatusTurno.Realizado), default);
+            Assert.Equal(120m, outubro.Valor); // 6 h × R$ 20
+
+            var versoes = await equipe.HistoricoDaPessoa(loja, bia.Id, default);
+            Assert.Equal(new[] { 2, 1 }, versoes.Select(v => v.Versao));
+            Assert.Equal((VinculoPessoa.Hora, 20m, "Marina"), (versoes[0].Vinculo, versoes[0].Regra.PorHora!.Value, versoes[0].PorNome));
+            Assert.Equal(("Bia Sousa", 90m), (versoes[1].Nome, versoes[1].Regra.Diaria!.Value));
+            Assert.Equal("NAO_ENCONTRADO", (await Assert.ThrowsAsync<GestaoException>(() => equipe.HistoricoDaPessoa(Guid.NewGuid(), bia.Id, default))).Codigo);
+        }
+        finally
+        {
+            await fonte.DisposeAsync();
+            await using var admin = new NpgsqlConnection(conexao); await admin.OpenAsync();
+            await admin.ExecuteAsync($"DROP SCHEMA {schema} CASCADE");
+        }
+    }
+
     /// <summary>Integração 6A: o colaborador que vai usar o Zippy é ligado a um usuário com acesso à loja, e a um só.</summary>
     [DeliveryDatabaseFact]
     public async Task Colaborador_ligado_ao_usuario_da_loja()

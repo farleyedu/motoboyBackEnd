@@ -49,6 +49,9 @@ public sealed record PessoaRequest(string? Nome, string? Funcao, string? Vinculo
     string? ChavePix, int? UsuarioId, string? Cor, IReadOnlyList<DiaPadrao>? EscalaPadrao, bool Ativo = true, DateOnly? Desde = null,
     int? Versao = null);
 
+/// <summary>Uma versão salva do cadastro (nada se reescreve): quem mudou, quando, e como ficaram nome, vínculo e regra.</summary>
+public sealed record PessoaVersaoDto(int Versao, DateTimeOffset Em, int Por, string? PorNome, string Nome, string Vinculo, RegraPagamento Regra);
+
 /// <summary>Linha do histórico do turno: nada se apaga, cada mudança é mais uma linha.</summary>
 public sealed record EventoTurno(DateTimeOffset Em, int? Por, string Acao, decimal? ValorAnterior, decimal? ValorNovo,
     string? Motivo, string? Detalhe, string? PorNome = null);
