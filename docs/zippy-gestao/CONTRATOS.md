@@ -431,3 +431,6 @@ Espelha `ContaFixa` do Painel (`src/features/zippy-gestao/despesas/despesasRegra
   `Despesas fixas`, finalidade da conta, `dados: { contaFixaId, recorrencia: true, mes }`.
 - **Lançada** = qualquer `despesa_fixa` não estornada com `dados.contaFixaId` e competência no mês (vale também o que a tela lançou
   pelo `POST acontecimentos`). Mudar o valor de um lançamento já feito é `POST ajustes`.
+- **Geração automática** (Integração 6A): `ContasFixasWorker` (a cada 6 h) chama `gerar` do mês em toda loja com conta fixa de valor
+  fixo; o responsável é quem cadastrou a conta mais antiga da loja. O Painel também chama `gerar` ao abrir Despesas no mês atual
+  (gerente). Conta fixa nova criada junto com o primeiro lançamento: a conta nasce antes e o lançamento já leva `dados.contaFixaId`.

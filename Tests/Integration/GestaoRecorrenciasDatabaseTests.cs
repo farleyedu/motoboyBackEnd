@@ -90,6 +90,12 @@ INSERT INTO estabelecimentos VALUES (@loja, 'America/Sao_Paulo'); INSERT INTO us
             await livro.Liquidar(loja, 7, new LiquidarRequest { ChaveIdempotencia = "paga-luz", LancamentoId = luzLembrete.LancamentoId!.Value, ContaId = banco, DataPagamento = hoje }, default);
             Assert.DoesNotContain(await rec.Lembretes(loja, 40, default), l => l.ContaFixaId == luz.Id && l.Mes == mes);
 
+            // O job gera sozinho a conta fixa nova do mês; rodar de novo não duplica (Integração 6A).
+            await rec.Salvar(loja, 7, null, new ContaFixaRequest("Gás de cozinha", "Gás", 90, 5), default);
+            Assert.Equal(1, await ContasFixasWorker.GerarTodas(fonte, rec, hoje, NullLogger.Instance, default));
+            Assert.Equal(0, await ContasFixasWorker.GerarTodas(fonte, rec, hoje, NullLogger.Instance, default));
+            Assert.Equal(EstadoOcorrencia.Lancada, (await rec.Ocorrencias(loja, mes, default)).Single(o => o.Nome == "Gás de cozinha").Estado);
+
             // Finalidades da loja: "gás" e "Gás" são a mesma.
             Assert.Equal("Gás", await rec.CriarFinalidade(loja, 7, "Gás", default));
             Assert.Equal("Gás", await rec.CriarFinalidade(loja, 7, " gas ", default));
