@@ -171,6 +171,13 @@ INSERT INTO usuario VALUES (7, 'Farley'), (8, 'Ana do caixa');", new { livro.Loj
         var ajuste = await db.Service.Ajustar(db.Loja, 7, new AjusteRequest { ChaveIdempotencia = "aj-set",
             LancamentoId = compra.Acontecimento.Lancamentos[0].Id, ValorNovo = 55m, Motivo = "Frete esquecido" }, default);
         Assert.Equal(new DateOnly(2026, 9, 1), ajuste.Acontecimento.Lancamentos[0].MesReferencia);
+        // O original fica como estava; o ajuste é outra linha que aponta para ele, com valor anterior, novo e motivo (Integração 6A).
+        var deSetembro = await db.Service.Lancamentos(db.Loja, new PeriodoFiltro { Mes = new DateOnly(2026, 9, 1), Limite = 100 }, default);
+        var original = deSetembro.Single(l => l.Id == compra.Acontecimento.Lancamentos[0].Id);
+        Assert.Equal(50m, original.Valor);
+        Assert.Equal(5m, deSetembro.Single(l => l.CorrigeLancamentoId == original.Id).Valor);
+        Assert.Equal((50m, 55m, "Frete esquecido", compra.Id), (ajuste.Acontecimento.ValorAnterior, ajuste.Acontecimento.ValorNovo,
+            ajuste.Acontecimento.Motivo, ajuste.Acontecimento.CorrigeId));
         Assert.Equal("DUPLICADO", (await Falha(() => db.Service.FecharMes(db.Loja, 7, new DateOnly(2026, 9, 1),
             new FecharMesRequest { ChaveIdempotencia = "fecha-set-2" }, default))).Codigo);
 
