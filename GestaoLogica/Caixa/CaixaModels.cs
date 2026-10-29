@@ -21,7 +21,8 @@ public static class MovimentoCaixa
 /// <summary>Linha da fita. <c>Tipo</c>: abre, venda, sup, sang, pag, canc. <c>Valor</c> com sinal (saída da gaveta negativa).</summary>
 public sealed record LinhaFita(string Id, string Hora, string Tipo, string Descricao, string Forma, decimal Valor);
 
-public sealed record PedidoEmAberto(string Numero, string Onde, decimal Valor, string Situacao);
+/// <summary><c>Situacao</c> = chave oficial do status (pendente, atribuido, em_rota, aguardando_motoboy). <c>Dia</c> = dia (AAAA-MM-DD) em que o pedido foi feito, quando legível.</summary>
+public sealed record PedidoEmAberto(string Numero, string Onde, decimal Valor, string Situacao, string? Dia = null);
 
 public sealed record AjusteFechamento(Guid Id, DateTimeOffset Em, int Por, decimal ContadoAnterior, decimal ContadoNovo, string Motivo,
     string? PorNome = null);
