@@ -167,6 +167,7 @@ builder.Services.AddScoped<APIBack.GestaoLogica.Estoque.IEstoqueService, APIBack
 builder.Services.AddScoped<APIBack.GestaoLogica.Estoque.IEstoquePoliticasService, APIBack.GestaoLogica.Estoque.EstoquePoliticasService>();
 builder.Services.AddScoped<APIBack.GestaoLogica.Equipe.IEquipeService, APIBack.GestaoLogica.Equipe.EquipeService>();
 builder.Services.AddScoped<APIBack.GestaoLogica.Caixa.ICaixaService, APIBack.GestaoLogica.Caixa.CaixaService>();
+builder.Services.AddScoped<APIBack.GestaoLogica.CaixaListas.ICaixaListasService, APIBack.GestaoLogica.CaixaListas.CaixaListasService>();
 builder.Services.AddScoped<APIBack.GestaoLogica.Despesas.IRecorrenciasService, APIBack.GestaoLogica.Despesas.RecorrenciasService>();
 builder.Services.AddHostedService<APIBack.GestaoLogica.Despesas.ContasFixasWorker>();
 builder.Services.AddScoped<APIBack.GestaoLogica.Despesas.IFinalidadesService, APIBack.GestaoLogica.Despesas.FinalidadesService>();
