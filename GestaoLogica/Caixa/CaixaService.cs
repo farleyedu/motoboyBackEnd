@@ -82,7 +82,10 @@ public sealed partial class CaixaService(NpgsqlDataSource dataSource, IAcontecim
         var fundo = correcoes.Count == 0 ? row.Fundo : correcoes[^1].FundoNovo;
         var pendentes = await PendentesPorMovimento(c, loja, dia);
         var fita = await Fita(loja, dia, contas.Gaveta, ct, fundo, row.FechadoEm is null, pendentes.Movimentos);
-        return new CaixaDoDia(dia, row.FechadoEm is null, Utc(row.AbertoEm), row.AbertoPor, fundo, fita, Array.Empty<PedidoEmAberto>(),
+        // Pedido em aberto é pendência de hoje: dia fechado ou passado não reconstrói o que estava ativo (o banco guarda só o status atual).
+        var emAberto = row.FechadoEm is null && dia == await Hoje(loja, ct)
+            ? await PedidosEmAbertoQuery.Carregar(c, loja, ct) : Array.Empty<PedidoEmAberto>();
+        return new CaixaDoDia(dia, row.FechadoEm is null, Utc(row.AbertoEm), row.AbertoPor, fundo, fita, emAberto,
             row.FechadoEm is null ? null : await Fechamento(c, loja, row), row.AbertoPorNome, row.Fundo, correcoes, pendentes.Total);
     }
 
