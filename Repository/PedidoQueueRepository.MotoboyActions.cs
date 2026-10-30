@@ -69,7 +69,7 @@ namespace APIBack.Repository
         {
             await using var connection = await _dataSource.OpenConnectionAsync();
             await using var transaction = await connection.BeginTransactionAsync();
-            var snapshot = await CompleteCurrentInternalAsync(connection, transaction, estabelecimentoId, motoboyId,
+            var snapshot = await CompleteCurrentInternalAsync(_livro, connection, transaction, estabelecimentoId, motoboyId,
                 completedBy: "motoboy", providedCode: codigo, enforceCode: true);
             await transaction.CommitAsync();
             return snapshot;

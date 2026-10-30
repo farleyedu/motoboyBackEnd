@@ -1,5 +1,7 @@
 using System.Text.Json;
+using APIBack.Acontecimentos;
 using APIBack.DTOs.Delivery;
+using APIBack.GestaoLogica.Vendas;
 using APIBack.Integrations.Ifood;
 using APIBack.Integrations.Ifood.Completion;
 using APIBack.Integrations.Ifood.Orders;
@@ -308,14 +310,14 @@ WHERE (state='processing' AND (lease_until_utc<=clock_timestamp() OR (send_start
         foreach (var id in ids)
         {
             var opened = await LockOfficialOperation(id, ct); await using var connection = opened.Connection; await using var tx = opened.Transaction;
-            if (opened.Operation?.State == "verified") await FinalizeOfficialCompletion(connection, tx, opened.Operation, ct);
+            if (opened.Operation?.State == "verified") await FinalizeOfficialCompletion(_livro, connection, tx, opened.Operation, ct);
             await tx.CommitAsync(ct);
         }
     }
 
-    private static async Task FinalizeOfficialCompletion(NpgsqlConnection c, NpgsqlTransaction tx, OfficialCompletionOperation op, CancellationToken ct)
+    private static async Task FinalizeOfficialCompletion(IAcontecimentosService livro, NpgsqlConnection c, NpgsqlTransaction tx, OfficialCompletionOperation op, CancellationToken ct)
     {
-        if (op.Kind == "takeout") { await FinalizeOfficialPickup(c, tx, op, ct); return; }
+        if (op.Kind == "takeout") { await FinalizeOfficialPickup(livro, c, tx, op, ct); return; }
         var owned = await c.ExecuteScalarAsync<bool>("""
 SELECT EXISTS(SELECT 1 FROM delivery_route_stops s JOIN pedido p ON p.id=s.pedido_id AND p.id_estabelecimento=s.estabelecimento_id
 JOIN ifood_connections a ON a.merchant_id=@Merchant AND a.estabelecimento_id=s.estabelecimento_id
@@ -337,7 +339,7 @@ AND (x.revision=@Revision OR x.remote_status='CONCLUDED') FOR SHARE OF a,x)
         // Pedido terminal tem snapshot ainda utilizável para conferência previamente persistida; não recalcular valores.
         if (request.Checklist != null) await SaveChecklistAsync(c, tx, op.Store, op.Rider, op.Stop, "delivery", manifest, request.Checklist, ct);
         if (op.Collect > 0) await c.ExecuteAsync("UPDATE pedido SET status_pagamento='pago' WHERE id=@Pedido AND id_estabelecimento=@Store", new { op.Pedido, op.Store }, tx);
-        await CompleteCurrentInternalAsync(c, tx, op.Store, op.Rider, "motoboy", null, false, true);
+        await CompleteCurrentInternalAsync(livro, c, tx, op.Store, op.Rider, "motoboy", null, false, true, responsavelId: op.User, pagamentos: request.Payments);
         var name = await c.ExecuteScalarAsync<string?>("SELECT nome_cliente FROM pedido WHERE id=@Pedido", new { op.Pedido }, tx);
         var receipt = new DeliveryReceipt { OperationId = op.Operation, PedidoId = op.Pedido, NomeCliente = name,
             CompletedAtUtc = DateTimeOffset.UtcNow, Total = op.Collect, CodeChecked = op.CodeChecked, PaidBeforeDelivery = op.PaidBefore,
@@ -353,7 +355,7 @@ UPDATE ifood_delivery_completions SET state='succeeded',finished_at_utc=NOW(),co
                 new { Cash = request.Payments.Where(p => p.Method == "dinheiro").Sum(p => p.Amount), op.Stop, op.Store, op.Rider }, tx);
     }
 
-    internal static async Task<bool> ReconcileOfficialCompletion(NpgsqlConnection c, NpgsqlTransaction tx, Guid store, int pedido, string remote)
+    internal static async Task<bool> ReconcileOfficialCompletion(IAcontecimentosService livro, NpgsqlConnection c, NpgsqlTransaction tx, Guid store, int pedido, string remote)
     {
         if (remote is not ("CANCELLED" or "CONCLUDED") || !await HasIfoodCompletionAsync(c, tx)) return false;
         if (remote == "CANCELLED")
@@ -377,7 +379,7 @@ AND h.occurred_at_utc>=o.send_started_at_utc AND h.projection_transaction_id=pg_
         }
         await c.ExecuteAsync("UPDATE ifood_delivery_completions SET state='verified',code_envelope=NULL,lease_id=NULL,lease_until_utc=NULL,evidence=COALESCE(evidence,'concluded_event') WHERE operation_id=@Operation", new { op.Operation }, tx);
         op.State = "verified"; op.Evidence ??= "concluded_event";
-        await FinalizeOfficialCompletion(c, tx, op, default);
+        await FinalizeOfficialCompletion(livro, c, tx, op, default);
         return await c.ExecuteScalarAsync<bool>("SELECT state='succeeded' FROM ifood_delivery_completions WHERE operation_id=@Operation", new { op.Operation }, tx);
     }
 }

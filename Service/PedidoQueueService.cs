@@ -141,6 +141,13 @@ namespace APIBack.Service
                 DeliveryRules.NormalizeReason(motivo, required: false));
         }
 
+        public Task<string> CancelarConcluidoAsync(Guid estabelecimentoId, int actorUserId, int pedidoId, string motivo)
+        {
+            EnsurePositive(pedidoId, "pedidoId");
+            return _repository.CancelarConcluidoAsync(estabelecimentoId, actorUserId, pedidoId,
+                DeliveryRules.NormalizeReason(motivo, required: true)!);
+        }
+
         public Task<MotoboyQueueDto> GetQueueAsync(Guid estabelecimentoId, int motoboyId, CancellationToken cancellationToken = default)
         {
             EnsurePositive(motoboyId, "motoboyId");

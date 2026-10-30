@@ -9,7 +9,13 @@ namespace APIBack.Integrations.Ifood.Orders;
 public sealed class IfoodOrderProjectionRepository
 {
     private readonly NpgsqlDataSource _source;
-    public IfoodOrderProjectionRepository(NpgsqlDataSource source) => _source = source;
+    // A conclusao oficial reconciliada aqui publica a venda no livro na mesma transacao (6C1-A).
+    private readonly APIBack.Acontecimentos.IAcontecimentosService _livro;
+    public IfoodOrderProjectionRepository(NpgsqlDataSource source)
+    {
+        _source = source;
+        _livro = APIBack.Repository.PedidoQueueRepository.LivroDaTransacao(source);
+    }
 
     public async Task<string> ProjectAsync(IfoodInboxReservation reservation, CancellationToken ct = default)
     {
@@ -172,7 +178,7 @@ VALUES(@Id,@MerchantId,@EstabelecimentoId,@ExternalOrderId,@EventId,@Code,@At,@O
                         await connection.ExecuteAsync(new CommandDefinition("UPDATE pedido SET status_pedido=6 WHERE id=@PedidoId AND id_estabelecimento=@Store",
                             new { snapshot.PedidoId, Store = item.EstabelecimentoId }, tx, cancellationToken: ct));
                 }
-                await APIBack.Repository.PedidoQueueRepository.ReconcileIfoodQueueAsync(connection, tx, item.EstabelecimentoId, snapshot.PedidoId,
+                await APIBack.Repository.PedidoQueueRepository.ReconcileIfoodQueueAsync(_livro, connection, tx, item.EstabelecimentoId, snapshot.PedidoId,
                     outcome == "applied" ? snapshot.RemoteStatus ?? "" : "");
                 var payload = JsonSerializer.Serialize(new { schemaVersion = 2, pedidoId = snapshot.PedidoId, estabelecimentoId = item.EstabelecimentoId,
                     action = "ifood_projected", revision = snapshot.Revision + 1, remoteStatus = snapshot.RemoteStatus, synchronizationState = snapshot.SynchronizationState });

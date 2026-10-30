@@ -1,5 +1,6 @@
 using System;
 using System.Threading.Tasks;
+using APIBack.GestaoLogica.Vendas;
 using APIBack.Model.Enum;
 using APIBack.Service;
 using Dapper;
@@ -61,10 +62,39 @@ UPDATE pedido
    SET status_pedido = @Concluido, horario_entrega = {entregaNow}, entrega_manual_entregue_utc = NOW()
  WHERE id = @PedidoId;",
             new { Concluido = (int)StatusPedido.Concluido, PedidoId = pedidoId }, transaction);
+        // Pendente entregue direto e retirada no balcao; o que saiu (em rota manual) e entrega.
+        await VendaDoPedido.PublicarAsync(_livro, connection, transaction, estabelecimentoId, pedidoId, actorUserId,
+            origemAuditada == EncerramentoRules.OrigemBalcao ? ModalidadeVenda.Retirada : ModalidadeVenda.Delivery);
         await PublishOrderEventAsync(connection, transaction, estabelecimentoId, actorUserId, pedidoId,
             "manual_delivered", origemAuditada, motivoAuditado);
         await transaction.CommitAsync();
         return StatusPedido.Concluido.ToApiKey();
+    }
+
+    /// <summary>
+    /// Cancelamento autorizado de pedido ja concluido (6C1-A): so com motivo, so pedido da loja e fora do iFood (GetPedidoAsync recusa:
+    /// o iFood segue os comandos oficiais). Status e estorno da venda na mesma transacao; a venda original fica no livro.
+    /// </summary>
+    public async Task<string> CancelarConcluidoAsync(Guid estabelecimentoId, int actorUserId, int pedidoId, string motivo)
+    {
+        if (string.IsNullOrWhiteSpace(motivo) || motivo.Trim().Length < 3)
+            throw new DeliveryDomainException(422, "MOTIVO_OBRIGATORIO", "Diga por que o pedido entregue foi cancelado.");
+        await using var connection = await _dataSource.OpenConnectionAsync();
+        await using var transaction = await connection.BeginTransactionAsync();
+        var pedido = await GetPedidoAsync(connection, transaction, estabelecimentoId, pedidoId, forUpdate: true)
+            ?? throw new DeliveryDomainException(404, "PEDIDO_NOT_FOUND", "Pedido nao encontrado neste estabelecimento.");
+        var status = StatusPedidoExtensions.FromDbValue(pedido.StatusPedido) ?? StatusPedido.Pendente;
+        if (status == StatusPedido.Cancelado) return status.ToApiKey();
+        if (status != StatusPedido.Concluido)
+            throw new DeliveryDomainException(409, "PEDIDO_NAO_CONCLUIDO", "So pedido entregue usa este cancelamento. Use o cancelamento comum.");
+
+        await connection.ExecuteAsync("UPDATE pedido SET status_pedido = @Cancelado WHERE id = @PedidoId;",
+            new { Cancelado = (int)StatusPedido.Cancelado, PedidoId = pedidoId }, transaction);
+        await VendaDoPedido.EstornarAsync(_livro, connection, transaction, estabelecimentoId, pedidoId, actorUserId, motivo.Trim());
+        await PublishOrderEventAsync(connection, transaction, estabelecimentoId, actorUserId, pedidoId,
+            "canceled_after_completion", "operador", motivo.Trim());
+        await transaction.CommitAsync();
+        return StatusPedido.Cancelado.ToApiKey();
     }
 
     private static async Task GarantirSemMotoboyAsync(NpgsqlConnection connection, NpgsqlTransaction transaction,

@@ -19,6 +19,7 @@ namespace APIBack.Service.Interface
         Task<MotoboyQueueDto> CancelAsync(Guid estabelecimentoId, int actorUserId, int pedidoId, string? motivo);
         Task<string> MarcarSaiuManualAsync(Guid estabelecimentoId, int actorUserId, int pedidoId, string? entregadorNome);
         Task<string> MarcarEntregueManualAsync(Guid estabelecimentoId, int actorUserId, int pedidoId, string? origem = null, string? motivo = null);
+        Task<string> CancelarConcluidoAsync(Guid estabelecimentoId, int actorUserId, int pedidoId, string motivo);
         Task<MotoboyQueueDto> GetQueueAsync(Guid estabelecimentoId, int motoboyId, CancellationToken cancellationToken = default);
         Task<LockPedidosResultDto> LockAsync(Guid estabelecimentoId, int actorUserId, IReadOnlyList<int> pedidoIds);
         Task<LockPedidosResultDto> UnlockAsync(Guid estabelecimentoId, int actorUserId, IReadOnlyList<int> pedidoIds);
