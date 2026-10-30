@@ -3,7 +3,9 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
+using APIBack.Acontecimentos;
 using APIBack.DTOs.Delivery;
+using APIBack.GestaoLogica.Vendas;
 using APIBack.Hubs;
 using APIBack.Model.Enum;
 using APIBack.Repository.Interface;
@@ -43,12 +45,21 @@ namespace APIBack.Repository
 
         private readonly NpgsqlDataSource _dataSource;
         private readonly Microsoft.Extensions.Options.IOptionsMonitor<APIBack.Integrations.Ifood.IfoodOptions>? _ifoodCompletionOptions;
+        // Livro da Gestao: toda conclusao publica a venda na mesma transacao (6C1-A).
+        private readonly IAcontecimentosService _livro;
 
-        public PedidoQueueRepository(NpgsqlDataSource dataSource, Microsoft.Extensions.Options.IOptionsMonitor<APIBack.Integrations.Ifood.IfoodOptions>? ifoodCompletionOptions = null)
+        public PedidoQueueRepository(NpgsqlDataSource dataSource, Microsoft.Extensions.Options.IOptionsMonitor<APIBack.Integrations.Ifood.IfoodOptions>? ifoodCompletionOptions = null,
+            IAcontecimentosService? livro = null)
         {
             _dataSource = dataSource ?? throw new ArgumentNullException(nameof(dataSource));
             _ifoodCompletionOptions = ifoodCompletionOptions;
+            _livro = livro ?? LivroDaTransacao(dataSource);
         }
+
+        /// <summary>Livro so para publicar dentro da transacao do pedido (essa sobrecarga nao notifica assinantes).</summary>
+        internal static IAcontecimentosService LivroDaTransacao(NpgsqlDataSource dataSource) =>
+            new AcontecimentosService(dataSource, Array.Empty<IAcontecimentoAssinante>(),
+                Microsoft.Extensions.Logging.Abstractions.NullLogger<AcontecimentosService>.Instance);
 
         private sealed class PedidoRow
         {
@@ -265,8 +276,8 @@ SELECT m.id
             await using var transaction = await connection.BeginTransactionAsync();
             await LockQueuesAsync(connection, transaction, estabelecimentoId, motoboyId);
             var completed = await GetCurrentStopAsync(connection, transaction, estabelecimentoId, motoboyId, forUpdate: false);
-            var snapshot = await CompleteCurrentInternalAsync(connection, transaction, estabelecimentoId, motoboyId,
-                completedBy: "operator", providedCode: null, enforceCode: false);
+            var snapshot = await CompleteCurrentInternalAsync(_livro, connection, transaction, estabelecimentoId, motoboyId,
+                completedBy: "operator", providedCode: null, enforceCode: false, responsavelId: actorUserId);
             if (completed != null)
                 await PublishOrderEventAsync(connection, transaction, estabelecimentoId, actorUserId, completed.PedidoId,
                     "operator_delivered", "operador_rota", "Entrega atual concluida pelo operador.", motoboyId);
@@ -409,9 +420,10 @@ SELECT m.id
             return await BuildSnapshotAsync(connection, transaction, estabelecimentoId, motoboyId, version);
         }
 
-        private static async Task<MotoboyQueueDto> CompleteCurrentInternalAsync(
+        private static async Task<MotoboyQueueDto> CompleteCurrentInternalAsync(IAcontecimentosService livro,
             NpgsqlConnection connection, NpgsqlTransaction transaction,
-            Guid estabelecimentoId, int motoboyId, string completedBy, string? providedCode, bool enforceCode, bool officialCompletion = false, int? targetPedidoId = null)
+            Guid estabelecimentoId, int motoboyId, string completedBy, string? providedCode, bool enforceCode, bool officialCompletion = false, int? targetPedidoId = null,
+            int? responsavelId = null, IReadOnlyList<DeliveryPaymentPart>? pagamentos = null)
         {
             await LockQueuesAsync(connection, transaction, estabelecimentoId, motoboyId);
             StopRow current;
@@ -472,6 +484,8 @@ SELECT m.id
                 $"UPDATE pedido SET status_pedido = @Concluido, horario_entrega = {entregaNow} WHERE id = @PedidoId;",
                 new { Concluido = (int)StatusPedido.Concluido, current.PedidoId }, transaction);
             await CancelPendingTransfersForPedidoAsync(connection, transaction, estabelecimentoId, current.PedidoId, "Pedido entregue.");
+            await VendaDoPedido.PublicarAsync(livro, connection, transaction, estabelecimentoId, current.PedidoId, responsavelId,
+                ModalidadeVenda.Delivery, pagamentos);
 
             var eligibility = await GetEligibilityAsync(connection, transaction, motoboyId, estabelecimentoId);
             // So a entrega atual abre vaga para a proxima; concluir um pedido do meio da fila nao mexe em quem esta em rota.

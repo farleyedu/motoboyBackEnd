@@ -26,8 +26,8 @@ public sealed partial class PedidoQueueRepository
         await using var transaction = await connection.BeginTransactionAsync();
         var preview = await GetActiveStopForPedidoAsync(connection, transaction, estabelecimentoId, pedidoId, forUpdate: false)
             ?? throw new DeliveryDomainException(404, "PEDIDO_NOT_IN_QUEUE", "Pedido nao esta na fila de nenhum motoboy.");
-        var snapshot = await CompleteCurrentInternalAsync(connection, transaction, estabelecimentoId, preview.MotoboyId,
-            completedBy: "operator", providedCode: null, enforceCode: false, targetPedidoId: pedidoId);
+        var snapshot = await CompleteCurrentInternalAsync(_livro, connection, transaction, estabelecimentoId, preview.MotoboyId,
+            completedBy: "operator", providedCode: null, enforceCode: false, targetPedidoId: pedidoId, responsavelId: actorUserId);
         await PublishOrderEventAsync(connection, transaction, estabelecimentoId, actorUserId, pedidoId,
             "operator_delivered", "operador_rota", motivo ?? "Entrega concluida pelo operador.", preview.MotoboyId);
         await transaction.CommitAsync();

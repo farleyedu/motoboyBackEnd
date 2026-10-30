@@ -423,6 +423,24 @@ namespace APIBack.Controllers
             }
         }
 
+        /// <summary>Cancela pedido ja entregue e estorna a venda no livro (6C1-A). Exige motivo e permissao de cancelar no Financeiro.</summary>
+        [HttpPost("pedidos/{pedidoId:int}/cancelar-concluido")]
+        [RequirePermission("Delivery", "atribuir_motoboy")]
+        [RequirePermission("Financeiro", "cancelar")]
+        public async Task<IActionResult> CancelarConcluido(int pedidoId, [FromBody] CancelPedidoRequest request)
+        {
+            if (!TryGetActor(out var actorUserId, out var estabelecimentoId, out var error)) return error!;
+            try
+            {
+                var status = await _queueService.CancelarConcluidoAsync(estabelecimentoId, actorUserId, pedidoId, request?.Motivo ?? "");
+                return Ok(ApiResponse<object>.Ok(new { pedidoId, status }));
+            }
+            catch (DeliveryDomainException ex)
+            {
+                return DomainError(ex);
+            }
+        }
+
         [HttpGet("motoboys/{motoboyId:int}/fila")]
         [RequireModule("Delivery")]
         [RequirePermission("Delivery", "visualizar")]

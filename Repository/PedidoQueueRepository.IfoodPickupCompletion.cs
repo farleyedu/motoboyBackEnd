@@ -98,7 +98,7 @@ VALUES(@Operation,'takeout',@Store,@Merchant,@Order,@Pedido,NULL,0,@User,'000000
         return owner.HasValue ? await ReadOfficialOperation(c, null, owner.Value, operation, ct) : null;
     }
 
-    private static async Task FinalizeOfficialPickup(NpgsqlConnection c, NpgsqlTransaction tx, OfficialCompletionOperation op, CancellationToken ct)
+    private static async Task FinalizeOfficialPickup(APIBack.Acontecimentos.IAcontecimentosService livro, NpgsqlConnection c, NpgsqlTransaction tx, OfficialCompletionOperation op, CancellationToken ct)
     {
         var valid = await c.ExecuteScalarAsync<bool>("""
 SELECT EXISTS(SELECT 1 FROM ifood_order_snapshots s JOIN ifood_connections a USING(merchant_id,estabelecimento_id)
@@ -125,5 +125,7 @@ INSERT INTO delivery_realtime_outbox(event_id,event_name,target_group,estabeleci
 VALUES(@Event,@Name,@Group,@Store,NULL,NULL,NULL,@Revision,CAST(@Payload AS jsonb),NOW())
 """, new { op.Operation, op.Pedido, op.Store, op.Collect, op.Revision, Receipt = JsonSerializer.Serialize(receipt), Event = Guid.NewGuid(),
             Name = DeliveryRealtimeEvents.DeliveryOrderUpdated, Group = DeliveryRealtimeEvents.EstablishmentGroup(op.Store), Payload = JsonSerializer.Serialize(new { schemaVersion = 2, pedidoId = op.Pedido, action = "ifood_pickup_confirmed", operationId = op.Operation }) }, tx, cancellationToken: ct));
+        await APIBack.GestaoLogica.Vendas.VendaDoPedido.PublicarAsync(livro, c, tx, op.Store, op.Pedido, op.User,
+            APIBack.GestaoLogica.Vendas.ModalidadeVenda.Retirada, request.Payments, ct);
     }
 }

@@ -37,6 +37,7 @@ namespace APIBack.Repository.Interface
         Task<string> MarcarSaiuManualAsync(Guid estabelecimentoId, int actorUserId, int pedidoId, string? entregadorNome);
         /// <summary>Entrega manual: a loja marca como entregue (tambem retirada no balcao). Devolve o status novo.</summary>
         Task<string> MarcarEntregueManualAsync(Guid estabelecimentoId, int actorUserId, int pedidoId, string? origem = null, string? motivo = null);
+        Task<string> CancelarConcluidoAsync(Guid estabelecimentoId, int actorUserId, int pedidoId, string motivo);
         Task<MotoboyQueueDto> GetQueueAsync(Guid estabelecimentoId, int motoboyId, CancellationToken cancellationToken = default);
         /// <summary>Trava/destrava pedidos da fila (ancoras). Estabelecimento apenas.</summary>
         Task<LockPedidosResultDto> SetLockedAsync(Guid estabelecimentoId, int actorUserId, IReadOnlyList<int> pedidoIds, bool locked);

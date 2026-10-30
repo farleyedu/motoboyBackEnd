@@ -16,6 +16,9 @@ public interface IAcontecimentosService
     Task<AcontecimentoPublicado> Publicar(NpgsqlConnection c, NpgsqlTransaction tx, Guid loja, int? responsavelId,
         PublicarAcontecimentoRequest request, CancellationToken ct);
     Task<AcontecimentoPublicado> Estornar(Guid loja, int? responsavelId, Guid acontecimentoId, EstornoRequest request, CancellationToken ct);
+    /// <summary>Estorna dentro da transacao do modulo (ex.: o cancelamento do pedido). Quem chama faz o commit; sem evento.</summary>
+    Task<AcontecimentoPublicado> Estornar(NpgsqlConnection c, NpgsqlTransaction tx, Guid loja, int? responsavelId, Guid acontecimentoId,
+        EstornoRequest request, CancellationToken ct);
     Task<AcontecimentoPublicado> Ajustar(Guid loja, int? responsavelId, AjusteRequest request, CancellationToken ct);
     Task<AcontecimentoPublicado> Liquidar(Guid loja, int? responsavelId, LiquidarRequest request, CancellationToken ct);
     Task<AcontecimentoPublicado> PagarFatura(Guid loja, int? responsavelId, Guid cartaoId, DateOnly faturaMes, LiquidarRequest request,
@@ -55,16 +58,28 @@ public sealed class AcontecimentosService(NpgsqlDataSource dataSource, IEnumerab
 
     public Task<AcontecimentoPublicado> Estornar(Guid loja, int? responsavelId, Guid acontecimentoId, EstornoRequest request,
         CancellationToken ct) =>
-        Escrever(loja, request?.ChaveIdempotencia, ct, async (c, tx, fuso) =>
-        {
-            await AcontecimentoSql.TravarAlvo(c, tx, loja, acontecimentoId);
-            var original = await AcontecimentoSql.Atual(c, tx, loja, acontecimentoId) ?? throw NaoEncontrado("Acontecimento");
-            return AcontecimentoRegras.PlanejarEstorno(original,
-                await AcontecimentoSql.LancamentosAtuais(c, tx, loja, acontecimentoId),
-                await AcontecimentoSql.MovimentosAtuais(c, tx, loja, acontecimentoId, null),
-                await AcontecimentoSql.LiquidacoesAtuais(c, tx, loja, acontecimentoId),
-                request, responsavelId, fuso, Agora);
-        });
+        Escrever(loja, request?.ChaveIdempotencia, ct, (c, tx, fuso) => PlanejarEstorno(c, tx, loja, responsavelId, acontecimentoId, request, fuso));
+
+    public async Task<AcontecimentoPublicado> Estornar(NpgsqlConnection c, NpgsqlTransaction tx, Guid loja, int? responsavelId,
+        Guid acontecimentoId, EstornoRequest request, CancellationToken ct)
+    {
+        var fuso = HorarioRegras.ResolverFuso(await AcontecimentoSql.Fuso(c, tx, loja));
+        var (resultado, _) = await EscreverNaTransacao(c, tx, loja, request?.ChaveIdempotencia, fuso,
+            () => PlanejarEstorno(c, tx, loja, responsavelId, acontecimentoId, request, fuso));
+        return resultado;
+    }
+
+    private async Task<AcontecimentoPlano> PlanejarEstorno(NpgsqlConnection c, NpgsqlTransaction tx, Guid loja, int? responsavelId,
+        Guid acontecimentoId, EstornoRequest? request, TimeZoneInfo fuso)
+    {
+        await AcontecimentoSql.TravarAlvo(c, tx, loja, acontecimentoId);
+        var original = await AcontecimentoSql.Atual(c, tx, loja, acontecimentoId) ?? throw NaoEncontrado("Acontecimento");
+        return AcontecimentoRegras.PlanejarEstorno(original,
+            await AcontecimentoSql.LancamentosAtuais(c, tx, loja, acontecimentoId),
+            await AcontecimentoSql.MovimentosAtuais(c, tx, loja, acontecimentoId, null),
+            await AcontecimentoSql.LiquidacoesAtuais(c, tx, loja, acontecimentoId),
+            request, responsavelId, fuso, Agora);
+    }
 
     public Task<AcontecimentoPublicado> Ajustar(Guid loja, int? responsavelId, AjusteRequest request, CancellationToken ct) =>
         Escrever(loja, request?.ChaveIdempotencia, ct, async (c, tx, fuso) =>
