@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS gestao_ficha_componente (
 CREATE INDEX IF NOT EXISTS ix_gestao_ficha_produto ON gestao_ficha_componente (estabelecimento_id, produto_id, ordem);
 -- O mesmo insumo nao entra duas vezes no mesmo grupo de modalidades do produto.
 CREATE UNIQUE INDEX IF NOT EXISTS ux_gestao_ficha_insumo
-    ON gestao_ficha_componente (estabelecimento_id, produto_id, insumo_id, (coalesce(array_to_string(modalidades, ','), '')));
+    ON gestao_ficha_componente (estabelecimento_id, produto_id, insumo_id, (coalesce(modalidades, ARRAY[]::text[])));
 
 -- De-para de vendas do cardapio: item de pedido sem produto (linha avulsa) -> produto vendido. iFood continua em ifood_produto_vinculo.
 CREATE TABLE IF NOT EXISTS gestao_venda_vinculo (

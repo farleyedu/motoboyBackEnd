@@ -37,7 +37,7 @@ CREATE TABLE ifood_order_links(merchant_id uuid, external_order_id uuid, estabel
 CREATE TABLE ifood_order_snapshots(merchant_id uuid, external_order_id uuid, estabelecimento_id uuid, order_type text, order_amount numeric, pending_amount numeric);
 INSERT INTO estabelecimentos VALUES (@loja, 'America/Sao_Paulo'), (@outra, 'America/Sao_Paulo'); INSERT INTO usuario VALUES (8, 'Júlia do caixa');", new { loja, outra });
                 foreach (var m in new[] { "20261105_01_gestao_fundacao.sql", "20261106_01_gestao_documentos.sql", "20261107_01_gestao_vinculos.sql",
-                             "20261110_01_gestao_caixa.sql" })
+                             "20261110_01_gestao_caixa.sql", "20261118_01_gestao_caixa_correcoes.sql" })
                     await c.ExecuteAsync(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "Migrations", "Delivery", m)));
             }
             var livro = new AcontecimentosService(fonte, Array.Empty<IAcontecimentoAssinante>(), NullLogger<AcontecimentosService>.Instance);
