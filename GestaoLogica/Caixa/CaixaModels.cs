@@ -19,7 +19,8 @@ public static class MovimentoCaixa
 }
 
 /// <summary>Linha da fita. <c>Tipo</c>: abre, venda, sup, sang, pag, canc. <c>Valor</c> com sinal (saída da gaveta negativa).</summary>
-public sealed record LinhaFita(string Id, string Hora, string Tipo, string Descricao, string Forma, decimal Valor);
+public sealed record LinhaFita(string Id, string Hora, string Tipo, string Descricao, string Forma, decimal Valor,
+    bool Corrigivel = false, bool Estornada = false, Guid? SolicitacaoPendente = null);
 
 public sealed record PedidoEmAberto(string Numero, string Onde, decimal Valor, string Situacao);
 
@@ -31,7 +32,8 @@ public sealed record FechamentoDto(string Id, DateOnly Dia, int Operador, DateTi
     string? Justificativa, decimal Fica, decimal Cofre, IReadOnlyList<AjusteFechamento> Ajustes, string? OperadorNome = null);
 
 public sealed record CaixaDoDia(DateOnly Dia, bool Aberto, DateTimeOffset? AbertoEm, int? Por, decimal Fundo, IReadOnlyList<LinhaFita> Fita,
-    IReadOnlyList<PedidoEmAberto> PedidosEmAberto, FechamentoDto? Fechamento, string? PorNome = null);
+    IReadOnlyList<PedidoEmAberto> PedidosEmAberto, FechamentoDto? Fechamento, string? PorNome = null, decimal? FundoOriginal = null,
+    IReadOnlyList<CorrecaoFundoDto>? CorrecoesFundo = null, int SolicitacoesPendentes = 0);
 
 /// <summary>Contagem por cédula (200, 100, 50, 20, 10, 5, 2) mais o total em moedas.</summary>
 public sealed record ContagemCaixa(IReadOnlyDictionary<int, int>? Notas, decimal Moedas);
@@ -57,3 +59,27 @@ public sealed record CompraAPagar(Guid LancamentoId, Guid AcontecimentoId, strin
 
 /// <summary>O que dá para pagar em dinheiro pela gaveta: remuneração da equipe e compras a pagar.</summary>
 public sealed record APagarNaGaveta(IReadOnlyList<APIBack.GestaoLogica.Equipe.PessoaAPagar> Equipe, IReadOnlyList<CompraAPagar> Compras);
+
+// ---- 6C2-B: correções do Caixa (docs/zippy-gestao/6c2b-contratos-correcoes-caixa.md no zippy-admin)
+
+public sealed record SolicitarCorrecaoRequest(string? ChaveIdempotencia, string? Motivo);
+
+public sealed record EstornarMovimentoRequest(string? ChaveIdempotencia, string? Motivo);
+
+/// <summary><c>Decisao</c>: "aprovar" ou "rejeitar". O motivo é obrigatório ao rejeitar.</summary>
+public sealed record DecisaoRequest(string? Decisao, string? Motivo);
+
+/// <summary><c>FundoAtual</c> = o fundo efetivo que a pessoa viu; se mudou desde então, a correção é recusada (CONFLITO).</summary>
+public sealed record CorrigirFundoRequest(string? ChaveIdempotencia, decimal FundoAtual, decimal FundoNovo, string? Motivo);
+
+public sealed record MovimentoSolicitado(Guid Id, string Tipo, string Descricao, DateTimeOffset DataFato, decimal Valor);
+
+public sealed record SolicitacaoDto(Guid Id, DateOnly Dia, string Tipo, string Status, MovimentoSolicitado? Movimento, decimal? FundoAnterior,
+    decimal? FundoNovo, string Motivo, int SolicitadoPor, string? SolicitadoPorNome, DateTimeOffset SolicitadoEm, int? DecididoPor,
+    string? DecididoPorNome, DateTimeOffset? DecididoEm, string? MotivoDecisao, Guid? CorrecaoId);
+
+public sealed record CorrecaoFundoDto(Guid Id, DateOnly Dia, DateTimeOffset Em, int Por, string? PorNome, decimal FundoAnterior,
+    decimal FundoNovo, string Motivo);
+
+/// <summary>Resposta da correção de fundo: gerente efetiva (<c>Efetivada</c>); operador só cria o pedido (HTTP 202).</summary>
+public sealed record CorrigirFundoResposta(bool Efetivada, CaixaDoDia? Dia, SolicitacaoDto? Solicitacao);

@@ -59,6 +59,33 @@ public sealed class GestaoCaixaController(ICaixaService service) : ControllerBas
         return await service.AjustarFechamento(loja, usuario, dia, req ?? throw Vazio(), ct);
     });
 
+    // ---- 6C2-B: correções (movimento errado e fundo de troco). O operador pede; o gerente estorna, aprova ou rejeita.
+
+    [HttpPost("movimentos/{id}/solicitacoes")]
+    public Task<IActionResult> Solicitar(string id, [FromBody] SolicitarCorrecaoRequest? req, CancellationToken ct) => Run(false, async (loja, usuario, acesso) =>
+        await service.Solicitar(loja, usuario, acesso, MovimentoId(id), req ?? throw Vazio(), ct));
+
+    [HttpPost("movimentos/{id}/estorno")]
+    public Task<IActionResult> Estornar(string id, [FromBody] EstornarMovimentoRequest? req, CancellationToken ct) => Run(true, async (loja, usuario, acesso) =>
+        await service.EstornarMovimento(loja, usuario, acesso, MovimentoId(id), req ?? throw Vazio(), ct));
+
+    [HttpGet("solicitacoes")]
+    public Task<IActionResult> Solicitacoes([FromQuery] string? status, [FromQuery] DateOnly? dia, CancellationToken ct) => Run(false, async (loja, usuario, acesso) =>
+        await service.Solicitacoes(loja, usuario, acesso, status, dia, ct));
+
+    [HttpPost("solicitacoes/{id:guid}/decisao")]
+    public Task<IActionResult> Decisao(Guid id, [FromBody] DecisaoRequest? req, CancellationToken ct) => Run(true, async (loja, usuario, acesso) =>
+        await service.Decidir(loja, usuario, acesso, id, req ?? throw Vazio(), ct));
+
+    /// <summary>Gerente corrige na hora (200). Operador só cria o pedido (202), sem mexer em dinheiro.</summary>
+    [HttpPost("dias/{dia}/corrigir-fundo")]
+    public Task<IActionResult> CorrigirFundo(DateOnly dia, [FromBody] CorrigirFundoRequest? req, CancellationToken ct) => Run(false, async (loja, usuario, acesso) =>
+        await service.CorrigirFundo(loja, usuario, acesso, dia, req ?? throw Vazio(), ct));
+
+    /// <summary>O id da fita é "{acontecimento}" ou "{acontecimento}:{linha}" / "{acontecimento}:q:{liquidação}": vale o primeiro GUID.</summary>
+    private static Guid MovimentoId(string id) =>
+        Guid.TryParse(id.Split(':')[0], out var guid) ? guid : throw new GestaoException("CAMPO_INVALIDO", "Movimento inválido.", 422);
+
     private async Task SoHojeParaOperador(Guid loja, GestaoPapeis.Acesso acesso, DateOnly dia, CancellationToken ct)
     {
         if (acesso.Papel == GestaoPapeis.OperadorCaixa && dia != await service.Hoje(loja, ct))
@@ -76,7 +103,8 @@ public sealed class GestaoCaixaController(ICaixaService service) : ControllerBas
         {
             if (acesso.Papel is null || (soGerente && acesso.Papel != GestaoPapeis.Gerente))
                 throw new GestaoException("SEM_PERMISSAO", soGerente ? "Só o gerente." : "Você não tem acesso ao caixa.", 403);
-            return Ok(ApiResponse<object?>.Ok(await acao(loja, usuario, acesso)));
+            var resultado = await acao(loja, usuario, acesso);
+            return resultado is CorrigirFundoResposta { Efetivada: false } ? StatusCode(202, ApiResponse<object?>.Ok(resultado)) : Ok(ApiResponse<object?>.Ok(resultado));
         }
         catch (GestaoException ex) { return StatusCode(ex.Status, ApiResponse<object>.Fail(ex.Message, ex.Codigo)); }
     }

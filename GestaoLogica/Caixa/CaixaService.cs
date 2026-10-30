@@ -24,9 +24,14 @@ public interface ICaixaService
     Task<FechamentoDto> AjustarFechamento(Guid loja, int usuario, DateOnly dia, AjustarFechamentoRequest req, CancellationToken ct);
     Task<DateOnly> Hoje(Guid loja, CancellationToken ct);
     Task<APagarNaGaveta> APagar(Guid loja, CancellationToken ct);
+    Task<SolicitacaoDto> Solicitar(Guid loja, int usuario, GestaoPapeis.Acesso acesso, Guid movimentoId, SolicitarCorrecaoRequest req, CancellationToken ct);
+    Task<CaixaDoDia> EstornarMovimento(Guid loja, int usuario, GestaoPapeis.Acesso acesso, Guid movimentoId, EstornarMovimentoRequest req, CancellationToken ct);
+    Task<IReadOnlyList<SolicitacaoDto>> Solicitacoes(Guid loja, int usuario, GestaoPapeis.Acesso acesso, string? status, DateOnly? dia, CancellationToken ct);
+    Task<SolicitacaoDto> Decidir(Guid loja, int usuario, GestaoPapeis.Acesso acesso, Guid solicitacaoId, DecisaoRequest req, CancellationToken ct);
+    Task<CorrigirFundoResposta> CorrigirFundo(Guid loja, int usuario, GestaoPapeis.Acesso acesso, DateOnly dia, CorrigirFundoRequest req, CancellationToken ct);
 }
 
-public sealed class CaixaService(NpgsqlDataSource dataSource, IAcontecimentosService livro, TimeProvider? relogio = null,
+public sealed partial class CaixaService(NpgsqlDataSource dataSource, IAcontecimentosService livro, TimeProvider? relogio = null,
     IEquipeService? equipe = null) : ICaixaService
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
@@ -73,9 +78,12 @@ public sealed class CaixaService(NpgsqlDataSource dataSource, IAcontecimentosSer
         var row = await Dia(c, loja, dia);
         if (row is null) return new CaixaDoDia(dia, false, null, null, 0, Array.Empty<LinhaFita>(), Array.Empty<PedidoEmAberto>(), null);
         var contas = await ContasDoCaixa(c, loja, null, ct);
-        var fita = await Fita(loja, dia, contas.Gaveta, ct);
-        return new CaixaDoDia(dia, row.FechadoEm is null, Utc(row.AbertoEm), row.AbertoPor, row.Fundo, fita, Array.Empty<PedidoEmAberto>(),
-            row.FechadoEm is null ? null : await Fechamento(c, loja, row), row.AbertoPorNome);
+        var correcoes = await CorrecoesDoFundo(c, loja, dia);
+        var fundo = correcoes.Count == 0 ? row.Fundo : correcoes[^1].FundoNovo;
+        var pendentes = await PendentesPorMovimento(c, loja, dia);
+        var fita = await Fita(loja, dia, contas.Gaveta, ct, fundo, row.FechadoEm is null, pendentes.Movimentos);
+        return new CaixaDoDia(dia, row.FechadoEm is null, Utc(row.AbertoEm), row.AbertoPor, fundo, fita, Array.Empty<PedidoEmAberto>(),
+            row.FechadoEm is null ? null : await Fechamento(c, loja, row), row.AbertoPorNome, row.Fundo, correcoes, pendentes.Total);
     }
 
     public async Task<CaixaDoDia> Abrir(Guid loja, int usuario, GestaoPapeis.Acesso acesso, AbrirCaixaRequest req, CancellationToken ct)
@@ -365,8 +373,16 @@ VALUES (@ajusteId, @loja, @dia, @usuario, @agora, @atual, @ContadoNovo, @motivo,
     // ---------------------------------------------------------------- apoio
 
     /// <summary>Fita do dia a partir do livro: abertura, vendas (todas as formas) e o que mexeu na gaveta.</summary>
-    private async Task<IReadOnlyList<LinhaFita>> Fita(Guid loja, DateOnly dia, Guid gaveta, CancellationToken ct)
+    private async Task<IReadOnlyList<LinhaFita>> Fita(Guid loja, DateOnly dia, Guid gaveta, CancellationToken ct, decimal? fundoEfetivo = null,
+        bool diaAberto = false, IReadOnlyDictionary<Guid, Guid>? pendentes = null)
     {
+        LinhaFita Marca(LinhaFita l, AcontecimentoDto a)
+        {
+            var estornada = a.CorrigidoPor.Count > 0;
+            var pendente = pendentes is not null && pendentes.TryGetValue(a.Id, out var s) ? s : (Guid?)null;
+            return l with { Estornada = estornada, SolicitacaoPendente = pendente,
+                Corrigivel = diaAberto && !estornada && pendente is null && Estornavel(a, gaveta) };
+        }
         var fuso = await livro.Fuso(loja, ct);
         var acontecimentos = await livro.LinhaDoTempo(loja, new PeriodoFiltro { Mes = new DateOnly(dia.Year, dia.Month, 1), Dia = dia, Limite = 1000 }, ct);
         var fita = new List<LinhaFita>();
@@ -376,10 +392,10 @@ VALUES (@ajusteId, @loja, @dia, @usuario, @agora, @atual, @ContadoNovo, @motivo,
             if (a.Tipo == TipoAbertura)
             {
                 fita.Add(new LinhaFita(a.Id.ToString(), hora, "abre", "Abertura · fundo de troco", FormaCaixa.Dinheiro,
-                    a.Dados.TryGetProperty("fundo", out var fundo) ? fundo.GetDecimal() : 0));
+                    fundoEfetivo ?? (a.Dados.TryGetProperty("fundo", out var fundo) ? fundo.GetDecimal() : 0)));
                 continue;
             }
-            if (a.Tipo is TipoFechamento or TipoRecolhimento or TipoAjusteFechamento) continue;
+            if (a.Tipo is TipoFechamento or TipoRecolhimento or TipoAjusteFechamento or TipoCorrecaoFundo) continue;
             if (a.Tipo == "venda")
             {
                 var forma = a.Dados.TryGetProperty("forma", out var fx) && fx.ValueKind == JsonValueKind.String ? fx.GetString()! : null;
@@ -398,8 +414,8 @@ VALUES (@ajusteId, @loja, @dia, @usuario, @agora, @atual, @ContadoNovo, @motivo,
                 _ => a.Lancamentos.Any(l => l.Sentido == Sentido.Entrada) ? "sup" : "pag",
             };
             foreach (var l in a.Lancamentos.Where(l => l.ContaId == gaveta))
-                fita.Add(new LinhaFita($"{a.Id}:{l.Linha}", hora, tipo, a.Descricao, FormaCaixa.Dinheiro,
-                    l.Sentido == Sentido.Entrada ? l.Valor : -l.Valor));
+                fita.Add(Marca(new LinhaFita($"{a.Id}:{l.Linha}", hora, tipo, a.Descricao, FormaCaixa.Dinheiro,
+                    l.Sentido == Sentido.Entrada ? l.Valor : -l.Valor), a));
             // Algo que estava a pagar (diária, compra) quitado com dinheiro da gaveta: o esperado já conta, a fita mostra.
             var naGaveta = a.Liquidacoes.Where(q => q.ContaId == gaveta).ToList();
             var sentidos = naGaveta.Count == 0 ? null : await SentidosLiquidados(loja, naGaveta);
@@ -407,8 +423,8 @@ VALUES (@ajusteId, @loja, @dia, @usuario, @agora, @atual, @ContadoNovo, @motivo,
             {
                 var entra = sentidos!.GetValueOrDefault(q.LancamentoId) == Sentido.Entrada;
                 var valor = entra ? q.Valor : -q.Valor;
-                fita.Add(new LinhaFita($"{a.Id}:q:{q.Id}", hora, q.CorrigeLiquidacaoId is null ? (entra ? "sup" : "pag") : "canc", a.Descricao,
-                    FormaCaixa.Dinheiro, valor));
+                fita.Add(Marca(new LinhaFita($"{a.Id}:q:{q.Id}", hora, q.CorrigeLiquidacaoId is null ? (entra ? "sup" : "pag") : "canc", a.Descricao,
+                    FormaCaixa.Dinheiro, valor), a));
             }
         }
         return fita;
