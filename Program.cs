@@ -162,7 +162,9 @@ builder.Services.AddScoped<APIBack.GestaoLogica.Vinculos.ICuradoriaDecisoesServi
 builder.Services.AddScoped<APIBack.GestaoLogica.Vinculos.ICuradoriaGlobalService, APIBack.GestaoLogica.Vinculos.CuradoriaGlobalService>();
 builder.Services.AddScoped<APIBack.GestaoLogica.Compras.IComprasService, APIBack.GestaoLogica.Compras.ComprasService>();
 // Sem ficha técnica no backend ainda: todo pedido fica "sem ficha" até a Gestão e Inteligência registrar a sua leitura.
-builder.Services.AddScoped<APIBack.GestaoLogica.Estoque.IFichaTecnicaLeitor, APIBack.GestaoLogica.Estoque.FichaTecnicaPendente>();
+builder.Services.AddScoped<APIBack.GestaoLogica.Estoque.IFichaTecnicaLeitor, APIBack.GestaoLogica.Vendas.FichaTecnicaLeitorPostgres>();
+builder.Services.AddScoped<APIBack.GestaoLogica.Vendas.IItensVendidosLeitor, APIBack.GestaoLogica.Vendas.ItensVendidosLeitor>();
+builder.Services.AddScoped<APIBack.GestaoLogica.Vendas.IVendasCatalogoService, APIBack.GestaoLogica.Vendas.VendasCatalogoService>();
 builder.Services.AddScoped<APIBack.GestaoLogica.Estoque.IEstoqueService, APIBack.GestaoLogica.Estoque.EstoqueService>();
 builder.Services.AddScoped<APIBack.GestaoLogica.Estoque.IEstoquePoliticasService, APIBack.GestaoLogica.Estoque.EstoquePoliticasService>();
 builder.Services.AddScoped<APIBack.GestaoLogica.Equipe.IEquipeService, APIBack.GestaoLogica.Equipe.EquipeService>();
