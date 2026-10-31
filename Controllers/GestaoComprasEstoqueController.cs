@@ -10,7 +10,7 @@ namespace APIBack.Controllers;
 
 public sealed record ContagensRequest(IReadOnlyList<Contagem>? Contagens);
 
-public sealed record PedidosBaixaRequest(IReadOnlyList<PedidoBaixa>? Pedidos);
+public sealed record PedidosBaixaRequest(IReadOnlyList<int>? PedidoIds);
 
 /// <summary>Compra a partir do documento e conferência por linha (CONTRATOS §9.5). Só o gerente que lança no Financeiro.</summary>
 [ApiController]
@@ -125,13 +125,28 @@ public sealed class GestaoEstoqueController(IEstoqueService service, IEstoquePol
         return acesso.Papel == GestaoPapeis.Gerente ? r : new { r.Acontecimento, Contados = r.Divergencias.Count };
     });
 
+    // Baixar vendas é do Estoque (gerente ou operador com Estoque). Não devolve saldo nenhum; o operador só vê o dia de hoje.
+    [HttpGet("baixa-vendas/candidatos")]
+    public Task<IActionResult> CandidatosBaixa([FromQuery] string? dia, CancellationToken ct) => Run(false, async (loja, _, acesso) =>
+    {
+        ExigirEstoque(acesso);
+        if (!DateOnly.TryParseExact(dia, "yyyy-MM-dd", out var d)) throw new GestaoException("CAMPO_INVALIDO", "Informe o dia (AAAA-MM-DD).", 422);
+        return await service.Candidatos(loja, d, !acesso.Historico, ct);
+    });
+
     [HttpPost("baixa-vendas/previa")]
-    public Task<IActionResult> PreviaBaixa([FromBody] PedidosBaixaRequest? req, CancellationToken ct) => Run(true, async (loja, _, _) =>
-        await service.PreviaBaixa(loja, req?.Pedidos ?? Array.Empty<PedidoBaixa>(), ct));
+    public Task<IActionResult> PreviaBaixa([FromBody] PedidosBaixaRequest? req, CancellationToken ct) => Run(false, async (loja, _, acesso) =>
+    {
+        ExigirEstoque(acesso);
+        return await service.PreviaBaixa(loja, req?.PedidoIds ?? Array.Empty<int>(), !acesso.Historico, ct);
+    });
 
     [HttpPost("baixa-vendas")]
     public Task<IActionResult> Baixa([FromBody] BaixaVendasRequest? req, CancellationToken ct) => Run(false, async (loja, usuario, acesso) =>
-        await service.RegistrarBaixa(loja, usuario, acesso, req ?? throw Vazio(), ct));
+    {
+        ExigirEstoque(acesso);
+        return await service.RegistrarBaixa(loja, usuario, acesso, req ?? throw Vazio(), ct);
+    });
 
     private static GestaoException Vazio() => new("CAMPO_INVALIDO", "Envie os dados.", 422);
 

@@ -51,7 +51,7 @@ INSERT INTO insumo_custo (id, estabelecimento_id, insumo_id, quantidade_compra, 
 VALUES (gen_random_uuid(), @loja, @queijo, 1000, 'g', 40, 0.04, 7);", new { loja, queijo, pao });
             }
             var livro = new AcontecimentosService(fonte, Array.Empty<IAcontecimentoAssinante>(), NullLogger<AcontecimentosService>.Instance);
-            var estoque = new EstoqueService(fonte, livro, new SemFicha());
+            var estoque = new EstoqueService(fonte, livro, new SemFicha(), new ItensDoPedidoFake(fonte));
             var politicas = new EstoquePoliticasService(fonte);
             var gerente = GestaoPapeis.Resolver((_, _) => true, false);
             var operador = GestaoPapeis.Resolver((m, _) => m is "Caixa" or "Estoque", false);

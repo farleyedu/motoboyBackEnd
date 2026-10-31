@@ -52,7 +52,7 @@ public class GestaoComprasEstoqueDatabaseTests
             {
                 await c.ExecuteAsync(@"CREATE TABLE estabelecimentos(id uuid PRIMARY KEY, timezone_iana text);
 CREATE TABLE usuario(id integer PRIMARY KEY, nome text);
-CREATE TABLE pedido(id integer PRIMARY KEY, id_estabelecimento uuid);
+CREATE TABLE pedido(id integer PRIMARY KEY, id_estabelecimento uuid, status_pedido integer NOT NULL DEFAULT 3);
 CREATE TABLE pedido_item(id bigserial PRIMARY KEY, pedido_id integer, produto_id uuid, nome text, quantidade integer, ordem integer DEFAULT 0);
 INSERT INTO estabelecimentos VALUES (@loja, 'America/Sao_Paulo');
 INSERT INTO usuario VALUES (7, 'Marina'), (8, 'Ana do caixa');", new { loja });
@@ -123,7 +123,7 @@ INSERT INTO pedido_item (pedido_id, produto_id, nome, quantidade) VALUES
                     new ComponenteFicha(pao, "Pão brioche", 1, "un"), new ComponenteFicha(queijo, "Muçarela fatiada", 30, "g"),
                     new ComponenteFicha(caixaKraft, "Caixa kraft", 1, "un", new[] { Modalidade.Delivery }),
                 }),
-            }));
+            }), new ItensDoPedidoFake(fonte));
             async Task<decimal> Saldo(Guid insumo) => (await estoque.Saldos(loja, default)).Single(s => s.InsumoId == insumo).Saldo;
             Assert.Equal((24m, 0m), (await Saldo(pao), await Saldo(queijo)));
 
@@ -149,8 +149,12 @@ INSERT INTO pedido_item (pedido_id, produto_id, nome, quantidade) VALUES
                 estoque.RegistrarPerda(loja, 8, operadorSemEstoque, new PerdaRequest("perda-2", pao, 1, "x", true), default))).Codigo);
 
             // Venda que baixa insumos e embalagens: 501 (delivery, 2 lanches) e 502 (salão, sem caixa); 503 tem item avulso.
-            var pedidos = new[] { new PedidoBaixa(501, Modalidade.Delivery), new PedidoBaixa(502, Modalidade.Salao), new PedidoBaixa(503, Modalidade.Retirada) };
-            var previa = await estoque.PreviaBaixa(loja, pedidos, default);
+            await ItensDoPedidoFake.Vender(livro, loja, 501, Modalidade.Delivery);
+            await ItensDoPedidoFake.Vender(livro, loja, 502, Modalidade.Salao);
+            await ItensDoPedidoFake.Vender(livro, loja, 503, Modalidade.Retirada);
+            await ItensDoPedidoFake.Vender(livro, loja, 504, Modalidade.Delivery);
+            var pedidos = new[] { 501, 502, 503 };
+            var previa = await estoque.PreviaBaixa(loja, pedidos, false, default);
             Assert.Equal(new[] { 501, 502 }, previa.Pedidos);
             Assert.Equal(503, Assert.Single(previa.SemFicha).PedidoId);
             Assert.Equal((2m, 3m, 90m), (previa.Consumo.Single(x => x.InsumoId == caixaKraft).Quantidade,
@@ -163,9 +167,9 @@ INSERT INTO pedido_item (pedido_id, produto_id, nome, quantidade) VALUES
             Assert.All(baixa.Acontecimento.Movimentos, m => Assert.Equal(TipoMovimento.Saida, m.Tipo));
             Assert.Equal((13m, -90m, -2m), (await Saldo(pao), await Saldo(queijo), await Saldo(caixaKraft)));
             Assert.Equal("DUPLICADO", (await Assert.ThrowsAsync<GestaoException>(() =>
-                estoque.RegistrarBaixa(loja, 7, gerente, new BaixaVendasRequest(new[] { new PedidoBaixa(501, Modalidade.Delivery), new PedidoBaixa(504, Modalidade.Delivery) }, true), default))).Codigo);
+                estoque.RegistrarBaixa(loja, 7, gerente, new BaixaVendasRequest(new[] { 501, 504 }, true), default))).Codigo);
             Assert.Equal("NAO_ENCONTRADO", (await Assert.ThrowsAsync<GestaoException>(() =>
-                estoque.PreviaBaixa(loja, new[] { new PedidoBaixa(900, Modalidade.Salao) }, default))).Codigo);
+                estoque.PreviaBaixa(loja, new[] { 900 }, false, default))).Codigo);
 
             // Inventário: diferença vira divergência (nunca perda), a contagem inteira fica no acontecimento.
             var inventario = await estoque.RegistrarInventario(loja, 7, gerente,

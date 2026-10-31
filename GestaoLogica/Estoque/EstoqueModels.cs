@@ -35,12 +35,26 @@ public sealed record ItemVendido(int PedidoId, Guid? ProdutoId, string Nome, int
 public sealed record PedidoBaixa(int PedidoId, string Modalidade);
 
 /// <summary>Quanto sai de um insumo. <c>Quantidade</c> positiva (o movimento de saída leva o sinal negativo).</summary>
-public sealed record ConsumoInsumo(Guid InsumoId, string Nome, string Unidade, decimal Quantidade);
+public sealed record ConsumoInsumo(Guid InsumoId, string Nome, string Unidade, decimal Quantidade, bool Embalagem = false);
 
 public sealed record PedidoSemFicha(int PedidoId, IReadOnlyList<string> Itens);
 
+/// <summary>Pedido que não entra na baixa. <c>Motivo</c>: ja_baixado, sem_venda, cancelado, modalidade_desconhecida ou fora_do_dia.</summary>
+public sealed record PedidoIgnorado(int PedidoId, string Motivo, string Detalhe);
+
+/// <summary>
+/// Prévia calculada no servidor. <c>Modalidades</c> vem da venda do livro (nunca do cliente). <c>Assinatura</c> resume pedidos + consumo:
+/// quem confirma devolve a assinatura vista e a baixa só grava se ela ainda for a mesma.
+/// </summary>
 public sealed record BaixaVendasPrevia(IReadOnlyList<ConsumoInsumo> Consumo, IReadOnlyList<int> Pedidos,
-    IReadOnlyList<PedidoSemFicha> SemFicha, IReadOnlyList<int> JaBaixados);
+    IReadOnlyList<PedidoSemFicha> SemFicha, IReadOnlyList<int> JaBaixados, IReadOnlyList<PedidoIgnorado> Ignorados,
+    IReadOnlyDictionary<int, string> Modalidades, string Assinatura);
+
+/// <summary>Venda do dia que pode (ou não) ser baixada. <c>Situacao</c>: pronto, sem_ficha ou baixado.</summary>
+public sealed record CandidatoBaixa(int PedidoId, string Modalidade, DateTimeOffset Quando, decimal? Total, string Situacao,
+    IReadOnlyList<string> Itens, IReadOnlyList<string> SemFicha);
+
+public sealed record CandidatosBaixa(DateOnly Dia, IReadOnlyList<CandidatoBaixa> Pedidos, bool Truncado);
 
 public sealed record Contagem(Guid InsumoId, decimal Contado);
 

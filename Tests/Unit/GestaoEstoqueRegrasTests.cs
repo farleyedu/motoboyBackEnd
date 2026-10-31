@@ -41,7 +41,7 @@ public class GestaoEstoqueRegrasTests
         Assert.Empty(pedidos);
         Assert.Equal("Refri avulso", Assert.Single(Assert.Single(semFicha).Itens));
         Assert.Equal("CAMPO_INVALIDO", Assert.Throws<GestaoException>(() =>
-            EstoqueRegras.ValidarPedidos(new[] { new PedidoBaixa(1, "balcao") })).Codigo);
+            EstoqueRegras.ValidarPedidos(new[] { 1, 1 })).Codigo);
     }
 
     [Fact]

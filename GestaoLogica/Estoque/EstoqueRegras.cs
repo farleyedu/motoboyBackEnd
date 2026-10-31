@@ -54,12 +54,11 @@ public static class EstoqueRegras
             .OrderBy(c => c.Nome).ToList(), baixados, semFicha);
     }
 
-    public static void ValidarPedidos(IReadOnlyList<PedidoBaixa> pedidos)
+    public static void ValidarPedidos(IReadOnlyList<int> pedidoIds)
     {
-        if (pedidos.Count == 0) throw Invalido("Escolha ao menos um pedido.");
-        if (pedidos.Any(p => !Modalidade.Todas.Contains(p.Modalidade)))
-            throw Invalido("Modalidade deve ser salao, retirada ou delivery.");
-        if (pedidos.GroupBy(p => p.PedidoId).Any(g => g.Count() > 1)) throw Invalido("Pedido repetido na lista.");
+        if (pedidoIds.Count == 0) throw Invalido("Escolha ao menos um pedido.");
+        if (pedidoIds.Count > 500) throw Invalido("Escolha no máximo 500 pedidos por baixa.");
+        if (pedidoIds.Distinct().Count() != pedidoIds.Count) throw Invalido("Pedido repetido na lista.");
     }
 
     private static GestaoException Invalido(string m) => new("CAMPO_INVALIDO", m, 422);
