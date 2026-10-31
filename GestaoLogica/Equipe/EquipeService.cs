@@ -24,9 +24,10 @@ public interface IEquipeService
     Task<IReadOnlyList<PessoaAPagar>> APagarPorPessoa(Guid loja, CancellationToken ct);
     Task<IReadOnlyList<UsuarioDaLoja>> UsuariosDaLoja(Guid loja, CancellationToken ct);
     Task<IReadOnlyList<PessoaVersaoDto>> HistoricoDaPessoa(Guid loja, Guid pessoaId, CancellationToken ct);
+    Task<AtividadeTurno> AtividadeDoTurno(Guid loja, Guid pessoaId, DateOnly data, CancellationToken ct);
 }
 
-public sealed class EquipeService(NpgsqlDataSource dataSource, IAcontecimentosService livro, TimeProvider? relogio = null) : IEquipeService
+public sealed partial class EquipeService(NpgsqlDataSource dataSource, IAcontecimentosService livro, TimeProvider? relogio = null) : IEquipeService
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private readonly TimeProvider _relogio = relogio ?? TimeProvider.System;
@@ -253,6 +254,19 @@ SELECT u.id AS UsuarioId, u.nome::text AS Nome, u.email::text AS Email,
             req.PagamentoAvulso ?? baseTurno.PagamentoAvulso, adicionais, req.BaseComissao ?? baseTurno.BaseComissao);
         var rem = EquipeRegras.Calcular(pessoa.Regra, jornada);
 
+        // Entregas conferidas pela pessoa: se o sistema apurou outro número, a diferença precisa de motivo e fica no histórico.
+        int? entregasApuradas = null;
+        if (req.Entregas is { } informadas && pessoa.UsuarioId is not null)
+        {
+            var ativ = await Atividade(c, loja, pessoa, req.Data, entrada, saida, ct);
+            if (ativ.EntregasOrigem == OrigemAtividade.Apurado)
+            {
+                entregasApuradas = ativ.Entregas;
+                if (informadas != ativ.Entregas && informadas != baseTurno.Entregas && (req.Motivo?.Trim().Length ?? 0) < 3)
+                    throw Invalido($"O sistema apurou {ativ.Entregas} entrega(s) neste turno: diga o motivo de informar {informadas} (mínimo de 3 letras).");
+            }
+        }
+
         var fuso = await livro.Fuso(loja, ct);
         var inicioLocal = req.Data.ToDateTime(TimeOnly.FromTimeSpan(TimeSpan.FromMinutes(EquipeRegras.Minutos(entrada)!.Value)));
         var inicio = new DateTimeOffset(inicioLocal, fuso.GetUtcOffset(inicioLocal));
@@ -354,6 +368,7 @@ ON CONFLICT (estabelecimento_id, pessoa_id, data) DO UPDATE SET entrada = EXCLUD
         var detalhes = new List<string>();
         if (antes is not null && (antes.Entrada != entrada || antes.Saida != saida)) detalhes.Add($"horário {antes.Entrada}–{antes.Saida} → {entrada}–{saida}");
         if (antes is not null && antes.Entregas != jornada.Entregas) detalhes.Add($"entregas {antes.Entregas} → {jornada.Entregas}");
+        if (entregasApuradas is { } apuradas && req.Entregas is { } conferidas) detalhes.Add($"entregas apuradas {apuradas}, conferidas {conferidas}");
         if (antes is not null && antes.Justificada != justificada) detalhes.Add(justificada ? "falta justificada" : "falta sem justificativa");
         if (antes is not null && !antes.Adicionais.SequenceEqual(adicionais)) detalhes.Add("adicionais: " + (adicionais.Count == 0 ? "nenhum" : string.Join(", ", adicionais.Select(a => a.Rotulo))));
         if (ajusteMesFechado) detalhes.Add($"{AcontecimentoRegras.MesTexto(mesDoTurno)} fechado: lançado em {AcontecimentoRegras.MesTexto(AcontecimentoRegras.Mes(hoje))}");

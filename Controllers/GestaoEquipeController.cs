@@ -40,6 +40,11 @@ public sealed class GestaoEquipeController(IEquipeService service) : ControllerB
     public Task<IActionResult> Semana([FromQuery] DateOnly inicio, CancellationToken ct) => Run(Leitura, async (loja, _) =>
         await service.Semana(loja, inicio, ct));
 
+    /// <summary>Entregas concluídas atribuídas à pessoa no dia do turno (conferência antes de confirmar).</summary>
+    [HttpGet("atividade")]
+    public Task<IActionResult> Atividade([FromQuery] Guid pessoaId, [FromQuery] DateOnly data, CancellationToken ct) => Run(Leitura, async (loja, _) =>
+        await service.AtividadeDoTurno(loja, pessoaId, data, ct));
+
     [HttpPost("turnos")]
     public Task<IActionResult> Turno([FromBody] MudarTurnoRequest? req, CancellationToken ct) => Run(Escrita, async (loja, usuario) =>
         await service.MudarTurno(loja, usuario, req ?? throw Vazio(), ct));
