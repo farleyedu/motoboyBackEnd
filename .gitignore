@@ -364,3 +364,17 @@ FodyWeavers.xsd
 
 # Local developer configuration (not for source control)
 appsettings.Local.json
+
+# Credenciais: nunca vao para o repositorio (chaves de conta de servico do Google, certificados, arquivos de segredo)
+*-service-account*.json
+*service_account*.json
+google-credentials*.json
+gcp-*.json
+*.pem
+*.p12
+*.pfx
+*.key
+secrets/
+.env
+.env.*
+!.env.example

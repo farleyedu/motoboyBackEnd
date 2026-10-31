@@ -1,5 +1,6 @@
 
 using APIBack.Service.Interface;
+using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 using System.Globalization;
@@ -22,11 +23,57 @@ namespace APIBack.Service
         private const string NominatimUrl = "https://nominatim.openstreetmap.org/search";
         private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(8);
 
-        public LocalizacaoService(HttpClient httpClient, IConfiguration configuration, ILogger<LocalizacaoService> logger)
+        // O Geocoding tem 10.000 eventos gratis por mes; 9.000 deixa margem. Cada consulta ao Google conta 1 evento.
+        private const int LimiteMensalPadrao = 9000;
+        private const string ServicoContador = "geocoding";
+        private static readonly TimeSpan TtlEnderecoEncontrado = TimeSpan.FromHours(24);
+        private static readonly TimeSpan TtlEnderecoNaoEncontrado = TimeSpan.FromMinutes(10);
+
+        private readonly IMemoryCache? _cache;
+        private readonly IGoogleUsoContador? _contador;
+        private readonly int _limiteMensal;
+
+        public LocalizacaoService(
+            HttpClient httpClient, IConfiguration configuration, ILogger<LocalizacaoService> logger,
+            IMemoryCache? cache = null, IGoogleUsoContador? contador = null)
         {
             _httpClient = httpClient;
             _logger = logger;
             _googleKey = configuration["Google:MapsApiKey"] ?? string.Empty;
+            _cache = cache;
+            _contador = contador;
+            _limiteMensal = int.TryParse(configuration["Google:GeocodingLimiteMensal"], NumberStyles.Integer, CultureInfo.InvariantCulture, out var limite) && limite > 0
+                ? limite
+                : LimiteMensalPadrao;
+        }
+
+        /// <summary>Mesmo endereco escrito com espacos ou caixa diferentes gasta uma consulta so.</summary>
+        internal static string ChaveEndereco(string endereco, string? cep)
+        {
+            var normalizado = string.Join(' ', endereco.Trim().ToLowerInvariant().Split(' ', StringSplitOptions.RemoveEmptyEntries));
+            var digitosCep = new string((cep ?? string.Empty).Where(char.IsDigit).ToArray());
+            return $"geo:f:{normalizado}|{digitosCep}";
+        }
+
+        internal static string ChavePonto(double latitude, double longitude) =>
+            $"geo:r:{latitude.ToString("F5", CultureInfo.InvariantCulture)}:{longitude.ToString("F5", CultureInfo.InvariantCulture)}";
+
+        /// <summary>Reserva uma consulta no mes. False = limite atingido (ou contador com defeito): nao chame o Google.</summary>
+        private async Task<bool> PodeChamarGoogleAsync()
+        {
+            if (_contador == null) return true;
+
+            try
+            {
+                if (await _contador.TentarReservarAsync(ServicoContador, _limiteMensal)) return true;
+                _logger.LogWarning("Geocodificacao: limite mensal de {Limite} consultas ao Google atingido; o Google nao sera chamado ate o proximo mes.", _limiteMensal);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Geocodificacao: o contador mensal falhou; o Google nao sera chamado.");
+            }
+
+            return false;
         }
 
         public async Task<(string Latitude, string Longitude)?> ObterCoordenadasAsync(string endereco)
@@ -52,10 +99,18 @@ namespace APIBack.Service
                 return new("unavailable", null);
             }
 
+            var chave = ChaveEndereco(endereco, cep);
+            if (_cache != null && _cache.TryGetValue(chave, out GeocodeConsulta? guardada) && guardada != null) return guardada;
+
+            if (!await PodeChamarGoogleAsync()) return new("unavailable", null);
+
             try
             {
                 var result = await BuscarGoogleAsync(endereco, cep);
-                return new(result == null ? "not_found" : result.Exata ? "found" : "approximate", result);
+                var consulta = new GeocodeConsulta(result == null ? "not_found" : result.Exata ? "found" : "approximate", result);
+                // So guarda resposta valida do Google; erro de chave, cota ou rede nunca vai para o cache.
+                _cache?.Set(chave, consulta, result == null ? TtlEnderecoNaoEncontrado : TtlEnderecoEncontrado);
+                return consulta;
             }
             catch (Exception ex)
             {
@@ -82,6 +137,11 @@ namespace APIBack.Service
                 return null;
             }
 
+            var chave = ChavePonto(latitude, longitude);
+            if (_cache != null && _cache.TryGetValue(chave, out EnderecoReverso? guardado) && guardado != null) return guardado;
+
+            if (!await PodeChamarGoogleAsync()) return null;
+
             try
             {
                 var lat = latitude.ToString("F6", CultureInfo.InvariantCulture);
@@ -97,7 +157,9 @@ namespace APIBack.Service
                     return null;
                 }
 
-                return InterpretarReverso(await response.Content.ReadAsStringAsync(cts.Token));
+                var endereco = InterpretarReverso(await response.Content.ReadAsStringAsync(cts.Token));
+                if (endereco != null) _cache?.Set(chave, endereco, TtlEnderecoEncontrado);
+                return endereco;
             }
             catch (Exception ex)
             {

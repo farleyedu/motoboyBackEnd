@@ -200,6 +200,7 @@ O painel consulta motivos/opções apenas por ação explícita e conserva `oper
 | Variavel | Descricao |
 | --- | --- |
 | `Google__MapsApiKey` | Chave do Google Maps Platform com a **Geocoding API** ativada (geocodificacao do endereco de entrega). Sem ela o cardapio web recusa pedidos de entrega. |
+| `Google__GeocodingLimiteMensal` | (opcional, padrao 9000) Limite de consultas ao Google Geocoding por mes. O backend conta cada consulta (tabela `google_uso_mensal`, migracao `Migrations/Infra/20261031_01_google_uso_mensal.sql`) e, ao chegar no limite, para de chamar o Google e responde "indisponivel" ate o proximo mes. A franquia gratuita do Google e 10.000 por mes; mantenha abaixo disso. |
 
 ## Pagamentos (Asaas)
 

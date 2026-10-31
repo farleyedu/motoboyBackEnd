@@ -223,6 +223,7 @@ builder.Services.AddScoped<ISimuladorRepository, SimuladorRepository>();
 builder.Services.AddScoped<ISimuladorPedidoService, SimuladorPedidoService>();
 builder.Services.AddScoped<ISimuladorIntegracoes, SimuladorIntegracoes>();
 builder.Services.AddScoped<IMotoboyService, MotoboyService>();
+builder.Services.AddSingleton<IGoogleUsoContador, GoogleUsoContador>();
 builder.Services.AddScoped<ILocalizacaoService, LocalizacaoService>();
 builder.Services.AddScoped<ITrackingService, TrackingService>();
 builder.Services.AddScoped<IOperationalSessionService, OperationalSessionService>();
