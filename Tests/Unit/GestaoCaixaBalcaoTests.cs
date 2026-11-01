@@ -64,6 +64,20 @@ public class GestaoCaixaBalcaoTests
     }
 
     [Fact]
+    public async Task Gestao6C5_balcao_que_segue_o_fluxo_fica_pendente_e_pode_pagar_na_retirada()
+    {
+        var (service, queue) = Criar();
+        var pago = await service.CreateBalcaoAsync(Loja, 7, Venda() with { Concluir = false });
+        Assert.Equal("pendente", pago.Status);
+        queue.Verify(q => q.MarcarEntregueManualAsync(It.IsAny<Guid>(), It.IsAny<int>(), It.IsAny<int>(), It.IsAny<string?>(), It.IsAny<string?>()), Times.Never);
+
+        // Paga na retirada: sem forma nem troco no pedido; a venda fica a receber quando o fluxo concluir.
+        await service.CreateBalcaoAsync(Loja, 7, Venda(null) with { TipoPagamento = null, Concluir = false });
+        var pedido = (ManualOrder)queue.Invocations.Last(i => i.Method.Name == nameof(IPedidoQueueRepository.CreatePedidoAsync)).Arguments[2];
+        Assert.Equal(((string?)null, (decimal?)null), (pedido.TipoPagamento, pedido.Troco));
+    }
+
+    [Fact]
     public async Task Gestao6C5_balcao_recusa_linha_avulsa_loja_sem_local_e_dinheiro_menor_que_o_total()
     {
         var (service, queue) = Criar();

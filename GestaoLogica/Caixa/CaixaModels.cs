@@ -160,9 +160,13 @@ public sealed record VendaAReceber(int PedidoId, string Numero, string Descricao
 /// <c>ValorRecebido</c> em dinheiro pode ser maior (troco não entra no livro).</summary>
 public sealed record RecebimentoRequest(string? ChaveIdempotencia, DateOnly Dia, int PedidoId, string? Forma, decimal ValorRecebido);
 
-/// <summary>Venda de balcão pelo Caixa (6C5): vira pedido sem endereço, pago e entregue na hora. Dinheiro exige <c>ValorRecebido</c>.</summary>
+/// <summary>
+/// Venda de balcão pelo Caixa (6C5): vira pedido sem endereço. Dinheiro exige <c>ValorRecebido</c>. <c>Concluir</c> (padrão true): entregue
+/// e pago na hora; false: segue o fluxo da loja e, sem <c>Forma</c>, o cliente paga na retirada (a venda fica a receber).
+/// </summary>
 public sealed record VendaBalcaoRequest(string? ChaveIdempotencia, DateOnly Dia, List<APIBack.DTOs.Delivery.PedidoItemRequest>? Itens, string? Forma,
-    decimal? ValorRecebido, string? Cliente = null, string? Telefone = null, string? Observacao = null);
+    decimal? ValorRecebido, string? Cliente = null, string? Telefone = null, string? Observacao = null, bool? Concluir = null);
 
 /// <param name="JaExistia">Reenvio com a mesma chave: o pedido e a venda já existiam (nada foi duplicado).</param>
-public sealed record VendaBalcaoResposta(int PedidoId, decimal Total, decimal Troco, bool JaExistia, CaixaDoDia Dia);
+/// <param name="Status">Situação do pedido criado: "concluido" (entregue na hora) ou "pendente" (segue o fluxo).</param>
+public sealed record VendaBalcaoResposta(int PedidoId, decimal Total, decimal Troco, bool JaExistia, CaixaDoDia Dia, string? Status = null);

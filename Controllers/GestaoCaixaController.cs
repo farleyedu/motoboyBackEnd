@@ -134,8 +134,11 @@ public sealed class GestaoCaixaController(ICaixaService service, IPedidoCoreServ
         var r = req ?? throw Vazio();
         if (!acesso.PodeLancar) throw new GestaoException("SEM_PERMISSAO", "Você não pode registrar no caixa.", 403);
         var chave = BalcaoRegras.Chave(r.ChaveIdempotencia);
-        var tipoPagamento = BalcaoRegras.TipoPagamento(r.Forma);
-        var recebido = BalcaoRegras.ValorRecebido(r.Forma!, r.ValorRecebido);
+        var concluir = r.Concluir ?? true;
+        // Seguindo o fluxo, a forma pode ficar para a retirada: a venda fica a receber no Caixa quando o pedido for concluído.
+        var pagaDepois = !concluir && string.IsNullOrWhiteSpace(r.Forma);
+        var tipoPagamento = pagaDepois ? null : BalcaoRegras.TipoPagamento(r.Forma);
+        var recebido = pagaDepois ? null : BalcaoRegras.ValorRecebido(r.Forma!, r.ValorRecebido);
         var hoje = await service.Hoje(loja, ct);
         if (r.Dia != hoje) throw new GestaoException("CAMPO_INVALIDO", "O caixa registra só o dia de hoje.", 422);
         if (await service.CarregarDia(loja, hoje, ct) is not { Aberto: true })
@@ -144,12 +147,12 @@ public sealed class GestaoCaixaController(ICaixaService service, IPedidoCoreServ
         try
         {
             pedido = await pedidos.CreateBalcaoAsync(loja, usuario,
-                new PedidoBalcao(chave, r.Itens ?? new(), tipoPagamento, recebido, r.Cliente, r.Telefone, r.Observacao));
+                new PedidoBalcao(chave, r.Itens ?? new(), tipoPagamento, recebido, r.Cliente, r.Telefone, r.Observacao, concluir));
         }
         catch (DeliveryDomainException ex) { throw new GestaoException(ex.Code, ex.Message, ex.StatusCode); }
         var total = pedido.Total ?? 0m;
         return new VendaBalcaoResposta(pedido.Id, total, recebido is { } v ? CaixaRegras.R2(v - total) : 0m, pedido.JaExistia,
-            (await service.CarregarDia(loja, hoje, ct))!);
+            (await service.CarregarDia(loja, hoje, ct))!, pedido.Status);
     });
 
     /// <summary>O id da fita é "{acontecimento}" ou "{acontecimento}:{linha}" / "{acontecimento}:q:{liquidação}": vale o primeiro GUID.</summary>

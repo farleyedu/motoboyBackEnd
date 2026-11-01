@@ -165,8 +165,11 @@ namespace APIBack.Service
 {
     /// <summary>
     /// Venda de balcão vinda do Caixa (6C5). <c>TipoPagamento</c> é o texto gravado no pedido (Dinheiro, Pix, Débito, Crédito), que a venda
-    /// do livro lê; <c>ValorRecebido</c> só no dinheiro (vira o "troco para" do pedido).
+    /// do livro lê; <c>ValorRecebido</c> só no dinheiro (vira o "troco para" do pedido). <c>Concluir</c> false: o pedido segue o fluxo
+    /// normal (fica pendente no quadro) e a venda vai para o livro quando o fluxo concluir; sem <c>TipoPagamento</c> (paga na retirada)
+    /// a venda fica a receber no Caixa.
     /// </summary>
     public sealed record PedidoBalcao(string Chave, System.Collections.Generic.IReadOnlyList<APIBack.DTOs.Delivery.PedidoItemRequest> Itens,
-        string TipoPagamento, decimal? ValorRecebido, string? NomeCliente = null, string? TelefoneCliente = null, string? Observacoes = null);
+        string? TipoPagamento, decimal? ValorRecebido, string? NomeCliente = null, string? TelefoneCliente = null, string? Observacoes = null,
+        bool Concluir = true);
 }

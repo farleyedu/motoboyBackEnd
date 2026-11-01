@@ -75,7 +75,8 @@ namespace APIBack.Service
         /// <summary>
         /// Venda de balcao pelo Caixa (6C5): pedido sem endereco (fica na posicao da loja), so com itens do cardapio (sem linha avulsa e
         /// sem taxa), pago e entregue na hora pela conclusao do balcao, que publica a venda no livro. Mesma chave devolve o mesmo pedido
-        /// (origem_ref "caixa:{chave}"). Sem autoatribuicao de motoboy e sem mensagem ao cliente.
+        /// (origem_ref "caixa:{chave}"). Sem autoatribuicao de motoboy e sem mensagem ao cliente. Com <c>Concluir</c> false o pedido fica
+        /// pendente e segue o fluxo da loja (cozinha, retirada); a venda so vai para o livro quando o fluxo concluir.
         /// </summary>
         public async Task<CreatedPedidoDto> CreateBalcaoAsync(Guid estabelecimentoId, int actorUserId, PedidoBalcao balcao)
         {
@@ -107,7 +108,8 @@ namespace APIBack.Service
                 ClienteId = await _clientes.ResolverOuCriarAsync(estabelecimentoId, balcao.TelefoneCliente, nome),
             };
             var created = await _queue.CreatePedidoAsync(estabelecimentoId, actorUserId, order);
-            created.Status = await _queue.MarcarEntregueManualAsync(estabelecimentoId, actorUserId, created.Id, EncerramentoRules.OrigemBalcao);
+            if (balcao.Concluir)
+                created.Status = await _queue.MarcarEntregueManualAsync(estabelecimentoId, actorUserId, created.Id, EncerramentoRules.OrigemBalcao);
             return created;
         }
 
