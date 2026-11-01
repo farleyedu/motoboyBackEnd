@@ -24,9 +24,12 @@ namespace APIBack.Controllers
         private readonly AtendimentoService _atendimento;
         private readonly IRastreioRepository _rastreio;
         private readonly MotoboyPedidoService _pedido;
+        private readonly APIBack.GestaoLogica.Caixa.IChegadaService? _chegadas;
 
-        public MotoboyTrackingV2Controller(IOperationalSessionService service, IPedidoQueueService queueService, AtendimentoService atendimento, IRastreioRepository rastreio, MotoboyPedidoService pedido)
+        public MotoboyTrackingV2Controller(IOperationalSessionService service, IPedidoQueueService queueService, AtendimentoService atendimento, IRastreioRepository rastreio, MotoboyPedidoService pedido,
+            APIBack.GestaoLogica.Caixa.IChegadaService? chegadas = null)
         {
+            _chegadas = chegadas;
             _pedido = pedido;
             _rastreio = rastreio;
             _service = service;
@@ -202,11 +205,19 @@ namespace APIBack.Controllers
         public Task<IActionResult> ResumeQueue() =>
             WithOperationalContextAsync((est, motoboyId, _) => _queueService.ResumeByMotoboyAsync(est, motoboyId));
 
-        /// <summary>Cheguei a loja: encerra o retorno da rota (alternativa ao raio automatico).</summary>
+        /// <summary>
+        /// Cheguei a loja: encerra o retorno da rota (alternativa ao raio automatico) e marca a presenca para o Caixa (6C6), mesmo sem GPS
+        /// e mesmo sem rota em retorno. A presenca nunca confirma acerto.
+        /// </summary>
         [HttpPost("queue/arrived-at-store")]
         [RequireOperationalSession]
         public Task<IActionResult> ArrivedAtStore() =>
-            WithOperationalContextAsync((est, motoboyId, _) => _queueService.ArriveAtStoreAsync(est, motoboyId));
+            WithOperationalContextAsync(async (est, motoboyId, _) =>
+            {
+                var fila = await _queueService.ArriveAtStoreAsync(est, motoboyId);
+                if (_chegadas != null) await _chegadas.AoChegarManual(est, motoboyId, HttpContext.RequestAborted);
+                return fila;
+            });
 
         // ---- Preferencias do motoboy (Fase 6) --------------------------------------
 

@@ -53,3 +53,66 @@ public static class CaixaRegras
 
     private static GestaoException Invalido(string m) => new("CAMPO_INVALIDO", m, 422);
 }
+
+/// <summary>Regras puras do acerto do motoboy (6C5): de onde vem cada parte, o que se espera em dinheiro e quando o lote fecha.</summary>
+public static class AcertoRegras
+{
+    /// <summary>
+    /// Parte da venda pela conta do livro: dinheiro a receber na conta "com motoboys" se conta e devolve; Pix recebido na maquininha veio
+    /// da integração; cartão a receber na maquininha precisa da conferência do caixa; recebível do iFood não passa pela gaveta.
+    /// </summary>
+    public static string Classificar(string? contaTipo, string? contaSubtipo, string status) => (contaTipo, contaSubtipo, status) switch
+    {
+        (TipoConta.Recebivel, APIBack.GestaoLogica.Vendas.VendaDoPedido.SubtipoMotoboys, StatusLancamento.AReceber) => ParteAcerto.Dinheiro,
+        (TipoConta.Recebivel, "ifood", _) => ParteAcerto.Ifood,
+        (TipoConta.Recebivel, "maquininha", StatusLancamento.AReceber) => ParteAcerto.CartaoManual,
+        (TipoConta.Recebivel, "maquininha", _) => ParteAcerto.Integracao,
+        _ => ParteAcerto.Outro,
+    };
+
+    /// <summary>Entregue − esperado (negativo = faltou). Não bateu exige motivo de pelo menos 3 letras.</summary>
+    public static decimal Diferenca(decimal esperado, decimal entregue, string? motivo)
+    {
+        if (entregue < 0 || decimal.Round(entregue, 2) != entregue)
+            throw new GestaoException("CAMPO_INVALIDO", "Valor entregue: zero ou mais, até 2 casas.", 422);
+        var dif = CaixaRegras.R2(entregue - esperado);
+        if (dif != 0 && (motivo?.Trim().Length ?? 0) < 3)
+            throw new GestaoException("CAMPO_INVALIDO", "O valor não bateu: diga o motivo antes de confirmar.", 422);
+        return dif;
+    }
+
+    /// <summary>conferido quando não sobra nada com o motoboy; parcial quando algum pedido ficou para outro lote.</summary>
+    public static string Situacao(int pendentesDepois) => pendentesDepois == 0 ? "conferido" : "parcial";
+
+    public static string Numero(int n) => $"L-{n:0000}";
+}
+
+/// <summary>Regras puras da venda de balcão pelo Caixa (6C5).</summary>
+public static class BalcaoRegras
+{
+    /// <summary>Texto da forma gravado no pedido: é o que a venda do livro lê (VendaRegras.Forma).</summary>
+    public static string TipoPagamento(string? forma) => forma?.Trim() switch
+    {
+        FormaCaixa.Dinheiro => "Dinheiro",
+        FormaCaixa.Pix => "Pix",
+        FormaCaixa.Debito => "Débito",
+        FormaCaixa.Credito => "Crédito",
+        _ => throw new GestaoException("CAMPO_INVALIDO", "Forma: din, pix, deb ou cre.", 422),
+    };
+
+    public static string Chave(string? chave)
+    {
+        var limpa = chave?.Trim();
+        if (string.IsNullOrEmpty(limpa) || limpa.Length > 100) throw new GestaoException("CAMPO_INVALIDO", "Envie a chave de idempotência.", 422);
+        return limpa;
+    }
+
+    /// <summary>Dinheiro: informe quanto recebeu (o troco sai da diferença). Outras formas não levam valor recebido.</summary>
+    public static decimal? ValorRecebido(string forma, decimal? valor)
+    {
+        if (forma.Trim() != FormaCaixa.Dinheiro) return null;
+        if (valor is not { } v || v <= 0 || decimal.Round(v, 2) != v)
+            throw new GestaoException("CAMPO_INVALIDO", "Informe quanto recebeu em dinheiro (até 2 casas).", 422);
+        return v;
+    }
+}

@@ -64,6 +64,7 @@ public sealed partial class CaixaService
         }
         var id = Guid.NewGuid();
         await Inserir(c, tx, loja, id, chave, dia, SolicEstorno, alvo.Id, null, null, motivo, usuario);
+        await GestaoTempoReal.AvisarNoCommit(c, tx, loja, id, GestaoTempoReal.Caixa);
         await tx.CommitAsync(ct);
         return await ParaDto(c, loja, (await Solicitacao(c, null, loja, id))!, ct);
     }
@@ -149,6 +150,7 @@ UPDATE gestao_caixa_solicitacoes SET status = @novo, decidido_por = @usuario, de
  WHERE estabelecimento_id = @loja AND id = @id AND status = 'pendente'",
             new { novo, usuario, agora = _relogio.GetUtcNow(), motivoDecisao, correcao, loja, id = solicitacaoId }, tx);
         if (n == 0) throw new GestaoException("JA_DECIDIDA", "Este pedido já foi decidido.", 409);
+        await GestaoTempoReal.AvisarNoCommit(c, tx, loja, solicitacaoId, GestaoTempoReal.Caixa);
         await tx.CommitAsync(ct);
         return await ParaDto(c, loja, (await Solicitacao(c, null, loja, solicitacaoId))!, ct);
     }
@@ -183,6 +185,7 @@ UPDATE gestao_caixa_solicitacoes SET status = @novo, decidido_por = @usuario, de
             if (req.FundoNovo == efetivo) throw Invalido("O fundo novo é igual ao atual.");
             var id = Guid.NewGuid();
             await Inserir(c, tx, loja, id, chave, hoje, SolicFundo, null, efetivo, req.FundoNovo, motivo, usuario);
+            await GestaoTempoReal.AvisarNoCommit(c, tx, loja, id, GestaoTempoReal.Caixa);
             await tx.CommitAsync(ct);
             return new CorrigirFundoResposta(false, null, await ParaDto(c, loja, (await Solicitacao(c, null, loja, id))!, ct));
         }

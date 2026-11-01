@@ -91,9 +91,11 @@ public static class VendaDoPedido
     /// Publica a venda do pedido dentro da transacao da conclusao. Sem o livro no banco, pedido do simulador ou venda ja publicada:
     /// nao grava nada. Erro do livro desfaz a conclusao (vira <see cref="DeliveryDomainException"/>).
     /// </summary>
+    /// <param name="motoboyId">Quem entregou pelo app (fila). Dinheiro dessa entrega fica a receber na conta "Dinheiro com motoboys" ate o
+    /// acerto no Caixa (6C5); sem a conta (caixa nunca aberto depois da 6C5), segue a regra antiga.</param>
     public static async Task<Guid?> PublicarAsync(IAcontecimentosService livro, NpgsqlConnection c, NpgsqlTransaction tx, Guid loja,
         int pedidoId, int? responsavelId, string modalidade, IReadOnlyList<DeliveryPaymentPart>? conferidos = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default, int? motoboyId = null)
     {
         if (!await Existe(c, tx, "gestao_acontecimentos")) return null;
         var pedido = await c.QuerySingleOrDefaultAsync<PedidoVenda>(@"
@@ -129,6 +131,8 @@ SELECT s.order_amount AS Total, s.prepaid_amount AS Prepago, s.order_type AS Tip
         {
             var (conta, recebido, pendencia) = p.Forma switch
             {
+                // O dinheiro esta com o motoboy, nao na gaveta: entra no acerto (CaixaService.Acertar liquida para a gaveta).
+                VendaRegras.Din when motoboyId.HasValue && contas.Motoboys is { } mb => (mb, false, (string?)null),
                 VendaRegras.Din when contas.Gaveta is { } g && contas.CaixaAberto => (g, true, (string?)null),
                 VendaRegras.Din => ((Guid?)null, false, contas.Gaveta == null ? "sem_conta_caixa" : "caixa_fechado"),
                 VendaRegras.Pix => (contas.Maquininha, contas.Maquininha.HasValue, contas.Maquininha == null ? "sem_conta_maquininha" : null),
@@ -153,6 +157,7 @@ SELECT s.order_amount AS Total, s.prepaid_amount AS Prepago, s.order_type AS Tip
         };
         if (principal != null) dados["forma"] = principal;
         if (ifood != null) dados["ifoodTipo"] = ifood.Tipo;
+        if (motoboyId.HasValue) dados["motoboyId"] = motoboyId.Value;
         if (pendencias.Count > 0) dados["pendencias"] = pendencias;
 
         try
@@ -202,7 +207,10 @@ SELECT a.id AS Id, EXISTS (SELECT 1 FROM gestao_acontecimentos e WHERE e.estabel
  WHERE a.estabelecimento_id = @loja AND a.tipo = 'venda' AND a.origem_tipo = 'pedido' AND a.origem_id = @id AND a.corrige_id IS NULL;",
             new { loja, id = pedidoId.ToString() }, tx);
 
-    private static async Task<(Guid? Gaveta, bool CaixaAberto, Guid? Maquininha, Guid? Ifood)> Contas(NpgsqlConnection c,
+    /// <summary>Subtipo da conta recebivel onde fica o dinheiro das entregas ate o acerto do motoboy (criada na abertura do caixa).</summary>
+    public const string SubtipoMotoboys = "motoboys";
+
+    private static async Task<(Guid? Gaveta, bool CaixaAberto, Guid? Maquininha, Guid? Ifood, Guid? Motoboys)> Contas(NpgsqlConnection c,
         NpgsqlTransaction tx, Guid loja, DateOnly hoje)
     {
         Guid? gaveta = null;
@@ -217,7 +225,7 @@ SELECT a.id AS Id, EXISTS (SELECT 1 FROM gestao_acontecimentos e WHERE e.estabel
         async Task<Guid?> Recebivel(string subtipo) => await c.ExecuteScalarAsync<Guid?>(@"SELECT id FROM gestao_contas
  WHERE estabelecimento_id = @loja AND tipo = 'recebivel' AND subtipo = @subtipo AND ativo ORDER BY criado_em, id LIMIT 1;",
             new { loja, subtipo }, tx);
-        return (gaveta, aberto, await Recebivel("maquininha"), await Recebivel("ifood"));
+        return (gaveta, aberto, await Recebivel("maquininha"), await Recebivel("ifood"), await Recebivel(SubtipoMotoboys));
     }
 
     private static Task<bool> Existe(NpgsqlConnection c, NpgsqlTransaction tx, string tabela) =>

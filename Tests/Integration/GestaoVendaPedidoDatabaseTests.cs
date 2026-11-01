@@ -20,7 +20,7 @@ namespace APIBack.Tests.Integration;
 /// </summary>
 public partial class DeliverySyncDatabaseTests
 {
-    private const string MigracoesGestao = "20261105_01_gestao_fundacao.sql|20261106_01_gestao_documentos.sql|20261107_01_gestao_vinculos.sql|20261110_01_gestao_caixa.sql";
+    private const string MigracoesGestao = "20261105_01_gestao_fundacao.sql|20261106_01_gestao_documentos.sql|20261107_01_gestao_vinculos.sql|20261110_01_gestao_caixa.sql|20261118_01_gestao_caixa_correcoes.sql|20261121_01_gestao_caixa_acertos.sql|20261122_01_gestao_caixa_chegadas.sql";
 
     internal static async Task PrepararGestao(Func<string, object?, Task> executar, Guid loja)
     {
@@ -69,7 +69,7 @@ ALTER TABLE delivery_route_stops ADD COLUMN canceled_at_utc timestamptz, ADD COL
     private static Task<int> Vendas(Database db) => db.Scalar<int>("SELECT count(*)::int FROM gestao_acontecimentos WHERE tipo = 'venda'");
 
     [DeliveryDatabaseFact]
-    public async Task Venda6C1A_conclusao_do_app_publica_uma_venda_mista_com_dinheiro_na_gaveta_e_pix_na_maquininha()
+    public async Task Venda6C1A_conclusao_do_app_publica_uma_venda_mista_com_dinheiro_com_o_motoboy_e_pix_na_maquininha()
     {
         await using var db = await VendaDatabase();
         var repo = new PedidoQueueRepository(db.Source); var request = CompletionRequest();
@@ -83,10 +83,12 @@ ALTER TABLE delivery_route_stops ADD COLUMN canceled_at_utc timestamptz, ADD COL
         Assert.Equal(2, dados.GetProperty("pagamentos").GetArrayLength());
         Assert.Equal(86.90m, linhas.Sum(l => l.Valor)); // total sem perder nem duplicar parcela
         Assert.Contains(new Linha("receita", 20m, "recebido", "recebivel", "maquininha"), linhas);
-        Assert.Contains(new Linha("receita", 66.90m, "recebido", "caixa", null), linhas);
+        // 6C5: o dinheiro ficou com o motoboy (a receber em "Dinheiro com motoboys") ate o acerto no Caixa.
+        Assert.Contains(new Linha("receita", 66.90m, "a_receber", "recebivel", VendaDoPedido.SubtipoMotoboys), linhas);
+        Assert.Equal(1, dados.GetProperty("motoboyId").GetInt32());
         Assert.Equal(7, await db.Scalar<int>("SELECT responsavel_id FROM gestao_acontecimentos WHERE tipo = 'venda'"));
-        // A gaveta recebeu so o dinheiro (fundo 100 + 66,90): o Caixa le o saldo do livro.
-        Assert.Equal(166.90m, (await Livro(db.Source).Contas(db.StoreId, default)).Single(k => k.Nome == "Gaveta do caixa").Saldo);
+        // A gaveta segue no fundo (100): o Caixa le o saldo do livro.
+        Assert.Equal(100m, (await Livro(db.Source).Contas(db.StoreId, default)).Single(k => k.Nome == "Gaveta do caixa").Saldo);
     }
 
     [DeliveryDatabaseFact]

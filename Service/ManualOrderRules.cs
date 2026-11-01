@@ -160,3 +160,13 @@ namespace APIBack.Service
             new(422, "INVALID_ORDER", message);
     }
 }
+
+namespace APIBack.Service
+{
+    /// <summary>
+    /// Venda de balcão vinda do Caixa (6C5). <c>TipoPagamento</c> é o texto gravado no pedido (Dinheiro, Pix, Débito, Crédito), que a venda
+    /// do livro lê; <c>ValorRecebido</c> só no dinheiro (vira o "troco para" do pedido).
+    /// </summary>
+    public sealed record PedidoBalcao(string Chave, System.Collections.Generic.IReadOnlyList<APIBack.DTOs.Delivery.PedidoItemRequest> Itens,
+        string TipoPagamento, decimal? ValorRecebido, string? NomeCliente = null, string? TelefoneCliente = null, string? Observacoes = null);
+}

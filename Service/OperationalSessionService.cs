@@ -19,14 +19,17 @@ namespace APIBack.Service
         private readonly DeliveryTrackingOptions _options;
         private readonly IPedidoQueueRepository _queueRepository;
         private readonly DeliverySyncMetrics? _metrics;
+        private readonly APIBack.GestaoLogica.Caixa.IChegadaService? _chegadas;
 
         public OperationalSessionService(
             IOperationalSessionRepository repository,
             IJwtService jwtService,
             IOptions<DeliveryTrackingOptions> options,
-            IPedidoQueueRepository queueRepository, DeliverySyncMetrics? metrics = null)
+            IPedidoQueueRepository queueRepository, DeliverySyncMetrics? metrics = null,
+            APIBack.GestaoLogica.Caixa.IChegadaService? chegadas = null)
         {
             _metrics = metrics;
+            _chegadas = chegadas;
             _queueRepository = queueRepository ?? throw new ArgumentNullException(nameof(queueRepository));
             _repository = repository ?? throw new ArgumentNullException(nameof(repository));
             _jwtService = jwtService ?? throw new ArgumentNullException(nameof(jwtService));
@@ -182,6 +185,8 @@ namespace APIBack.Service
                 // Nunca lanca (a posicao ja foi aceita).
                 await _queueRepository.TryFinishReturnByLocationAsync(
                     payload.EstabelecimentoId.Value, context.MotoboyId, location.Latitude, location.Longitude);
+                // 6C6: presença para o Caixa, rota ou não (acerto pendente não depende de "retornando"). Também nunca lança.
+                await AvisarChegadaAsync(payload.EstabelecimentoId.Value, context.MotoboyId, location, cancellationToken);
             }
             return new OperationalLocationAckDto
             {
@@ -223,6 +228,7 @@ namespace APIBack.Service
             {
                 var results = await _repository.WriteLocationsAsync(context.SessionId, context.MotoboyId,
                     context.SessionEpoch, locations, cancellationToken);
+                OperationalLocationWrite? ultimaFresca = null;
                 for (var i = 0; i < locations.Count; i++)
                 {
                     var location = locations[i];
@@ -232,12 +238,22 @@ namespace APIBack.Service
                         SessionVersion = result.SessionVersion, ReceivedAtUtc = result.ReceivedAtUtc };
                     if (result.Outcome == "accepted" && result.UpdatedCurrent && payload.EstabelecimentoId.HasValue &&
                         DeliveryTrackingPolicy.IsLocationFresh(location.CapturedAtUtc, now, _options.LocationFreshnessSeconds))
+                    {
                         await _queueRepository.TryFinishReturnByLocationAsync(payload.EstabelecimentoId.Value,
                             context.MotoboyId, location.Latitude, location.Longitude);
+                        if (ultimaFresca == null || location.CapturedAtUtc > ultimaFresca.CapturedAtUtc) ultimaFresca = location;
+                    }
                 }
+                // Lote (reenvio offline): só a posição fresca mais recente decide a presença; as antigas não piscam o Caixa.
+                if (ultimaFresca != null && payload.EstabelecimentoId.HasValue)
+                    await AvisarChegadaAsync(payload.EstabelecimentoId.Value, context.MotoboyId, ultimaFresca, cancellationToken);
             }
             return new OperationalLocationBatchAckDto { Samples = acknowledgments };
         }
+
+        private Task AvisarChegadaAsync(Guid estabelecimentoId, int motoboyId, OperationalLocationWrite location, CancellationToken cancellationToken) =>
+            _chegadas?.AoReceberPosicao(estabelecimentoId, motoboyId, location.Latitude, location.Longitude, location.AccuracyMeters,
+                location.CapturedAtUtc, cancellationToken) ?? Task.CompletedTask;
 
         public async Task<OperationalSessionDto?> GetSessionAsync(JwtPayload payload)
         {

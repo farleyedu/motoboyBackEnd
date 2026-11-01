@@ -2,7 +2,10 @@ using APIBack.Acontecimentos;
 using APIBack.DTOs.Common;
 using APIBack.Extensions;
 using APIBack.GestaoLogica.Caixa;
+using APIBack.DTOs.Delivery;
 using APIBack.Security;
+using APIBack.Service;
+using APIBack.Service.Interface;
 using Microsoft.AspNetCore.Mvc;
 
 namespace APIBack.Controllers;
@@ -15,7 +18,7 @@ public sealed record ConferirContagemRequest(DateOnly Dia, ContagemCaixa Contage
 /// </summary>
 [ApiController]
 [Route("api/gestao/caixa")]
-public sealed class GestaoCaixaController(ICaixaService service) : ControllerBase
+public sealed class GestaoCaixaController(ICaixaService service, IPedidoCoreService pedidos) : ControllerBase
 {
     [HttpGet("dias/{dia}")]
     public Task<IActionResult> Dia(DateOnly dia, CancellationToken ct) => Run(false, async (loja, _, acesso) =>
@@ -81,6 +84,73 @@ public sealed class GestaoCaixaController(ICaixaService service) : ControllerBas
     [HttpPost("dias/{dia}/corrigir-fundo")]
     public Task<IActionResult> CorrigirFundo(DateOnly dia, [FromBody] CorrigirFundoRequest? req, CancellationToken ct) => Run(false, async (loja, usuario, acesso) =>
         await service.CorrigirFundo(loja, usuario, acesso, dia, req ?? throw Vazio(), ct));
+
+    // ---- 6C5: aba Motoboys (acerto em lote) e recebimento do que ficou a receber. Gerente e operador; correção de lote só o gerente.
+
+    /// <summary>Motoboys com entregas pendentes, em rota ou acertados no dia, com os lotes do dia.</summary>
+    [HttpGet("dias/{dia}/motoboys")]
+    public Task<IActionResult> Motoboys(DateOnly dia, CancellationToken ct) => Run(false, async (loja, _, acesso) =>
+    {
+        await SoHojeParaOperador(loja, acesso, dia, ct);
+        return await service.MotoboysDoDia(loja, dia, ct);
+    });
+
+    /// <summary>Confirma o lote: pedidos não enviados continuam pendentes (parcial). Pedido já acertado → 409 ACERTO_DESATUALIZADO.</summary>
+    [HttpPost("acertos")]
+    public Task<IActionResult> Acertar([FromBody] AcertoRequest? req, CancellationToken ct) => Run(false, async (loja, usuario, acesso) =>
+        await service.Acertar(loja, usuario, acesso, req ?? throw Vazio(), ct));
+
+    [HttpGet("acertos")]
+    public Task<IActionResult> Acertos([FromQuery] DateOnly dia, CancellationToken ct) => Run(false, async (loja, _, acesso) =>
+    {
+        await SoHojeParaOperador(loja, acesso, dia, ct);
+        return await service.Acertos(loja, dia, ct);
+    });
+
+    /// <summary>Situação do acerto de um motoboy (a 6C6 lê para o app do motoboy).</summary>
+    [HttpGet("acertos/situacao")]
+    public Task<IActionResult> SituacaoAcerto([FromQuery] int motoboyId, CancellationToken ct) => Run(false, async (loja, _, _) =>
+        await service.SituacaoDoMotoboy(loja, motoboyId, ct));
+
+    [HttpPost("acertos/{id:guid}/correcao")]
+    public Task<IActionResult> CorrigirAcerto(Guid id, [FromBody] CorrigirAcertoRequest? req, CancellationToken ct) => Run(true, async (loja, usuario, acesso) =>
+        await service.CorrigirAcerto(loja, usuario, acesso, id, req ?? throw Vazio(), ct));
+
+    /// <summary>Pedidos concluídos cuja venda ficou a receber (sem motoboy e sem iFood).</summary>
+    [HttpGet("a-receber")]
+    public Task<IActionResult> AReceber(CancellationToken ct) => Run(false, async (loja, _, _) => await service.AReceberNoCaixa(loja, ct));
+
+    [HttpPost("recebimentos")]
+    public Task<IActionResult> Receber([FromBody] RecebimentoRequest? req, CancellationToken ct) => Run(false, async (loja, usuario, acesso) =>
+        await service.Receber(loja, usuario, acesso, req ?? throw Vazio(), ct));
+
+    /// <summary>
+    /// Venda de balcão (decisão do dono, 01/11): vira pedido sem endereço com itens do cardápio, entregue e pago na hora; a venda vai para o
+    /// livro pela conclusão do balcão (dinheiro na gaveta, Pix e cartão na maquininha). Exige o caixa de hoje aberto.
+    /// </summary>
+    [HttpPost("balcao")]
+    public Task<IActionResult> Balcao([FromBody] VendaBalcaoRequest? req, CancellationToken ct) => Run(false, async (loja, usuario, acesso) =>
+    {
+        var r = req ?? throw Vazio();
+        if (!acesso.PodeLancar) throw new GestaoException("SEM_PERMISSAO", "Você não pode registrar no caixa.", 403);
+        var chave = BalcaoRegras.Chave(r.ChaveIdempotencia);
+        var tipoPagamento = BalcaoRegras.TipoPagamento(r.Forma);
+        var recebido = BalcaoRegras.ValorRecebido(r.Forma!, r.ValorRecebido);
+        var hoje = await service.Hoje(loja, ct);
+        if (r.Dia != hoje) throw new GestaoException("CAMPO_INVALIDO", "O caixa registra só o dia de hoje.", 422);
+        if (await service.CarregarDia(loja, hoje, ct) is not { Aberto: true })
+            throw new GestaoException("SEM_CAIXA", "Abra o caixa antes de vender no balcão.", 409);
+        CreatedPedidoDto pedido;
+        try
+        {
+            pedido = await pedidos.CreateBalcaoAsync(loja, usuario,
+                new PedidoBalcao(chave, r.Itens ?? new(), tipoPagamento, recebido, r.Cliente, r.Telefone, r.Observacao));
+        }
+        catch (DeliveryDomainException ex) { throw new GestaoException(ex.Code, ex.Message, ex.StatusCode); }
+        var total = pedido.Total ?? 0m;
+        return new VendaBalcaoResposta(pedido.Id, total, recebido is { } v ? CaixaRegras.R2(v - total) : 0m, pedido.JaExistia,
+            (await service.CarregarDia(loja, hoje, ct))!);
+    });
 
     /// <summary>O id da fita é "{acontecimento}" ou "{acontecimento}:{linha}" / "{acontecimento}:q:{liquidação}": vale o primeiro GUID.</summary>
     private static Guid MovimentoId(string id) =>

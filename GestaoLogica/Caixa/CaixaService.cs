@@ -29,10 +29,20 @@ public interface ICaixaService
     Task<IReadOnlyList<SolicitacaoDto>> Solicitacoes(Guid loja, int usuario, GestaoPapeis.Acesso acesso, string? status, DateOnly? dia, CancellationToken ct);
     Task<SolicitacaoDto> Decidir(Guid loja, int usuario, GestaoPapeis.Acesso acesso, Guid solicitacaoId, DecisaoRequest req, CancellationToken ct);
     Task<CorrigirFundoResposta> CorrigirFundo(Guid loja, int usuario, GestaoPapeis.Acesso acesso, DateOnly dia, CorrigirFundoRequest req, CancellationToken ct);
+    // 6C5: aba Motoboys (acerto em lote) e recebimento do que ficou a receber (CaixaService.Acertos.cs).
+    Task<IReadOnlyList<MotoboyDoDia>> MotoboysDoDia(Guid loja, DateOnly dia, CancellationToken ct);
+    Task<AcertoDto> Acertar(Guid loja, int usuario, GestaoPapeis.Acesso acesso, AcertoRequest req, CancellationToken ct);
+    Task<IReadOnlyList<AcertoDto>> Acertos(Guid loja, DateOnly dia, CancellationToken ct);
+    Task<SituacaoAcertoMotoboy> SituacaoDoMotoboy(Guid loja, int motoboyId, CancellationToken ct);
+    /// <summary>6C6: conferência dos pedidos do próprio motoboy (app), pelos lotes da 6C5. Pendentes e lotes desde <paramref name="desde"/>.</summary>
+    Task<ConferenciasDoMotoboy> ConferenciasDoMotoboy(Guid loja, int motoboyId, DateTimeOffset desde, CancellationToken ct);
+    Task<AcertoDto> CorrigirAcerto(Guid loja, int usuario, GestaoPapeis.Acesso acesso, Guid acertoId, CorrigirAcertoRequest req, CancellationToken ct);
+    Task<IReadOnlyList<VendaAReceber>> AReceberNoCaixa(Guid loja, CancellationToken ct);
+    Task<CaixaDoDia> Receber(Guid loja, int usuario, GestaoPapeis.Acesso acesso, RecebimentoRequest req, CancellationToken ct);
 }
 
 public sealed partial class CaixaService(NpgsqlDataSource dataSource, IAcontecimentosService livro, TimeProvider? relogio = null,
-    IEquipeService? equipe = null) : ICaixaService
+    IEquipeService? equipe = null, IChegadaService? chegadas = null) : ICaixaService
 {
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private readonly TimeProvider _relogio = relogio ?? TimeProvider.System;
@@ -97,6 +107,8 @@ public sealed partial class CaixaService(NpgsqlDataSource dataSource, IAcontecim
         {
             if (await Dia(c, loja, hoje) is not null) return (await CarregarDia(loja, hoje, ct))!;
             var contas = await ContasDoCaixa(c, loja, usuario, ct);
+            // A partir da 6C5 o dinheiro da entrega com motoboy espera o acerto nesta conta (VendaDoPedido usa se existir).
+            await GarantirContaMotoboys(c, loja, usuario, ct);
             var gaveta = await Saldo(loja, contas.Gaveta, ct);
             // Abrir põe a gaveta no fundo de troco: o que falta vem do cofre, o que sobra vai para ele.
             var acerto = CaixaRegras.R2(req.Fundo - gaveta);
@@ -388,6 +400,8 @@ VALUES (@ajusteId, @loja, @dia, @usuario, @agora, @atual, @ContadoNovo, @motivo,
         }
         var fuso = await livro.Fuso(loja, ct);
         var acontecimentos = await livro.LinhaDoTempo(loja, new PeriodoFiltro { Mes = new DateOnly(dia.Year, dia.Month, 1), Dia = dia, Limite = 1000 }, ct);
+        var motoboys = (await livro.Contas(loja, ct)).Where(k => k.Tipo == TipoConta.Recebivel && k.Subtipo == APIBack.GestaoLogica.Vendas.VendaDoPedido.SubtipoMotoboys)
+            .Select(k => k.Id).ToHashSet();
         var fita = new List<LinhaFita>();
         foreach (var a in acontecimentos.OrderBy(a => a.DataFato).ThenBy(a => a.RegistradoEm))
         {
@@ -402,9 +416,19 @@ VALUES (@ajusteId, @loja, @dia, @usuario, @agora, @atual, @ContadoNovo, @motivo,
             if (a.Tipo == "venda")
             {
                 var forma = a.Dados.TryGetProperty("forma", out var fx) && fx.ValueKind == JsonValueKind.String ? fx.GetString()! : null;
-                foreach (var l in a.Lancamentos.Where(l => l.Natureza == Natureza.Receita))
+                // Dinheiro com o motoboy (6C5) ou sem conta ainda não passou pelo caixa: entra na fita quando for recebido (liquidação).
+                foreach (var l in a.Lancamentos.Where(l => l.Natureza == Natureza.Receita && l.ContaId is { } k && !motoboys.Contains(k)))
                     fita.Add(new LinhaFita($"{a.Id}:{l.Linha}", hora, "venda", a.Descricao,
                         forma ?? (l.ContaId == gaveta ? FormaCaixa.Dinheiro : FormaCaixa.Pix), l.Valor));
+                continue;
+            }
+            // Recebimento no caixa (6C5) em Pix ou cartão: vai para a maquininha; a forma está no fim da descrição.
+            if (a.Tipo == "pagamento" && a.Descricao.Contains(" recebido no caixa · ") && a.Liquidacoes.All(q => q.ContaId != gaveta))
+            {
+                var formaRecebida = a.Descricao[(a.Descricao.LastIndexOf('·') + 1)..].Trim();
+                if (FormaCaixa.Maquininha.Contains(formaRecebida))
+                    foreach (var q in a.Liquidacoes.Where(q => q.CorrigeLiquidacaoId is null))
+                        fita.Add(new LinhaFita($"{a.Id}:q:{q.Id}", hora, "venda", a.Descricao, formaRecebida, q.Valor));
                 continue;
             }
             var tipo = a.Tipo switch
@@ -426,7 +450,8 @@ VALUES (@ajusteId, @loja, @dia, @usuario, @agora, @atual, @ContadoNovo, @motivo,
             {
                 var entra = sentidos!.GetValueOrDefault(q.LancamentoId) == Sentido.Entrada;
                 var valor = entra ? q.Valor : -q.Valor;
-                fita.Add(Marca(new LinhaFita($"{a.Id}:q:{q.Id}", hora, q.CorrigeLiquidacaoId is null ? (entra ? "sup" : "pag") : "canc", a.Descricao,
+                // Receita recebida em dinheiro (acerto do motoboy, venda que estava a receber) é venda na fita, não suprimento.
+                fita.Add(Marca(new LinhaFita($"{a.Id}:q:{q.Id}", hora, q.CorrigeLiquidacaoId is null ? (entra ? "venda" : "pag") : "canc", a.Descricao,
                     FormaCaixa.Dinheiro, valor), a));
             }
         }

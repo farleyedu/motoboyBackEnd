@@ -17,6 +17,9 @@ namespace APIBack.Service.Interface
         /// </summary>
         Task<CreatedPedidoDto> CreateAsync(Guid estabelecimentoId, int actorUserId, CreatePedidoRequest request, string? idempotencyKey, bool autoAtribuir = true);
 
+        /// <summary>Venda de balcão pelo Caixa (6C5): pedido sem endereço, itens do cardápio, pago e entregue na hora.</summary>
+        Task<CreatedPedidoDto> CreateBalcaoAsync(Guid estabelecimentoId, int actorUserId, APIBack.Service.PedidoBalcao balcao);
+
         /// <summary>Substitui os dados de um pedido em Rascunho ou Pendente (sem motoboy).</summary>
         Task<CreatedPedidoDto> UpdateAsync(Guid estabelecimentoId, int actorUserId, int pedidoId, CreatePedidoRequest request);
 

@@ -485,7 +485,7 @@ SELECT m.id
                 new { Concluido = (int)StatusPedido.Concluido, current.PedidoId }, transaction);
             await CancelPendingTransfersForPedidoAsync(connection, transaction, estabelecimentoId, current.PedidoId, "Pedido entregue.");
             await VendaDoPedido.PublicarAsync(livro, connection, transaction, estabelecimentoId, current.PedidoId, responsavelId,
-                ModalidadeVenda.Delivery, pagamentos);
+                ModalidadeVenda.Delivery, pagamentos, motoboyId: motoboyId);
 
             var eligibility = await GetEligibilityAsync(connection, transaction, motoboyId, estabelecimentoId);
             // So a entrega atual abre vaga para a proxima; concluir um pedido do meio da fila nao mexe em quem esta em rota.

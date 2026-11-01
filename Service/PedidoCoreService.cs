@@ -73,6 +73,45 @@ namespace APIBack.Service
         }
 
         /// <summary>
+        /// Venda de balcao pelo Caixa (6C5): pedido sem endereco (fica na posicao da loja), so com itens do cardapio (sem linha avulsa e
+        /// sem taxa), pago e entregue na hora pela conclusao do balcao, que publica a venda no livro. Mesma chave devolve o mesmo pedido
+        /// (origem_ref "caixa:{chave}"). Sem autoatribuicao de motoboy e sem mensagem ao cliente.
+        /// </summary>
+        public async Task<CreatedPedidoDto> CreateBalcaoAsync(Guid estabelecimentoId, int actorUserId, PedidoBalcao balcao)
+        {
+            if (balcao.Itens is not { Count: > 0 } || balcao.Itens.Any(item => item?.ProdutoId is not { } id || id == Guid.Empty))
+                throw new DeliveryDomainException(422, "INVALID_ORDER", "Venda de balcão: escolha produtos do cardápio.");
+            var restaurant = await _restaurant.GetAsync(estabelecimentoId);
+            if (restaurant?.Latitude is not { } latitude || restaurant.Longitude is not { } longitude)
+                throw new DeliveryDomainException(409, "LOJA_SEM_LOCAL", "Cadastre o endereço da loja em Configurações antes de vender no balcão.");
+
+            var ids = balcao.Itens.Select(item => item.ProdutoId!.Value).Distinct().ToList();
+            var products = (await _cardapio.ListarProdutosPublicosPorIdsAsync(estabelecimentoId, ids, exigirPublicoWeb: false))
+                .ToDictionary(product => product.Id);
+            var priced = PedidoPricing.Price(balcao.Itens, products, allowFreeLines: false);
+            var total = priced.Subtotal;
+            if (total <= 0 || total > OrderCoreRules.MaxMoney)
+                throw new DeliveryDomainException(422, "INVALID_ORDER", "Valor da venda inválido.");
+            if (balcao.ValorRecebido is { } recebido && recebido < total)
+                throw new DeliveryDomainException(422, "INVALID_ORDER", $"Valor recebido menor que o total (R$ {total:N2}).");
+
+            var nome = string.IsNullOrWhiteSpace(balcao.NomeCliente) ? "Balcão" : balcao.NomeCliente.Trim();
+            var order = new ManualOrder
+            {
+                NomeCliente = nome, TelefoneCliente = string.IsNullOrWhiteSpace(balcao.TelefoneCliente) ? null : balcao.TelefoneCliente.Trim(),
+                EnderecoEntrega = "Balcão", Rua = "Balcão", Numero = "s/n", Bairro = restaurant.Bairro ?? "Balcão", Cidade = restaurant.Cidade ?? "",
+                Latitude = latitude, Longitude = longitude,
+                Items = LegacyItemsJson(priced.Lines), Lines = priced.Lines, Value = total, Subtotal = total, TaxaEntrega = 0m,
+                TipoPagamento = balcao.TipoPagamento, Troco = balcao.ValorRecebido, Observacoes = balcao.Observacoes, PrevisaoMinutos = 1,
+                Origem = PedidoOrigem.Atendente, OrigemRef = CleanRef($"caixa:{balcao.Chave}"),
+                ClienteId = await _clientes.ResolverOuCriarAsync(estabelecimentoId, balcao.TelefoneCliente, nome),
+            };
+            var created = await _queue.CreatePedidoAsync(estabelecimentoId, actorUserId, order);
+            created.Status = await _queue.MarcarEntregueManualAsync(estabelecimentoId, actorUserId, created.Id, EncerramentoRules.OrigemBalcao);
+            return created;
+        }
+
+        /// <summary>
         /// Autoatribuicao (Fase 2 de Configuracoes): so age quando ha EXATAMENTE um motoboy disponivel
         /// (FindSingleAvailableMotoboyAsync nunca escolhe entre varios). E uma conveniencia: qualquer
         /// falha aqui e ignorada, o pedido ja foi criado e continua na fila normal para o atendente

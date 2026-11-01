@@ -12,15 +12,20 @@ namespace APIBack.Acontecimentos;
 public interface IAcontecimentosService
 {
     Task<AcontecimentoPublicado> Publicar(Guid loja, int? responsavelId, PublicarAcontecimentoRequest request, CancellationToken ct);
-    /// <summary>Publica dentro da transacao do modulo (ex.: a conclusao do pedido). Quem chama faz o commit; sem evento.</summary>
+    /// <summary>Publica dentro da transacao do modulo (ex.: a conclusao do pedido). Quem chama faz o commit; o aviso de tempo real
+    /// sai so com ele (pg_notify, ver GestaoTempoReal).</summary>
     Task<AcontecimentoPublicado> Publicar(NpgsqlConnection c, NpgsqlTransaction tx, Guid loja, int? responsavelId,
         PublicarAcontecimentoRequest request, CancellationToken ct);
     Task<AcontecimentoPublicado> Estornar(Guid loja, int? responsavelId, Guid acontecimentoId, EstornoRequest request, CancellationToken ct);
-    /// <summary>Estorna dentro da transacao do modulo (ex.: o cancelamento do pedido). Quem chama faz o commit; sem evento.</summary>
+    /// <summary>Estorna dentro da transacao do modulo (ex.: o cancelamento do pedido). Quem chama faz o commit; o aviso sai so com ele.</summary>
     Task<AcontecimentoPublicado> Estornar(NpgsqlConnection c, NpgsqlTransaction tx, Guid loja, int? responsavelId, Guid acontecimentoId,
         EstornoRequest request, CancellationToken ct);
     Task<AcontecimentoPublicado> Ajustar(Guid loja, int? responsavelId, AjusteRequest request, CancellationToken ct);
     Task<AcontecimentoPublicado> Liquidar(Guid loja, int? responsavelId, LiquidarRequest request, CancellationToken ct);
+    /// <summary>Liquida dentro da transacao do modulo (ex.: o acerto do motoboy, varias linhas de uma vez). Quem chama faz o commit;
+    /// o aviso de tempo real sai so com ele.</summary>
+    Task<AcontecimentoPublicado> Liquidar(NpgsqlConnection c, NpgsqlTransaction tx, Guid loja, int? responsavelId, LiquidarRequest request,
+        CancellationToken ct);
     Task<AcontecimentoPublicado> PagarFatura(Guid loja, int? responsavelId, Guid cartaoId, DateOnly faturaMes, LiquidarRequest request,
         CancellationToken ct);
     Task<AcontecimentoPublicado> FecharMes(Guid loja, int? responsavelId, DateOnly mes, FecharMesRequest request, CancellationToken ct);
@@ -52,7 +57,8 @@ public sealed class AcontecimentosService(NpgsqlDataSource dataSource, IEnumerab
     {
         var fuso = HorarioRegras.ResolverFuso(await AcontecimentoSql.Fuso(c, tx, loja));
         var (resultado, _) = await EscreverNaTransacao(c, tx, loja, request?.ChaveIdempotencia, fuso, async () =>
-            AcontecimentoRegras.PlanejarPublicacao(request, responsavelId, await AcontecimentoSql.ContasInfo(c, tx, loja), fuso, Agora));
+            AcontecimentoRegras.PlanejarPublicacao(request, responsavelId, await AcontecimentoSql.ContasInfo(c, tx, loja), fuso, Agora),
+            avisarNoCommit: true);
         return resultado;
     }
 
@@ -65,7 +71,7 @@ public sealed class AcontecimentosService(NpgsqlDataSource dataSource, IEnumerab
     {
         var fuso = HorarioRegras.ResolverFuso(await AcontecimentoSql.Fuso(c, tx, loja));
         var (resultado, _) = await EscreverNaTransacao(c, tx, loja, request?.ChaveIdempotencia, fuso,
-            () => PlanejarEstorno(c, tx, loja, responsavelId, acontecimentoId, request, fuso));
+            () => PlanejarEstorno(c, tx, loja, responsavelId, acontecimentoId, request, fuso), avisarNoCommit: true);
         return resultado;
     }
 
@@ -107,20 +113,32 @@ public sealed class AcontecimentosService(NpgsqlDataSource dataSource, IEnumerab
         });
 
     public Task<AcontecimentoPublicado> Liquidar(Guid loja, int? responsavelId, LiquidarRequest request, CancellationToken ct) =>
-        Escrever(loja, request?.ChaveIdempotencia, ct, async (c, tx, fuso) =>
-        {
-            if (request is null) throw new GestaoException("CAMPO_INVALIDO", "Envie o pagamento.", 422);
-            var linhas = await AcontecimentoSql.LancamentoECorrecoes(c, tx, loja, request.LancamentoId);
-            var alvo = linhas.SingleOrDefault(l => l.Id == request.LancamentoId) ?? throw NaoEncontrado("Lançamento");
-            await AcontecimentoSql.TravarAlvo(c, tx, loja, alvo.AcontecimentoId);
-            linhas = await AcontecimentoSql.LancamentoECorrecoes(c, tx, loja, request.LancamentoId);
-            alvo = linhas.Single(l => l.Id == request.LancamentoId);
-            var contas = await AcontecimentoSql.ContasInfo(c, tx, loja);
-            var conta = contas.GetValueOrDefault(request.ContaId) ?? throw NaoEncontrado("Conta");
-            var original = await AcontecimentoSql.Atual(c, tx, loja, alvo.AcontecimentoId) ?? throw NaoEncontrado("Acontecimento");
-            return AcontecimentoRegras.PlanejarLiquidacao(alvo, linhas.Where(l => l.CorrigeLancamentoId == alvo.Id).ToList(), conta,
-                alvo.ContaId is { } contaAlvo ? contas.GetValueOrDefault(contaAlvo) : null, original, request, responsavelId, fuso, Agora);
-        });
+        Escrever(loja, request?.ChaveIdempotencia, ct, (c, tx, fuso) => PlanejarLiquidacao(c, tx, loja, responsavelId, request, fuso));
+
+    public async Task<AcontecimentoPublicado> Liquidar(NpgsqlConnection c, NpgsqlTransaction tx, Guid loja, int? responsavelId,
+        LiquidarRequest request, CancellationToken ct)
+    {
+        var fuso = HorarioRegras.ResolverFuso(await AcontecimentoSql.Fuso(c, tx, loja));
+        var (resultado, _) = await EscreverNaTransacao(c, tx, loja, request?.ChaveIdempotencia, fuso,
+            () => PlanejarLiquidacao(c, tx, loja, responsavelId, request, fuso), avisarNoCommit: true);
+        return resultado;
+    }
+
+    private async Task<AcontecimentoPlano> PlanejarLiquidacao(NpgsqlConnection c, NpgsqlTransaction tx, Guid loja, int? responsavelId,
+        LiquidarRequest? request, TimeZoneInfo fuso)
+    {
+        if (request is null) throw new GestaoException("CAMPO_INVALIDO", "Envie o pagamento.", 422);
+        var linhas = await AcontecimentoSql.LancamentoECorrecoes(c, tx, loja, request.LancamentoId);
+        var alvo = linhas.SingleOrDefault(l => l.Id == request.LancamentoId) ?? throw NaoEncontrado("Lançamento");
+        await AcontecimentoSql.TravarAlvo(c, tx, loja, alvo.AcontecimentoId);
+        linhas = await AcontecimentoSql.LancamentoECorrecoes(c, tx, loja, request.LancamentoId);
+        alvo = linhas.Single(l => l.Id == request.LancamentoId);
+        var contas = await AcontecimentoSql.ContasInfo(c, tx, loja);
+        var conta = contas.GetValueOrDefault(request.ContaId) ?? throw NaoEncontrado("Conta");
+        var original = await AcontecimentoSql.Atual(c, tx, loja, alvo.AcontecimentoId) ?? throw NaoEncontrado("Acontecimento");
+        return AcontecimentoRegras.PlanejarLiquidacao(alvo, linhas.Where(l => l.CorrigeLancamentoId == alvo.Id).ToList(), conta,
+            alvo.ContaId is { } contaAlvo ? contas.GetValueOrDefault(contaAlvo) : null, original, request, responsavelId, fuso, Agora);
+    }
 
     public Task<AcontecimentoPublicado> PagarFatura(Guid loja, int? responsavelId, Guid cartaoId, DateOnly faturaMes,
         LiquidarRequest request, CancellationToken ct) =>
@@ -220,7 +238,7 @@ public sealed class AcontecimentosService(NpgsqlDataSource dataSource, IEnumerab
 
     private static async Task<(AcontecimentoPublicado, bool Novo)> EscreverNaTransacao(NpgsqlConnection c, NpgsqlTransaction tx,
         Guid loja, string? chave, TimeZoneInfo fuso, Func<Task<AcontecimentoPlano>> planejar,
-        Func<NpgsqlConnection, NpgsqlTransaction, Guid, Task>? depois = null)
+        Func<NpgsqlConnection, NpgsqlTransaction, Guid, Task>? depois = null, bool avisarNoCommit = false)
     {
         var chaveLimpa = chave?.Trim();
         (Guid Id, string Hash)? existente = null;
@@ -247,6 +265,8 @@ public sealed class AcontecimentosService(NpgsqlDataSource dataSource, IEnumerab
             await c.ExecuteAsync("SAVEPOINT gestao_escrita;", transaction: tx);
             id = await AcontecimentoSql.Inserir(c, tx, loja, plano);
             if (depois != null) await depois(c, tx, id);
+            // Transacao de outro modulo: o PostgreSQL so entrega no commit dela (rollback descarta). Replay nao chega aqui.
+            if (avisarNoCommit) await GestaoTempoReal.AvisarAcontecimentoNoCommit(c, tx, loja, id);
             await c.ExecuteAsync("RELEASE SAVEPOINT gestao_escrita;", transaction: tx);
         }
         catch (PostgresException ex)
@@ -326,7 +346,8 @@ public static class ContaRegras
         var subtipo = string.IsNullOrWhiteSpace(r.Subtipo) ? null : r.Subtipo.Trim();
         if (tipo == TipoConta.Recebivel)
         {
-            if (subtipo is not ("ifood" or "maquininha" or "outro")) throw Erro("Recebível: ifood, maquininha ou outro.");
+            // motoboys (6C5): dinheiro das entregas que espera o acerto no Caixa.
+            if (subtipo is not ("ifood" or "maquininha" or "motoboys" or "outro")) throw Erro("Recebível: ifood, maquininha, motoboys ou outro.");
         }
         else if (subtipo != null) throw Erro("Só recebível tem subtipo.");
         if (tipo == TipoConta.CartaoEmpresa)

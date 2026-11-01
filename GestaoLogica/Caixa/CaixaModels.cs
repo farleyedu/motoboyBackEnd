@@ -84,3 +84,85 @@ public sealed record CorrecaoFundoDto(Guid Id, DateOnly Dia, DateTimeOffset Em, 
 
 /// <summary>Resposta da correção de fundo: gerente efetiva (<c>Efetivada</c>); operador só cria o pedido (HTTP 202).</summary>
 public sealed record CorrigirFundoResposta(bool Efetivada, CaixaDoDia? Dia, SolicitacaoDto? Solicitacao);
+
+// ---- 6C5: aba Motoboys do Caixa (acerto em lote) e recebimento de venda que ficou a receber
+
+/// <summary>
+/// Como cada parte do pagamento da entrega entra no acerto: <c>dinheiro</c> (contar e devolver), <c>integracao</c> (Pix já confirmado
+/// pela integração), <c>cartao_manual</c> (cartão na maquininha: o comprovante físico não confirma sozinho, o caixa confere),
+/// <c>ifood</c> (recebível do iFood, não passa pela gaveta), <c>outro</c> (já está na gaveta ou sem conta).
+/// </summary>
+public static class ParteAcerto
+{
+    public const string Dinheiro = "dinheiro", Integracao = "integracao", CartaoManual = "cartao_manual", Ifood = "ifood", Outro = "outro";
+}
+
+/// <param name="Situacao">a_receber ou recebido (status do livro).</param>
+public sealed record ParteDaEntrega(string Tipo, decimal Valor, string Situacao);
+
+/// <param name="Situacao">entregue (dá para acertar) ou em_rota (ainda não).</param>
+/// <param name="Lote">Número do lote (L-0006) quando já foi acertada.</param>
+public sealed record EntregaDoMotoboy(int PedidoId, string Numero, string? Cliente, DateTimeOffset? Em, string Situacao, decimal Valor,
+    IReadOnlyList<ParteDaEntrega> Partes, string? Lote = null);
+
+/// <summary>
+/// Um motoboy na aba Motoboys. Os totais somam só o que está pendente. A presença vem da 6C6 (<see cref="ChegadaRegras"/>) e é só destaque:
+/// nunca confirma acerto.
+/// </summary>
+/// <param name="Chegada">rota, chegando, provavel, loja (retorno confirmado) ou sem_sinal; nulo quando não há o que dizer.</param>
+/// <param name="ChegadaEm">Desde quando está nesse estado (nulo para sem_sinal).</param>
+/// <param name="Sinal">ok, antigo ou ausente: idade da última posição desta loja. Conferência manual vale em qualquer caso.</param>
+/// <param name="PosicaoEm">Captura da última posição recebida.</param>
+/// <param name="ChegadaOrigem">gps ou manual (o motoboy tocou "cheguei").</param>
+public sealed record MotoboyDoDia(int MotoboyId, string Nome, string? Chegada, DateTimeOffset? ChegadaEm, decimal DinheiroCom,
+    decimal CartaoAConferir, decimal Integracao, decimal Ifood, IReadOnlyList<EntregaDoMotoboy> Pendentes, IReadOnlyList<EntregaDoMotoboy> EmRota,
+    IReadOnlyList<AcertoDto> Lotes, string? Sinal = null, DateTimeOffset? PosicaoEm = null, string? ChegadaOrigem = null);
+
+/// <param name="ConferidoManual">Obrigatório para pedido com cartão: o caixa conferiu na maquininha.</param>
+public sealed record ItemAcertoRequest(int PedidoId, bool ConferidoManual = false);
+
+/// <summary>Pedidos que não forem enviados continuam pendentes com o motoboy (conferência parcial). Diferença exige motivo.</summary>
+public sealed record AcertoRequest(string? ChaveIdempotencia, DateOnly Dia, int MotoboyId, IReadOnlyList<ItemAcertoRequest>? Itens,
+    decimal ValorEntregue, string? Motivo);
+
+public sealed record ItemAcertoDto(int PedidoId, decimal Dinheiro, decimal DigitalIntegracao, decimal CartaoManual, decimal Ifood,
+    bool ConferidoManual);
+
+/// <param name="Numero">L-0006.</param>
+/// <param name="Tipo">acerto ou correcao (correção aponta o original em <c>CorrigeId</c>; o original não muda).</param>
+/// <param name="Situacao">conferido (não sobrou nada com o motoboy) ou parcial.</param>
+/// <param name="CorrigidoPor">Id da correção, quando este lote foi corrigido.</param>
+public sealed record AcertoDto(Guid Id, string Numero, DateOnly Dia, int MotoboyId, string? MotoboyNome, string Tipo, Guid? CorrigeId,
+    decimal Esperado, decimal Entregue, decimal Diferenca, string? Motivo, string Situacao, int PendentesDepois, int Operador,
+    string? OperadorNome, DateTimeOffset Em, IReadOnlyList<ItemAcertoDto> Itens, Guid? CorrigidoPor = null);
+
+/// <summary>Correção do valor entregue de um lote (gerente). Vira um lote novo; a diferença nova vai para o livro.</summary>
+public sealed record CorrigirAcertoRequest(string? ChaveIdempotencia, decimal EntregueNovo, string? Motivo);
+
+/// <summary>O que a 6C6 lê para o app do motoboy: se ainda há algo a acertar e como ficou o último lote.</summary>
+public sealed record SituacaoAcertoMotoboy(int MotoboyId, int Pendentes, decimal DinheiroPendente, bool TudoAcertado, AcertoDto? UltimoLote);
+
+/// <summary>
+/// 6C6: como a loja conferiu um pedido do motoboy, para o app dele. Lido dos lotes da 6C5 (única fonte); nada aqui é presumido.
+/// </summary>
+/// <param name="Situacao">pendente (entregue, fora de lote), conferido (no lote) ou corrigido (lote corrigido depois pelo gerente).</param>
+/// <param name="LoteSituacao">conferido ou parcial (o lote deixou outros pedidos pendentes com o motoboy).</param>
+/// <param name="Diferenca">Diferença final do lote (com a correção, se houve): negativa = faltou. Zero quando bateu.</param>
+public sealed record ConferenciaDoPedido(int PedidoId, string Situacao, decimal Valor, decimal Dinheiro, Guid? LoteId, string? Lote,
+    string? LoteSituacao, DateTimeOffset? ConferidoEm, string? ConferidoPor, decimal Diferenca, DateTimeOffset? CorrigidoEm, string? Motivo);
+
+public sealed record ConferenciasDoMotoboy(Guid EstabelecimentoId, int MotoboyId, DateTimeOffset LidoEm, IReadOnlyList<ConferenciaDoPedido> Pedidos);
+
+/// <summary>Pedido concluído cuja venda ficou a receber (forma desconhecida, caixa fechado na hora). Motoboy e iFood não entram.</summary>
+public sealed record VendaAReceber(int PedidoId, string Numero, string Descricao, DateTimeOffset Em, decimal AReceber, string? FormaPrevista);
+
+/// <summary>Recebe no caixa o que ficou a receber da venda do pedido: dinheiro vai para a gaveta; Pix e cartão, para a maquininha.
+/// <c>ValorRecebido</c> em dinheiro pode ser maior (troco não entra no livro).</summary>
+public sealed record RecebimentoRequest(string? ChaveIdempotencia, DateOnly Dia, int PedidoId, string? Forma, decimal ValorRecebido);
+
+/// <summary>Venda de balcão pelo Caixa (6C5): vira pedido sem endereço, pago e entregue na hora. Dinheiro exige <c>ValorRecebido</c>.</summary>
+public sealed record VendaBalcaoRequest(string? ChaveIdempotencia, DateOnly Dia, List<APIBack.DTOs.Delivery.PedidoItemRequest>? Itens, string? Forma,
+    decimal? ValorRecebido, string? Cliente = null, string? Telefone = null, string? Observacao = null);
+
+/// <param name="JaExistia">Reenvio com a mesma chave: o pedido e a venda já existiam (nada foi duplicado).</param>
+public sealed record VendaBalcaoResposta(int PedidoId, decimal Total, decimal Troco, bool JaExistia, CaixaDoDia Dia);

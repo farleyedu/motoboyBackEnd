@@ -129,7 +129,10 @@ namespace APIBack.Hubs
 
             var canViewDelivery = httpContext!.IsSuperAdmin() || httpContext.TemPermissao("Delivery", "visualizar") || httpContext.TemPermissao("Delivery", "gestao_motoboy");
             var canViewChat = httpContext.IsSuperAdmin() || httpContext.TemPermissao("WhatsApp", "visualizar");
-            if (!canViewDelivery && !canViewChat)
+            // Gestao (6C4): um grupo por area que o papel alcanca. O operador de caixa nao entra no do Financeiro.
+            var gestao = APIBack.Security.GestaoPapeis.Resolver(httpContext.TemPermissao, httpContext.IsSuperAdmin()).Areas
+                .Intersect(APIBack.Acontecimentos.GestaoTempoReal.Recursos).ToList();
+            if (!canViewDelivery && !canViewChat && gestao.Count == 0)
             {
                 Context.Abort();
                 return;
@@ -144,6 +147,11 @@ namespace APIBack.Hubs
             if (canViewChat)
             {
                 await Groups.AddToGroupAsync(Context.ConnectionId, APIBack.Atendimento.ChatRealtimeEvents.Group(estabelecimentoId.Value));
+            }
+
+            foreach (var area in gestao)
+            {
+                await Groups.AddToGroupAsync(Context.ConnectionId, APIBack.Acontecimentos.GestaoTempoReal.Grupo(estabelecimentoId.Value, area));
             }
 
             _connections.Add(Context.ConnectionId, estabelecimentoId.Value, Context);

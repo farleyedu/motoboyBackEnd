@@ -9,13 +9,19 @@ using Microsoft.AspNetCore.Mvc;
 namespace APIBack.Controllers;
 
 [ApiController,Route("api/motoboys/me/work"),APIBack.Attributes.Authorize]
-public sealed class MotoboyWorkController(MotoboyWorkService service) : ControllerBase
+public sealed class MotoboyWorkController(MotoboyWorkService service, APIBack.GestaoLogica.Caixa.ICaixaService caixa) : ControllerBase
 {
     private int? Owner => HttpContext.Items["JwtPayload"] is JwtPayload p && !p.MotoboySessionId.HasValue ? HttpContext.GetUserId() : null;
     [HttpGet]
     public Task<IActionResult> Read(Guid store,DateTimeOffset from,DateTimeOffset to,CancellationToken ct) => Run(store,async(r,u)=>await service.Read(store,r,from,to,ct),ct);
     [HttpPost("settlements/{id:guid}/actions")]
     public Task<IActionResult> Action(Guid id,Guid store,RiderSettlementAction request,CancellationToken ct) => Run(store,async(r,u)=>await service.Action(store,r,u,id,request,true,ct),ct);
+    /// <summary>
+    /// 6C6: conferência dos meus pedidos pela loja (lotes do Caixa). Só leitura: o motoboy não marca conferência. Separada da remuneração
+    /// (settlements): aqui é o dinheiro dos pedidos que a loja conferiu, não o pagamento do motoboy.
+    /// </summary>
+    [HttpGet("conferences")]
+    public Task<IActionResult> Conferences(Guid store,DateTimeOffset from,CancellationToken ct) => Run(store,async(r,u)=>await caixa.ConferenciasDoMotoboy(store,r,from,ct),ct);
     [HttpPost("support")]
     public Task<IActionResult> Support(Guid store,RiderSupportRequest request,CancellationToken ct) => Run(store,async(r,u)=>await service.Support(store,r,request,ct),ct);
     private async Task<IActionResult> Run(Guid store,Func<int,int,Task<object>> action,CancellationToken ct)

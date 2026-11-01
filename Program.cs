@@ -154,6 +154,10 @@ builder.Services.AddScoped<IIngredienteRepository, IngredienteRepository>();
 builder.Services.AddScoped<IIngredienteService, IngredienteService>();
 // Livro de acontecimentos da gestao (docs/zippy-gestao/CONTRATOS.md).
 builder.Services.AddScoped<APIBack.Acontecimentos.IAcontecimentosService, APIBack.Acontecimentos.AcontecimentosService>();
+// Tempo real da gestao (6C4): so invalidacao, depois do commit, por loja e area (ver GestaoTempoReal).
+builder.Services.AddSingleton<APIBack.Acontecimentos.IGestaoTempoRealPublisher, APIBack.Acontecimentos.GestaoTempoRealPublisher>();
+builder.Services.AddSingleton<APIBack.Acontecimentos.IAcontecimentoAssinante, APIBack.Acontecimentos.GestaoTempoRealAssinante>();
+builder.Services.AddHostedService<APIBack.Acontecimentos.GestaoTempoRealOuvinte>();
 builder.Services.AddScoped<APIBack.GestaoLogica.Documentos.ILeitorCupomFoto, APIBack.GestaoLogica.Documentos.LeitorCupomClaude>();
 builder.Services.AddScoped<APIBack.GestaoLogica.Documentos.IDocumentosService, APIBack.GestaoLogica.Documentos.DocumentosService>();
 builder.Services.AddScoped<APIBack.GestaoLogica.Vinculos.IVinculosService, APIBack.GestaoLogica.Vinculos.VinculosService>();
@@ -169,6 +173,8 @@ builder.Services.AddScoped<APIBack.GestaoLogica.Estoque.IEstoqueService, APIBack
 builder.Services.AddScoped<APIBack.GestaoLogica.Estoque.IEstoquePoliticasService, APIBack.GestaoLogica.Estoque.EstoquePoliticasService>();
 builder.Services.AddScoped<APIBack.GestaoLogica.Equipe.IEquipeService, APIBack.GestaoLogica.Equipe.EquipeService>();
 builder.Services.AddScoped<APIBack.GestaoLogica.Caixa.ICaixaService, APIBack.GestaoLogica.Caixa.CaixaService>();
+// 6C6: presenca do motoboy no Caixa pela posicao que o rastreio ja recebe (so destaque; nunca confirma acerto).
+builder.Services.AddScoped<APIBack.GestaoLogica.Caixa.IChegadaService, APIBack.GestaoLogica.Caixa.ChegadaService>();
 builder.Services.AddScoped<APIBack.GestaoLogica.CaixaListas.ICaixaListasService, APIBack.GestaoLogica.CaixaListas.CaixaListasService>();
 builder.Services.AddScoped<APIBack.GestaoLogica.Despesas.IRecorrenciasService, APIBack.GestaoLogica.Despesas.RecorrenciasService>();
 builder.Services.AddHostedService<APIBack.GestaoLogica.Despesas.ContasFixasWorker>();
