@@ -229,7 +229,9 @@ SELECT e.id, e.nome_fantasia AS Nome, e.id_empresa AS EmpresaId, emp.nome_fantas
        SELECT COUNT(*) AS abertas FROM gestao_nota n WHERE n.estabelecimento_id = e.id AND n.concluida_em IS NULL) nt ON TRUE
  ORDER BY e.nome_fantasia;";
             var rows = await connection.QueryAsync<CarteiraLojaDto>(new CommandDefinition(sql, new { Hoje = Hoje.ToDateTime(TimeOnly.MinValue) }, cancellationToken: ct));
-            return rows.ToList();
+            // Mesmos nomes de modulo que pacotes e estabelecimentos devolvem (Pedidos, iFood...), nao os do enum (PEDIDOS, IFOOD):
+            // a aba Plano e modulos compara as duas listas.
+            return rows.Select(r => { r.Modulos = APIBack.Model.Gestao.EstabelecimentoModuleMapper.ToUiModules(string.Empty, r.Modulos).ToArray(); return r; }).ToList();
         }
 
         public async Task<DinheiroMesDto> DinheiroAsync(DateOnly mes, CancellationToken ct = default)
