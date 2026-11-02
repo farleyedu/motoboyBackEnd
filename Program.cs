@@ -365,6 +365,12 @@ builder.Services.AddScoped<WhatsAppSender>();
 // Webhook do WhatsApp: evento gravado em wa_evento (Postgres) e processado pelo worker, sem fila em memoria.
 builder.Services.AddScoped<APIBack.Atendimento.IWaEventoRepository, APIBack.Atendimento.SqlWaEventoRepository>();
 builder.Services.AddScoped<APIBack.Atendimento.IWaWebhookIngestor, APIBack.Atendimento.WaWebhookIngestor>();
+builder.Services.AddScoped<APIBack.GestaoMensagens.IGestaoMensagensStore, APIBack.GestaoMensagens.GestaoMensagensPostgresStore>();
+builder.Services.AddScoped<APIBack.GestaoMensagens.IGestaoEnviadorMeta, APIBack.GestaoMensagens.GestaoEnviadorMeta>();
+builder.Services.AddScoped<APIBack.GestaoMensagens.IGestaoPainel, APIBack.GestaoMensagens.GestaoPainelChamados>();
+builder.Services.AddScoped<APIBack.GestaoMensagens.IGestaoMarcos, APIBack.GestaoMensagens.GestaoMarcosRelacionamento>();
+builder.Services.AddScoped<APIBack.GestaoMensagens.IGestaoMensagensService, APIBack.GestaoMensagens.GestaoMensagensService>();
+builder.Services.AddScoped<APIBack.GestaoMensagens.IGestaoMensagensRetorno, APIBack.GestaoMensagens.GestaoMensagensRetorno>();
 builder.Services.AddScoped<APIBack.Atendimento.IWaEventoProcessor, APIBack.Atendimento.WaEventoProcessor>();
 builder.Services.AddScoped<APIBack.Atendimento.IIngressoDeConversa>(sp => sp.GetRequiredService<ConversationService>());
 builder.Services.AddScoped<APIBack.Atendimento.IPipelineDeMensagem, APIBack.Atendimento.PipelineDeMensagem>();

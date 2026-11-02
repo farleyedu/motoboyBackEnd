@@ -73,11 +73,14 @@ namespace APIBack.Atendimento
         private readonly ILogger<WaEventoProcessor> _logger;
         private readonly ConexaoMeta.IConexaoMetaRepository? _conexoes;
         private readonly IIdentidadeWhatsappService? _identidade;
+        private readonly GestaoMensagens.IGestaoMensagensRetorno? _gestaoMensagens;
 
         public WaEventoProcessor(
             ICanalRepository canais, IMessageService mensagens, IPipelineDeMensagem pipeline, ILogger<WaEventoProcessor> logger,
-            ConexaoMeta.IConexaoMetaRepository? conexoes = null, IIdentidadeWhatsappService? identidade = null)
+            ConexaoMeta.IConexaoMetaRepository? conexoes = null, IIdentidadeWhatsappService? identidade = null,
+            GestaoMensagens.IGestaoMensagensRetorno? gestaoMensagens = null)
         {
+            _gestaoMensagens = gestaoMensagens;
             _canais = canais;
             _mensagens = mensagens;
             _pipeline = pipeline;
@@ -197,6 +200,7 @@ namespace APIBack.Atendimento
                 return ResultadoEvento.Ignorado($"evento da WABA {wabaDoEvento} para o canal {canal.Id} de outra WABA");
             }
 
+            await RegistrarRetornoGestaoAsync(canal, mensagem);
             var inputLegado = await PrepararAsync(evento, mensagem, valor, phoneNumberId, display, canal, canal.IdEstabelecimento, RotaEvento.Operacional);
             await _pipeline.ExecutarAsync(inputLegado, canal);
 
@@ -242,6 +246,8 @@ namespace APIBack.Atendimento
                     $"rota capturada {evento.Rota}, rota atual {RotaEvento.Para(canal)}");
             if (WabaDiferente(canal, wabaDoEvento))
                 return Bloquear(evento, RotaBloqueada.Proibido, RotaBloqueada.WabaIncorreta, $"evento da WABA {wabaDoEvento} para o canal {canal.Id} de outra WABA");
+
+            await RegistrarRetornoGestaoAsync(canal, mensagem);
 
             if (evento.Rota == RotaEvento.Gestao)
             {
@@ -318,6 +324,28 @@ namespace APIBack.Atendimento
                 IdCanal: canal.Id);
         }
 
+        /// <summary>
+        /// Resposta real em numero da Gestao entra no historico da Gestao (e vira o marco "recebida"). Falha aqui nunca bloqueia a mensagem:
+        /// o fluxo normal segue e o evento nao e reenfileirado por causa disso.
+        /// </summary>
+        private async Task RegistrarRetornoGestaoAsync(CanalWhatsapp canal, WebhookMessageDto mensagem)
+        {
+            if (_gestaoMensagens == null) return;
+            try
+            {
+                DateTimeOffset em = DateTimeOffset.UtcNow;
+                if (long.TryParse(mensagem.CarimboTempo, out var unix))
+                {
+                    try { em = DateTimeOffset.FromUnixTimeSeconds(unix); } catch (ArgumentOutOfRangeException) { }
+                }
+                await _gestaoMensagens.RegistrarRecebidaAsync(canal.Id, mensagem.De, mensagem.Id, em, WaMensagemTexto.Exibicao(mensagem));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "[wa.in] ev=gestao_retorno_falhou wa={Wa} canal={Canal}", mensagem.Id, canal.Id);
+            }
+        }
+
         private ResultadoEvento Bloquear(WaEvento evento, int codigo, string motivo, string detalhe, string? categoria = null)
         {
             _logger.LogWarning(
@@ -363,7 +391,10 @@ namespace APIBack.Atendimento
                 if (primeiro.TryGetProperty("error_data", out var dados) && Texto(dados, "details") is { } d) detalhe = $"{detalhe}: {d}";
             }
 
+            // Recibo e so recibo: muda o estado de entrega da mensagem da Gestao, nunca o "esperando resposta" nem o "aguardando loja".
+            var daGestao = _gestaoMensagens != null && await _gestaoMensagens.AplicarReciboAsync(wamid, situacao, codigo, detalhe);
             var atualizada = await _mensagens.AtualizarStatusPorProvedorAsync(wamid, situacao, codigo, detalhe);
+            if (!atualizada && daGestao) return ResultadoEvento.Processado();
             if (!atualizada)
             {
                 // O recibo pode chegar milissegundos antes de a mensagem receber o id da Meta: tenta de novo algumas vezes.
