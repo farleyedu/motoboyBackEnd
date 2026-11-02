@@ -47,6 +47,23 @@ public sealed class GestaoCaixaController(ICaixaService service, IPedidoCoreServ
     public Task<IActionResult> Fechar([FromBody] FecharCaixaRequest? req, CancellationToken ct) => Run(false, async (loja, usuario, acesso) =>
         await service.Fechar(loja, usuario, acesso, req ?? throw Vazio(), ct));
 
+    /// <summary>Configuração do caixa da loja (tolerância do fechamento, operador vê o saldo). Gerente e operador leem; só o gerente muda.</summary>
+    [HttpGet("config")]
+    public Task<IActionResult> Config(CancellationToken ct) => Run(false, async (loja, _, _) => await service.Config(loja, ct));
+
+    [HttpPut("config")]
+    public Task<IActionResult> SalvarConfig([FromBody] SalvarConfigDoCaixaRequest? req, CancellationToken ct) => Run(true, async (loja, usuario, _) =>
+        await service.SalvarConfig(loja, usuario, req ?? throw Vazio(), ct));
+
+    /// <summary>Fechamentos enviados pelo operador esperando o gerente (o aviso do painel).</summary>
+    [HttpGet("aprovacoes")]
+    public Task<IActionResult> Aprovacoes(CancellationToken ct) => Run(true, async (loja, _, _) => await service.Aguardando(loja, ct));
+
+    /// <summary>O gerente aprova (com recontagem opcional) ou devolve o fechamento enviado.</summary>
+    [HttpPost("fechamentos/{dia}/decisao")]
+    public Task<IActionResult> DecidirFechamento(DateOnly dia, [FromBody] DecisaoDoFechamentoRequest? req, CancellationToken ct) => Run(true, async (loja, usuario, acesso) =>
+        await service.DecidirFechamento(loja, usuario, acesso, dia, req ?? throw Vazio(), ct));
+
     /// <summary>O que dá para pagar em dinheiro pela gaveta (diárias e compras a pagar). Gerente e operador.</summary>
     [HttpGet("a-pagar")]
     public Task<IActionResult> APagar(CancellationToken ct) => Run(false, async (loja, _, _) => await service.APagar(loja, ct));
@@ -141,7 +158,10 @@ public sealed class GestaoCaixaController(ICaixaService service, IPedidoCoreServ
         var recebido = pagaDepois ? null : BalcaoRegras.ValorRecebido(r.Forma!, r.ValorRecebido);
         var hoje = await service.Hoje(loja, ct);
         if (r.Dia != hoje) throw new GestaoException("CAMPO_INVALIDO", "O caixa registra só o dia de hoje.", 422);
-        if (await service.CarregarDia(loja, hoje, ct) is not { Aberto: true })
+        var diaAtual = await service.CarregarDia(loja, hoje, ct);
+        if (diaAtual?.Aguardando is not null)
+            throw new GestaoException("AGUARDANDO_APROVACAO", "O fechamento do caixa espera a aprovação do gerente: não dá para vender agora.", 409);
+        if (diaAtual is not { Aberto: true })
             throw new GestaoException("SEM_CAIXA", "Abra o caixa antes de vender no balcão.", 409);
         CreatedPedidoDto pedido;
         try

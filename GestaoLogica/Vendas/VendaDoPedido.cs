@@ -219,7 +219,8 @@ SELECT a.id AS Id, EXISTS (SELECT 1 FROM gestao_acontecimentos e WHERE e.estabel
         {
             gaveta = await c.ExecuteScalarAsync<Guid?>("SELECT conta_gaveta_id FROM gestao_caixas WHERE estabelecimento_id = @loja;", new { loja }, tx);
             aberto = gaveta.HasValue && await c.ExecuteScalarAsync<bool>(@"SELECT EXISTS (SELECT 1 FROM gestao_caixa_dias
- WHERE estabelecimento_id = @loja AND dia = @dia AND fechado_em IS NULL);", new { loja, dia = hoje.ToDateTime(TimeOnly.MinValue) }, tx);
+ WHERE estabelecimento_id = @loja AND dia = @dia AND fechado_em IS NULL AND (to_jsonb(gestao_caixa_dias)->>'envio_em') IS NULL);",
+                new { loja, dia = hoje.ToDateTime(TimeOnly.MinValue) }, tx);
         }
         // Mais de um recebivel do mesmo subtipo: vale o primeiro criado (decisao registrada no relatorio da 6C1-A).
         async Task<Guid?> Recebivel(string subtipo) => await c.ExecuteScalarAsync<Guid?>(@"SELECT id FROM gestao_contas

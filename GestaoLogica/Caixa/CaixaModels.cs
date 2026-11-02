@@ -32,9 +32,36 @@ public sealed record FechamentoDto(string Id, DateOnly Dia, int Operador, DateTi
     decimal Esperado, decimal Contado, IReadOnlyDictionary<string, decimal> Maquininha, IReadOnlyDictionary<string, decimal> MaquininhaEsperado,
     string? Justificativa, decimal Fica, decimal Cofre, IReadOnlyList<AjusteFechamento> Ajustes, string? OperadorNome = null);
 
+/// <param name="Aberto">Aberto de verdade: nem fechado nem com fechamento esperando o gerente (aí o caixa fica travado).</param>
+/// <param name="Aguardando">Fechamento enviado pelo operador esperando a aprovação do gerente.</param>
+/// <param name="Devolvido">O gerente devolveu o último envio para recontar (o caixa voltou a ficar aberto).</param>
+/// <param name="AprovadoPorNome">Fechado por aprovação do gerente: quem aprovou.</param>
 public sealed record CaixaDoDia(DateOnly Dia, bool Aberto, DateTimeOffset? AbertoEm, int? Por, decimal Fundo, IReadOnlyList<LinhaFita> Fita,
     IReadOnlyList<PedidoEmAberto> PedidosEmAberto, FechamentoDto? Fechamento, string? PorNome = null, decimal? FundoOriginal = null,
-    IReadOnlyList<CorrecaoFundoDto>? CorrecoesFundo = null, int SolicitacoesPendentes = 0);
+    IReadOnlyList<CorrecaoFundoDto>? CorrecoesFundo = null, int SolicitacoesPendentes = 0, EnvioDoFechamento? Aguardando = null,
+    DevolucaoDoFechamento? Devolvido = null, string? AprovadoPorNome = null);
+
+/// <summary>Configuração do caixa da loja, decidida pelo gerente.</summary>
+/// <param name="ToleranciaFechamento">Diferença (para mais ou para menos) que o operador fecha sozinho; acima disso vai para o gerente.</param>
+public sealed record ConfigDoCaixa(decimal ToleranciaFechamento, bool OperadorVeSaldo);
+
+public sealed record SalvarConfigDoCaixaRequest(decimal? ToleranciaFechamento, bool? OperadorVeSaldo);
+
+/// <summary>O que o operador contou e enviou ao gerente (nada disso está no livro até a aprovação).</summary>
+public sealed record EnvioDoFechamento(DateTimeOffset Em, int Por, string? PorNome, ContagemCaixa Contagem, decimal Esperado, decimal Contado,
+    decimal Diferenca, IReadOnlyDictionary<string, decimal> Maquininha, IReadOnlyDictionary<string, decimal> MaquininhaEsperado, string? Justificativa,
+    decimal Fica, decimal Tolerancia);
+
+public sealed record DevolucaoDoFechamento(DateTimeOffset Em, int Por, string? PorNome, string Motivo);
+
+/// <summary>
+/// Decisão do gerente sobre um fechamento enviado: <c>aprovar</c> (com <c>Recontagem</c> opcional, que substitui a contagem do operador,
+/// guardada) ou <c>devolver</c> (com <c>Motivo</c>; só no próprio dia).
+/// </summary>
+public sealed record DecisaoDoFechamentoRequest(string? Decisao, ContagemCaixa? Recontagem, string? Justificativa, decimal? Fica, string? Motivo);
+
+/// <summary>Fechamento esperando o gerente (aviso no painel).</summary>
+public sealed record FechamentoAguardando(DateOnly Dia, DateTimeOffset Em, string? PorNome, decimal Diferenca, decimal Contado, decimal Esperado);
 
 /// <summary>Contagem por cédula (200, 100, 50, 20, 10, 5, 2) mais o total em moedas.</summary>
 public sealed record ContagemCaixa(IReadOnlyDictionary<int, int>? Notas, decimal Moedas);

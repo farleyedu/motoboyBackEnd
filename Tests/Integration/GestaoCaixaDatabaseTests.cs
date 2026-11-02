@@ -38,7 +38,7 @@ CREATE TABLE ifood_order_links(merchant_id uuid, external_order_id uuid, estabel
 CREATE TABLE ifood_order_snapshots(merchant_id uuid, external_order_id uuid, estabelecimento_id uuid, order_type text, order_amount numeric, pending_amount numeric);
 INSERT INTO estabelecimentos VALUES (@loja, 'America/Sao_Paulo'); INSERT INTO usuario VALUES (7, 'Marina'), (8, 'Júlia do caixa');", new { loja });
                 foreach (var m in new[] { "20261105_01_gestao_fundacao.sql", "20261106_01_gestao_documentos.sql", "20261107_01_gestao_vinculos.sql",
-                             "20261110_01_gestao_caixa.sql", "20261118_01_gestao_caixa_correcoes.sql" })
+                             "20261110_01_gestao_caixa.sql", "20261118_01_gestao_caixa_correcoes.sql", "20261123_01_gestao_caixa_aprovacao.sql" })
                     await c.ExecuteAsync(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "Migrations", "Delivery", m)));
             }
             var livro = new AcontecimentosService(fonte, Array.Empty<IAcontecimentoAssinante>(), NullLogger<AcontecimentosService>.Instance);
@@ -92,7 +92,29 @@ INSERT INTO estabelecimentos VALUES (@loja, 'America/Sao_Paulo'); INSERT INTO us
             var maq = new Dictionary<string, decimal> { ["pix"] = 38, ["cre"] = 90, ["deb"] = 0 };
             Assert.Equal("CAMPO_INVALIDO", (await Assert.ThrowsAsync<GestaoException>(() =>
                 caixa.Fechar(loja, 8, operador, new FecharCaixaRequest(hoje, contagem, maq, null, 10), default))).Codigo);
+            // Acima da tolerância (padrão zero), a operadora envia ao gerente: nada vai para o livro e o caixa trava até ele decidir.
             dia = await caixa.Fechar(loja, 8, operador, new FecharCaixaRequest(hoje, contagem, maq, "Troco dado errado", 10), default);
+            Assert.False(dia.Aberto);
+            Assert.Null(dia.Fechamento);
+            Assert.Equal((-2m, 23m, "Júlia do caixa"), (dia.Aguardando!.Diferenca, dia.Aguardando.Contado, dia.Aguardando.PorNome));
+            Assert.Equal(0, await Scalar<int>(fonte, "SELECT count(*) FROM gestao_lancamentos WHERE categoria = 'quebra_de_caixa'"));
+            Assert.Equal("AGUARDANDO_APROVACAO", (await Assert.ThrowsAsync<GestaoException>(() => caixa.RegistrarMovimento(loja, 8, operador,
+                new MovimentoCaixaRequest("m9", hoje, MovimentoCaixa.Suprimento, 10, null, null), default))).Codigo);
+            Assert.Single(await caixa.Aguardando(loja, default));
+            Assert.Equal("SEM_PERMISSAO", (await Assert.ThrowsAsync<GestaoException>(() => caixa.DecidirFechamento(loja, 8, operador, hoje,
+                new DecisaoDoFechamentoRequest("aprovar", null, null, null, null), default))).Codigo);
+
+            // O gerente devolve para recontar: o caixa volta a ficar aberto, com o recado. A operadora envia de novo.
+            dia = await caixa.DecidirFechamento(loja, 7, gerente, hoje, new DecisaoDoFechamentoRequest("devolver", null, null, null, "Conte as moedas de novo"), default);
+            Assert.True(dia.Aberto);
+            Assert.Equal(("Conte as moedas de novo", "Marina"), (dia.Devolvido!.Motivo, dia.Devolvido.PorNome));
+            dia = await caixa.Fechar(loja, 8, operador, new FecharCaixaRequest(hoje, contagem, maq, "Troco dado errado", 10), default);
+            Assert.NotNull(dia.Aguardando);
+
+            // Aprovado: o fechamento vai para o livro como sempre, com a operadora como quem contou e o gerente como quem aprovou.
+            dia = await caixa.DecidirFechamento(loja, 7, gerente, hoje, new DecisaoDoFechamentoRequest("aprovar", null, null, null, null), default);
+            Assert.Equal("Marina", dia.AprovadoPorNome);
+            Assert.Empty(await caixa.Aguardando(loja, default));
             var f = dia.Fechamento!;
             Assert.Equal((25m, 23m, 10m, 13m), (f.Esperado, f.Contado, f.Fica, f.Cofre));
             Assert.Equal((38m, 96.50m), (f.MaquininhaEsperado["pix"], f.MaquininhaEsperado["cre"]));
@@ -150,7 +172,7 @@ CREATE TABLE ifood_order_links(merchant_id uuid, external_order_id uuid, estabel
 CREATE TABLE ifood_order_snapshots(merchant_id uuid, external_order_id uuid, estabelecimento_id uuid, order_type text, order_amount numeric, pending_amount numeric);
 INSERT INTO estabelecimentos VALUES (@loja, 'America/Sao_Paulo'); INSERT INTO usuario VALUES (7, 'Marina'), (8, 'Júlia do caixa');", new { loja });
                 foreach (var m in new[] { "20261105_01_gestao_fundacao.sql", "20261106_01_gestao_documentos.sql", "20261107_01_gestao_vinculos.sql",
-                             "20261109_01_gestao_equipe.sql", "20261110_01_gestao_caixa.sql", "20261118_01_gestao_caixa_correcoes.sql" })
+                             "20261109_01_gestao_equipe.sql", "20261110_01_gestao_caixa.sql", "20261118_01_gestao_caixa_correcoes.sql", "20261123_01_gestao_caixa_aprovacao.sql" })
                     await c.ExecuteAsync(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "Migrations", "Delivery", m)));
             }
             var livro = new AcontecimentosService(fonte, Array.Empty<IAcontecimentoAssinante>(), NullLogger<AcontecimentosService>.Instance);
