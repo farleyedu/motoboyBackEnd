@@ -6,6 +6,7 @@ using System.Text;
 using System.Threading.Tasks;
 using APIBack.Model.CRM;
 using APIBack.Repository.Interface;
+using APIBack.Service;
 using Dapper;
 using Npgsql;
 
@@ -20,7 +21,7 @@ namespace APIBack.Repository
             _dataSource = dataSource;
         }
 
-        public async Task<IReadOnlyCollection<CrmOportunidadeRow>> ListarOportunidadesAsync(string? status, string? tipo, string? responsavel, string? busca)
+        public async Task<IReadOnlyCollection<CrmOportunidadeRow>> ListarOportunidadesAsync(string? status, string? tipo, int? responsavelUsuarioId, string? busca)
         {
             const string sql = @"
 SELECT id,
@@ -31,6 +32,8 @@ SELECT id,
        cnpj,
        tipo,
        responsavel,
+       responsavel_usuario_id,
+       (SELECT u.nome FROM usuario u WHERE u.id = crm_oportunidade.responsavel_usuario_id) AS responsavel_nome,
        coluna,
        status,
        substatus,
@@ -55,7 +58,7 @@ SELECT id,
   FROM crm_oportunidade
  WHERE (@Status IS NULL OR status::text = @Status)
    AND (@Tipo IS NULL OR tipo::text = @Tipo)
-   AND (@Responsavel IS NULL OR responsavel::text = @Responsavel)
+   AND (@ResponsavelUsuarioId IS NULL OR responsavel_usuario_id = @ResponsavelUsuarioId)
    AND (
        @Busca IS NULL
        OR nome_empresa ILIKE '%' || @Busca || '%'
@@ -78,7 +81,7 @@ SELECT id,
             {
                 Status = NormalizeNullable(status),
                 Tipo = NormalizeNullable(tipo),
-                Responsavel = NormalizeNullable(responsavel),
+                ResponsavelUsuarioId = responsavelUsuarioId,
                 Busca = NormalizeNullable(busca)
             });
 
@@ -96,6 +99,8 @@ SELECT id,
        cnpj,
        tipo,
        responsavel,
+       responsavel_usuario_id,
+       (SELECT u.nome FROM usuario u WHERE u.id = crm_oportunidade.responsavel_usuario_id) AS responsavel_nome,
        coluna,
        status,
        substatus,
@@ -129,12 +134,12 @@ SELECT id,
         {
             const string sql = @"
 INSERT INTO crm_oportunidade (
-    nome_empresa, nome_contato, telefone, email, cnpj, tipo, responsavel, coluna, status,
+    nome_empresa, nome_contato, telefone, email, cnpj, tipo, responsavel_usuario_id, coluna, status,
     substatus, proxima_acao, estimativa_json, proposta_json, proposta_enviada_em,
     reserva_reuniao_id, reuniao_local, reserva_resposta_id, reserva_pagamento_id,
     dt_resposta_prevista, dt_pagamento_prevista, closed_at)
 VALUES (
-    @NomeEmpresa, @NomeContato, @Telefone, @Email, @Cnpj, @Tipo::crm_tipo_servico, @Responsavel::crm_responsavel, @Coluna::crm_kanban_col, @Status::crm_oportunidade_status,
+    @NomeEmpresa, @NomeContato, @Telefone, @Email, @Cnpj, @Tipo::crm_tipo_servico, @ResponsavelUsuarioId, @Coluna::crm_kanban_col, @Status::crm_oportunidade_status,
     @Substatus, @ProximaAcao, COALESCE(@EstimativaJson::jsonb, '{}'::jsonb), @PropostaJson::jsonb, @PropostaEnviadaEm,
     @ReuniaoReservaId, @ReuniaoLocal, @RespostaReservaId, @PagamentoReservaId,
     @DtRespostaPrevista, @DtPagamentoPrevista, @ClosedAt)
@@ -149,7 +154,7 @@ RETURNING id;";
                 oportunidade.Email,
                 oportunidade.Cnpj,
                 oportunidade.Tipo,
-                oportunidade.Responsavel,
+                oportunidade.ResponsavelUsuarioId,
                 oportunidade.Coluna,
                 oportunidade.Status,
                 oportunidade.Substatus,
@@ -176,7 +181,7 @@ UPDATE crm_oportunidade
        telefone = @Telefone,
        email = @Email,
        cnpj = @Cnpj,
-       responsavel = @Responsavel::crm_responsavel,
+       responsavel_usuario_id = @ResponsavelUsuarioId,
        status = @Status::crm_oportunidade_status,
        substatus = @Substatus,
        proxima_acao = @ProximaAcao,
@@ -197,7 +202,7 @@ UPDATE crm_oportunidade
                 oportunidade.Telefone,
                 oportunidade.Email,
                 oportunidade.Cnpj,
-                oportunidade.Responsavel,
+                oportunidade.ResponsavelUsuarioId,
                 oportunidade.Status,
                 oportunidade.Substatus,
                 oportunidade.ProximaAcao,
@@ -338,6 +343,8 @@ SELECT id,
        cnpj,
        tipo,
        responsavel,
+       responsavel_usuario_id,
+       (SELECT u.nome FROM usuario u WHERE u.id = crm_oportunidade.responsavel_usuario_id) AS responsavel_nome,
        coluna,
        status,
        substatus,
@@ -370,12 +377,22 @@ SELECT id,
                 throw new KeyNotFoundException("Oportunidade nao encontrada.");
             }
 
-            var empresaId = await ObterEmpresaExistenteAsync(connection, transaction, command.Cnpj, command.NomeEmpresa)
-                ?? await CriarEmpresaAsync(connection, transaction, command);
-            var tipoEstabelecimentoId = await ResolverTipoEstabelecimentoIdAsync(connection, transaction, command.EstabelecimentoTipoSlug);
-            var estabelecimentoId = await ObterEstabelecimentoExistenteAsync(connection, transaction, empresaId)
-                ?? await CriarEstabelecimentoAsync(connection, transaction, command, empresaId, tipoEstabelecimentoId);
-            var responsavelUserId = await ResolverUsuarioResponsavelAsync(connection, transaction, command.Responsavel);
+            // So liga a empresa e a loja que o operador confirmou (CrmAssociacaoRegras). Sem confirmacao, as duas nascem novas:
+            // nada de procurar por nome nem de pegar o primeiro estabelecimento da empresa.
+            var empresaId = command.EmpresaId.HasValue
+                ? await ConfirmarEmpresaAsync(connection, transaction, command.EmpresaId.Value)
+                : await CriarEmpresaAsync(connection, transaction, command);
+            Guid estabelecimentoId;
+            if (command.EstabelecimentoId.HasValue)
+            {
+                estabelecimentoId = await ConfirmarEstabelecimentoAsync(connection, transaction, empresaId, command.EstabelecimentoId.Value);
+            }
+            else
+            {
+                var tipoEstabelecimentoId = await ResolverTipoEstabelecimentoIdAsync(connection, transaction, command.EstabelecimentoTipoSlug);
+                estabelecimentoId = await CriarEstabelecimentoAsync(connection, transaction, command, empresaId, tipoEstabelecimentoId);
+            }
+            var responsavelUserId = await ResolverUsuarioResponsavelAsync(connection, transaction, command.ResponsavelUsuarioId);
 
             await VincularUsuarioEmpresaAsync(connection, transaction, responsavelUserId, empresaId, command.UsuarioId);
             await VincularUsuarioEstabelecimentoAsync(connection, transaction, responsavelUserId, estabelecimentoId, command.UsuarioId);
@@ -387,7 +404,7 @@ INSERT INTO crm_contrato (
     estabelecimento_id,
     tipo,
     status,
-    responsavel,
+    responsavel_usuario_id,
     mensalidade_saas,
     mensalidade_marketing,
     marketing_valor_fixo,
@@ -402,7 +419,7 @@ VALUES (
     @EstabelecimentoId,
     @Tipo::crm_tipo_servico,
     @Status::crm_contrato_status,
-    @Responsavel::crm_responsavel,
+    @ResponsavelUsuarioId,
     @MensalidadeSaas,
     @MensalidadeMarketing,
     @MarketingValorFixo,
@@ -419,7 +436,7 @@ RETURNING id;",
                     EstabelecimentoId = estabelecimentoId,
                     command.Tipo,
                     Status = command.StatusInicial,
-                    command.Responsavel,
+                    command.ResponsavelUsuarioId,
                     command.MensalidadeSaas,
                     command.MensalidadeMarketing,
                     command.MarketingValorFixo,
@@ -629,7 +646,7 @@ fonte AS (
                WHEN ep.status_estabelecimento IN ('ativo', 'trial') THEN 'ativo'
                ELSE 'pausado'
            END AS status,
-           COALESCE(NULLIF(opp.responsavel::text, ''), 'farley') AS responsavel,
+           opp.responsavel_usuario_id,
            COALESCE(NULLIF(opp.proposta_json ->> 'saaSMensalidade', '')::numeric, 0) AS mensalidade_saas,
            COALESCE(NULLIF(opp.proposta_json ->> 'marketingMensalidade', '')::numeric, 0) AS mensalidade_marketing,
            COALESCE(NULLIF(opp.proposta_json ->> 'marketingValorFixo', '')::numeric, 0) AS marketing_valor_fixo,
@@ -650,7 +667,7 @@ fonte AS (
       LEFT JOIN LATERAL (
             SELECT o.id,
                    o.tipo,
-                   o.responsavel,
+                   o.responsavel_usuario_id,
                    o.proposta_json,
                    o.closed_at,
                    o.updated_at,
@@ -662,7 +679,6 @@ fonte AS (
                         NULLIF(regexp_replace(COALESCE(alvo.cnpj, ''), '[^0-9]', '', 'g'), '') IS NOT NULL
                         AND regexp_replace(COALESCE(o.cnpj, ''), '[^0-9]', '', 'g') = regexp_replace(COALESCE(alvo.cnpj, ''), '[^0-9]', '', 'g')
                     )
-                    OR lower(btrim(o.nome_empresa)) = lower(btrim(alvo.nome_empresa))
                    )
                AND (o.status::text = 'fechado' OR o.closed_at IS NOT NULL)
              ORDER BY CASE
@@ -684,7 +700,7 @@ oportunidades_legado AS (
         email,
         cnpj,
         tipo,
-        responsavel,
+        responsavel_usuario_id,
         coluna,
         status,
         substatus,
@@ -703,7 +719,7 @@ oportunidades_legado AS (
            fonte.email,
            fonte.cnpj,
            fonte.tipo::crm_tipo_servico,
-           fonte.responsavel::crm_responsavel,
+           fonte.responsavel_usuario_id,
            'aguardando'::crm_kanban_col,
            'fechado'::crm_oportunidade_status,
            'legacy_equalized',
@@ -731,7 +747,7 @@ fonte_resolvida AS (
            fonte.estabelecimento_id,
            fonte.tipo,
            fonte.status,
-           fonte.responsavel,
+           fonte.responsavel_usuario_id,
            fonte.mensalidade_saas,
            fonte.mensalidade_marketing,
            fonte.marketing_valor_fixo,
@@ -751,7 +767,7 @@ inserted AS (
         estabelecimento_id,
         tipo,
         status,
-        responsavel,
+        responsavel_usuario_id,
         mensalidade_saas,
         mensalidade_marketing,
         marketing_valor_fixo,
@@ -766,7 +782,7 @@ inserted AS (
            fonte_resolvida.estabelecimento_id,
            fonte_resolvida.tipo::crm_tipo_servico,
            fonte_resolvida.status::crm_contrato_status,
-           fonte_resolvida.responsavel::crm_responsavel,
+           fonte_resolvida.responsavel_usuario_id,
            fonte_resolvida.mensalidade_saas,
            fonte_resolvida.mensalidade_marketing,
            fonte_resolvida.marketing_valor_fixo,
@@ -789,6 +805,56 @@ SELECT COUNT(*)
             return inseridos;
         }
 
+        public async Task<IReadOnlyCollection<CrmEmpresaExistente>> ListarEmpresasParaAssociacaoAsync()
+        {
+            const string sql = @"
+SELECT id AS Id,
+       COALESCE(nome_fantasia, '') AS NomeFantasia,
+       cnpj AS Cnpj
+  FROM empresas;";
+
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            var rows = await connection.QueryAsync<CrmEmpresaExistente>(sql);
+            return rows.ToList();
+        }
+
+        public async Task<IReadOnlyCollection<CrmEstabelecimentoDaEmpresaRow>> ListarEstabelecimentosDasEmpresasAsync(IReadOnlyCollection<Guid> empresaIds)
+        {
+            if (empresaIds.Count == 0)
+            {
+                return Array.Empty<CrmEstabelecimentoDaEmpresaRow>();
+            }
+
+            const string sql = @"
+SELECT id,
+       id_empresa AS empresa_id,
+       COALESCE(nome_fantasia, '') AS nome,
+       COALESCE(ativo, TRUE) AS ativo,
+       situacao_comercial AS situacao
+  FROM estabelecimentos
+ WHERE id_empresa = ANY(@EmpresaIds)
+ ORDER BY nome_fantasia, id;";
+
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            var rows = await connection.QueryAsync<CrmEstabelecimentoDaEmpresaRow>(sql, new { EmpresaIds = empresaIds.ToArray() });
+            return rows.ToList();
+        }
+
+        public async Task<IReadOnlyCollection<CrmResponsavelRow>> ListarEquipeZippyAsync()
+        {
+            const string sql = @"
+SELECT id,
+       COALESCE(nome, email, '') AS nome
+  FROM usuario
+ WHERE COALESCE(is_super_admin, FALSE) = TRUE
+   AND deleted_at IS NULL
+ ORDER BY nome, id;";
+
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            var rows = await connection.QueryAsync<CrmResponsavelRow>(sql);
+            return rows.ToList();
+        }
+
         public async Task<IReadOnlyCollection<CrmContratoRow>> ListarContratosAsync(string? status)
         {
             const string sql = @"
@@ -801,6 +867,8 @@ SELECT c.id,
        c.tipo,
        c.status,
        c.responsavel,
+       c.responsavel_usuario_id,
+       ru.nome AS responsavel_nome,
        c.mensalidade_saas,
        c.mensalidade_marketing,
        c.marketing_valor_fixo,
@@ -814,6 +882,7 @@ SELECT c.id,
   FROM crm_contrato c
   JOIN empresas e ON e.id = c.empresa_id
   JOIN estabelecimentos est ON est.id = c.estabelecimento_id
+  LEFT JOIN usuario ru ON ru.id = c.responsavel_usuario_id
  WHERE (
        @Status IS NOT NULL AND c.status::text = @Status
    )
@@ -839,6 +908,8 @@ SELECT c.id,
        c.tipo,
        c.status,
        c.responsavel,
+       c.responsavel_usuario_id,
+       ru.nome AS responsavel_nome,
        c.mensalidade_saas,
        c.mensalidade_marketing,
        c.marketing_valor_fixo,
@@ -852,6 +923,7 @@ SELECT c.id,
   FROM crm_contrato c
   JOIN empresas e ON e.id = c.empresa_id
   JOIN estabelecimentos est ON est.id = c.estabelecimento_id
+  LEFT JOIN usuario ru ON ru.id = c.responsavel_usuario_id
  WHERE c.id = @ContratoId
  LIMIT 1;";
 
@@ -859,12 +931,12 @@ SELECT c.id,
             return await connection.QueryFirstOrDefaultAsync<CrmContratoRow>(sql, new { ContratoId = contratoId });
         }
 
-        public async Task AtualizarContratoAsync(Guid contratoId, string? status, string? responsavel, int? diaVencimento, DateTime? dataInicioCobranca, decimal? mensalidadeSaas, decimal? mensalidadeMarketing, decimal? marketingValorFixo, string? observacoes)
+        public async Task AtualizarContratoAsync(Guid contratoId, string? status, int? responsavelUsuarioId, int? diaVencimento, DateTime? dataInicioCobranca, decimal? mensalidadeSaas, decimal? mensalidadeMarketing, decimal? marketingValorFixo, string? observacoes)
         {
             const string sql = @"
 UPDATE crm_contrato
    SET status = COALESCE(@Status::crm_contrato_status, status),
-       responsavel = COALESCE(@Responsavel::crm_responsavel, responsavel),
+       responsavel_usuario_id = COALESCE(@ResponsavelUsuarioId, responsavel_usuario_id),
        dia_vencimento = COALESCE(@DiaVencimento, dia_vencimento),
        dt_inicio_cobranca = COALESCE(@DataInicioCobranca, dt_inicio_cobranca),
        mensalidade_saas = COALESCE(@MensalidadeSaas, mensalidade_saas),
@@ -883,7 +955,7 @@ UPDATE crm_contrato
             {
                 ContratoId = contratoId,
                 Status = NormalizeNullable(status),
-                Responsavel = NormalizeNullable(responsavel),
+                ResponsavelUsuarioId = responsavelUsuarioId,
                 DiaVencimento = diaVencimento,
                 DataInicioCobranca = dataInicioCobranca?.Date,
                 MensalidadeSaas = mensalidadeSaas,
@@ -1137,14 +1209,23 @@ SELECT COALESCE(SUM(CASE
                              = DATE_TRUNC('month', @ReferenciaMes::timestamp)
                         THEN valor_pago
                         ELSE 0
-                    END), 0) AS recebido_mes,
+                    END), 0) AS registrado_manual_mes,
        COALESCE(SUM(CASE
                         WHEN status IN ('pendente', 'parcial')
                          AND DATE_TRUNC('month', COALESCE(competencia::timestamp, data_vencimento::timestamp))
                              = DATE_TRUNC('month', @ReferenciaMes::timestamp)
                         THEN valor_total - valor_pago
                         ELSE 0
-                    END), 0) AS pendente_mes
+                    END), 0) AS pendente_manual_mes,
+       -- Dinheiro de verdade: o que a assinatura cobrou e o gateway confirmou.
+       (SELECT COALESCE(SUM(COALESCE(cc.valor_pago, cc.valor)), 0)
+          FROM comercial_cobranca cc
+         WHERE cc.status = 'paga'
+           AND DATE_TRUNC('month', cc.pago_em AT TIME ZONE 'America/Sao_Paulo') = DATE_TRUNC('month', @ReferenciaMes::timestamp)) AS recebido_mes,
+       (SELECT COALESCE(SUM(cc.valor), 0)
+          FROM comercial_cobranca cc
+         WHERE cc.status IN ('aberta', 'processando')
+           AND DATE_TRUNC('month', cc.vencimento AT TIME ZONE 'America/Sao_Paulo') = DATE_TRUNC('month', @ReferenciaMes::timestamp)) AS pendente_mes
   FROM crm_lancamento;";
 
             await using var connection = await _dataSource.OpenConnectionAsync();
@@ -1191,32 +1272,28 @@ SELECT CASE
             return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
         }
 
-        private async Task<Guid?> ObterEmpresaExistenteAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, string? cnpj, string nomeEmpresa)
+        private static async Task<Guid> ConfirmarEmpresaAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, Guid empresaId)
         {
-            var cnpjNormalizado = NormalizeDigits(cnpj);
-            if (!string.IsNullOrWhiteSpace(cnpjNormalizado))
-            {
-                const string sqlByCnpj = @"
-SELECT id
-  FROM empresas
- WHERE regexp_replace(COALESCE(cnpj, ''), '[^0-9]', '', 'g') = @Cnpj
- LIMIT 1;";
+            var existe = await connection.ExecuteScalarAsync<Guid?>(
+                "SELECT id FROM empresas WHERE id = @EmpresaId FOR UPDATE;", new { EmpresaId = empresaId }, transaction);
+            return existe ?? throw new KeyNotFoundException("Empresa confirmada nao encontrada.");
+        }
 
-                var empresaIdPorCnpj = await connection.ExecuteScalarAsync<Guid?>(sqlByCnpj, new { Cnpj = cnpjNormalizado }, transaction);
-                if (empresaIdPorCnpj.HasValue)
-                {
-                    return empresaIdPorCnpj;
-                }
+        private static async Task<Guid> ConfirmarEstabelecimentoAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, Guid empresaId, Guid estabelecimentoId)
+        {
+            var donoId = await connection.ExecuteScalarAsync<Guid?>(
+                "SELECT id_empresa FROM estabelecimentos WHERE id = @EstabelecimentoId FOR UPDATE;", new { EstabelecimentoId = estabelecimentoId }, transaction);
+            if (!donoId.HasValue)
+            {
+                throw new KeyNotFoundException("Loja confirmada nao encontrada.");
             }
 
-            const string sqlByNome = @"
-SELECT id
-  FROM empresas
- WHERE lower(btrim(nome_fantasia)) = lower(btrim(@NomeEmpresa))
- ORDER BY created_at
- LIMIT 1;";
+            if (donoId.Value != empresaId)
+            {
+                throw new InvalidOperationException("A loja confirmada nao pertence a empresa confirmada.");
+            }
 
-            return await connection.ExecuteScalarAsync<Guid?>(sqlByNome, new { NomeEmpresa = nomeEmpresa.Trim() }, transaction);
+            return estabelecimentoId;
         }
 
         private async Task<Guid> CriarEmpresaAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, CrmCloseOpportunityCommand command)
@@ -1234,18 +1311,6 @@ RETURNING id;";
                 Telefone = NormalizeNullable(command.Telefone),
                 Email = NormalizeNullable(command.Email)
             }, transaction);
-        }
-
-        private async Task<Guid?> ObterEstabelecimentoExistenteAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, Guid empresaId)
-        {
-            const string sql = @"
-SELECT id
-  FROM estabelecimentos
- WHERE id_empresa = @EmpresaId
- ORDER BY ativo DESC, created_at, id
- LIMIT 1;";
-
-            return await connection.ExecuteScalarAsync<Guid?>(sql, new { EmpresaId = empresaId }, transaction);
         }
 
         private async Task<Guid> ResolverTipoEstabelecimentoIdAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, string? establishmentTypeSlug)
@@ -1406,36 +1471,18 @@ SET tipo_acesso = EXCLUDED.tipo_acesso,
             }, transaction);
         }
 
-        private async Task<int> ResolverUsuarioResponsavelAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, string responsavel)
+        private static async Task<int> ResolverUsuarioResponsavelAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, int responsavelUsuarioId)
         {
-            var admins = (await connection.QueryAsync<(int Id, string? Nome, string? Email)>(@"
-SELECT id, nome, email
+            var id = await connection.ExecuteScalarAsync<int?>(@"
+SELECT id
   FROM usuario
- WHERE COALESCE(is_super_admin, FALSE) = TRUE
-   AND deleted_at IS NULL
- ORDER BY created_at, id;",
-                transaction: transaction)).ToList();
+ WHERE id = @Id
+   AND COALESCE(is_super_admin, FALSE) = TRUE
+   AND deleted_at IS NULL;",
+                new { Id = responsavelUsuarioId },
+                transaction);
 
-            if (admins.Count == 0)
-            {
-                throw new InvalidOperationException("Nenhum super admin cadastrado para vincular o contrato.");
-            }
-
-            var normalizedResponsavel = NormalizeToken(responsavel);
-            if (normalizedResponsavel == "farley")
-            {
-                var farley = admins.FirstOrDefault(item => MatchResponsavel(item.Nome, item.Email, "farley"));
-                return farley.Id != 0 ? farley.Id : admins[0].Id;
-            }
-
-            var socio = admins.FirstOrDefault(item => !MatchResponsavel(item.Nome, item.Email, "farley"));
-            return socio.Id != 0 ? socio.Id : admins[0].Id;
-        }
-
-        private static bool MatchResponsavel(string? nome, string? email, string target)
-        {
-            return NormalizeToken(nome).Contains(target, StringComparison.Ordinal)
-                || NormalizeToken(email).Contains(target, StringComparison.Ordinal);
+            return id ?? throw new InvalidOperationException("O responsavel precisa ser alguem da equipe Zippy.");
         }
 
         private async Task<string> GerarSlugDisponivelAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, string nomeFantasia)

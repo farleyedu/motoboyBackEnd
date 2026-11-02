@@ -7,11 +7,13 @@ namespace APIBack.Service.Interface
 {
     public interface ICrmService
     {
-        Task<IReadOnlyCollection<CrmOportunidadeResumoDto>> ListarOportunidadesAsync(string? status, string? tipo, string? responsavel, string? busca);
+        Task<IReadOnlyCollection<CrmOportunidadeResumoDto>> ListarOportunidadesAsync(string? status, string? tipo, int? responsavelUsuarioId, string? busca);
         Task<CrmOportunidadeDetalheDto?> ObterOportunidadeAsync(Guid oportunidadeId);
         Task<CrmOportunidadeResumoDto> CriarOportunidadeAsync(int usuarioId, CriarCrmOportunidadeRequest request);
         Task<CrmOportunidadeResumoDto> AtualizarOportunidadeAsync(int usuarioId, Guid oportunidadeId, AtualizarCrmOportunidadeRequest request);
         Task<CrmOportunidadeResumoDto> MoverOportunidadeAsync(int usuarioId, Guid oportunidadeId, MoverCrmOportunidadeRequest request);
+        Task<IReadOnlyCollection<CrmCandidatoAssociacaoDto>> ListarCandidatosAssociacaoAsync(Guid oportunidadeId, string? cnpj, string? nomeEmpresa);
+        Task<IReadOnlyCollection<CrmResponsavelDto>> ListarResponsaveisAsync();
         Task<FecharCrmOportunidadeResponse> FecharOportunidadeAsync(int usuarioId, Guid oportunidadeId, FecharCrmOportunidadeRequest request);
 
         Task<IReadOnlyCollection<CrmContratoResumoDto>> ListarContratosAsync(string? status);

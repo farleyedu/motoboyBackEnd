@@ -906,7 +906,7 @@ namespace APIBack.Service
                     Id = summary.Id,
                     Nome = summary.Nome,
                     Email = summary.Email,
-                    Telefone = null,
+                    Telefone = summary.TelefoneE164,
                     Status = summary.DeletedAt.HasValue ? "inativo" : "ativo",
                     IsSuperAdmin = summary.IsSuperAdmin,
                     CreatedAt = summary.CreatedAt,
@@ -939,6 +939,12 @@ namespace APIBack.Service
             ValidateRequired(request.Nome, "nome", "Nome obrigatorio.", errors);
             ValidateRequired(request.Email, "email", "E-mail obrigatorio.", errors);
             ValidateOptionalEmail(request.Email, "email", "E-mail invalido.", errors);
+            string? telefoneE164 = null;
+            if (request.Telefone != null && !APIBack.Automation.Helpers.TelefoneHelper.TryNormalizarE164(request.Telefone, out telefoneE164))
+            {
+                AddError(errors, "telefone", "Telefone invalido. Use DDD + numero (ex.: (34) 99148-0112).");
+            }
+
             ValidateRequired(request.TipoUsuario, "tipoUsuario", "Tipo de usuario obrigatorio.", errors);
             if (!targetUserId.HasValue)
             {
@@ -1117,6 +1123,8 @@ namespace APIBack.Service
                 UsuarioId = targetUserId,
                 Nome = request.Nome.Trim(),
                 Email = request.Email.Trim(),
+                TelefoneE164 = telefoneE164,
+                TelefoneInformado = request.Telefone != null,
                 SenhaHash = string.IsNullOrWhiteSpace(request.SenhaInicial) ? null : PasswordSecurity.Hash(request.SenhaInicial.Trim()),
                 IsSuperAdmin = targetIsSuperAdmin,
                 EmpresaId = targetEmpresaId!.Value,

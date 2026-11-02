@@ -41,8 +41,9 @@ namespace APIBack.Options
         /// <summary>
         /// Pastas extras varridas junto com <see cref="MigrationsPath"/> no boot (mesmo lock,
         /// mesmo ledger). Financeiro fica de fora de proposito: ainda nao tem seed/versionamento
-        /// e so deve rodar quando o modulo for ativado de verdade.
+        /// e so deve rodar quando o modulo for ativado de verdade. Inteligencia entra porque a ficha
+        /// tecnica (Delivery/20261120_01) exige as tabelas de ingredientes; o arquivo e aditivo e idempotente.
         /// </summary>
-        public string[] AdditionalMigrationsPaths { get; set; } = new[] { "Migrations/Negocio" };
+        public string[] AdditionalMigrationsPaths { get; set; } = new[] { "Migrations/Negocio", "Migrations/Inteligencia" };
     }
 }

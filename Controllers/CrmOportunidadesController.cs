@@ -25,14 +25,14 @@ namespace APIBack.Controllers
         }
 
         [HttpGet]
-        public async Task<IActionResult> Listar([FromQuery] string? status, [FromQuery] string? tipo, [FromQuery] string? responsavel, [FromQuery] string? busca)
+        public async Task<IActionResult> Listar([FromQuery] string? status, [FromQuery] string? tipo, [FromQuery] int? responsavelUsuarioId, [FromQuery] string? busca)
         {
             var access = EnsureCrmAccess();
             if (access != null) return access;
 
             try
             {
-                var response = await _service.ListarOportunidadesAsync(status, tipo, responsavel, busca);
+                var response = await _service.ListarOportunidadesAsync(status, tipo, responsavelUsuarioId, busca);
                 return Ok(ApiResponse<IReadOnlyCollection<CrmOportunidadeResumoDto>>.Ok(response));
             }
             catch (Exception ex)
@@ -133,6 +133,47 @@ namespace APIBack.Controllers
             {
                 _logger.LogError(ex, "Erro ao mover oportunidade {OportunidadeId} do CRM", oportunidadeId);
                 return StatusCode(StatusCodes.Status500InternalServerError, ApiResponse<object>.Fail("Erro ao mover oportunidade do CRM."));
+            }
+        }
+
+        /// <summary>Equipe Zippy que pode ser responsavel por oportunidade e contrato.</summary>
+        [HttpGet("responsaveis")]
+        public async Task<IActionResult> Responsaveis()
+        {
+            var access = EnsureCrmAccess();
+            if (access != null) return access;
+
+            try
+            {
+                return Ok(ApiResponse<IReadOnlyCollection<CrmResponsavelDto>>.Ok(await _service.ListarResponsaveisAsync()));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao listar responsaveis do CRM");
+                return StatusCode(StatusCodes.Status500InternalServerError, ApiResponse<object>.Fail("Erro ao listar responsaveis do CRM."));
+            }
+        }
+
+        /// <summary>Empresas ja cadastradas com que o fechamento pode se ligar: CNPJ igual e nome parecido. O operador confirma qual e.</summary>
+        [HttpGet("{oportunidadeId:guid}/candidatos-associacao")]
+        public async Task<IActionResult> CandidatosAssociacao(Guid oportunidadeId, [FromQuery] string? cnpj, [FromQuery] string? nomeEmpresa)
+        {
+            var access = EnsureCrmAccess();
+            if (access != null) return access;
+
+            try
+            {
+                var response = await _service.ListarCandidatosAssociacaoAsync(oportunidadeId, cnpj, nomeEmpresa);
+                return Ok(ApiResponse<IReadOnlyCollection<CrmCandidatoAssociacaoDto>>.Ok(response));
+            }
+            catch (KeyNotFoundException ex)
+            {
+                return NotFound(ApiResponse<object>.Fail(ex.Message));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro ao listar candidatos de associacao da oportunidade {OportunidadeId}", oportunidadeId);
+                return StatusCode(StatusCodes.Status500InternalServerError, ApiResponse<object>.Fail("Erro ao listar candidatos de associacao."));
             }
         }
 

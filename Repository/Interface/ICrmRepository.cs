@@ -2,12 +2,13 @@ using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using APIBack.Model.CRM;
+using APIBack.Service;
 
 namespace APIBack.Repository.Interface
 {
     public interface ICrmRepository
     {
-        Task<IReadOnlyCollection<CrmOportunidadeRow>> ListarOportunidadesAsync(string? status, string? tipo, string? responsavel, string? busca);
+        Task<IReadOnlyCollection<CrmOportunidadeRow>> ListarOportunidadesAsync(string? status, string? tipo, int? responsavelUsuarioId, string? busca);
         Task<CrmOportunidadeRow?> ObterOportunidadeAsync(Guid oportunidadeId);
         Task<Guid> CriarOportunidadeAsync(CrmOportunidadeRow oportunidade);
         Task AtualizarOportunidadeAsync(CrmOportunidadeRow oportunidade);
@@ -19,10 +20,13 @@ namespace APIBack.Repository.Interface
 
         Task<CrmCloseOpportunityResult> FecharOportunidadeAsync(CrmCloseOpportunityCommand command);
         Task<int> SincronizarContratosLegadosAsync();
+        Task<IReadOnlyCollection<CrmEmpresaExistente>> ListarEmpresasParaAssociacaoAsync();
+        Task<IReadOnlyCollection<CrmEstabelecimentoDaEmpresaRow>> ListarEstabelecimentosDasEmpresasAsync(IReadOnlyCollection<Guid> empresaIds);
+        Task<IReadOnlyCollection<CrmResponsavelRow>> ListarEquipeZippyAsync();
 
         Task<IReadOnlyCollection<CrmContratoRow>> ListarContratosAsync(string? status);
         Task<CrmContratoRow?> ObterContratoAsync(Guid contratoId);
-        Task AtualizarContratoAsync(Guid contratoId, string? status, string? responsavel, int? diaVencimento, DateTime? dataInicioCobranca, decimal? mensalidadeSaas, decimal? mensalidadeMarketing, decimal? marketingValorFixo, string? observacoes);
+        Task AtualizarContratoAsync(Guid contratoId, string? status, int? responsavelUsuarioId, int? diaVencimento, DateTime? dataInicioCobranca, decimal? mensalidadeSaas, decimal? mensalidadeMarketing, decimal? marketingValorFixo, string? observacoes);
         Task<IReadOnlyCollection<CrmHistoricoRow>> ListarHistoricoContratoAsync(Guid contratoId);
         Task AdicionarHistoricoContratoAsync(Guid contratoId, int usuarioId, string acao, string? detalhe);
         Task<CrmImplantacaoRow?> ObterImplantacaoAsync(Guid contratoId);

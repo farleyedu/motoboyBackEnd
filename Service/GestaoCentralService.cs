@@ -218,13 +218,13 @@ SELECT e.id, e.nome_fantasia AS Nome, e.id_empresa AS EmpresaId, emp.nome_fantas
          FROM crm_contrato c
         WHERE c.estabelecimento_id = e.id AND c.status <> 'cancelado') ct ON TRUE
   LEFT JOIN LATERAL (
-       SELECT SUM(l.valor_total - l.valor_pago) FILTER (WHERE l.status IN ('pendente', 'parcial') AND l.data_vencimento < @Hoje) AS atrasado,
-              MIN(l.data_vencimento) FILTER (WHERE l.status IN ('pendente', 'parcial') AND l.data_vencimento < @Hoje) AS desde,
-              MIN(l.data_vencimento) FILTER (WHERE l.status IN ('pendente', 'parcial') AND l.data_vencimento >= @Hoje) AS proximo,
-              MAX(l.data_pagamento) FILTER (WHERE l.status IN ('pago', 'parcial')) AS ultimo_pago
-         FROM crm_lancamento l
-         JOIN crm_contrato c ON c.id = l.contrato_id
-        WHERE c.estabelecimento_id = e.id) fin ON TRUE
+       -- Cobranca e pagamento vem da assinatura (comercial_cobranca); o lancamento manual do CRM nao conta como pago nem como atraso.
+       SELECT SUM(cb.valor) FILTER (WHERE cb.status IN ('aberta', 'processando') AND cb.vencimento < @Hoje) AS atrasado,
+              MIN(cb.vencimento) FILTER (WHERE cb.status IN ('aberta', 'processando') AND cb.vencimento < @Hoje) AS desde,
+              MIN(cb.vencimento) FILTER (WHERE cb.status IN ('aberta', 'processando') AND cb.vencimento >= @Hoje) AS proximo,
+              MAX(cb.pago_em) FILTER (WHERE cb.status = 'paga') AS ultimo_pago
+         FROM comercial_cobranca cb
+        WHERE cb.id_estabelecimento = e.id) fin ON TRUE
   LEFT JOIN LATERAL (
        SELECT COUNT(*) AS abertas FROM gestao_nota n WHERE n.estabelecimento_id = e.id AND n.concluida_em IS NULL) nt ON TRUE
  ORDER BY e.nome_fantasia;";
@@ -242,12 +242,12 @@ SELECT e.id, e.nome_fantasia AS Nome, e.id_empresa AS EmpresaId, emp.nome_fantas
             await using var connection = await dataSource.OpenConnectionAsync(ct);
             var dto = await connection.QuerySingleAsync<DinheiroMesDto>(new CommandDefinition(@"
 SELECT
-  COALESCE((SELECT SUM(l.valor_pago) FROM crm_lancamento l WHERE l.status IN ('pago', 'parcial')
-             AND l.data_pagamento >= @Inicio AND l.data_pagamento < @Fim), 0) AS Entrou,
-  COALESCE((SELECT SUM(l.valor_total - l.valor_pago) FROM crm_lancamento l WHERE l.status IN ('pendente', 'parcial')
-             AND l.data_vencimento >= GREATEST(@Inicio, @Hoje) AND l.data_vencimento < @Fim), 0) AS AReceber,
-  COALESCE((SELECT SUM(l.valor_total - l.valor_pago) FROM crm_lancamento l WHERE l.status IN ('pendente', 'parcial')
-             AND l.data_vencimento < LEAST(@Hoje, @Fim)), 0) AS Atrasado,
+  COALESCE((SELECT SUM(COALESCE(cb.valor_pago, cb.valor)) FROM comercial_cobranca cb WHERE cb.status = 'paga'
+             AND cb.pago_em >= @Inicio AND cb.pago_em < @Fim), 0) AS Entrou,
+  COALESCE((SELECT SUM(cb.valor) FROM comercial_cobranca cb WHERE cb.status IN ('aberta', 'processando')
+             AND cb.vencimento >= GREATEST(@Inicio, @Hoje) AND cb.vencimento < @Fim), 0) AS AReceber,
+  COALESCE((SELECT SUM(cb.valor) FROM comercial_cobranca cb WHERE cb.status IN ('aberta', 'processando')
+             AND cb.vencimento < LEAST(@Hoje, @Fim)), 0) AS Atrasado,
   COALESCE((SELECT SUM(COALESCE(z.valor_pago, z.valor)) FROM zippy_conta z WHERE z.status = 'paga'
              AND z.pago_em >= @Inicio AND z.pago_em < @Fim), 0) AS Saiu,
   COALESCE((SELECT SUM(z.valor) FROM zippy_conta z WHERE z.status = 'a_pagar' AND z.vencimento < @Fim), 0) AS APagar,
@@ -260,9 +260,9 @@ SELECT
                 args, cancellationToken: ct));
             dto.Mes = inicio.ToString("yyyy-MM");
             dto.EntrouPorTipo = (await connection.QueryAsync<DinheiroTipoDto>(new CommandDefinition(@"
-SELECT l.tipo_lancamento AS Tipo, SUM(l.valor_pago) AS Valor FROM crm_lancamento l
- WHERE l.status IN ('pago', 'parcial') AND l.data_pagamento >= @Inicio AND l.data_pagamento < @Fim
- GROUP BY l.tipo_lancamento ORDER BY 2 DESC;", args, cancellationToken: ct))).ToList();
+SELECT cb.tipo AS Tipo, SUM(COALESCE(cb.valor_pago, cb.valor)) AS Valor FROM comercial_cobranca cb
+ WHERE cb.status = 'paga' AND cb.pago_em >= @Inicio AND cb.pago_em < @Fim
+ GROUP BY cb.tipo ORDER BY 2 DESC;", args, cancellationToken: ct))).ToList();
             dto.SaiuPorCategoria = (await connection.QueryAsync<DinheiroTipoDto>(new CommandDefinition(@"
 SELECT z.categoria AS Tipo, SUM(COALESCE(z.valor_pago, z.valor)) AS Valor FROM zippy_conta z
  WHERE z.status = 'paga' AND z.pago_em >= @Inicio AND z.pago_em < @Fim
@@ -476,10 +476,17 @@ SELECT * FROM (
     FROM estabelecimento_situacao_log s LEFT JOIN usuario u ON u.id = s.usuario_id
    WHERE s.estabelecimento_id = @Id
   UNION ALL
+  SELECT COALESCE(cb.pago_em, cb.vencimento), 'cobranca',
+         CASE WHEN cb.status = 'paga' THEN 'pago' WHEN cb.status = 'cancelada' THEN 'cancelado'
+              WHEN cb.vencimento < NOW() THEN 'atrasado' ELSE 'a_vencer' END,
+         CONCAT(cb.descricao, ' · R$ ', TO_CHAR(CASE WHEN cb.status = 'paga' THEN COALESCE(cb.valor_pago, cb.valor) ELSE cb.valor END, 'FM999G990D00')), NULL
+    FROM comercial_cobranca cb
+   WHERE cb.id_estabelecimento = @Id AND cb.vencimento <= NOW() + INTERVAL '40 days'
+  UNION ALL
+  -- Anotacao da equipe no CRM: aparece como manual, nunca como pago.
   SELECT COALESCE(l.data_pagamento::timestamptz, l.data_vencimento::timestamptz), 'cobranca',
-         CASE WHEN l.status IN ('pago', 'parcial') THEN 'pago' WHEN l.status = 'cancelado' THEN 'cancelado'
-              WHEN l.data_vencimento < CURRENT_DATE THEN 'atrasado' ELSE 'a_vencer' END,
-         CONCAT(l.descricao, ' · R$ ', TO_CHAR(CASE WHEN l.status IN ('pago', 'parcial') THEN l.valor_pago ELSE l.valor_total END, 'FM999G990D00')), NULL
+         CASE WHEN l.status = 'cancelado' THEN 'cancelado' ELSE 'manual' END,
+         CONCAT('Lancamento manual do CRM · ', l.descricao, ' · R$ ', TO_CHAR(CASE WHEN l.status IN ('pago', 'parcial') THEN l.valor_pago ELSE l.valor_total END, 'FM999G990D00')), NULL
     FROM crm_lancamento l JOIN crm_contrato c ON c.id = l.contrato_id
    WHERE c.estabelecimento_id = @Id AND l.data_vencimento <= CURRENT_DATE + 40
   UNION ALL

@@ -12,7 +12,11 @@ namespace APIBack.Model.CRM
         public string? Email { get; set; }
         public string? Cnpj { get; set; }
         public string Tipo { get; set; } = string.Empty;
-        public string Responsavel { get; set; } = string.Empty;
+        /// <summary>Valor antigo do enum crm_responsavel (farley/socio); so leitura do que ja existia.</summary>
+        public string? Responsavel { get; set; }
+        /// <summary>Usuario da equipe Zippy responsavel. E o que vale.</summary>
+        public int? ResponsavelUsuarioId { get; set; }
+        public string? ResponsavelNome { get; set; }
         public string Coluna { get; set; } = string.Empty;
         public string Status { get; set; } = string.Empty;
         public string? Substatus { get; set; }
@@ -66,7 +70,11 @@ namespace APIBack.Model.CRM
         public Guid? OportunidadeId { get; set; }
         public string Tipo { get; set; } = string.Empty;
         public string Status { get; set; } = string.Empty;
-        public string Responsavel { get; set; } = string.Empty;
+        /// <summary>Valor antigo do enum crm_responsavel (farley/socio); so leitura do que ja existia.</summary>
+        public string? Responsavel { get; set; }
+        /// <summary>Usuario da equipe Zippy responsavel. E o que vale.</summary>
+        public int? ResponsavelUsuarioId { get; set; }
+        public string? ResponsavelNome { get; set; }
         public decimal MensalidadeSaas { get; set; }
         public decimal MensalidadeMarketing { get; set; }
         public decimal MarketingValorFixo { get; set; }
@@ -115,6 +123,8 @@ namespace APIBack.Model.CRM
     {
         public decimal RecebidoMes { get; set; }
         public decimal PendenteMes { get; set; }
+        public decimal RegistradoManualMes { get; set; }
+        public decimal PendenteManualMes { get; set; }
     }
 
     public class CrmDivisaoRow
@@ -129,7 +139,11 @@ namespace APIBack.Model.CRM
     {
         public Guid OportunidadeId { get; set; }
         public int UsuarioId { get; set; }
-        public string Responsavel { get; set; } = string.Empty;
+        public int ResponsavelUsuarioId { get; set; }
+        /// <summary>Empresa ja cadastrada que o operador confirmou. Nulo = criar empresa nova.</summary>
+        public Guid? EmpresaId { get; set; }
+        /// <summary>Loja da empresa confirmada pelo operador. Nulo = criar loja nova.</summary>
+        public Guid? EstabelecimentoId { get; set; }
         public string NomeEmpresa { get; set; } = string.Empty;
         public string NomeContato { get; set; } = string.Empty;
         public string Telefone { get; set; } = string.Empty;
@@ -147,6 +161,21 @@ namespace APIBack.Model.CRM
         public decimal MarketingValorFixo { get; set; }
         public decimal ImplantacaoValor { get; set; }
         public string? PropostaJson { get; set; }
+    }
+
+    public class CrmEstabelecimentoDaEmpresaRow
+    {
+        public Guid Id { get; set; }
+        public Guid EmpresaId { get; set; }
+        public string Nome { get; set; } = string.Empty;
+        public bool Ativo { get; set; }
+        public string? Situacao { get; set; }
+    }
+
+    public class CrmResponsavelRow
+    {
+        public int Id { get; set; }
+        public string Nome { get; set; } = string.Empty;
     }
 
     public class CrmCloseOpportunityResult

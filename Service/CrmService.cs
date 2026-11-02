@@ -38,12 +38,12 @@ namespace APIBack.Service
             _centralEstabelecimentoId = null; // central desativada
         }
 
-        public async Task<IReadOnlyCollection<CrmOportunidadeResumoDto>> ListarOportunidadesAsync(string? status, string? tipo, string? responsavel, string? busca)
+        public async Task<IReadOnlyCollection<CrmOportunidadeResumoDto>> ListarOportunidadesAsync(string? status, string? tipo, int? responsavelUsuarioId, string? busca)
         {
             var rows = await _crmRepository.ListarOportunidadesAsync(
                 NormalizeNullable(status) ?? "ativo",
                 NormalizeNullable(tipo),
-                NormalizeNullable(responsavel),
+                responsavelUsuarioId,
                 NormalizeNullable(busca));
 
             var result = new List<CrmOportunidadeResumoDto>(rows.Count);
@@ -77,7 +77,7 @@ namespace APIBack.Service
             ValidateRequired(request.NomeContato, "nomeContato", "Informe o nome do contato.", errors);
             ValidateRequired(request.Telefone, "telefone", "Informe o telefone.", errors);
             ValidateAllowed(NormalizeToken(request.Tipo), "tipo", new[] { "saas", "marketing", "ambos" }, "Tipo invalido.", errors);
-            ValidateAllowed(NormalizeToken(request.Responsavel), "responsavel", new[] { "farley", "socio" }, "Responsavel invalido.", errors);
+            await ValidarResponsavelAsync(request.ResponsavelUsuarioId, errors);
             ThrowIfValidationErrors(errors);
 
             var oportunidade = new CrmOportunidadeRow
@@ -88,7 +88,7 @@ namespace APIBack.Service
                 Email = NormalizeNullable(request.Email),
                 Cnpj = NormalizeDigits(request.Cnpj),
                 Tipo = NormalizeToken(request.Tipo),
-                Responsavel = NormalizeToken(request.Responsavel),
+                ResponsavelUsuarioId = request.ResponsavelUsuarioId,
                 Coluna = "conversa",
                 Status = "ativo",
                 Substatus = NormalizeNullable(request.Substatus),
@@ -111,9 +111,9 @@ namespace APIBack.Service
                 ?? throw new KeyNotFoundException("Oportunidade nao encontrada.");
 
             var errors = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
-            if (request.Responsavel != null)
+            if (request.ResponsavelUsuarioId.HasValue)
             {
-                ValidateAllowed(NormalizeToken(request.Responsavel), "responsavel", new[] { "farley", "socio" }, "Responsavel invalido.", errors);
+                await ValidarResponsavelAsync(request.ResponsavelUsuarioId, errors);
             }
 
             if (request.Status != null)
@@ -133,7 +133,7 @@ namespace APIBack.Service
             row.Telefone = NormalizeNullable(request.Telefone) ?? row.Telefone;
             row.Email = NormalizeNullable(request.Email) ?? row.Email;
             row.Cnpj = NormalizeDigits(request.Cnpj) ?? row.Cnpj;
-            row.Responsavel = request.Responsavel != null ? NormalizeToken(request.Responsavel) : row.Responsavel;
+            row.ResponsavelUsuarioId = request.ResponsavelUsuarioId ?? row.ResponsavelUsuarioId;
             row.Substatus = request.Substatus != null ? NormalizeNullable(request.Substatus) : row.Substatus;
             row.ProximaAcao = request.ProximaAcao != null ? NormalizeNullable(request.ProximaAcao) : row.ProximaAcao;
             row.Status = request.Status != null ? NormalizeToken(request.Status) : row.Status;
@@ -250,6 +250,11 @@ namespace APIBack.Service
                 AddError(errors, "coluna", "A oportunidade so pode ser fechada nas colunas quase fechado ou aguardando retorno.");
             }
 
+            if (!row.ResponsavelUsuarioId.HasValue)
+            {
+                AddError(errors, "responsavel", "Defina o responsavel da oportunidade antes de fechar.");
+            }
+
             ThrowIfValidationErrors(errors);
 
             var proposta = DeserializeProposta(row.PropostaJson, row.PropostaEnviadaEm) ?? new CrmPropostaDto();
@@ -262,11 +267,35 @@ namespace APIBack.Service
             var cnpj = request.CnpjOverride != null
                 ? NormalizeDigits(request.CnpjOverride)
                 : row.Cnpj;
+            // O servidor nunca liga sozinho: nome igual nao liga e o primeiro estabelecimento nao vale. O operador confirma a empresa
+            // (e a loja) entre os candidatos; sem confirmacao, empresa e loja nascem novas, a nao ser que o CNPJ ja seja de alguem.
+            var candidatos = await MontarCandidatosAsync(cnpj, nomeEmpresa);
+            var erroAssociacao = CrmAssociacaoRegras.ValidarEscolha(
+                candidatos.Select(item => new CrmCandidatoAssociacao(item.EmpresaId, item.Nome, item.Cnpj, item.Motivo)).ToList(),
+                request.EmpresaId);
+            if (erroAssociacao == null && request.EstabelecimentoId.HasValue)
+            {
+                var lojaConfirmada = request.EmpresaId.HasValue
+                    ? candidatos.FirstOrDefault(item => item.EmpresaId == request.EmpresaId.Value)?.Lojas.Any(loja => loja.Id == request.EstabelecimentoId.Value)
+                    : null;
+                if (lojaConfirmada != true)
+                {
+                    erroAssociacao = "A loja escolhida nao pertence a empresa confirmada.";
+                }
+            }
+
+            if (erroAssociacao != null)
+            {
+                throw ValidationException("Dados invalidos.", ("empresaId", erroAssociacao));
+            }
+
             var command = new CrmCloseOpportunityCommand
             {
                 OportunidadeId = row.Id,
                 UsuarioId = usuarioId,
-                Responsavel = row.Responsavel,
+                ResponsavelUsuarioId = row.ResponsavelUsuarioId!.Value,
+                EmpresaId = request.EmpresaId,
+                EstabelecimentoId = request.EstabelecimentoId,
                 NomeEmpresa = nomeEmpresa,
                 NomeContato = nomeContato,
                 Telefone = telefone,
@@ -299,6 +328,56 @@ namespace APIBack.Service
             };
         }
 
+        public async Task<IReadOnlyCollection<CrmCandidatoAssociacaoDto>> ListarCandidatosAssociacaoAsync(Guid oportunidadeId, string? cnpj, string? nomeEmpresa)
+        {
+            var row = await _crmRepository.ObterOportunidadeAsync(oportunidadeId)
+                ?? throw new KeyNotFoundException("Oportunidade nao encontrada.");
+            return await MontarCandidatosAsync(
+                cnpj != null ? NormalizeDigits(cnpj) : row.Cnpj,
+                NormalizeNullable(nomeEmpresa) ?? row.NomeEmpresa);
+        }
+
+        public async Task<IReadOnlyCollection<CrmResponsavelDto>> ListarResponsaveisAsync()
+        {
+            return (await _crmRepository.ListarEquipeZippyAsync())
+                .Select(item => new CrmResponsavelDto { Id = item.Id, Nome = item.Nome })
+                .ToList();
+        }
+
+        private async Task<List<CrmCandidatoAssociacaoDto>> MontarCandidatosAsync(string? cnpj, string nomeEmpresa)
+        {
+            var empresas = await _crmRepository.ListarEmpresasParaAssociacaoAsync();
+            var candidatos = CrmAssociacaoRegras.Candidatos(cnpj, nomeEmpresa, empresas);
+            var lojas = (await _crmRepository.ListarEstabelecimentosDasEmpresasAsync(candidatos.Select(item => item.EmpresaId).ToList()))
+                .ToLookup(item => item.EmpresaId);
+
+            return candidatos.Select(item => new CrmCandidatoAssociacaoDto
+            {
+                EmpresaId = item.EmpresaId,
+                Nome = item.Nome,
+                Cnpj = item.Cnpj,
+                Motivo = item.Motivo,
+                Lojas = lojas[item.EmpresaId]
+                    .Select(loja => new CrmCandidatoLojaDto { Id = loja.Id, Nome = loja.Nome, Ativo = loja.Ativo, Situacao = loja.Situacao })
+                    .ToList()
+            }).ToList();
+        }
+
+        private async Task ValidarResponsavelAsync(int? responsavelUsuarioId, Dictionary<string, List<string>> errors)
+        {
+            if (!responsavelUsuarioId.HasValue)
+            {
+                AddError(errors, "responsavelUsuarioId", "Informe o responsavel.");
+                return;
+            }
+
+            var equipe = await _crmRepository.ListarEquipeZippyAsync();
+            if (equipe.All(item => item.Id != responsavelUsuarioId.Value))
+            {
+                AddError(errors, "responsavelUsuarioId", "O responsavel precisa ser alguem da equipe Zippy.");
+            }
+        }
+
         public async Task<IReadOnlyCollection<CrmContratoResumoDto>> ListarContratosAsync(string? status)
         {
             await SincronizarContratosLegadosAsync();
@@ -328,14 +407,9 @@ namespace APIBack.Service
                     errors);
             }
 
-            if (request.Responsavel != null)
+            if (request.ResponsavelUsuarioId.HasValue)
             {
-                ValidateAllowed(
-                    NormalizeToken(request.Responsavel),
-                    "responsavel",
-                    new[] { "farley", "socio" },
-                    "Responsavel invalido.",
-                    errors);
+                await ValidarResponsavelAsync(request.ResponsavelUsuarioId, errors);
             }
 
             if (request.DiaVencimento.HasValue && (request.DiaVencimento.Value < 1 || request.DiaVencimento.Value > 31))
@@ -355,7 +429,7 @@ namespace APIBack.Service
             await _crmRepository.AtualizarContratoAsync(
                 contratoId,
                 request.Status != null ? NormalizeToken(request.Status) : null,
-                request.Responsavel != null ? NormalizeToken(request.Responsavel) : null,
+                request.ResponsavelUsuarioId,
                 request.DiaVencimento,
                 request.DataInicioCobranca?.ToDateTime(TimeOnly.MinValue),
                 request.MensalidadeSaas,
@@ -408,7 +482,7 @@ namespace APIBack.Service
                     lancamento.ContratoId,
                     usuarioId,
                     "Lancamento atualizado",
-                    $"Lancamento {lancamento.Descricao} atualizado para status {status}.");
+                    $"Lancamento manual {lancamento.Descricao} atualizado para {RotuloManual(status)}.");
 
                 return MapLancamento((await _crmRepository.ObterLancamentoAsync(lancamento.Id))!);
             }
@@ -471,7 +545,7 @@ namespace APIBack.Service
                 contrato.Id,
                 usuarioId,
                 "Lancamento criado",
-                $"Lancamento {request.Descricao} criado com status {statusNovo}.");
+                $"Lancamento manual {request.Descricao} criado como {RotuloManual(statusNovo)}.");
 
             return MapLancamento((await _crmRepository.ObterLancamentoAsync(id))!);
         }
@@ -487,6 +561,8 @@ namespace APIBack.Service
             {
                 RecebidoMes = resumo.RecebidoMes,
                 PendenteMes = resumo.PendenteMes,
+                RegistradoManualMes = resumo.RegistradoManualMes,
+                PendenteManualMes = resumo.PendenteManualMes,
                 FarleyMes = divisao.Sum(item => item.FarleyValor),
                 SocioMes = divisao.Sum(item => item.SocioValor)
             };
@@ -777,7 +853,8 @@ namespace APIBack.Service
                 Email = row.Email,
                 Cnpj = row.Cnpj,
                 Tipo = row.Tipo,
-                Responsavel = row.Responsavel,
+                ResponsavelUsuarioId = row.ResponsavelUsuarioId,
+                ResponsavelNome = row.ResponsavelNome,
                 Coluna = row.Coluna,
                 Status = row.Status,
                 Substatus = row.Substatus,
@@ -812,7 +889,8 @@ namespace APIBack.Service
                 Email = resumo.Email,
                 Cnpj = resumo.Cnpj,
                 Tipo = resumo.Tipo,
-                Responsavel = resumo.Responsavel,
+                ResponsavelUsuarioId = resumo.ResponsavelUsuarioId,
+                ResponsavelNome = resumo.ResponsavelNome,
                 Coluna = resumo.Coluna,
                 Status = resumo.Status,
                 Substatus = resumo.Substatus,
@@ -873,7 +951,8 @@ namespace APIBack.Service
                 OportunidadeId = dto.OportunidadeId,
                 Tipo = dto.Tipo,
                 Status = dto.Status,
-                Responsavel = dto.Responsavel,
+                ResponsavelUsuarioId = dto.ResponsavelUsuarioId,
+                ResponsavelNome = dto.ResponsavelNome,
                 MensalidadeSaas = dto.MensalidadeSaas,
                 MensalidadeMarketing = dto.MensalidadeMarketing,
                 MarketingValorFixo = dto.MarketingValorFixo,
@@ -913,7 +992,8 @@ namespace APIBack.Service
                 OportunidadeId = row.OportunidadeId,
                 Tipo = row.Tipo,
                 Status = row.Status,
-                Responsavel = row.Responsavel,
+                ResponsavelUsuarioId = row.ResponsavelUsuarioId,
+                ResponsavelNome = row.ResponsavelNome,
                 MensalidadeSaas = row.MensalidadeSaas,
                 MensalidadeMarketing = row.MensalidadeMarketing,
                 MarketingValorFixo = row.MarketingValorFixo,
@@ -943,11 +1023,23 @@ namespace APIBack.Service
                 DataPagamento = row.DataPagamento.HasValue ? DateOnly.FromDateTime(row.DataPagamento.Value) : null,
                 ValorTotal = row.ValorTotal,
                 ValorPago = row.ValorPago,
-                Status = row.Status,
+                Status = RotuloManual(row.Status),
+                Origem = CrmLancamentoOrigem.Manual,
                 CreatedAt = row.CreatedAt,
                 UpdatedAt = row.UpdatedAt
             };
         }
+
+        /// <summary>
+        /// Lancamento do CRM e anotacao da equipe. O banco guarda pendente/parcial/pago/cancelado, mas a API nunca o chama de "pago":
+        /// o que foi pago de verdade esta na cobranca da assinatura.
+        /// </summary>
+        public static string RotuloManual(string? statusBanco) => statusBanco switch
+        {
+            "pago" => "registrado_manual",
+            "parcial" => "parcial_manual",
+            _ => statusBanco ?? "pendente"
+        };
 
         private static CrmHistoricoItemDto MapHistorico(CrmHistoricoRow row)
         {

@@ -35,7 +35,7 @@
     <Content Include="Migrations\Delivery\rollback\*.sql" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Migrations\Negocio\*.sql" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Migrations\Financeiro\*.sql" CopyToOutputDirectory="PreserveNewest" />
-    <!-- Só para os testes de banco (o boot não lê esta pasta). -->
+    <!-- Lida no boot (AdditionalMigrationsPaths) e pelos testes de banco. -->
     <Content Include="Migrations\Inteligencia\*.sql" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 

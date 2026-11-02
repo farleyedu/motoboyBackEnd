@@ -86,6 +86,7 @@ namespace APIBack.Model.Gestao
         public string Nome { get; set; } = string.Empty;
         public string Email { get; set; } = string.Empty;
         public bool IsSuperAdmin { get; set; }
+        public string? TelefoneE164 { get; set; }
         public DateTime? CreatedAt { get; set; }
         public DateTime? DeletedAt { get; set; }
     }
@@ -143,6 +144,9 @@ namespace APIBack.Model.Gestao
         public int? UsuarioId { get; set; }
         public string Nome { get; set; } = string.Empty;
         public string Email { get; set; } = string.Empty;
+        /// <summary>E.164 (+5534991480112) ou nulo. So grava quando TelefoneInformado: telefone omitido na edicao mantem o que ja existe.</summary>
+        public string? TelefoneE164 { get; set; }
+        public bool TelefoneInformado { get; set; }
         public string? SenhaHash { get; set; }
         /// <summary>A senha e aleatoria: o usuario ainda vai definir a propria pelo link de convite.</summary>
         public bool SenhaPendente { get; set; }

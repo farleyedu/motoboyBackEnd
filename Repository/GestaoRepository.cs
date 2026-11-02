@@ -587,6 +587,7 @@ SELECT DISTINCT
        COALESCE(u.nome, '')   AS Nome,
        COALESCE(u.email, '')  AS Email,
        COALESCE(u.is_super_admin, FALSE) AS IsSuperAdmin,
+       u.telefone_e164        AS TelefoneE164,
        u.created_at           AS CreatedAt,
        u.deleted_at           AS DeletedAt
   FROM usuario u
@@ -840,6 +841,7 @@ SELECT  ue.id                     AS VinculoId,
 UPDATE usuario
    SET nome = @Nome,
        email = @Email,
+       telefone_e164 = CASE WHEN @TelefoneInformado THEN @TelefoneE164 ELSE telefone_e164 END,
        senha = COALESCE(@SenhaHash, senha),
        senha_pendente = CASE WHEN @SenhaHash IS NULL THEN senha_pendente ELSE @SenhaPendente END,
        is_super_admin = @IsSuperAdmin,
@@ -853,6 +855,8 @@ UPDATE usuario
                     UserId = command.UsuarioId.Value,
                     command.Nome,
                     command.Email,
+                    command.TelefoneE164,
+                    command.TelefoneInformado,
                     command.SenhaHash,
                     command.SenhaPendente,
                     command.IsSuperAdmin,
@@ -894,14 +898,15 @@ UPDATE usuario_estabelecimentos
             else
             {
                 const string sqlInsert = @"
-INSERT INTO usuario (nome, email, senha, senha_pendente, is_super_admin, ultimo_estabelecimento_acessado, provider, created_at, updated_at)
-VALUES (@Nome, @Email, @SenhaHash, @SenhaPendente, @IsSuperAdmin, @UltimoEstabelecimentoAcessado, 'local', NOW(), NOW())
+INSERT INTO usuario (nome, email, telefone_e164, senha, senha_pendente, is_super_admin, ultimo_estabelecimento_acessado, provider, created_at, updated_at)
+VALUES (@Nome, @Email, @TelefoneE164, @SenhaHash, @SenhaPendente, @IsSuperAdmin, @UltimoEstabelecimentoAcessado, 'local', NOW(), NOW())
 RETURNING id;";
 
                 userId = await connection.ExecuteScalarAsync<int>(sqlInsert, new
                 {
                     command.Nome,
                     command.Email,
+                    command.TelefoneE164,
                     command.SenhaHash,
                     command.SenhaPendente,
                     command.IsSuperAdmin,

@@ -49,7 +49,9 @@ namespace APIBack.DTOs.CRM
         public string? Email { get; set; }
         public string? Cnpj { get; set; }
         public string Tipo { get; set; } = string.Empty;
-        public string Responsavel { get; set; } = string.Empty;
+        /// <summary>Usuario da equipe Zippy responsavel (super admin). Nulo = ninguem definido.</summary>
+        public int? ResponsavelUsuarioId { get; set; }
+        public string? ResponsavelNome { get; set; }
         public string Coluna { get; set; } = string.Empty;
         public string Status { get; set; } = string.Empty;
         public string? Substatus { get; set; }
@@ -83,7 +85,7 @@ namespace APIBack.DTOs.CRM
         public string? Email { get; set; }
         public string? Cnpj { get; set; }
         public string Tipo { get; set; } = string.Empty;
-        public string Responsavel { get; set; } = string.Empty;
+        public int? ResponsavelUsuarioId { get; set; }
         public string? Substatus { get; set; }
         public CrmValoresDto? Estimativa { get; set; }
     }
@@ -95,7 +97,7 @@ namespace APIBack.DTOs.CRM
         public string? Telefone { get; set; }
         public string? Email { get; set; }
         public string? Cnpj { get; set; }
-        public string? Responsavel { get; set; }
+        public int? ResponsavelUsuarioId { get; set; }
         public string? Substatus { get; set; }
         public string? ProximaAcao { get; set; }
         public string? Status { get; set; }
@@ -143,6 +145,34 @@ namespace APIBack.DTOs.CRM
         public string? CnpjOverride { get; set; }
         public string? EstabelecimentoTipoSlug { get; set; }
         public string? Observacoes { get; set; }
+        /// <summary>Empresa ja cadastrada que o operador confirmou (de GET .../candidatos-associacao). Nulo = criar empresa nova.</summary>
+        public Guid? EmpresaId { get; set; }
+        /// <summary>Loja da empresa confirmada. Nulo = criar loja nova. So vale junto com EmpresaId.</summary>
+        public Guid? EstabelecimentoId { get; set; }
+    }
+
+    public class CrmCandidatoLojaDto
+    {
+        public Guid Id { get; set; }
+        public string Nome { get; set; } = string.Empty;
+        public bool Ativo { get; set; }
+        public string? Situacao { get; set; }
+    }
+
+    public class CrmCandidatoAssociacaoDto
+    {
+        public Guid EmpresaId { get; set; }
+        public string Nome { get; set; } = string.Empty;
+        public string? Cnpj { get; set; }
+        /// <summary>cnpj (mesma empresa: o fechamento so aceita ligar a esta) | nome_parecido (so sugestao).</summary>
+        public string Motivo { get; set; } = string.Empty;
+        public List<CrmCandidatoLojaDto> Lojas { get; set; } = new();
+    }
+
+    public class CrmResponsavelDto
+    {
+        public int Id { get; set; }
+        public string Nome { get; set; } = string.Empty;
     }
 
     public class FecharCrmOportunidadeResponse
@@ -179,9 +209,19 @@ namespace APIBack.DTOs.CRM
         public DateOnly? DataPagamento { get; set; }
         public decimal ValorTotal { get; set; }
         public decimal ValorPago { get; set; }
+        /// <summary>
+        /// pendente | parcial_manual | registrado_manual | cancelado. Lancamento do CRM e anotacao da equipe, nunca "pago":
+        /// pagamento de verdade vem da assinatura (comercial_cobranca).
+        /// </summary>
         public string Status { get; set; } = string.Empty;
+        public string Origem { get; set; } = CrmLancamentoOrigem.Manual;
         public DateTimeOffset CreatedAt { get; set; }
         public DateTimeOffset UpdatedAt { get; set; }
+    }
+
+    public static class CrmLancamentoOrigem
+    {
+        public const string Manual = "manual";
     }
 
     public class CrmContratoResumoDto
@@ -194,7 +234,8 @@ namespace APIBack.DTOs.CRM
         public Guid? OportunidadeId { get; set; }
         public string Tipo { get; set; } = string.Empty;
         public string Status { get; set; } = string.Empty;
-        public string Responsavel { get; set; } = string.Empty;
+        public int? ResponsavelUsuarioId { get; set; }
+        public string? ResponsavelNome { get; set; }
         public decimal MensalidadeSaas { get; set; }
         public decimal MensalidadeMarketing { get; set; }
         public decimal MarketingValorFixo { get; set; }
@@ -219,7 +260,7 @@ namespace APIBack.DTOs.CRM
     public class AtualizarCrmContratoRequest
     {
         public string? Status { get; set; }
-        public string? Responsavel { get; set; }
+        public int? ResponsavelUsuarioId { get; set; }
         public int? DiaVencimento { get; set; }
         [JsonConverter(typeof(FlexibleNullableDateOnlyJsonConverter))]
         public DateOnly? DataInicioCobranca { get; set; }
@@ -246,8 +287,13 @@ namespace APIBack.DTOs.CRM
 
     public class CrmFinanceiroResumoDto
     {
+        /// <summary>Pago na assinatura (comercial_cobranca paga) no mes.</summary>
         public decimal RecebidoMes { get; set; }
+        /// <summary>Cobrancas da assinatura em aberto com vencimento no mes.</summary>
         public decimal PendenteMes { get; set; }
+        /// <summary>Registrado a mao nos lancamentos do CRM no mes. Nao e pagamento confirmado.</summary>
+        public decimal RegistradoManualMes { get; set; }
+        public decimal PendenteManualMes { get; set; }
         public decimal FarleyMes { get; set; }
         public decimal SocioMes { get; set; }
     }
