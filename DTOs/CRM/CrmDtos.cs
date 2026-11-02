@@ -149,6 +149,13 @@ namespace APIBack.DTOs.CRM
         public Guid? EmpresaId { get; set; }
         /// <summary>Loja da empresa confirmada. Nulo = criar loja nova. So vale junto com EmpresaId.</summary>
         public Guid? EstabelecimentoId { get; set; }
+        /// <summary>
+        /// Fechou na conversa: verbal | whatsapp | assinado. Com aceite valido, fecha sem proposta formal e de qualquer coluna.
+        /// Opcional: sem ele, o fechamento continua exigindo proposta e coluna quase/aguardando.
+        /// </summary>
+        public string? Aceite { get; set; }
+        /// <summary>Valor mensal combinado no aceite, usado quando nao ha proposta registrada.</summary>
+        public decimal? ValorMensal { get; set; }
     }
 
     public class CrmCandidatoLojaDto

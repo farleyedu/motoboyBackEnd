@@ -33,7 +33,8 @@ namespace APIBack.Service
 
         private static readonly string[] PrefixosSempreLiberados =
             // Chamados ficam abertos: a loja bloqueada precisa conseguir perguntar por que.
-            { "/api/gestao", "/api/admin", "/api/auth", "/api/me", "/api/v2/comercial", "/api/v2/chamados" };
+            // Acompanhamento e da equipe Zippy (so super admin), como a Gestao.
+            { "/api/gestao", "/api/admin", "/api/auth", "/api/me", "/api/v2/comercial", "/api/v2/chamados", "/api/acompanhamento" };
 
         /// <summary>
         /// Rotas que nao dependem da situacao da loja, para qualquer usuario (inclusive super admin com uma loja no contexto):
@@ -108,6 +109,16 @@ namespace APIBack.Service
         }
 
         public static DateTimeOffset FimDoTeste(DateTimeOffset inicio) => inicio.AddDays(DiasTeste);
+
+        public const string CodigoTesteObrigatorio = "TESTE_OBRIGATORIO";
+
+        /// <summary>
+        /// Portao do teste: so ativa quem esta no teste, quem ja e ativo (troca de plano) ou quem volta de uma reimplantacao
+        /// (implantacao com a operacao ja iniciada antes). Loja que nunca testou passa primeiro pelo teste de 15 dias.
+        /// </summary>
+        public static bool PodeAtivar(string situacaoAtual, DateTimeOffset? operacaoIniciadaEm) =>
+            situacaoAtual is SituacoesComerciais.Teste or SituacoesComerciais.Ativo ||
+            (situacaoAtual == SituacoesComerciais.Implantacao && operacaoIniciadaEm.HasValue);
     }
 
     /// <summary>
@@ -313,6 +324,34 @@ SELECT e.situacao_comercial = 'teste'
             await using var connection = await _dataSource.OpenConnectionAsync(ct);
             await using var tx = await connection.BeginTransactionAsync(ct);
 
+            await AplicarNaTransacaoAsync(connection, tx, estabelecimentoId, request, usuarioId, origem, AcoesInternas.Nenhuma, ct);
+
+            var resultado = await LerAsync(connection, tx, estabelecimentoId, ct)
+                ?? throw new SituacaoComercialException(404, "ESTABELECIMENTO_NAO_ENCONTRADO", "Estabelecimento nao encontrado.");
+            await tx.CommitAsync(ct);
+            _cache.Remove(Key(estabelecimentoId));
+            return resultado;
+        }
+
+        /// <summary>Acoes que so as passagens do acompanhamento usam (nunca a rota da Gestao).</summary>
+        public enum AcoesInternas
+        {
+            Nenhuma,
+            /// <summary>reimplantar (volta para implantacao, sem novo teste) e prorrogar_teste (Dias).</summary>
+            Acompanhamento
+        }
+
+        /// <summary>
+        /// Muda a situacao dentro de uma transacao ja aberta (a do acompanhamento, ou a de <see cref="AplicarAsync"/>) e grava o log.
+        /// Devolve (antes, depois). Quem chama limpa o cache (<see cref="CacheKey"/>) depois do commit.
+        /// reimplantar: dias = null mantem o teste ja feito; ZerarTeste = true apaga um teste nao concluido (loja retomada).
+        /// </summary>
+        public static async Task<(string Antes, string Depois)> AplicarNaTransacaoAsync(
+            NpgsqlConnection connection, NpgsqlTransaction tx, Guid estabelecimentoId, AcaoSituacaoRequest request, int? usuarioId,
+            string origem, AcoesInternas internas, CancellationToken ct, int? dias = null, bool zerarTeste = false)
+        {
+            var acao = (request.Acao ?? string.Empty).Trim().ToLowerInvariant();
+
             // A edicao de pacote trava primeiro o pacote e depois as lojas; a ativacao usa a mesma ordem.
             var planoSolicitado = (request.Plano ?? string.Empty).Trim().ToLowerInvariant();
             PacoteRow? pacote = null;
@@ -347,6 +386,16 @@ UPDATE estabelecimentos
                 case "ativar":
                     if (antes == SituacoesComerciais.Bloqueado)
                         throw new SituacaoComercialException(409, "ESTABELECIMENTO_BLOQUEADO", "Desbloqueie a loja antes de ativar ou alterar o plano.");
+                    // Vale tambem para a API legada: nenhuma loja vira ativa sem passar pelo teste de 15 dias.
+                    if (!SituacaoComercialRules.PodeAtivar(antes, atual.OperacaoIniciadaEm))
+                        throw new SituacaoComercialException(422, SituacaoComercialRules.CodigoTesteObrigatorio,
+                            "Toda loja passa pelo teste antes de operar.",
+                            new
+                            {
+                                motivo = "Toda loja passa pelo teste antes de operar.",
+                                caminho = "Implantação → Teste → Operando",
+                                sequencia = new[] { "implantacao", "teste", "operando" }
+                            });
                     var plano = planoSolicitado;
                     // O plano existe no catalogo (validado acima) ou e personalizado: a Gestao pode criar planos novos.
                     if (pacote == null && plano != "personalizado")
@@ -392,6 +441,33 @@ UPDATE estabelecimentos
  WHERE id = @Id;", new { Id = estabelecimentoId, Depois = depois }, tx, cancellationToken: ct));
                     break;
 
+                case "reimplantar" when internas == AcoesInternas.Acompanhamento:
+                    // Reimplantar (operando) ou reabrir a loja de quem voltou (bloqueada): checklist novo, sem novo teste.
+                    // Teste iniciado e nao concluido (loja perdida no teste) e apagado: ela testa de novo.
+                    if (antes is not (SituacoesComerciais.Ativo or SituacoesComerciais.Bloqueado or SituacoesComerciais.Implantacao))
+                        throw new SituacaoComercialException(409, "SITUACAO_INVALIDA", "A loja nao pode voltar para a implantacao agora.");
+                    depois = SituacoesComerciais.Implantacao;
+                    await connection.ExecuteAsync(new CommandDefinition(@"
+UPDATE estabelecimentos
+   SET situacao_comercial = 'implantacao', bloqueado_em = NULL, bloqueado_por = NULL, bloqueado_motivo = NULL,
+       operacao_iniciada_em = CASE WHEN @Zerar THEN NULL ELSE operacao_iniciada_em END,
+       teste_termina_em = CASE WHEN @Zerar THEN NULL ELSE teste_termina_em END
+ WHERE id = @Id;", new { Id = estabelecimentoId, Zerar = zerarTeste }, tx, cancellationToken: ct));
+                    break;
+
+                case "prorrogar_teste" when internas == AcoesInternas.Acompanhamento:
+                    if (antes != SituacoesComerciais.Teste)
+                        throw new SituacaoComercialException(409, "SITUACAO_INVALIDA", "So o teste pode ser prorrogado.");
+                    if (dias is not (7 or 15))
+                        throw new SituacaoComercialException(422, "DIAS_INVALIDOS", "Prorrogue por 7 ou 15 dias.");
+                    depois = SituacoesComerciais.Teste;
+                    // Conta a partir do fim atual (ou de agora, se o teste ja venceu): nunca encurta o teste.
+                    await connection.ExecuteAsync(new CommandDefinition(@"
+UPDATE estabelecimentos
+   SET teste_termina_em = GREATEST(COALESCE(teste_termina_em, NOW()), NOW()) + make_interval(days => @Dias)
+ WHERE id = @Id;", new { Id = estabelecimentoId, Dias = dias }, tx, cancellationToken: ct));
+                    break;
+
                 default:
                     throw new SituacaoComercialException(422, "ACAO_INVALIDA", "Acao invalida. Use iniciar_operacao, ativar, bloquear ou desbloquear.");
             }
@@ -402,14 +478,10 @@ VALUES (@Id, @Acao, @Antes, @Depois, @Motivo, @Usuario, CAST(@Detalhes AS jsonb)
                 new
                 {
                     Id = estabelecimentoId, Acao = acao, Antes = antes, Depois = depois, Motivo = motivo, Usuario = usuarioId,
-                    Detalhes = JsonSerializer.Serialize(new { request.Plano, request.MotoboysBase, origem, ator = usuarioId })
+                    Detalhes = JsonSerializer.Serialize(new { request.Plano, request.MotoboysBase, origem, ator = usuarioId, dias })
                 }, tx, cancellationToken: ct));
 
-            var resultado = await LerAsync(connection, tx, estabelecimentoId, ct)
-                ?? throw new SituacaoComercialException(404, "ESTABELECIMENTO_NAO_ENCONTRADO", "Estabelecimento nao encontrado.");
-            await tx.CommitAsync(ct);
-            _cache.Remove(Key(estabelecimentoId));
-            return resultado;
+            return (antes, depois);
         }
 
         public async Task<IReadOnlyList<TesteVencidoDto>> ListarTestesVencidosAsync(CancellationToken ct = default)

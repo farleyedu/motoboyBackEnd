@@ -333,7 +333,18 @@ SELECT id
         {
             await using var connection = await _dataSource.OpenConnectionAsync();
             await using var transaction = await connection.BeginTransactionAsync();
+            var result = await FecharOportunidadeNaTransacaoAsync(connection, transaction, command);
+            await transaction.CommitAsync();
+            return result;
+        }
 
+        /// <summary>
+        /// Fechamento dentro de uma transacao ja aberta (a do fechamento legado ou a da passagem do acompanhamento).
+        /// Loja nova nasce sempre em implantacao: so passa a operar depois do teste. Quem chama faz o commit.
+        /// </summary>
+        public async Task<CrmCloseOpportunityResult> FecharOportunidadeNaTransacaoAsync(
+            NpgsqlConnection connection, NpgsqlTransaction transaction, CrmCloseOpportunityCommand command)
+        {
             var oportunidade = await connection.QueryFirstOrDefaultAsync<CrmOportunidadeRow>(@"
 SELECT id,
        nome_empresa,
@@ -490,7 +501,8 @@ RETURNING id;",
             var lancamentoIds = new List<Guid>();
             var dataVencimentoBase = CalcularDataVencimento(command.DataInicioCobranca.Date, command.DiaVencimento);
 
-            if (command.MensalidadeSaas > 0)
+            // Passagem do acompanhamento: a cobranca so comeca depois do teste, entao o fechamento nao lanca nada.
+            if (!command.SemLancamentos && command.MensalidadeSaas > 0)
             {
                 lancamentoIds.Add(await InserirLancamentoAsync(
                     connection,
@@ -507,7 +519,7 @@ RETURNING id;",
                     "pendente"));
             }
 
-            if (command.MensalidadeMarketing > 0)
+            if (!command.SemLancamentos && command.MensalidadeMarketing > 0)
             {
                 lancamentoIds.Add(await InserirLancamentoAsync(
                     connection,
@@ -524,7 +536,7 @@ RETURNING id;",
                     "pendente"));
             }
 
-            if (command.MarketingValorFixo > 0)
+            if (!command.SemLancamentos && command.MarketingValorFixo > 0)
             {
                 lancamentoIds.Add(await InserirLancamentoAsync(
                     connection,
@@ -541,7 +553,7 @@ RETURNING id;",
                     "pendente"));
             }
 
-            if (command.ImplantacaoValor > 0)
+            if (!command.SemLancamentos && command.ImplantacaoValor > 0)
             {
                 lancamentoIds.Add(await InserirLancamentoAsync(
                     connection,
@@ -575,7 +587,17 @@ UPDATE crm_oportunidade
                 "negocio_fechado",
                 $"Contrato {contratoId} criado para {command.NomeEmpresa}.");
 
-            await transaction.CommitAsync();
+            if (command.RegistrarPropostaAceita && !string.IsNullOrWhiteSpace(command.PropostaJson))
+            {
+                await RegistrarPropostaAceitaAsync(connection, transaction, command);
+            }
+
+            if (command.VincularAcompanhamento)
+            {
+                // Fechamento pelo /crm legado: o acompanhamento da oportunidade (se ja existe) passa a ser o da loja.
+                await APIBack.Acompanhamento.Fases.AcompanhamentoSql.VincularLojaAsync(
+                    connection, transaction, command.OportunidadeId, estabelecimentoId, command.UsuarioId, "Fechamento pelo CRM");
+            }
 
             return new CrmCloseOpportunityResult
             {
@@ -1272,6 +1294,33 @@ SELECT CASE
             return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
         }
 
+        /// <summary>Guarda a proposta do fechamento como versao aceita (proxima versao da oportunidade). Sem a tabela, nao faz nada.</summary>
+        private static async Task RegistrarPropostaAceitaAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, CrmCloseOpportunityCommand command)
+        {
+            var existe = await connection.ExecuteScalarAsync<bool>(
+                "SELECT to_regclass('acompanhamento_proposta_versao') IS NOT NULL;", transaction: transaction);
+            if (!existe)
+            {
+                return;
+            }
+
+            await connection.ExecuteAsync(@"
+UPDATE acompanhamento_proposta_versao SET status = 'guardada'
+ WHERE oportunidade_id = @OportunidadeId AND status IN ('rascunho', 'enviada');
+INSERT INTO acompanhamento_proposta_versao (oportunidade_id, versao, status, valor_mensal, valor_implantacao, dados, criada_por, enviada_em)
+SELECT @OportunidadeId, COALESCE(MAX(versao), 0) + 1, 'aceita', @ValorMensal, @ValorImplantacao, CAST(@Dados AS jsonb), @UsuarioId, NOW()
+  FROM acompanhamento_proposta_versao WHERE oportunidade_id = @OportunidadeId;",
+                new
+                {
+                    command.OportunidadeId,
+                    ValorMensal = command.MensalidadeSaas + command.MensalidadeMarketing,
+                    ValorImplantacao = command.ImplantacaoValor,
+                    Dados = command.PropostaJson,
+                    command.UsuarioId
+                },
+                transaction);
+        }
+
         private static async Task<Guid> ConfirmarEmpresaAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, Guid empresaId)
         {
             var existe = await connection.ExecuteScalarAsync<Guid?>(
@@ -1374,7 +1423,8 @@ INSERT INTO estabelecimentos (
     modulos_ativos,
     id_tipo_estabelecimento,
     slug,
-    status)
+    status,
+    situacao_comercial)
 VALUES (
     @EmpresaId,
     'matriz'::tipo_unidade_enum,
@@ -1392,7 +1442,9 @@ VALUES (
     @ModulosAtivos::modulo_enum[],
     @TipoEstabelecimentoId,
     @Slug,
-    'ativo')
+    'ativo',
+    -- Loja do fechamento nasce em implantacao (configura, nao opera) e so opera depois do teste de 15 dias.
+    'implantacao')
 RETURNING id;";
 
             return await connection.ExecuteScalarAsync<Guid>(sql, new

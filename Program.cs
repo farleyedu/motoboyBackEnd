@@ -117,6 +117,8 @@ builder.Services.AddScoped<IUsuarioRepository, UsuarioRepository>();
 builder.Services.AddScoped<IUsuarioService, UsuarioService>();
 builder.Services.AddScoped<ICrmRepository, CrmRepository>();
 builder.Services.AddScoped<ICrmService, CrmService>();
+builder.Services.AddScoped<APIBack.Acompanhamento.Fases.IAcompanhamentoStore, APIBack.Acompanhamento.Fases.AcompanhamentoPostgresStore>();
+builder.Services.AddScoped<APIBack.Acompanhamento.Fases.IAcompanhamentoService, APIBack.Acompanhamento.Fases.AcompanhamentoService>();
 builder.Services.AddScoped<IAdminUsuariosRepository, AdminUsuariosRepository>();
 builder.Services.AddScoped<IAdminUsuariosService, AdminUsuariosService>();
 builder.Services.AddScoped<APIBack.Service.IAcessoService, APIBack.Service.AcessoService>();

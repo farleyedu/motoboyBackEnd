@@ -229,9 +229,12 @@ namespace APIBack.Service
             var row = await _crmRepository.ObterOportunidadeAsync(oportunidadeId)
                 ?? throw new KeyNotFoundException("Oportunidade nao encontrada.");
 
-            if (string.IsNullOrWhiteSpace(row.PropostaJson))
+            // Fechou na conversa: com aceite registrado (verbal, WhatsApp, assinado) nao precisa de proposta formal nem de coluna.
+            var aceite = NormalizeToken(request.Aceite);
+            var fechouNaConversa = Array.IndexOf(APIBack.Acompanhamento.Fases.PassagensCatalogo.Aceites, aceite) >= 0;
+            if (string.IsNullOrWhiteSpace(row.PropostaJson) && !fechouNaConversa)
             {
-                throw ValidationException("Dados invalidos.", ("proposta", "A oportunidade precisa ter proposta registrada para fechar negocio."));
+                throw ValidationException("Dados invalidos.", ("proposta", "Registre a proposta ou o aceite (verbal, whatsapp ou assinado) para fechar negocio."));
             }
 
             if (row.Status != "ativo")
@@ -245,7 +248,11 @@ namespace APIBack.Service
             {
                 AddError(errors, "diaVencimento", "Informe um dia de vencimento entre 1 e 31.");
             }
-            if (row.Coluna != "quase" && row.Coluna != "aguardando")
+            if (!string.IsNullOrWhiteSpace(request.Aceite) && !fechouNaConversa)
+            {
+                AddError(errors, "aceite", "Aceite invalido. Use verbal, whatsapp ou assinado.");
+            }
+            if (!fechouNaConversa && row.Coluna != "quase" && row.Coluna != "aguardando")
             {
                 AddError(errors, "coluna", "A oportunidade so pode ser fechada nas colunas quase fechado ou aguardando retorno.");
             }
@@ -308,7 +315,8 @@ namespace APIBack.Service
                 ImplantacaoJaPaga = request.ImplantacaoJaPaga,
                 Observacoes = NormalizeNullable(request.Observacoes),
                 EstabelecimentoTipoSlug = NormalizeNullable(request.EstabelecimentoTipoSlug),
-                MensalidadeSaas = proposta.SaaSMensalidade ?? 0m,
+                // Sem proposta formal (fechou na conversa), vale o valor mensal combinado no aceite.
+                MensalidadeSaas = proposta.SaaSMensalidade ?? request.ValorMensal ?? 0m,
                 MensalidadeMarketing = proposta.MarketingMensalidade ?? 0m,
                 MarketingValorFixo = proposta.MarketingValorFixo ?? 0m,
                 ImplantacaoValor = proposta.Implantacao ?? 0m,

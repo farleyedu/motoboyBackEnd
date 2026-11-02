@@ -69,7 +69,9 @@ public class ModulosPorRotaTests
         "api/migration", "api/localizacao", "api/entregas", "api/v2/pagamentos", "api/configuracoes", "api/delivery",
         "api/cardapio/web", "api/cardapio/{estabelecimentoid:guid}/atencao-motoboy", "api/v2/ifood/config",
         // conexao Mercado Pago fica acessivel antes de contratar modulos; chamados = suporte sempre acessivel
-        "api/v2/integracoes/mercadopago", "api/integracoes/mercadopago", "api/v2/chamados"
+        "api/v2/integracoes/mercadopago", "api/integracoes/mercadopago", "api/v2/chamados",
+        // acompanhamento das lojas = area da equipe Zippy (super admin), fora dos modulos da loja
+        "api/acompanhamento"
     };
 
     [Fact]

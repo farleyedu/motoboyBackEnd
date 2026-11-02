@@ -161,6 +161,12 @@ namespace APIBack.Model.CRM
         public decimal MarketingValorFixo { get; set; }
         public decimal ImplantacaoValor { get; set; }
         public string? PropostaJson { get; set; }
+        /// <summary>Nao gera lancamentos: a cobranca so comeca depois do teste (passagem do acompanhamento).</summary>
+        public bool SemLancamentos { get; set; }
+        /// <summary>Guarda <see cref="PropostaJson"/> como versao aceita (a passagem marca a versao ela mesma).</summary>
+        public bool RegistrarPropostaAceita { get; set; } = true;
+        /// <summary>Liga o acompanhamento da oportunidade a loja (o fechamento legado; a passagem faz isso ela mesma).</summary>
+        public bool VincularAcompanhamento { get; set; } = true;
     }
 
     public class CrmEstabelecimentoDaEmpresaRow
