@@ -38,12 +38,13 @@ public sealed record FechamentoDto(string Id, DateOnly Dia, int Operador, DateTi
 /// <param name="Devolvido">O gerente devolveu o último envio para recontar (o caixa voltou a ficar aberto).</param>
 /// <param name="AprovadoPorNome">Fechado por aprovação do gerente: quem aprovou.</param>
 /// <param name="Turno">1 no primeiro caixa do dia; 2, 3… quando o dia abriu de novo depois de fechar (novo turno).</param>
+/// <param name="FitaDoDia">Só do 2º turno em diante: a fita do dia inteiro (todos os turnos), para vendas e resultado do dia. <c>Fita</c> é sempre só do turno (a gaveta).</param>
 /// <param name="Anteriores">Fechamentos que saíram do dia: turnos encerrados e fechamentos desfeitos (reabertos), do mais antigo ao mais novo.</param>
 public sealed record CaixaDoDia(DateOnly Dia, bool Aberto, DateTimeOffset? AbertoEm, int? Por, decimal Fundo, IReadOnlyList<LinhaFita> Fita,
     IReadOnlyList<PedidoEmAberto> PedidosEmAberto, FechamentoDto? Fechamento, string? PorNome = null, decimal? FundoOriginal = null,
     IReadOnlyList<CorrecaoFundoDto>? CorrecoesFundo = null, int SolicitacoesPendentes = 0, EnvioDoFechamento? Aguardando = null,
     DevolucaoDoFechamento? Devolvido = null, string? AprovadoPorNome = null, int Turno = 1, IReadOnlyList<FechamentoAnterior>? Anteriores = null,
-    bool AprovacaoPendente = false);
+    bool AprovacaoPendente = false, IReadOnlyList<LinhaFita>? FitaDoDia = null);
 
 /// <summary>
 /// Que dia o caixa está rodando. <c>Dia</c> = dia em operação (o do caixa aberto; sem caixa aberto, o da virada); <c>DiaDoCalendario</c>

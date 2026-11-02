@@ -141,13 +141,20 @@ public sealed partial class CaixaService(NpgsqlDataSource dataSource, IAcontecim
         var aberto = row.FechadoEm is null && row.EnvioEm is null;
         var (inicio, fim) = await JanelaDoCaixa(c, loja, row, ct);
         var fita = await Fita(loja, dia, contas.Gaveta, ct, fundo, aberto, pendentes.Movimentos, inicio, fim);
+        // Do 2º turno em diante a fita é só do turno (a gaveta); as vendas e o resultado do dia precisam de todos os turnos.
+        IReadOnlyList<LinhaFita>? fitaDoDia = null;
+        if (row.Turno > 1)
+        {
+            var (inicioDoDia, fimDoDia) = await JanelaDoCaixa(c, loja, row, ct, diaTodo: true);
+            fitaDoDia = await Fita(loja, dia, contas.Gaveta, ct, inicio: inicioDoDia, fim: fimDoDia);
+        }
         // Pedido em aberto é pendência de hoje: dia fechado ou passado não reconstrói o que estava ativo (o banco guarda só o status atual).
         var emAberto = row.FechadoEm is null && dia == emOperacao
             ? await PedidosEmAbertoQuery.Carregar(c, loja, ct) : Array.Empty<PedidoEmAberto>();
         return new CaixaDoDia(dia, aberto, Utc(row.AbertoEm), row.AbertoPor, fundo, fita, emAberto,
             row.FechadoEm is null ? null : await Fechamento(c, loja, row), row.AbertoPorNome, row.Fundo, correcoes, pendentes.Total,
             row.FechadoEm is null ? EnvioDe(row) : null, row.FechadoEm is null ? DevolucaoDe(row) : null, row.AprovadoPorNome,
-            row.Turno, await Anteriores(c, loja, dia), AprovacaoPendente: row.FechadoEm is not null && row.AprovadoEm is null);
+            row.Turno, await Anteriores(c, loja, dia), AprovacaoPendente: row.FechadoEm is not null && row.AprovadoEm is null, FitaDoDia: fitaDoDia);
     }
 
     public async Task<CaixaDoDia> Abrir(Guid loja, int usuario, GestaoPapeis.Acesso acesso, AbrirCaixaRequest req, CancellationToken ct)
@@ -611,10 +618,11 @@ INSERT INTO gestao_caixas (estabelecimento_id, conta_gaveta_id, conta_cofre_id) 
     /// De quando até quando o caixa vale: do início do dia (ou do fechamento do caixa anterior, se ele passou da meia-noite) até o
     /// fechamento; no 2º turno em diante, da abertura do turno. Aberto, vale até agora (inclusive depois da meia-noite).
     /// </summary>
-    private async Task<(DateTimeOffset Inicio, DateTimeOffset? Fim)> JanelaDoCaixa(NpgsqlConnection c, Guid loja, DiaRow row, CancellationToken ct)
+    private async Task<(DateTimeOffset Inicio, DateTimeOffset? Fim)> JanelaDoCaixa(NpgsqlConnection c, Guid loja, DiaRow row, CancellationToken ct,
+        bool diaTodo = false)
     {
         DateTimeOffset? fim = row.FechadoEm is { } f ? Utc(f) : null;
-        if (row.Turno > 1) return (Utc(row.AbertoEm), fim);
+        if (row.Turno > 1 && !diaTodo) return (Utc(row.AbertoEm), fim);
         var fuso = await livro.Fuso(loja, ct);
         var meiaNoite = new DateTimeOffset(TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(row.Dia.Date, DateTimeKind.Unspecified), fuso), TimeSpan.Zero);
         var anterior = await c.ExecuteScalarAsync<DateTime?>(@"SELECT max(fechado_em) FROM gestao_caixa_dias
