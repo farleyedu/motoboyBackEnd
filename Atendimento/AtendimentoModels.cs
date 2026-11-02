@@ -58,6 +58,16 @@ namespace APIBack.Atendimento
         public static bool DoCliente(string? origem) => origem is Proprio or Autorizado;
     }
 
+    public static class FinalidadeTeste
+    {
+        /// <summary>Loja de teste comum.</summary>
+        public const string Geral = "geral";
+        /// <summary>O destino e a loja real de Gestao, escolhida pelo operador por ID.</summary>
+        public const string Gestao = "gestao";
+
+        public static bool Valida(string? f) => f is Geral or Gestao;
+    }
+
     /// <summary>
     /// Registro do numero na Cloud API (POST /{phone}/register), so na origem autorizado. dispensado = coexistencia com o app WhatsApp
     /// Business: o numero ja esta registrado e a API nunca deve registra-lo (nem desregistra-lo).
@@ -108,6 +118,12 @@ namespace APIBack.Atendimento
         public string? TokenCifrado { get; set; }
         /// <summary>Numero central de testes: todas as lojas de teste usam este numero; recebe quem esta vinculado a ele agora.</summary>
         public bool Central { get; set; }
+        /// <summary>Numero de teste da Zippy (varios; cada um atende uma loja por vez). <see cref="Central"/> e o principal entre eles.</summary>
+        public bool Teste { get; set; }
+        /// <summary>Para que serve o numero de teste (<c>FinalidadeTeste</c>); o ingressor da fila le este valor.</summary>
+        public string FinalidadeTeste { get; set; } = Atendimento.FinalidadeTeste.Geral;
+        /// <summary>E numero de teste da Zippy (so a Gestao mexe), inclusive o legado que so tem a marca de central.</summary>
+        public bool DeTeste => Teste || Central;
         public bool TemToken => !string.IsNullOrWhiteSpace(TokenCifrado) || !string.IsNullOrWhiteSpace(TokenAutorizacaoCifrado);
         public string Status { get; set; } = StatusCanal.Configurando;
         public string ModoAtendimento { get; set; } = Atendimento.ModoAtendimento.Hibrido;

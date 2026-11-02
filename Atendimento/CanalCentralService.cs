@@ -12,7 +12,7 @@ namespace APIBack.Atendimento
     /// <param name="EstabelecimentoId">Loja que recebe as mensagens deste numero agora.</param>
     public sealed record CanalCentralRequest(string? PhoneNumberId, string? Numero, string? Token, Guid EstabelecimentoId);
 
-    public interface ICanalCentralService
+    public interface ICanalCentralService : ICanaisTesteService
     {
         /// <summary>Numero central de testes, ou nulo se ainda nao foi cadastrado. So a Gestao.</summary>
         Task<CanalView?> ObterAsync(AtendimentoAtor ator);
@@ -25,7 +25,7 @@ namespace APIBack.Atendimento
     /// ele existe uma vez so (um canal marcado como central) e quem recebe as mensagens e a loja a que ele esta vinculado agora.
     /// Trocar o vinculo e o mesmo "mover numero" das lojas comuns.
     /// </summary>
-    public sealed class CanalCentralService : ICanalCentralService
+    public sealed partial class CanalCentralService : ICanalCentralService
     {
         private const string ModuloWhatsapp = "WHATSAPP";
 
@@ -33,9 +33,13 @@ namespace APIBack.Atendimento
         private readonly ICatalogoRepository _catalogo;
         private readonly ITokenProtector _token;
         private readonly ILogger<CanalCentralService> _logger;
+        private readonly ICanalVerificador? _verificador;
 
-        public CanalCentralService(ICanalRepository canais, ICatalogoRepository catalogo, ITokenProtector token, ILogger<CanalCentralService> logger)
+        public CanalCentralService(
+            ICanalRepository canais, ICatalogoRepository catalogo, ITokenProtector token, ILogger<CanalCentralService> logger,
+            ICanalVerificador? verificador = null)
         {
+            _verificador = verificador;
             _canais = canais;
             _catalogo = catalogo;
             _token = token;
@@ -108,7 +112,7 @@ namespace APIBack.Atendimento
                     canal = new CanalWhatsapp
                     {
                         Id = Guid.NewGuid(), IdEstabelecimento = request.EstabelecimentoId, PhoneNumberId = phoneNumberId, NumeroE164 = numero,
-                        Nome = "Numero central de testes", TokenCifrado = novoToken, Central = true, Origem = OrigemCanal.Central, Status = StatusCanal.Configurando,
+                        Nome = "Numero central de testes", TokenCifrado = novoToken, Central = true, Teste = true, Origem = OrigemCanal.Central, Status = StatusCanal.Configurando,
                         ModoAtendimento = ModoAtendimento.Hibrido
                     };
                     await _canais.CriarAsync(canal, Array.Empty<string>());

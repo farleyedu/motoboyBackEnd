@@ -65,10 +65,11 @@ namespace APIBack.Automation.Infra
             var proprio = (await _canais.ObterParaServicoAsync(idEstabelecimento, servicoCodigo))?.NumeroE164;
             if (proprio != null) return proprio;
 
-            // Loja de teste (criada com "numero de teste") nao tem numero proprio: o link do cardapio abre o numero central.
+            // Loja de teste (criada com "numero de teste") nao tem numero proprio: o link do cardapio abre o numero de teste principal
+            // (ou, sem principal em uso, outro numero de teste em uso).
             // So vale para loja sem nenhum numero; uma loja com numero proprio que nao atende o servico continua sem link.
             if ((await _canais.ListarPorLojaAsync(idEstabelecimento))?.Count > 0) return null;
-            return (await _canais.ObterCentralAsync())?.NumeroE164;
+            return (await _canais.ObterTesteUtilizavelAsync())?.NumeroE164;
         }
 
         public async Task<string?> ObterPhoneNumberIdPorDisplayPhoneAsync(string displayPhoneNumber)

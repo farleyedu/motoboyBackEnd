@@ -321,4 +321,71 @@ namespace APIBack.DTOs.CRM
         public decimal SocioTotal { get; set; }
         public List<CrmDivisaoDetalheDto> Detalhes { get; set; } = new();
     }
+
+    // ---- Leads (POST /api/crm/leads): contrato independente da tela legada
+
+    public class CrmLeadProximoPassoRequest
+    {
+        public string? Tipo { get; set; }
+        [JsonConverter(typeof(FlexibleNullableDateOnlyJsonConverter))]
+        public DateOnly? Data { get; set; }
+        public string? Nota { get; set; }
+    }
+
+    public class CriarCrmLeadRequest
+    {
+        public string? Nome { get; set; }
+        /// <summary>WhatsApp em E.164 (+5534991480112).</summary>
+        public string? Whatsapp { get; set; }
+        public string? Origem { get; set; }
+        public string? Decisor { get; set; }
+        public int? ResponsavelUsuarioId { get; set; }
+        public CrmLeadProximoPassoRequest? ProximoPasso { get; set; }
+        public string? Cnpj { get; set; }
+        public string? Email { get; set; }
+        /// <summary>"criar_novo": a pessoa conferiu os candidatos parecidos e confirma que este lead e outro.</summary>
+        public string? DecisaoDuplicidade { get; set; }
+        public string? MotivoDuplicidade { get; set; }
+        /// <summary>Ids dos candidatos que a pessoa viu. Candidato novo desde a ultima conferencia volta como 409.</summary>
+        public List<Guid>? CandidatosConfirmados { get; set; }
+    }
+
+    public class CrmLeadCandidatoDto
+    {
+        public Guid Id { get; set; }
+        /// <summary>lead | loja</summary>
+        public string Tipo { get; set; } = string.Empty;
+        public string Nome { get; set; } = string.Empty;
+        public string? Telefone { get; set; }
+        public int? ResponsavelUsuarioId { get; set; }
+        public string? ResponsavelNome { get; set; }
+        public string Situacao { get; set; } = string.Empty;
+        /// <summary>telefone_igual | nome_igual | nome_parecido</summary>
+        public List<string> Motivos { get; set; } = new();
+        public double Similaridade { get; set; }
+    }
+
+    public class CrmLeadEnriquecimentoDto
+    {
+        public bool Solicitado { get; set; }
+        public bool Disponivel { get; set; }
+        public string? Motivo { get; set; }
+        public string? RazaoSocial { get; set; }
+        public string? NomeFantasia { get; set; }
+        public string? Situacao { get; set; }
+    }
+
+    public class CrmLeadCriadoDto
+    {
+        public Guid OportunidadeId { get; set; }
+        public Guid AcompanhamentoId { get; set; }
+        public APIBack.Acompanhamento.Relacionamento.UsuarioEquipeDto? Responsavel { get; set; }
+        public APIBack.Acompanhamento.Relacionamento.ProximoPassoDto? ProximoPasso { get; set; }
+        public string WhatsappE164 { get; set; } = string.Empty;
+        public CrmLeadEnriquecimentoDto Enriquecimento { get; set; } = new();
+        /// <summary>A mesma chave de idempotencia ja tinha criado este lead: nada novo foi gravado.</summary>
+        public bool Repetida { get; set; }
+        public bool DuplicidadeDecidida { get; set; }
+        public CrmOportunidadeResumoDto? Oportunidade { get; set; }
+    }
 }

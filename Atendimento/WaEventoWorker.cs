@@ -88,10 +88,15 @@ namespace APIBack.Atendimento
                         case "tentar_de_novo":
                             await repositorio.ReagendarAsync(evento.Id, resultado.Motivo ?? "aguardando", TimeSpan.FromSeconds(3), definitivo: false);
                             break;
+                        case "bloqueado":
+                            // Rota insegura: nunca vira "processado" (nem o ack de sucesso); fica com codigo e motivo para diagnostico.
+                            await repositorio.MarcarBloqueadoAsync(evento.Id, resultado.Codigo ?? RotaBloqueada.NaoRoteavel, resultado.Motivo ?? "rota bloqueada");
+                            break;
                         default:
                             await repositorio.MarcarProcessadoAsync(evento.Id);
                             break;
                     }
+                    if (resultado.Categoria != null) await repositorio.RegistrarCategoriaAsync(evento.Id, resultado.Categoria);
                 }
                 catch (Exception ex)
                 {

@@ -33,6 +33,15 @@ namespace APIBack.Atendimento
         /// <summary>Marca este canal como o central e desmarca o anterior, na mesma transacao.</summary>
         Task DefinirCentralAsync(Guid canalId);
 
+        // ---- numeros de teste (varios; "central" = principal). Implementacao padrao so para nao quebrar fakes antigos. ----
+        /// <summary>Todos os numeros de teste, o principal primeiro.</summary>
+        Task<IReadOnlyList<CanalWhatsapp>> ListarTesteAsync() => throw new NotSupportedException();
+        /// <summary>Numero de teste que serve de fallback: o principal se estiver em uso; senao o mais antigo em uso (nao inativo).</summary>
+        Task<CanalWhatsapp?> ObterTesteUtilizavelAsync() => throw new NotSupportedException();
+        /// <summary>Aplica a alteracao do numero de teste numa unica transacao (destino, servicos, principal, campos e auditoria).</summary>
+        /// <exception cref="CanalConflitoException">Numero ou ID da Meta ja pertence a outro canal.</exception>
+        Task AplicarTesteAsync(AlteracaoTeste alteracao) => throw new NotSupportedException();
+
         /// <exception cref="CanalConflitoException">O numero ou o ID da Meta ja existe (em qualquer loja).</exception>
         Task CriarAsync(CanalWhatsapp canal, IReadOnlyCollection<string> servicos);
         /// <exception cref="CanalConflitoException">O novo numero ou ID da Meta ja pertence a outro canal.</exception>
@@ -69,7 +78,7 @@ namespace APIBack.Atendimento
     {
         private const string Colunas = @"
        id AS Id, id_estabelecimento AS IdEstabelecimento, phone_number_id AS PhoneNumberId, numero_e164 AS NumeroE164,
-       nome AS Nome, token_cifrado AS TokenCifrado, central AS Central, status AS Status, modo_atendimento AS ModoAtendimento,
+       nome AS Nome, token_cifrado AS TokenCifrado, central AS Central, teste AS Teste, finalidade_teste AS FinalidadeTeste, status AS Status, modo_atendimento AS ModoAtendimento,
        config::text AS ConfigJson, verificado_em AS VerificadoEm, ultimo_recebimento_em AS UltimoRecebimentoEm,
        ultimo_envio_ok_em AS UltimoEnvioOkEm, ultimo_erro AS UltimoErro, ultimo_erro_em AS UltimoErroEm,
        origem AS Origem, waba_id AS WabaId, app_id AS AppId, app_secret_cifrado AS AppSecretCifrado, webhook_chave AS WebhookChave,
@@ -169,7 +178,7 @@ UPDATE canal_whatsapp
        estado_meta = @EstadoMeta, inscricao_waba_em = @InscricaoWabaEm, coexistencia_sincronizada_em = @CoexistenciaSincronizadaEm,
        webhook_estado = @WebhookEstado, webhook_erro = @WebhookErro, webhook_registrado_em = @WebhookRegistradoEm,
        status = @Status, ultimo_erro = @UltimoErro, ultimo_erro_em = CASE WHEN @UltimoErro IS NULL THEN NULL ELSE NOW() END,
-       desconectado_em = NULL, central = FALSE,
+       desconectado_em = NULL, central = FALSE, teste = FALSE,
        token_cifrado = NULL, app_secret_cifrado = NULL, verify_token_cifrado = NULL, webhook_chave = NULL,
        updated_at_utc = NOW()
  WHERE id = @Id;", canal);
@@ -186,7 +195,7 @@ UPDATE canal_whatsapp
             await connection.ExecuteAsync(@"
 UPDATE canal_whatsapp
    -- Os segredos do numero proprio deixam de valer (reconectar pede os dados de novo); a URL do webhook e mantida.
-   SET status = 'inativo', desconectado_em = NOW(), token_cifrado = NULL, app_secret_cifrado = NULL, updated_at_utc = NOW()
+   SET status = 'inativo', desconectado_em = NOW(), central = FALSE, token_cifrado = NULL, app_secret_cifrado = NULL, updated_at_utc = NOW()
  WHERE id = @Id;", new { Id = canalId });
         }
 
@@ -227,10 +236,77 @@ UPDATE canal_whatsapp
             await using var connection = new NpgsqlConnection(_connectionString);
             await connection.OpenAsync();
             await using var tx = await connection.BeginTransactionAsync();
-            await connection.ExecuteAsync("UPDATE canal_whatsapp SET central = FALSE, origem = 'zippy' WHERE central AND id <> @Id;", new { Id = canalId }, tx);
+            // O principal anterior continua sendo numero de teste (com destino, token e historico); so deixa de ser o principal.
+            await connection.ExecuteAsync("UPDATE canal_whatsapp SET central = FALSE, updated_at_utc = NOW() WHERE central AND id <> @Id;", new { Id = canalId }, tx);
             await connection.ExecuteAsync(
-                "UPDATE canal_whatsapp SET central = TRUE, origem = 'central', updated_at_utc = NOW() WHERE id = @Id;", new { Id = canalId }, tx);
+                "UPDATE canal_whatsapp SET central = TRUE, teste = TRUE, origem = 'central', updated_at_utc = NOW() WHERE id = @Id;", new { Id = canalId }, tx);
             await tx.CommitAsync();
+        }
+
+        public async Task<IReadOnlyList<CanalWhatsapp>> ListarTesteAsync()
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            var canais = (await connection.QueryAsync<CanalWhatsapp>($"SELECT {Colunas} FROM canal_whatsapp WHERE teste ORDER BY central DESC, created_at_utc;")).ToList();
+            foreach (var c in canais)
+            {
+                c.Servicos = (await connection.QueryAsync<string>("SELECT servico_codigo FROM canal_servico WHERE id_canal = @Id ORDER BY servico_codigo;", new { c.Id })).ToList();
+            }
+
+            return canais;
+        }
+
+        public async Task<CanalWhatsapp?> ObterTesteUtilizavelAsync()
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            return await ObterUmAsync(connection, "WHERE teste AND status <> 'inativo' ORDER BY central DESC, created_at_utc", new { });
+        }
+
+        public async Task AplicarTesteAsync(AlteracaoTeste a)
+        {
+            await using var connection = new NpgsqlConnection(_connectionString);
+            await connection.OpenAsync();
+            await using var tx = await connection.BeginTransactionAsync();
+            try
+            {
+                var origem = await connection.ExecuteScalarAsync<Guid?>(
+                        "SELECT id_estabelecimento FROM canal_whatsapp WHERE id = @Id AND teste FOR UPDATE;", new { Id = a.CanalId }, tx)
+                    ?? throw new KeyNotFoundException("Numero de teste nao encontrado.");
+                var moveu = a.Destino.HasValue && a.Destino.Value != origem;
+
+                if (a.Principal == true)
+                {
+                    await connection.ExecuteAsync("UPDATE canal_whatsapp SET central = FALSE, updated_at_utc = NOW() WHERE central AND id <> @Id;", new { Id = a.CanalId }, tx);
+                }
+
+                if (moveu)
+                {
+                    await connection.ExecuteAsync("DELETE FROM canal_servico WHERE id_canal = @Id;", new { Id = a.CanalId }, tx);
+                    if (a.Servicos != null) await GravarServicosAsync(connection, tx, a.CanalId, a.Servicos);
+                }
+
+                await connection.ExecuteAsync(@"
+UPDATE canal_whatsapp
+   SET id_estabelecimento = COALESCE(@Destino, id_estabelecimento),
+       nome = COALESCE(@Nome, nome),
+       finalidade_teste = COALESCE(@Finalidade, finalidade_teste),
+       central = COALESCE(@Principal, central),
+       token_cifrado = COALESCE(@Token, token_cifrado),
+       status = CASE WHEN @Moveu OR @Token IS NOT NULL THEN COALESCE(@Status, 'configurando') ELSE COALESCE(@Status, status) END,
+       verificado_em = CASE WHEN @Moveu OR @Token IS NOT NULL THEN NULL ELSE verificado_em END,
+       updated_at_utc = NOW()
+ WHERE id = @Id;",
+                    new { Id = a.CanalId, a.Destino, a.Nome, a.Finalidade, a.Principal, Token = a.TokenCifrado, Moveu = moveu, a.Status }, tx);
+
+                await connection.ExecuteAsync(@"
+INSERT INTO canal_whatsapp_auditoria (id_canal, acao, id_estabelecimento_origem, id_estabelecimento_destino, usuario_id, detalhe)
+VALUES (@Canal, @Acao, @Origem, @Destino, @Usuario, CAST(@Detalhe AS jsonb));",
+                    new { Canal = a.CanalId, a.Acao, Origem = origem, Destino = a.Destino ?? origem, Usuario = (int?)a.UsuarioId, Detalhe = a.DetalheJson }, tx);
+                await tx.CommitAsync();
+            }
+            catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UniqueViolation)
+            {
+                throw Conflito(ex);
+            }
         }
 
         public async Task CriarAsync(CanalWhatsapp canal, IReadOnlyCollection<string> servicos)
@@ -241,11 +317,11 @@ UPDATE canal_whatsapp
             try
             {
                 await connection.ExecuteAsync(@"
-INSERT INTO canal_whatsapp (id, id_estabelecimento, phone_number_id, numero_e164, nome, token_cifrado, central, status, modo_atendimento, config,
+INSERT INTO canal_whatsapp (id, id_estabelecimento, phone_number_id, numero_e164, nome, token_cifrado, central, teste, finalidade_teste, status, modo_atendimento, config,
                             origem, waba_id, app_id, app_secret_cifrado, webhook_chave, verify_token_cifrado, webhook_estado, webhook_erro, webhook_registrado_em,
                             id_autorizacao_meta, coexistencia, registro_estado, registro_pin_cifrado, registro_tentativas, registro_tentado_em,
                             estado_meta, inscricao_waba_em, coexistencia_sincronizada_em)
-VALUES (@Id, @IdEstabelecimento, @PhoneNumberId, @NumeroE164, @Nome, @TokenCifrado, @Central, @Status, @ModoAtendimento, CAST(@ConfigJson AS jsonb),
+VALUES (@Id, @IdEstabelecimento, @PhoneNumberId, @NumeroE164, @Nome, @TokenCifrado, @Central, @Teste, @FinalidadeTeste, @Status, @ModoAtendimento, CAST(@ConfigJson AS jsonb),
         @Origem, @WabaId, @AppId, @AppSecretCifrado, @WebhookChave, @VerifyTokenCifrado, @WebhookEstado, @WebhookErro, @WebhookRegistradoEm,
         @IdAutorizacaoMeta, @Coexistencia, @RegistroEstado, @RegistroPinCifrado, @RegistroTentativas, @RegistroTentadoEm,
         @EstadoMeta, @InscricaoWabaEm, @CoexistenciaSincronizadaEm);",

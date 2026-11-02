@@ -298,7 +298,7 @@ namespace APIBack.Atendimento
 
             if (existente == null)
             {
-                var proprios = (await _canais.ListarPorLojaAsync(estabelecimentoId)).Where(c => !c.Central && c.Status != StatusCanal.Inativo).ToList();
+                var proprios = (await _canais.ListarPorLojaAsync(estabelecimentoId)).Where(c => !c.DeTeste && c.Status != StatusCanal.Inativo).ToList();
                 if (proprios.Count > 0) throw Invalido("phoneNumberId", "Esta loja ja tem um numero conectado. Desconecte antes de conectar outro.");
             }
 
@@ -355,13 +355,14 @@ namespace APIBack.Atendimento
         public async Task DesconectarAsync(AtendimentoAtor ator, Guid canalId)
         {
             var canal = await ObterOuFalharAsync(canalId);
-            if (canal.Central) ExigirGestao(ator, "desconectar_canal", canal.IdEstabelecimento);
+            if (canal.DeTeste) ExigirGestao(ator, "desconectar_canal", canal.IdEstabelecimento);
             else ExigirDonoOuGestao(ator, "desconectar_canal", canal.IdEstabelecimento);
 
             await _canais.RegistrarAuditoriaAsync(canalId, "desconectado", canal.IdEstabelecimento, null, ator.UsuarioId,
                 JsonSerializer.Serialize(new { numero = canal.NumeroE164, phoneNumberId = canal.PhoneNumberId }));
             // Desconectar nao apaga: conversas, modelos e configuracoes continuam ligados ao mesmo canal e voltam ao reconectar.
-            // So o central de testes (da Gestao) ainda sai de vez.
+            // So o principal de testes (contrato antigo) ainda sai de vez; os demais numeros de teste so desativam, para trocar de destino
+            // ou reativar depois sem apagar conversas nem auditoria.
             if (canal.Central) await _canais.RemoverAsync(canalId);
             else await _canais.DesativarAsync(canalId);
             _logger.LogInformation("[canal] ev=desconectado canal={Canal} loja={Loja} usuario={Usuario}", canalId, canal.IdEstabelecimento, ator.UsuarioId);
@@ -370,7 +371,7 @@ namespace APIBack.Atendimento
         public async Task<VerificacaoCanal> VerificarAsync(AtendimentoAtor ator, Guid canalId)
         {
             var canal = await ObterOuFalharAsync(canalId);
-            if (canal.Central) ExigirGestao(ator, "verificar_canal", canal.IdEstabelecimento);
+            if (canal.DeTeste) ExigirGestao(ator, "verificar_canal", canal.IdEstabelecimento);
             else ExigirDonoOuGestao(ator, "verificar_canal", canal.IdEstabelecimento);
             return await _verificador.VerificarAsync(canal);
         }
@@ -504,7 +505,7 @@ namespace APIBack.Atendimento
 
             if (existente == null)
             {
-                var conectados = (await _canais.ListarPorLojaAsync(estabelecimentoId)).Where(c => !c.Central && c.Status != StatusCanal.Inativo).ToList();
+                var conectados = (await _canais.ListarPorLojaAsync(estabelecimentoId)).Where(c => !c.DeTeste && c.Status != StatusCanal.Inativo).ToList();
                 if (conectados.Count > 0) throw Invalido("phoneNumberId", "Esta loja ja tem um numero conectado. Desconecte antes de conectar outro.");
             }
 
@@ -683,7 +684,7 @@ namespace APIBack.Atendimento
         /// <summary>O canal como a tela enxerga (sem token, app secret nem PIN). Usado tambem pela conexao pela Meta.</summary>
         internal static CanalView Montar(CanalWhatsapp c, CanalWebhookView webhook) => new(
             c.Id, c.IdEstabelecimento, c.PhoneNumberId, c.NumeroE164, c.Nome, c.Status, c.ModoAtendimento, c.Servicos, c.TemToken,
-            c.VerificadoEm, c.UltimoRecebimentoEm, c.UltimoEnvioOkEm, c.UltimoErro, c.UltimoErroEm, c.Central,
+            c.VerificadoEm, c.UltimoRecebimentoEm, c.UltimoEnvioOkEm, c.UltimoErro, c.UltimoErroEm, c.DeTeste,
             c.Origem, c.WabaId, c.AppId, webhook,
             new ConexaoMeta.CanalConexaoView(c.AutorizacaoEstado, c.Coexistencia, c.RegistroEstado, c.EstadoMeta, c.InscricaoWabaEm, c.DesconectadoEm));
     }

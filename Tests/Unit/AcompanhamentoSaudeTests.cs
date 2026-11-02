@@ -186,7 +186,7 @@ public class AcompanhamentoSaudeTests
     [InlineData(8, Fx.PrecisaDeAjuda)]
     public void Sete_dias_sem_pedido_vira_precisa_de_ajuda(int diasSemPedido, string esperada)
     {
-        var a = Avaliar(Loja(e => e with { Pedidos7d = diasSemPedido >= 7 ? 0 : 3, Pedidos28d = 60, UltimoPedidoEm = Dia(-diasSemPedido, 20) }));
+        var a = Avaliar(Loja(e => e with { Pedidos7d = diasSemPedido >= 7 ? 0 : 20, Pedidos28d = diasSemPedido >= 7 ? 60 : 80, UltimoPedidoEm = Dia(-diasSemPedido, 20) }));
         Assert.Equal(esperada, a.Faixa);
         if (esperada == Fx.PrecisaDeAjuda) Assert.Equal("sem_pedidos", a.Principal!.Codigo);
     }

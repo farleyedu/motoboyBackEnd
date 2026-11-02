@@ -14,6 +14,36 @@ namespace APIBack.Atendimento
     public interface IPipelineDeMensagem
     {
         Task ExecutarAsync(ConversationProcessingInput input, CanalWhatsapp canal);
+        /// <summary>
+        /// Mensagem para a loja Gestao, com o remetente ja classificado nesta mensagem. Devolve false quando nao ha como entregar com
+        /// seguranca (funcionario verificado sem assistente interno disponivel): o evento fica bloqueado, nunca cai no bot publico.
+        /// </summary>
+        Task<bool> ExecutarGestaoAsync(ConversationProcessingInput input, CanalWhatsapp canal, ContextoGestao contexto);
+    }
+
+    /// <summary>Referencia segura da midia para a Parte B (transcricao/interpretacao): so o ID da Meta, nunca o conteudo.</summary>
+    public sealed record ReferenciaMidia(string? MidiaId, string? Mime, string? Tipo, string WaMensagemId)
+    {
+        public bool Audio => Tipo is "audio" or "voice";
+    }
+
+    /// <param name="Destino"><see cref="IdentidadeWhatsapp.DestinoRemetente"/>.</param>
+    /// <param name="Categoria"><see cref="CategoriaRemetente"/>.</param>
+    /// <param name="Autorizacao">So no assistente interno: o usuario verificado e as permissoes reais dele (nunca super admin).</param>
+    public sealed record ContextoGestao(string Destino, string Categoria, IdentidadeWhatsapp.AutorizacaoWhatsapp? Autorizacao, ReferenciaMidia Midia);
+
+    /// <summary>Mensagem de funcionario verificado para a loja Gestao, ja autorizada nesta mensagem.</summary>
+    public sealed record MensagemInterna(
+        string WaMensagemId, Guid CanalId, Guid LojaGestaoId, string TelefoneE164, string Texto, string? TextoInterpretado, DateTime RecebidaEmUtc,
+        IdentidadeWhatsapp.AutorizacaoWhatsapp Autorizacao, ReferenciaMidia Midia);
+
+    /// <summary>
+    /// Assistente interno da Gestao (implementado em outra etapa). Toda acao confere <see cref="IdentidadeWhatsapp.AutorizacaoWhatsapp.TemPermissao"/>;
+    /// a loja de destino do numero nao concede nada.
+    /// </summary>
+    public interface IAssistenteInternoWhatsapp
+    {
+        Task AtenderAsync(MensagemInterna mensagem, CanalWhatsapp canal);
     }
 
     /// <summary>
@@ -25,6 +55,9 @@ namespace APIBack.Atendimento
     {
         private const string AvisoEmpresaPausada =
             "Estamos enfrentando uma instabilidade temporária no atendimento. Assim que possível, retornaremos por aqui.";
+        internal const string PedidoIdentificacao =
+            "Olá! Este número aparece tanto na nossa equipe quanto como contato comercial. " +
+            "Para continuar, confirme como você quer ser atendido: responda EQUIPE ou CLIENTE.";
 
         private readonly IExecucaoAtendimentoRepository? _execucoes;
         private readonly APIBack.Service.ISituacaoComercialService? _situacoes;
@@ -34,6 +67,7 @@ namespace APIBack.Atendimento
         private readonly IEnviadorDeRespostas _enviador;
         private readonly ICardapioPedidoWebService? _pedidosWeb;
         private readonly ILogger<PipelineDeMensagem> _logger;
+        private readonly IAssistenteInternoWhatsapp? _assistente;
 
         public PipelineDeMensagem(
             IIngressoDeConversa ingresso,
@@ -42,8 +76,9 @@ namespace APIBack.Atendimento
             IEnviadorDeRespostas enviador,
             ILogger<PipelineDeMensagem> logger,
             ICardapioPedidoWebService? pedidosWeb = null, IExecucaoAtendimentoRepository? execucoes = null,
-            APIBack.Service.ISituacaoComercialService? situacoes = null)
+            APIBack.Service.ISituacaoComercialService? situacoes = null, IAssistenteInternoWhatsapp? assistente = null)
         {
+            _assistente = assistente;
             _situacoes = situacoes;
             _execucoes = execucoes;
             _ingresso = ingresso;
@@ -64,6 +99,14 @@ namespace APIBack.Atendimento
             {
                 _logger.LogInformation("[atend] ev=ignorada wa={Wa} canal={Canal} motivo=mensagem_do_proprio_numero", wa, canal.Id);
                 return;
+            }
+
+            // Segunda trava: a loja capturada no ingresso e a do canal precisam ser a mesma; nunca grava historico na loja errada.
+            if (LojaDivergente(input, canal))
+            {
+                _logger.LogWarning("[atend] ev=recusada wa={Wa} canal={Canal} loja_canal={LojaCanal} loja_mensagem={LojaMensagem} motivo=loja_divergente",
+                    wa, canal.Id, canal.IdEstabelecimento, input.IdEstabelecimento);
+                throw new InvalidOperationException("Loja da mensagem diferente da loja do canal: entrega recusada.");
             }
 
             var telefone = NormalizarTelefone(de);
@@ -148,6 +191,73 @@ namespace APIBack.Atendimento
             await _executor.ExecutarAsync(new MensagemRecebida(
                 idConversa, canal, telefone, input.Texto, input.TextoInterpretado, primeira, input.DataMensagemUtc ?? DateTime.UtcNow, wa, input.Mensagem.Tipo));
         }
+
+        public async Task<bool> ExecutarGestaoAsync(ConversationProcessingInput input, CanalWhatsapp canal, ContextoGestao contexto)
+        {
+            var wa = input.Mensagem.Id;
+            var de = input.Mensagem.De ?? string.Empty;
+            if (EhEco(de, input))
+            {
+                _logger.LogInformation("[atend] ev=ignorada wa={Wa} canal={Canal} motivo=mensagem_do_proprio_numero", wa, canal.Id);
+                return true;
+            }
+            if (LojaDivergente(input, canal))
+                throw new InvalidOperationException("Loja da mensagem diferente da loja do canal: entrega recusada.");
+
+            switch (contexto.Destino)
+            {
+                case IdentidadeWhatsapp.DestinoRemetente.AssistenteInterno:
+                    // Nunca cai no bot publico nem na conversa publica da loja: sem assistente, o evento fica bloqueado para reprocessar.
+                    if (_assistente == null || contexto.Autorizacao == null)
+                    {
+                        _logger.LogWarning("[atend] ev=sem_resposta wa={Wa} canal={Canal} rota=gestao motivo=assistente_interno_indisponivel", wa, canal.Id);
+                        return false;
+                    }
+                    _logger.LogInformation("[atend] ev=assistente_interno wa={Wa} canal={Canal} usuario={Usuario} midia={Midia}",
+                        wa, canal.Id, contexto.Autorizacao.UsuarioId, contexto.Midia.MidiaId != null);
+                    await _assistente.AtenderAsync(new MensagemInterna(
+                        wa!, canal.Id, canal.IdEstabelecimento, NormalizarTelefone(de), input.Texto, input.TextoInterpretado,
+                        input.DataMensagemUtc ?? DateTime.UtcNow, contexto.Autorizacao, contexto.Midia), canal);
+                    return true;
+
+                case IdentidadeWhatsapp.DestinoRemetente.ConfirmarPapel:
+                    await PedirIdentificacaoAsync(input, canal, wa);
+                    return true;
+
+                default:
+                    // Contato do CRM (atendimento publico) ou desconhecido (qualificacao): o atendimento publico da loja Gestao.
+                    _logger.LogInformation("[atend] ev=gestao_publico wa={Wa} canal={Canal} categoria={Categoria}", wa, canal.Id, contexto.Categoria);
+                    await ExecutarAsync(input, canal);
+                    return true;
+            }
+        }
+
+        /// <summary>
+        /// Telefone da equipe que tambem e contato comercial: grava na conversa publica (nada interno), nao chama o bot e pede que a
+        /// pessoa diga o papel. Nada e decidido em silencio; o pedido sai uma vez por conversa.
+        /// </summary>
+        private async Task PedirIdentificacaoAsync(ConversationProcessingInput input, CanalWhatsapp canal, string? wa)
+        {
+            var telefone = NormalizarTelefone(input.Mensagem.De ?? string.Empty);
+            var ingresso = await _ingresso.AcrescentarEntradaAsync(
+                idWa: input.Mensagem.De!, idMensagemWa: wa!, conteudo: input.Texto, displayPhoneNumber: input.PhoneNumberDisplay ?? string.Empty,
+                phoneNumberId: input.PhoneNumberId, dataMensagemUtc: input.DataMensagemUtc, tipoOrigem: input.Mensagem.Tipo,
+                telefoneContato: telefone, idEstabelecimentoDoCanal: canal.IdEstabelecimento, idCanal: canal.Id);
+            if (ingresso == null)
+            {
+                _logger.LogInformation("[atend] ev=ignorada wa={Wa} canal={Canal} motivo=duplicada_ou_empresa_desativada", wa, canal.Id);
+                return;
+            }
+
+            var primeira = ingresso.NovaConversa || ingresso.ReiniciadaPorExpiracao || ingresso.AposEncerramentoManualEm.HasValue;
+            _logger.LogInformation("[atend] ev=identificacao_pendente wa={Wa} conversa={Conversa} canal={Canal} pedido_enviado={Pedido}",
+                wa, ingresso.Mensagem.IdConversa, canal.Id, primeira);
+            if (primeira)
+                await _enviador.EnviarAsync(ingresso.Mensagem.IdConversa, canal, telefone, new AcaoResponder(PedidoIdentificacao));
+        }
+
+        private static bool LojaDivergente(ConversationProcessingInput input, CanalWhatsapp canal) =>
+            input.IdEstabelecimento.HasValue && input.IdEstabelecimento.Value != canal.IdEstabelecimento;
 
         /// <summary>Qualquer falha aqui (banco sem a migration, WhatsApp fora) e ignorada: a mensagem segue o fluxo normal.</summary>
         private async Task<bool> TentarConfirmarPedidoAsync(Guid idConversa, string? texto)

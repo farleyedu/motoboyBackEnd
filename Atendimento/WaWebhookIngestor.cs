@@ -25,12 +25,21 @@ namespace APIBack.Atendimento
     {
         private readonly IWaEventoRepository _eventos;
         private readonly ILogger<WaWebhookIngestor> _logger;
+        private readonly ICanalRepository? _canais;
 
-        public WaWebhookIngestor(IWaEventoRepository eventos, ILogger<WaWebhookIngestor> logger)
+        /// <param name="canais">
+        /// Resolve o destino (canal + loja) NO INGRESSO, gravado junto com a mensagem. Sem ele (testes antigos) o evento fica sem
+        /// destino capturado e o processador usa o caminho legado.
+        /// </param>
+        public WaWebhookIngestor(IWaEventoRepository eventos, ILogger<WaWebhookIngestor> logger, ICanalRepository? canais = null)
         {
             _eventos = eventos;
             _logger = logger;
+            _canais = canais;
         }
+
+        /// <summary>Relogio trocavel nos testes.</summary>
+        internal Func<DateTime> Agora { get; set; } = () => DateTime.UtcNow;
 
         public async Task<ResultadoIngestao> IngerirAsync(JsonElement raiz, CanalWhatsapp? canal)
         {
@@ -116,6 +125,10 @@ namespace APIBack.Atendimento
 
             if (valor.TryGetProperty("messages", out var mensagens) && mensagens.ValueKind == JsonValueKind.Array)
             {
+                // O destino e o dono do numero AGORA, no ingresso. O worker so confere; nunca recalcula pelo Phone Number ID,
+                // entao trocar o numero de loja com a fila pendente nao leva mensagem antiga para a loja nova.
+                var destino = await CapturarDestinoAsync(canal, phoneNumberId, mensagens.GetArrayLength());
+
                 foreach (var mensagem in mensagens.EnumerateArray())
                 {
                     var id = Texto(mensagem, "id");
@@ -134,16 +147,19 @@ namespace APIBack.Atendimento
                         waba_id = wabaId
                     });
 
-                    var novo = await _eventos.RegistrarAsync(new WaEvento
+                    var evento = new WaEvento
                     {
                         Id = Guid.NewGuid(), Tipo = TipoEvento.Mensagem, Chave = id,
                         PhoneNumberId = phoneNumberId, DisplayPhone = display, PayloadJson = payload, IdCanal = canal?.Id
-                    });
+                    };
+                    Descrever(evento, mensagem);
+                    destino?.Aplicar(evento);
+                    var novo = await _eventos.RegistrarAsync(evento);
 
                     _logger.LogInformation(
-                        "[wa.in] ev={Evento} wa={Wa} tipo={Tipo} de={De} phone_number_id={PhoneNumberId} display={Display} bytes={Bytes}",
-                        novo ? "recebida" : "repetida", id, Texto(mensagem, "type"), Mascarar(Texto(mensagem, "from")),
-                        phoneNumberId, display, payload.Length);
+                        "[wa.in] ev={Evento} wa={Wa} tipo={Tipo} de={De} phone_number_id={PhoneNumberId} display={Display} rota={Rota} loja={Loja} bytes={Bytes}",
+                        novo ? "recebida" : "repetida", id, evento.TipoMensagem, Mascarar(evento.Remetente),
+                        phoneNumberId, display, evento.Rota ?? "(nao_capturada)", evento.IdEstabelecimentoDestino, payload.Length);
                     if (novo) novos++; else repetidos++;
                 }
             }
@@ -191,6 +207,59 @@ namespace APIBack.Atendimento
             }
 
             return (novos, repetidos, 0);
+        }
+
+        /// <summary>Destino de um lote de mensagens do mesmo numero, capturado uma vez. Nulo = sem repositorio (caminho legado).</summary>
+        private sealed record DestinoCapturado(string Rota, DateTime Em, Guid? Canal, Guid? Loja, string? SnapshotJson)
+        {
+            public void Aplicar(WaEvento e)
+            {
+                e.Rota = Rota;
+                e.RotaCapturadaEm = Em;
+                e.IdCanalDestino = Canal;
+                e.IdEstabelecimentoDestino = Loja;
+                e.RotaSnapshotJson = SnapshotJson;
+            }
+        }
+
+        private async Task<DestinoCapturado?> CapturarDestinoAsync(CanalWhatsapp? canalDoWebhook, string? phoneNumberId, int quantas)
+        {
+            if (quantas == 0) return null;
+            var agora = Agora();
+            // URL propria: o canal ja foi conferido contra o phone_number_id acima. Global: o dono ativo do ID agora.
+            var canal = canalDoWebhook;
+            if (canal == null)
+            {
+                if (_canais == null) return null;
+                canal = string.IsNullOrWhiteSpace(phoneNumberId) ? null : await _canais.ObterAtivoPorPhoneNumberIdAsync(phoneNumberId);
+            }
+
+            if (canal == null || canal.IdEstabelecimento == Guid.Empty)
+                return new DestinoCapturado(RotaEvento.SemCanal, agora, null, null, null);
+
+            var snapshot = JsonSerializer.Serialize(new
+            {
+                origem = canal.Origem, teste = canal.DeTeste, finalidade = canal.FinalidadeTeste, principal = canal.Central,
+                waba = canal.WabaId, phone_number_id = canal.PhoneNumberId
+            });
+            return new DestinoCapturado(RotaEvento.Para(canal), agora, canal.Id, canal.IdEstabelecimento, snapshot);
+        }
+
+        /// <summary>Remetente, tipo, horario e referencia da midia (so o ID da Meta; o arquivo nunca passa por aqui).</summary>
+        private static void Descrever(WaEvento evento, JsonElement mensagem)
+        {
+            evento.Remetente = Texto(mensagem, "from");
+            evento.TipoMensagem = Texto(mensagem, "type");
+            if (long.TryParse(Texto(mensagem, "timestamp"), out var unix))
+            {
+                try { evento.MensagemEm = DateTimeOffset.FromUnixTimeSeconds(unix).UtcDateTime; } catch (ArgumentOutOfRangeException) { }
+            }
+
+            if (evento.TipoMensagem is { Length: > 0 } tipo && mensagem.TryGetProperty(tipo, out var midia) && midia.ValueKind == JsonValueKind.Object)
+            {
+                evento.MidiaId = Texto(midia, "id");
+                evento.MidiaMime = Texto(midia, "mime_type");
+            }
         }
 
         private static int Contar(JsonElement valor, string propriedade) =>

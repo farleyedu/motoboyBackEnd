@@ -105,6 +105,17 @@ namespace APIBack.Service
             return (await ObterOportunidadeResumoAsync(id))!;
         }
 
+        public async Task<CrmLeadCriadoDto> CriarLeadAsync(int usuarioId, CriarCrmLeadRequest request, string? chaveIdempotencia, System.Threading.CancellationToken ct = default)
+        {
+            // Nenhuma fonte de CNPJ esta configurada: o CNPJ e guardado e a resposta diz que nao houve enriquecimento.
+            var lead = await new APIBack.Acompanhamento.Relacionamento.LeadCriador(_crmRepository).CriarAsync(request, usuarioId, chaveIdempotencia, ct);
+            lead.Oportunidade = await ObterOportunidadeResumoAsync(lead.OportunidadeId);
+            return lead;
+        }
+
+        public Task<IReadOnlyList<CrmLeadCandidatoDto>> ListarLeadsParecidosAsync(string? nome, string? telefone, System.Threading.CancellationToken ct = default) =>
+            new APIBack.Acompanhamento.Relacionamento.LeadCriador(_crmRepository).ParecidosAsync(nome, telefone, ct);
+
         public async Task<CrmOportunidadeResumoDto> AtualizarOportunidadeAsync(int usuarioId, Guid oportunidadeId, AtualizarCrmOportunidadeRequest request)
         {
             var row = await _crmRepository.ObterOportunidadeAsync(oportunidadeId)

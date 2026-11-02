@@ -877,6 +877,137 @@ SELECT id,
             return rows.ToList();
         }
 
+        // ---- Leads (ILeadStore)
+
+        public async Task<APIBack.Acompanhamento.Relacionamento.UsuarioEquipeDto?> MembroDaEquipeAsync(int usuarioId, System.Threading.CancellationToken ct)
+        {
+            await using var connection = await _dataSource.OpenConnectionAsync(ct);
+            return await connection.QueryFirstOrDefaultAsync<APIBack.Acompanhamento.Relacionamento.UsuarioEquipeDto>(new CommandDefinition(@"
+SELECT id AS Id, COALESCE(nome, email, '') AS Nome FROM usuario
+ WHERE id = @Id AND COALESCE(is_super_admin, FALSE) = TRUE AND deleted_at IS NULL;", new { Id = usuarioId }, cancellationToken: ct));
+        }
+
+        // Normalizacao de nome no SQL: a mesma da migration (nome_normalizado) e de RelacionamentoRegras.NormalizarNome.
+        private const string NomeNormalizadoSql = "btrim(regexp_replace(translate(lower({0}), 'áàâãäéèêëíìîïóòôõöúùûüçñ', 'aaaaaeeeeiiiiooooouuuucn'), '[^a-z0-9]+', ' ', 'g'))";
+
+        public async Task<IReadOnlyList<APIBack.Acompanhamento.Relacionamento.LeadCandidatoBruto>> CandidatosAsync(string nomeNormalizado, string? e164, System.Threading.CancellationToken ct)
+        {
+            // Largo de proposito: a decisao fina de "parecido" e feita em codigo (LeadCriador.Classificar).
+            var digitos = new string((e164 ?? string.Empty).Where(char.IsDigit).ToArray());
+            var nomeLead = "COALESCE(o.nome_normalizado, " + string.Format(NomeNormalizadoSql, "o.nome_empresa") + ")";
+            var sql = @"
+SELECT o.id AS Id, 'lead' AS Tipo, o.nome_empresa AS Nome, COALESCE(o.whatsapp_e164, o.telefone) AS Telefone,
+       o.responsavel_usuario_id AS ResponsavelUsuarioId, u.nome AS ResponsavelNome, o.status::text || '/' || o.coluna::text AS Situacao
+  FROM crm_oportunidade o LEFT JOIN usuario u ON u.id = o.responsavel_usuario_id
+ WHERE o.deleted_at IS NULL
+   AND ((@Digitos <> '' AND length(@Digitos) >= 10
+         AND right(regexp_replace(COALESCE(o.whatsapp_e164, o.telefone, ''), '[^0-9]', '', 'g'), 10) = right(@Digitos, 10))
+        OR (@Nome <> '' AND (" + nomeLead + @" = @Nome
+            OR " + nomeLead + @" LIKE '%' || @Nome || '%'
+            OR @Nome LIKE '%' || NULLIF(" + nomeLead + @", '') || '%'
+            OR split_part(" + nomeLead + @", ' ', 1) = split_part(@Nome, ' ', 1))))
+ LIMIT 30;";
+            await using var connection = await _dataSource.OpenConnectionAsync(ct);
+            var candidatos = (await connection.QueryAsync<APIBack.Acompanhamento.Relacionamento.LeadCandidatoBruto>(
+                new CommandDefinition(sql, new { Nome = nomeNormalizado, Digitos = digitos }, cancellationToken: ct))).ToList();
+            if (nomeNormalizado.Length > 0)
+            {
+                var nomeLoja = string.Format(NomeNormalizadoSql, "e.nome_fantasia");
+                var lojas = await connection.QueryAsync<APIBack.Acompanhamento.Relacionamento.LeadCandidatoBruto>(new CommandDefinition(@"
+SELECT e.id AS Id, 'loja' AS Tipo, e.nome_fantasia AS Nome, NULL AS Telefone, NULL::int AS ResponsavelUsuarioId, NULL AS ResponsavelNome,
+       COALESCE(e.situacao_comercial, 'ativo') AS Situacao
+  FROM estabelecimentos e
+ WHERE " + nomeLoja + @" = @Nome
+    OR " + nomeLoja + @" LIKE '%' || @Nome || '%'
+    OR @Nome LIKE '%' || NULLIF(" + nomeLoja + @", '') || '%'
+    OR split_part(" + nomeLoja + @", ' ', 1) = split_part(@Nome, ' ', 1)
+ LIMIT 30;", new { Nome = nomeNormalizado }, cancellationToken: ct));
+                candidatos.AddRange(lojas);
+            }
+            return candidatos;
+        }
+
+        public async Task<APIBack.Acompanhamento.Relacionamento.LeadGravado?> LeadPorChaveAsync(string chave, System.Threading.CancellationToken ct)
+        {
+            await using var connection = await _dataSource.OpenConnectionAsync(ct);
+            return await LerLeadPorChaveAsync(connection, chave, ct);
+        }
+
+        private static async Task<APIBack.Acompanhamento.Relacionamento.LeadGravado?> LerLeadPorChaveAsync(Npgsql.NpgsqlConnection connection, string chave, System.Threading.CancellationToken ct)
+        {
+            var lead = await connection.QueryFirstOrDefaultAsync<(Guid Id, string? Hash)?>(new CommandDefinition(
+                "SELECT id, lead_hash FROM crm_oportunidade WHERE lead_chave = @Chave;", new { Chave = chave }, cancellationToken: ct));
+            if (lead is not { } l) return null;
+            var acompanhamento = await connection.QueryFirstOrDefaultAsync<Guid?>(new CommandDefinition(
+                "SELECT id FROM acompanhamento WHERE oportunidade_id = @O;", new { O = l.Id }, cancellationToken: ct));
+            var passo = acompanhamento.HasValue
+                ? await connection.QueryFirstOrDefaultAsync<Guid?>(new CommandDefinition(
+                    "SELECT id FROM acompanhamento_proximo_passo WHERE acompanhamento_id = @A ORDER BY criado_em LIMIT 1;", new { A = acompanhamento }, cancellationToken: ct))
+                : null;
+            return new APIBack.Acompanhamento.Relacionamento.LeadGravado
+            {
+                OportunidadeId = l.Id, AcompanhamentoId = acompanhamento ?? Guid.Empty, ProximoPassoId = passo ?? Guid.Empty, Hash = l.Hash, Repetida = true
+            };
+        }
+
+        public async Task<APIBack.Acompanhamento.Relacionamento.LeadGravado> CriarLeadAsync(APIBack.Acompanhamento.Relacionamento.LeadNovo novo, System.Threading.CancellationToken ct)
+        {
+            await using var connection = await _dataSource.OpenConnectionAsync(ct);
+            await using var tx = await connection.BeginTransactionAsync(ct);
+            try
+            {
+                var oportunidade = await connection.ExecuteScalarAsync<Guid>(new CommandDefinition(@"
+INSERT INTO crm_oportunidade (nome_empresa, nome_contato, telefone, email, cnpj, tipo, responsavel_usuario_id, coluna, status, proxima_acao, estimativa_json,
+    origem, decisor, whatsapp_e164, nome_normalizado, lead_chave, lead_hash)
+VALUES (@Nome, @Decisor, @Whatsapp, @Email, @Cnpj, 'saas'::crm_tipo_servico, @Responsavel, 'conversa'::crm_kanban_col, 'ativo'::crm_oportunidade_status,
+    @ProximaAcao, '{}'::jsonb, @Origem, @Decisor, @Whatsapp, @NomeNormalizado, @Chave, @Hash)
+RETURNING id;", new
+                {
+                    novo.Nome, novo.Decisor, novo.Whatsapp, novo.Email, novo.Cnpj, Responsavel = novo.ResponsavelUsuarioId,
+                    ProximaAcao = $"{novo.PassoTipo} em {novo.PassoData:dd/MM}", novo.Origem, novo.NomeNormalizado, novo.Chave, novo.Hash
+                }, tx, cancellationToken: ct));
+
+                var detalhe = $"origem: {novo.Origem}; decisor: {novo.Decisor}" + (novo.DecisaoDuplicidade == null ? "" : $"; duplicidade decidida: {novo.DecisaoDuplicidade}");
+                await connection.ExecuteAsync(new CommandDefinition(
+                    "INSERT INTO crm_oportunidade_historico (id_oportunidade, id_usuario, acao, detalhe) VALUES (@O, @U, 'Lead criado', @D);",
+                    new { O = oportunidade, U = novo.UsuarioId, D = detalhe }, tx, cancellationToken: ct));
+
+                var documento = novo.Cnpj is { Length: 14 } ? novo.Cnpj : null;
+                var acompanhamento = await connection.ExecuteScalarAsync<Guid>(new CommandDefinition(@"
+INSERT INTO acompanhamento (oportunidade_id, fase, documento, quem_decide) VALUES (@O, 'conversa', @Doc, @Decisor)
+ON CONFLICT (oportunidade_id) WHERE oportunidade_id IS NOT NULL DO UPDATE SET atualizado_em = acompanhamento.atualizado_em
+RETURNING id;", new { O = oportunidade, Doc = documento, novo.Decisor }, tx, cancellationToken: ct));
+
+                await connection.ExecuteAsync(new CommandDefinition(@"
+INSERT INTO acompanhamento_relacionamento (acompanhamento_id, responsavel_usuario_id, responsavel_desde) VALUES (@A, @R, NOW())
+ON CONFLICT (acompanhamento_id) DO UPDATE SET responsavel_usuario_id = EXCLUDED.responsavel_usuario_id, responsavel_desde = NOW();",
+                    new { A = acompanhamento, R = novo.ResponsavelUsuarioId }, tx, cancellationToken: ct));
+
+                var passo = await connection.ExecuteScalarAsync<Guid>(new CommandDefinition(@"
+INSERT INTO acompanhamento_proximo_passo (acompanhamento_id, tipo, data, nota, criado_por) VALUES (@A, @Tipo, @Data, @Nota, @U) RETURNING id;",
+                    new { A = acompanhamento, Tipo = novo.PassoTipo, Data = novo.PassoData.ToDateTime(TimeOnly.MinValue), Nota = novo.PassoNota, U = novo.UsuarioId }, tx, cancellationToken: ct));
+
+                var evento = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    oportunidadeId = oportunidade, novo.Origem, novo.Decisor, responsavel = novo.ResponsavelUsuarioId,
+                    proximoPasso = new { tipo = novo.PassoTipo, data = novo.PassoData }
+                });
+                await connection.ExecuteAsync(new CommandDefinition(@"
+INSERT INTO acompanhamento_relacionamento_evento (acompanhamento_id, tipo, detalhe, usuario_id) VALUES (@A, 'lead_criado', @D::jsonb, @U);",
+                    new { A = acompanhamento, U = novo.UsuarioId, D = evento }, tx, cancellationToken: ct));
+
+                await tx.CommitAsync(ct);
+                return new APIBack.Acompanhamento.Relacionamento.LeadGravado { OportunidadeId = oportunidade, AcompanhamentoId = acompanhamento, ProximoPassoId = passo, Hash = novo.Hash };
+            }
+            catch (Npgsql.PostgresException ex) when (ex.SqlState == Npgsql.PostgresErrorCodes.UniqueViolation && ex.ConstraintName == "ux_crm_oportunidade_lead_chave" && novo.Chave != null)
+            {
+                // Duas chamadas com a mesma chave ao mesmo tempo: a segunda devolve o lead da primeira.
+                await tx.RollbackAsync(ct);
+                await using var leitura = await _dataSource.OpenConnectionAsync(ct);
+                return (await LerLeadPorChaveAsync(leitura, novo.Chave, ct))!;
+            }
+        }
+
         public async Task<IReadOnlyCollection<CrmContratoRow>> ListarContratosAsync(string? status)
         {
             const string sql = @"

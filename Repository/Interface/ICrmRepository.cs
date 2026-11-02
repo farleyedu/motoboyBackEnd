@@ -6,7 +6,7 @@ using APIBack.Service;
 
 namespace APIBack.Repository.Interface
 {
-    public interface ICrmRepository
+    public interface ICrmRepository : APIBack.Acompanhamento.Relacionamento.ILeadStore
     {
         Task<IReadOnlyCollection<CrmOportunidadeRow>> ListarOportunidadesAsync(string? status, string? tipo, int? responsavelUsuarioId, string? busca);
         Task<CrmOportunidadeRow?> ObterOportunidadeAsync(Guid oportunidadeId);
