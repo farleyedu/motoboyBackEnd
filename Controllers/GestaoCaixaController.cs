@@ -31,6 +31,16 @@ public sealed class GestaoCaixaController(ICaixaService service, IPedidoCoreServ
     public Task<IActionResult> Abrir([FromBody] AbrirCaixaRequest? req, CancellationToken ct) => Run(false, async (loja, usuario, acesso) =>
         await service.Abrir(loja, usuario, acesso, req ?? throw Vazio(), ct));
 
+    /// <summary>Caixa de hoje fechado: abre outro turno (o fechamento vale) com o fundo informado.</summary>
+    [HttpPost("turno")]
+    public Task<IActionResult> NovoTurno([FromBody] NovoTurnoRequest? req, CancellationToken ct) => Run(false, async (loja, usuario, acesso) =>
+        await service.NovoTurno(loja, usuario, acesso, req ?? throw Vazio(), ct));
+
+    /// <summary>Caixa de hoje fechado: desfaz o fechamento (estornos no livro) e o caixa continua aberto. Motivo obrigatório.</summary>
+    [HttpPost("reabrir")]
+    public Task<IActionResult> Reabrir([FromBody] ReabrirCaixaRequest? req, CancellationToken ct) => Run(false, async (loja, usuario, acesso) =>
+        await service.Reabrir(loja, usuario, acesso, req ?? throw Vazio(), ct));
+
     [HttpPost("movimentos")]
     public Task<IActionResult> Movimento([FromBody] MovimentoCaixaRequest? req, CancellationToken ct) => Run(false, async (loja, usuario, acesso) =>
         await service.RegistrarMovimento(loja, usuario, acesso, req ?? throw Vazio(), ct));

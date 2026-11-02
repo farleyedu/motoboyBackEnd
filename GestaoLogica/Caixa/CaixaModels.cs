@@ -30,16 +30,32 @@ public sealed record AjusteFechamento(Guid Id, DateTimeOffset Em, int Por, decim
 
 public sealed record FechamentoDto(string Id, DateOnly Dia, int Operador, DateTimeOffset Abertura, DateTimeOffset Fechamento,
     decimal Esperado, decimal Contado, IReadOnlyDictionary<string, decimal> Maquininha, IReadOnlyDictionary<string, decimal> MaquininhaEsperado,
-    string? Justificativa, decimal Fica, decimal Cofre, IReadOnlyList<AjusteFechamento> Ajustes, string? OperadorNome = null);
+    string? Justificativa, decimal Fica, decimal Cofre, IReadOnlyList<AjusteFechamento> Ajustes, string? OperadorNome = null, int Turno = 1,
+    bool Ajustavel = true);
 
 /// <param name="Aberto">Aberto de verdade: nem fechado nem com fechamento esperando o gerente (aí o caixa fica travado).</param>
 /// <param name="Aguardando">Fechamento enviado pelo operador esperando a aprovação do gerente.</param>
 /// <param name="Devolvido">O gerente devolveu o último envio para recontar (o caixa voltou a ficar aberto).</param>
 /// <param name="AprovadoPorNome">Fechado por aprovação do gerente: quem aprovou.</param>
+/// <param name="Turno">1 no primeiro caixa do dia; 2, 3… quando o dia abriu de novo depois de fechar (novo turno).</param>
+/// <param name="Anteriores">Fechamentos que saíram do dia: turnos encerrados e fechamentos desfeitos (reabertos), do mais antigo ao mais novo.</param>
 public sealed record CaixaDoDia(DateOnly Dia, bool Aberto, DateTimeOffset? AbertoEm, int? Por, decimal Fundo, IReadOnlyList<LinhaFita> Fita,
     IReadOnlyList<PedidoEmAberto> PedidosEmAberto, FechamentoDto? Fechamento, string? PorNome = null, decimal? FundoOriginal = null,
     IReadOnlyList<CorrecaoFundoDto>? CorrecoesFundo = null, int SolicitacoesPendentes = 0, EnvioDoFechamento? Aguardando = null,
-    DevolucaoDoFechamento? Devolvido = null, string? AprovadoPorNome = null);
+    DevolucaoDoFechamento? Devolvido = null, string? AprovadoPorNome = null, int Turno = 1, IReadOnlyList<FechamentoAnterior>? Anteriores = null);
+
+/// <summary>
+/// Um fechamento que saiu do dia. <c>Destino</c> = <c>novo_turno</c> (o fechamento vale; o dia abriu outro turno) ou <c>reaberto</c>
+/// (o fechamento foi desfeito: quebra/sobra, ajustes e recolhimento estornados no livro).
+/// </summary>
+public sealed record FechamentoAnterior(string Destino, int Turno, DateTimeOffset Em, string? PorNome, string? Motivo, DateTimeOffset AbertoEm,
+    DateTimeOffset FechadoEm, string? FechadoPorNome, decimal Esperado, decimal Contado, decimal Cofre, decimal Fica);
+
+/// <summary>Abrir outro turno no mesmo dia, com o fundo de troco (o padrão da tela é o que ficou na gaveta).</summary>
+public sealed record NovoTurnoRequest(DateOnly Dia, decimal Fundo);
+
+/// <summary>Desfazer o fechamento de hoje e continuar o caixa aberto. <c>Motivo</c> obrigatório (mínimo de 3 letras).</summary>
+public sealed record ReabrirCaixaRequest(DateOnly Dia, string? Motivo);
 
 /// <summary>Configuração do caixa da loja, decidida pelo gerente.</summary>
 /// <param name="ToleranciaFechamento">Diferença (para mais ou para menos) que o operador fecha sozinho; acima disso vai para o gerente.</param>

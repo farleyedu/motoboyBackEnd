@@ -44,6 +44,9 @@ public interface ICaixaService
     Task<ConfigDoCaixa> SalvarConfig(Guid loja, int usuario, SalvarConfigDoCaixaRequest req, CancellationToken ct);
     Task<IReadOnlyList<FechamentoAguardando>> Aguardando(Guid loja, CancellationToken ct);
     Task<CaixaDoDia> DecidirFechamento(Guid loja, int usuario, GestaoPapeis.Acesso acesso, DateOnly dia, DecisaoDoFechamentoRequest req, CancellationToken ct);
+    // Abrir de novo depois de fechar: novo turno ou reabrir o mesmo (CaixaService.Turnos.cs).
+    Task<CaixaDoDia> NovoTurno(Guid loja, int usuario, GestaoPapeis.Acesso acesso, NovoTurnoRequest req, CancellationToken ct);
+    Task<CaixaDoDia> Reabrir(Guid loja, int usuario, GestaoPapeis.Acesso acesso, ReabrirCaixaRequest req, CancellationToken ct);
 }
 
 public sealed partial class CaixaService(NpgsqlDataSource dataSource, IAcontecimentosService livro, TimeProvider? relogio = null,
@@ -85,6 +88,11 @@ public sealed partial class CaixaService(NpgsqlDataSource dataSource, IAcontecim
         public string? DevolucaoMotivo { get; set; }
         public string? DevolvidoPorNome { get; set; }
         public string? AprovadoPorNome { get; set; }
+        public int Versao { get; set; }
+        public int Turno { get; set; } = 1;
+        public DateTime? CicloDesde { get; set; }
+        public Guid? RecolhimentoId { get; set; }
+        public int? AprovadoPor { get; set; }
     }
 
     private const string ColunasDia = @"dia, fundo, aberto_por, aberto_em, fechado_por, fechado_em, fechamento_id, esperado, contado,
@@ -93,7 +101,8 @@ public sealed partial class CaixaService(NpgsqlDataSource dataSource, IAcontecim
        (SELECT u.nome::text FROM usuario u WHERE u.id = fechado_por) AS fechado_por_nome,
        envio_em, envio_por, envio::text AS envio, (SELECT u.nome::text FROM usuario u WHERE u.id = envio_por) AS envio_por_nome,
        devolvido_em, devolvido_por, devolucao_motivo, (SELECT u.nome::text FROM usuario u WHERE u.id = devolvido_por) AS devolvido_por_nome,
-       (SELECT u.nome::text FROM usuario u WHERE u.id = aprovado_por) AS aprovado_por_nome";
+       (SELECT u.nome::text FROM usuario u WHERE u.id = aprovado_por) AS aprovado_por_nome,
+       versao, turno, ciclo_desde, recolhimento_id, aprovado_por";
 
     public async Task<DateOnly> Hoje(Guid loja, CancellationToken ct) =>
         AcontecimentoRegras.DiaLocal(_relogio.GetUtcNow(), await livro.Fuso(loja, ct));
@@ -109,13 +118,14 @@ public sealed partial class CaixaService(NpgsqlDataSource dataSource, IAcontecim
         var fundo = correcoes.Count == 0 ? row.Fundo : correcoes[^1].FundoNovo;
         var pendentes = await PendentesPorMovimento(c, loja, dia);
         var aberto = row.FechadoEm is null && row.EnvioEm is null;
-        var fita = await Fita(loja, dia, contas.Gaveta, ct, fundo, aberto, pendentes.Movimentos);
+        var fita = await Fita(loja, dia, contas.Gaveta, ct, fundo, aberto, pendentes.Movimentos, InicioDoTurno(row));
         // Pedido em aberto é pendência de hoje: dia fechado ou passado não reconstrói o que estava ativo (o banco guarda só o status atual).
         var emAberto = row.FechadoEm is null && dia == await Hoje(loja, ct)
             ? await PedidosEmAbertoQuery.Carregar(c, loja, ct) : Array.Empty<PedidoEmAberto>();
         return new CaixaDoDia(dia, aberto, Utc(row.AbertoEm), row.AbertoPor, fundo, fita, emAberto,
             row.FechadoEm is null ? null : await Fechamento(c, loja, row), row.AbertoPorNome, row.Fundo, correcoes, pendentes.Total,
-            row.FechadoEm is null ? EnvioDe(row) : null, row.FechadoEm is null ? DevolucaoDe(row) : null, row.AprovadoPorNome);
+            row.FechadoEm is null ? EnvioDe(row) : null, row.FechadoEm is null ? DevolucaoDe(row) : null, row.AprovadoPorNome,
+            row.Turno, await Anteriores(c, loja, dia));
     }
 
     public async Task<CaixaDoDia> Abrir(Guid loja, int usuario, GestaoPapeis.Acesso acesso, AbrirCaixaRequest req, CancellationToken ct)
@@ -304,7 +314,7 @@ SELECT s.id, a.id, coalesce(s.descricao, a.descricao),
         var diferenca = CaixaRegras.Diferenca(esperado, contado);
         CaixaRegras.ExigirJustificativa(diferenca, req.Justificativa);
         var (fica, cofre) = CaixaRegras.Repartir(contado, req.Fica);
-        var fita = await Fita(loja, hoje, contas.Gaveta, ct);
+        var fita = await Fita(loja, hoje, contas.Gaveta, ct, desde: InicioDoTurno(await Dia(c, loja, hoje)));
         var maqEsperado = FormaCaixa.Maquininha.ToDictionary(f => f, f => CaixaRegras.R2(fita.Where(l => l.Tipo == "venda" && l.Forma == f).Sum(l => l.Valor)));
         var maquininha = FormaCaixa.Maquininha.ToDictionary(f => f, f => CaixaRegras.R2(req.Maquininha?.GetValueOrDefault(f) ?? 0));
         var justificativa = diferenca == 0 ? null : Cortar(req.Justificativa!.Trim(), 300);
@@ -327,10 +337,12 @@ SELECT s.id, a.id, coalesce(s.descricao, a.descricao),
         var contas = await ContasDoCaixa(c, loja, null, ct);
         var diferenca = CaixaRegras.Diferenca(esperado, contado);
         var dia = hoje.ToString("yyyy-MM-dd");
+        // Depois de reabrir ou de um novo turno o dia fecha de novo: a versão separa as chaves do livro.
+        var sufixo = SufixoDaVersao(await Dia(c, loja, hoje));
 
         var fechamento = new PublicarAcontecimentoRequest
         {
-            ChaveIdempotencia = $"caixa:fechamento:{dia}", Tipo = TipoFechamento, Modulo = ModuloGestao.Caixa, DataFato = _relogio.GetUtcNow(),
+            ChaveIdempotencia = $"caixa:fechamento:{dia}{sufixo}", Tipo = TipoFechamento, Modulo = ModuloGestao.Caixa, DataFato = _relogio.GetUtcNow(),
             Descricao = diferenca == 0 ? "Fechamento do caixa · bateu" : $"Fechamento do caixa · {(diferenca < 0 ? "faltou" : "sobrou")} R$ {Math.Abs(diferenca):N2}",
             Origem = new OrigemRef { Tipo = "caixa", Id = dia },
             Dados = JsonSerializer.SerializeToElement(new
@@ -356,7 +368,7 @@ SELECT s.id, a.id, coalesce(s.descricao, a.descricao),
         if (cofre > 0)
             recolhimento = (await livro.Publicar(c, tx, loja, usuario, new PublicarAcontecimentoRequest
             {
-                ChaveIdempotencia = $"caixa:recolhimento:{dia}", Tipo = TipoRecolhimento, Modulo = ModuloGestao.Caixa, DataFato = _relogio.GetUtcNow(),
+                ChaveIdempotencia = $"caixa:recolhimento:{dia}{sufixo}", Tipo = TipoRecolhimento, Modulo = ModuloGestao.Caixa, DataFato = _relogio.GetUtcNow(),
                 Descricao = $"Recolhimento ao cofre · R$ {cofre:N2}", Origem = new OrigemRef { Tipo = "caixa", Id = dia },
                 Lancamentos = Transferencia(contas.Gaveta, contas.Cofre, cofre, hoje, "Recolhimento ao cofre"),
             }, ct)).Id;
@@ -383,7 +395,9 @@ UPDATE gestao_caixa_dias SET fechado_por = @fechadoPor, fechado_em = @agora, fec
             new { loja, de = mes.ToDateTime(TimeOnly.MinValue), ate = mes.AddMonths(1).ToDateTime(TimeOnly.MinValue) });
         var lista = new List<FechamentoDto>();
         foreach (var d in dias) lista.Add(await Fechamento(c, loja, d));
-        return lista;
+        // Turnos que fecharam antes de um novo turno no mesmo dia: continuam sendo fechamentos (só não se ajustam mais).
+        lista.AddRange(await TurnosEncerrados(c, loja, mes));
+        return lista.OrderByDescending(f => f.Dia).ThenByDescending(f => f.Turno).ToList();
     }
 
     public async Task<FechamentoDto> AjustarFechamento(Guid loja, int usuario, DateOnly dia, AjustarFechamentoRequest req, CancellationToken ct)
@@ -430,8 +444,9 @@ VALUES (@ajusteId, @loja, @dia, @usuario, @agora, @atual, @ContadoNovo, @motivo,
     // ---------------------------------------------------------------- apoio
 
     /// <summary>Fita do dia a partir do livro: abertura, vendas (todas as formas) e o que mexeu na gaveta.</summary>
+    /// <param name="desde">Início do turno (2º turno em diante): o que veio antes é do turno que já fechou.</param>
     private async Task<IReadOnlyList<LinhaFita>> Fita(Guid loja, DateOnly dia, Guid gaveta, CancellationToken ct, decimal? fundoEfetivo = null,
-        bool diaAberto = false, IReadOnlyDictionary<Guid, Guid>? pendentes = null)
+        bool diaAberto = false, IReadOnlyDictionary<Guid, Guid>? pendentes = null, DateTimeOffset? desde = null)
     {
         LinhaFita Marca(LinhaFita l, AcontecimentoDto a)
         {
@@ -444,9 +459,12 @@ VALUES (@ajusteId, @loja, @dia, @usuario, @agora, @atual, @ContadoNovo, @motivo,
         var acontecimentos = await livro.LinhaDoTempo(loja, new PeriodoFiltro { Mes = new DateOnly(dia.Year, dia.Month, 1), Dia = dia, Limite = 1000 }, ct);
         var motoboys = (await livro.Contas(loja, ct)).Where(k => k.Tipo == TipoConta.Recebivel && k.Subtipo == APIBack.GestaoLogica.Vendas.VendaDoPedido.SubtipoMotoboys)
             .Select(k => k.Id).ToHashSet();
+        // Fechamento, recolhimento e ajuste não entram na fita; o estorno deles (caixa reaberto) também não.
+        var doFechamento = acontecimentos.Where(a => a.Tipo is TipoFechamento or TipoRecolhimento or TipoAjusteFechamento).Select(a => a.Id).ToHashSet();
         var fita = new List<LinhaFita>();
-        foreach (var a in acontecimentos.OrderBy(a => a.DataFato).ThenBy(a => a.RegistradoEm))
+        foreach (var a in acontecimentos.Where(a => desde is null || a.DataFato >= desde).OrderBy(a => a.DataFato).ThenBy(a => a.RegistradoEm))
         {
+            if (a.CorrigeId is { } corrigido && doFechamento.Contains(corrigido)) continue;
             var hora = TimeZoneInfo.ConvertTime(a.DataFato, fuso).ToString("HH:mm");
             if (a.Tipo == TipoAbertura)
             {
@@ -526,13 +544,14 @@ VALUES (@ajusteId, @loja, @dia, @usuario, @agora, @atual, @ContadoNovo, @motivo,
 SELECT a.id, a.em, a.por, a.contado_anterior, a.contado_novo, a.motivo, u.nome::text AS por_nome
   FROM gestao_caixa_ajustes a
   LEFT JOIN usuario u ON u.id = a.por
- WHERE a.estabelecimento_id = @loja AND a.dia = @dia ORDER BY a.em, a.id", new { loja, dia = d.Dia }))
+ WHERE a.estabelecimento_id = @loja AND a.dia = @dia AND (CAST(@desde AS timestamptz) IS NULL OR a.em >= @desde) ORDER BY a.em, a.id",
+            new { loja, dia = d.Dia, desde = d.CicloDesde }))
             .Select(a => new AjusteFechamento(a.Id, Utc(a.Em), a.Por, a.Anterior, a.Novo, a.Motivo, a.PorNome)).ToList();
         var vazio = new Dictionary<string, decimal>();
         return new FechamentoDto(dia.ToString("yyyy-MM-dd"), dia, d.FechadoPor!.Value, Utc(d.AbertoEm), Utc(d.FechadoEm!.Value), d.Esperado!.Value,
             d.Contado!.Value, d.Maquininha is null ? vazio : JsonSerializer.Deserialize<Dictionary<string, decimal>>(d.Maquininha)!,
             d.MaquininhaEsperado is null ? vazio : JsonSerializer.Deserialize<Dictionary<string, decimal>>(d.MaquininhaEsperado)!,
-            d.Justificativa, d.Fica ?? 0, d.Cofre ?? 0, ajustes, d.FechadoPorNome);
+            d.Justificativa, d.Fica ?? 0, d.Cofre ?? 0, ajustes, d.FechadoPorNome, d.Turno);
     }
 
     /// <summary>Gaveta e cofre da loja, criados na primeira abertura (contas "caixa" do livro, idempotentes pela chave).</summary>

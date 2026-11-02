@@ -252,7 +252,8 @@ VALUES (@ajusteId, @loja, @chave, @dia, @ordem, @usuario, @agora, @efetivo, @fun
 
     private static async Task<decimal> FundoEfetivo(NpgsqlConnection c, NpgsqlTransaction? tx, Guid loja, DateOnly dia) =>
         await c.ExecuteScalarAsync<decimal>(@"
-SELECT coalesce((SELECT fundo_novo FROM gestao_caixa_fundo_ajustes WHERE estabelecimento_id = @loja AND dia = @dia ORDER BY ordem DESC LIMIT 1),
+SELECT coalesce((SELECT a.fundo_novo FROM gestao_caixa_fundo_ajustes a JOIN gestao_caixa_dias d ON d.estabelecimento_id = a.estabelecimento_id AND d.dia = a.dia
+                   WHERE a.estabelecimento_id = @loja AND a.dia = @dia AND (d.turno = 1 OR a.em >= d.aberto_em) ORDER BY a.ordem DESC LIMIT 1),
                 (SELECT fundo FROM gestao_caixa_dias WHERE estabelecimento_id = @loja AND dia = @dia))",
             new { loja, dia = dia.ToDateTime(TimeOnly.MinValue) }, tx);
 
@@ -260,7 +261,8 @@ SELECT coalesce((SELECT fundo_novo FROM gestao_caixa_fundo_ajustes WHERE estabel
         (await c.QueryAsync<(Guid Id, DateTime Em, int Por, string? PorNome, decimal Anterior, decimal Novo, string Motivo)>(@"
 SELECT a.id, a.em, a.por, u.nome::text AS por_nome, a.fundo_anterior, a.fundo_novo, a.motivo
   FROM gestao_caixa_fundo_ajustes a LEFT JOIN usuario u ON u.id = a.por
- WHERE a.estabelecimento_id = @loja AND a.dia = @dia ORDER BY a.ordem", new { loja, dia = dia.ToDateTime(TimeOnly.MinValue) }))
+  JOIN gestao_caixa_dias d ON d.estabelecimento_id = a.estabelecimento_id AND d.dia = a.dia
+ WHERE a.estabelecimento_id = @loja AND a.dia = @dia AND (d.turno = 1 OR a.em >= d.aberto_em) ORDER BY a.ordem", new { loja, dia = dia.ToDateTime(TimeOnly.MinValue) }))
             .Select(a => new CorrecaoFundoDto(a.Id, dia, Utc(a.Em), a.Por, a.PorNome, a.Anterior, a.Novo, a.Motivo)).ToList();
 
     // ---------------------------------------------------------------- apoio
