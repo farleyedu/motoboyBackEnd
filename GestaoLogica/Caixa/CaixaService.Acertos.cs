@@ -289,17 +289,32 @@ VALUES (@id, @loja, @pedido, @venda, @dinheiro, @integracao, @cartao, @ifood, @c
         if (!acesso.PodeLancar) throw new GestaoException("SEM_PERMISSAO", "Você não pode registrar no caixa.", 403);
         var chave = req.ChaveIdempotencia?.Trim();
         if (string.IsNullOrEmpty(chave) || chave.Length > 100) throw Invalido("Envie a chave de idempotência.");
-        var forma = req.Forma?.Trim();
-        if (forma is not (FormaCaixa.Dinheiro or FormaCaixa.Pix or FormaCaixa.Debito or FormaCaixa.Credito))
-            throw Invalido("Forma: din, pix, deb ou cre. iFood é recebido pelo repasse.");
+        // Uma forma só (como sempre) ou o pedido dividido em várias partes.
+        var partes = (req.Pagamentos is { Count: > 0 } lista
+            ? lista.Select(p => (Forma: p.Forma?.Trim() ?? "", p.Valor, p.ValorRecebido))
+            : new[] { (Forma: req.Forma?.Trim() ?? "", Valor: 0m, ValorRecebido: (decimal?)req.ValorRecebido) }).ToList();
+        var dividido = req.Pagamentos is { Count: > 1 };
+        foreach (var p in partes)
+            if (p.Forma is not (FormaCaixa.Dinheiro or FormaCaixa.Pix or FormaCaixa.Debito or FormaCaixa.Credito))
+                throw Invalido("Forma: din, pix, deb ou cre. iFood é recebido pelo repasse.");
+        if (dividido)
+        {
+            if (partes.Count > 4 || partes.Select(p => p.Forma).Distinct().Count() != partes.Count)
+                throw Invalido("Uma parte por forma de pagamento (no máximo 4).");
+            if (partes.Any(p => p.Valor <= 0 || decimal.Round(p.Valor, 2) != p.Valor)) throw Invalido("Cada parte: valor maior que zero, até 2 casas.");
+        }
+        var forma = partes[0].Forma;
         var hoje = await SoHoje(loja, req.Dia, ct);
 
         await using var c = await dataSource.OpenConnectionAsync(ct);
         await DiaAberto(c, loja, hoje);
         var contas = await ContasDoCaixa(c, loja, null, ct);
-        var destino = forma == FormaCaixa.Dinheiro ? contas.Gaveta : await c.ExecuteScalarAsync<Guid?>(@"SELECT id FROM gestao_contas
+        Guid? maquininha = null;
+        if (partes.Any(p => p.Forma != FormaCaixa.Dinheiro))
+            maquininha = await c.ExecuteScalarAsync<Guid?>(@"SELECT id FROM gestao_contas
  WHERE estabelecimento_id = @loja AND tipo = 'recebivel' AND subtipo = 'maquininha' AND ativo ORDER BY criado_em, id LIMIT 1", new { loja })
-            ?? throw new GestaoException("SEM_CONTA", "Cadastre a maquininha no Financeiro antes de receber em Pix ou cartão.", 409);
+                ?? throw new GestaoException("SEM_CONTA", "Cadastre a maquininha no Financeiro antes de receber em Pix ou cartão.", 409);
+        Guid DestinoDe(string f) => f == FormaCaixa.Dinheiro ? contas.Gaveta : maquininha!.Value;
 
         await using var tx = await c.BeginTransactionAsync(ct);
         var pedido = req.PedidoId.ToString(CultureInfo.InvariantCulture);
@@ -314,15 +329,45 @@ VALUES (@id, @loja, @pedido, @venda, @dinheiro, @integracao, @cartao, @ifood, @c
             return (await CarregarDia(loja, hoje, ct))!;
         }
         var total = CaixaRegras.R2(linhas.Sum(l => l.Liquido));
-        if (forma == FormaCaixa.Dinheiro && req.ValorRecebido < total)
-            throw Invalido($"Valor menor que o que falta receber (R$ {total:N2}).");
-        foreach (var l in linhas)
-            await livro.Liquidar(c, tx, loja, usuario, new LiquidarRequest
+        if (!dividido)
+        {
+            if (forma == FormaCaixa.Dinheiro && (partes[0].ValorRecebido ?? req.ValorRecebido) < total)
+                throw Invalido($"Valor menor que o que falta receber (R$ {total:N2}).");
+            foreach (var l in linhas)
+                await livro.Liquidar(c, tx, loja, usuario, new LiquidarRequest
+                {
+                    ChaveIdempotencia = $"recebimento:{chave}:{l.LancamentoId}", LancamentoId = l.LancamentoId, ContaId = DestinoDe(forma), DataPagamento = hoje,
+                    // A forma vai no fim da descrição: a fita e a conferência da maquininha leem dali (a liquidação não tem dados próprios).
+                    Descricao = $"Pedido #{pedido} recebido no caixa · {forma}",
+                }, ct);
+            await tx.CommitAsync(ct);
+            return (await CarregarDia(loja, hoje, ct))!;
+        }
+
+        // Dividido: as partes têm de cobrir o pedido inteiro (a sobra pela metade não existe) e cada uma vira o seu recebimento,
+        // com a forma na descrição. As partes enchem as linhas do pedido em ordem; o dinheiro com troco só vale na sua parte.
+        var soma = CaixaRegras.R2(partes.Sum(p => p.Valor));
+        if (soma != total) throw Invalido($"As partes somam R$ {soma:N2}, mas o pedido tem R$ {total:N2} a receber.");
+        foreach (var p in partes.Where(p => p.Forma == FormaCaixa.Dinheiro))
+            if ((p.ValorRecebido ?? p.Valor) < p.Valor) throw Invalido($"Dinheiro: recebeu menos que a parte de R$ {p.Valor:N2}.");
+        var falta = linhas.Select(l => (Linha: l, Resta: CaixaRegras.R2(l.Liquido))).ToList();
+        for (var i = 0; i < partes.Count; i++)
+        {
+            var restaDaParte = partes[i].Valor;
+            for (var j = 0; j < falta.Count && restaDaParte > 0; j++)
             {
-                ChaveIdempotencia = $"recebimento:{chave}:{l.LancamentoId}", LancamentoId = l.LancamentoId, ContaId = destino, DataPagamento = hoje,
-                // A forma vai no fim da descrição: a fita e a conferência da maquininha leem dali (a liquidação não tem dados próprios).
-                Descricao = $"Pedido #{pedido} recebido no caixa · {forma}",
-            }, ct);
+                if (falta[j].Resta <= 0) continue;
+                var parte = CaixaRegras.R2(Math.Min(restaDaParte, falta[j].Resta));
+                await livro.Liquidar(c, tx, loja, usuario, new LiquidarParcialRequest
+                {
+                    ChaveIdempotencia = $"recebimento:{chave}:{falta[j].Linha.LancamentoId}:{partes[i].Forma}", LancamentoId = falta[j].Linha.LancamentoId,
+                    ContaId = DestinoDe(partes[i].Forma), DataPagamento = hoje, Valor = parte,
+                    Descricao = $"Pedido #{pedido} recebido no caixa · {partes[i].Forma}",
+                }, ct);
+                falta[j] = (falta[j].Linha, CaixaRegras.R2(falta[j].Resta - parte));
+                restaDaParte = CaixaRegras.R2(restaDaParte - parte);
+            }
+        }
         await tx.CommitAsync(ct);
         return (await CarregarDia(loja, hoje, ct))!;
     }

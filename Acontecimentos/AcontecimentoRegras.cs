@@ -425,6 +425,35 @@ public static class AcontecimentoRegras
     }
 
     /// <summary>
+    /// Recebe (ou paga) uma PARTE do lançamento, para a venda dividida em formas. Cada parte vira o seu acontecimento de pagamento
+    /// (a forma vai na descrição). Só vale para lançamento sem correção; a soma das partes não passa do que falta. Quem chama (o
+    /// Caixa) cobre o lançamento inteiro na mesma transação: sobra pela metade não existe, porque a view já mostra "recebido".
+    /// </summary>
+    public static AcontecimentoPlano PlanejarLiquidacaoParcial(LancamentoAtual alvo, IReadOnlyList<LancamentoAtual> correcoesDoAlvo,
+        ContaInfo conta, ContaInfo? contaDoAlvo, AcontecimentoAtual original, LiquidarParcialRequest r, int? responsavelId,
+        TimeZoneInfo fuso, DateTimeOffset agora)
+    {
+        var chave = Chave(r.ChaveIdempotencia);
+        if (original.Estornado) throw new GestaoException("JA_ESTORNADO", "Acontecimento estornado não se paga.", 409);
+        if (contaDoAlvo?.Tipo == TipoConta.CartaoEmpresa) throw Invalido("Compra no cartão da empresa se paga pela fatura inteira.");
+        if (alvo.CorrigeLancamentoId != null) throw Invalido("Pague o lançamento original; as correções vão junto.");
+        if (alvo.Natureza == Natureza.Transferencia || StatusLancamento.Liquidado(alvo.StatusRegistro))
+            throw Invalido("Este lançamento já nasceu pago ou recebido.");
+        if (correcoesDoAlvo.Count > 0) throw Invalido("Venda com correção não se divide em formas: ajuste antes de receber.");
+        if (r.Valor <= 0 || decimal.Round(r.Valor, 2) != r.Valor) throw Invalido("Valor da parte: maior que zero, até 2 casas.");
+        var falta = alvo.Valor - alvo.Liquidado;
+        if (r.Valor > falta) throw Invalido($"Esta parte (R$ {r.Valor:N2}) passa do que falta receber (R$ {falta:N2}).");
+        var data = DataPagamento(r.DataPagamento, conta, fuso, agora);
+        var verbo = alvo.Sentido == Sentido.Entrada ? "Recebido" : "Pago";
+        var hash = Hash(new { tipo = "pagamento_parcial", alvo = alvo.Id, conta = conta.Id, valor = r.Valor, data, responsavelId });
+        var liq = new LiquidacaoPlano(alvo.Id, conta.Id, r.Valor, data, null);
+        return new AcontecimentoPlano(chave, hash, TipoAcontecimento.Pagamento, ModuloGestao.Financeiro, agora,
+            Mes(DiaLocal(agora, fuso)), responsavelId, "lancamento", alvo.Id.ToString(), null,
+            Opcional(r.Descricao, 300) ?? $"{verbo}: {alvo.Descricao ?? alvo.Natureza}", "{}", null, null, null, null,
+            r.Valor, Array.Empty<LancamentoPlano>(), Array.Empty<MovimentoPlano>(), new[] { liq });
+    }
+
+    /// <summary>
     /// Pagamento da fatura do cartao da empresa: quita, de uma vez, tudo o que esta a pagar naquela fatura, saindo do
     /// banco ou do caixa. Cada compra deixa de estar a pagar so aqui (o cartao nao tira dinheiro na hora da compra).
     /// </summary>

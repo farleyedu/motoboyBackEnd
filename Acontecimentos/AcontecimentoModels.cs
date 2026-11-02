@@ -139,13 +139,22 @@ public sealed class AjusteRequest
     public bool ConfirmacaoHumana { get; set; }
 }
 
-public sealed class LiquidarRequest
+public class LiquidarRequest
 {
     public string? ChaveIdempotencia { get; set; }
     public Guid LancamentoId { get; set; }
     public Guid ContaId { get; set; }
     public DateOnly? DataPagamento { get; set; }
     public string? Descricao { get; set; }
+}
+
+/// <summary>
+/// Recebimento de uma parte do lançamento (venda paga em mais de uma forma). Só módulos do servidor criam este tipo, dentro da
+/// transação que cobre o lançamento inteiro; o corpo HTTP vira sempre <see cref="LiquidarRequest"/> e quita por inteiro.
+/// </summary>
+public sealed class LiquidarParcialRequest : LiquidarRequest
+{
+    public decimal Valor { get; set; }
 }
 
 public sealed class FecharMesRequest

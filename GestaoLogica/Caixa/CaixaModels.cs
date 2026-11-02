@@ -218,7 +218,12 @@ public sealed record VendaAReceber(int PedidoId, string Numero, string Descricao
 
 /// <summary>Recebe no caixa o que ficou a receber da venda do pedido: dinheiro vai para a gaveta; Pix e cartão, para a maquininha.
 /// <c>ValorRecebido</c> em dinheiro pode ser maior (troco não entra no livro).</summary>
-public sealed record RecebimentoRequest(string? ChaveIdempotencia, DateOnly Dia, int PedidoId, string? Forma, decimal ValorRecebido);
+/// <param name="Pagamentos">Pedido pago em mais de uma forma: cada parte com a forma e o valor (as partes somam o que falta). Em dinheiro,
+/// <c>ValorRecebido</c> da parte pode ser maior (o troco só vale nela). Sem a lista, vale <c>Forma</c> e <c>ValorRecebido</c> como sempre.</param>
+public sealed record RecebimentoRequest(string? ChaveIdempotencia, DateOnly Dia, int PedidoId, string? Forma, decimal ValorRecebido,
+    IReadOnlyList<ParteDoRecebimento>? Pagamentos = null);
+
+public sealed record ParteDoRecebimento(string? Forma, decimal Valor, decimal? ValorRecebido = null);
 
 /// <summary>
 /// Venda de balcão pelo Caixa (6C5): vira pedido sem endereço. Dinheiro exige <c>ValorRecebido</c>. <c>Concluir</c> (padrão true): entregue

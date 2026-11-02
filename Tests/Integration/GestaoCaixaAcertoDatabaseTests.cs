@@ -118,4 +118,44 @@ public partial class DeliverySyncDatabaseTests
             new RecebimentoRequest("r2", hoje, 24, FormaCaixa.Pix, 64m), default))).Codigo);
         Assert.Empty(await caixa.AReceberNoCaixa(db.StoreId, default));
     }
+
+    [DeliveryDatabaseFact]
+    public async Task Recebimento_dividido_em_formas_quita_o_pedido_de_uma_vez_e_cada_parte_vai_para_a_sua_conta()
+    {
+        await using var db = await VendaDatabase();
+        var livro = Livro(db.Source);
+        var caixa = new CaixaService(db.Source, livro);
+        var operador = GestaoPapeis.Resolver((m, _) => m is "Caixa", false);
+        var hoje = await caixa.Hoje(db.StoreId, default);
+        await using (var c = await db.Source.OpenConnectionAsync())
+        {
+            await using var tx = await c.BeginTransactionAsync();
+            await VendaDoPedido.PublicarAsync(livro, c, tx, db.StoreId, 24, 7, ModalidadeVenda.Salao);
+            await tx.CommitAsync();
+        }
+        Assert.Equal(64m, Assert.Single(await caixa.AReceberNoCaixa(db.StoreId, default)).AReceber);
+        await livro.CriarConta(db.StoreId, 7, new ContaRequest { ChaveIdempotencia = "maq-dividido", Tipo = TipoConta.Recebivel, Subtipo = "maquininha", Nome = "Stone" }, default);
+        var antes = Gaveta(await livro.Contas(db.StoreId, default));
+
+        // Regras: as partes têm de cobrir o pedido; uma parte por forma; dinheiro não pode ser menor que a parte.
+        Assert.Equal("CAMPO_INVALIDO", (await Assert.ThrowsAsync<GestaoException>(() => caixa.Receber(db.StoreId, 7, operador, new RecebimentoRequest("d0", hoje, 24, null, 0,
+            new[] { new ParteDoRecebimento(FormaCaixa.Dinheiro, 40m), new ParteDoRecebimento(FormaCaixa.Pix, 20m) }), default))).Codigo);
+        Assert.Equal("CAMPO_INVALIDO", (await Assert.ThrowsAsync<GestaoException>(() => caixa.Receber(db.StoreId, 7, operador, new RecebimentoRequest("d0", hoje, 24, null, 0,
+            new[] { new ParteDoRecebimento(FormaCaixa.Pix, 30m), new ParteDoRecebimento(FormaCaixa.Pix, 34m) }), default))).Codigo);
+        Assert.Equal("CAMPO_INVALIDO", (await Assert.ThrowsAsync<GestaoException>(() => caixa.Receber(db.StoreId, 7, operador, new RecebimentoRequest("d0", hoje, 24, null, 0,
+            new[] { new ParteDoRecebimento(FormaCaixa.Dinheiro, 40m, 30m), new ParteDoRecebimento(FormaCaixa.Pix, 24m) }), default))).Codigo);
+        Assert.Single(await caixa.AReceberNoCaixa(db.StoreId, default)); // nada ficou pela metade
+
+        // R$ 40 em dinheiro (cliente deu R$ 50) + R$ 24 no Pix.
+        var partes = new[] { new ParteDoRecebimento(FormaCaixa.Dinheiro, 40m, 50m), new ParteDoRecebimento(FormaCaixa.Pix, 24m) };
+        var dia = await caixa.Receber(db.StoreId, 7, operador, new RecebimentoRequest("d1", hoje, 24, null, 0, partes), default);
+        Assert.Contains(dia.Fita, l => l.Tipo == "venda" && l.Forma == FormaCaixa.Dinheiro && l.Valor == 40m);
+        Assert.Contains(dia.Fita, l => l.Tipo == "venda" && l.Forma == FormaCaixa.Pix && l.Valor == 24m);
+        Assert.Equal(antes + 40m, Gaveta(await livro.Contas(db.StoreId, default))); // só a parte em dinheiro entra na gaveta
+        Assert.Empty(await caixa.AReceberNoCaixa(db.StoreId, default));
+
+        // Reenvio com a mesma chave não paga de novo.
+        await caixa.Receber(db.StoreId, 7, operador, new RecebimentoRequest("d1", hoje, 24, null, 0, partes), default);
+        Assert.Equal(antes + 40m, Gaveta(await livro.Contas(db.StoreId, default)));
+    }
 }

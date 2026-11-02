@@ -136,8 +136,11 @@ public sealed class AcontecimentosService(NpgsqlDataSource dataSource, IEnumerab
         var contas = await AcontecimentoSql.ContasInfo(c, tx, loja);
         var conta = contas.GetValueOrDefault(request.ContaId) ?? throw NaoEncontrado("Conta");
         var original = await AcontecimentoSql.Atual(c, tx, loja, alvo.AcontecimentoId) ?? throw NaoEncontrado("Acontecimento");
-        return AcontecimentoRegras.PlanejarLiquidacao(alvo, linhas.Where(l => l.CorrigeLancamentoId == alvo.Id).ToList(), conta,
-            alvo.ContaId is { } contaAlvo ? contas.GetValueOrDefault(contaAlvo) : null, original, request, responsavelId, fuso, Agora);
+        var correcoesDoAlvo = linhas.Where(l => l.CorrigeLancamentoId == alvo.Id).ToList();
+        var contaDoAlvo = alvo.ContaId is { } contaAlvo ? contas.GetValueOrDefault(contaAlvo) : null;
+        return request is LiquidarParcialRequest parcial
+            ? AcontecimentoRegras.PlanejarLiquidacaoParcial(alvo, correcoesDoAlvo, conta, contaDoAlvo, original, parcial, responsavelId, fuso, Agora)
+            : AcontecimentoRegras.PlanejarLiquidacao(alvo, correcoesDoAlvo, conta, contaDoAlvo, original, request, responsavelId, fuso, Agora);
     }
 
     public Task<AcontecimentoPublicado> PagarFatura(Guid loja, int? responsavelId, Guid cartaoId, DateOnly faturaMes,
