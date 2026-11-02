@@ -761,6 +761,7 @@ SELECT  id                      AS Id,
         COALESCE(nome, '')      AS Nome,
         COALESCE(email, '')     AS Email,
         COALESCE(is_super_admin, FALSE) AS IsSuperAdmin,
+        telefone_e164           AS TelefoneE164,
         created_at              AS CreatedAt,
         deleted_at              AS DeletedAt
   FROM usuario

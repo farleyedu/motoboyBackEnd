@@ -10,6 +10,7 @@ using APIBack.Automation.Interfaces;
 using APIBack.Automation.Models;
 using APIBack.DTOs.Gestao;
 using APIBack.DTOs.Motoboy;
+using APIBack.IdentidadeWhatsapp;
 using APIBack.Model.Gestao;
 using APIBack.Repository.Interface;
 using APIBack.Security;
@@ -18,7 +19,7 @@ using Microsoft.Extensions.Logging;
 
 namespace APIBack.Service
 {
-    public class GestaoService : IGestaoService
+    public class GestaoService : IGestaoService, IIdentidadeWhatsappEscopo
     {
         private readonly IGestaoRepository _repository;
         private readonly ILogger<GestaoService> _logger;
@@ -27,9 +28,11 @@ namespace APIBack.Service
         private readonly IAcessoService? _acessoService;
         private readonly ICanaisWhatsappService? _canaisWhatsapp;
         private readonly ICanalCentralService? _canalCentral;
+        private readonly IIdentidadeWhatsappService? _identidadeWhatsapp;
 
-        public GestaoService(IGestaoRepository repository, ILogger<GestaoService> logger, IWabaPhoneRepository? wabaPhoneRepository = null, IAgenteRepository? agenteRepository = null, IAcessoService? acessoService = null, ICanaisWhatsappService? canaisWhatsapp = null, ICanalCentralService? canalCentral = null)
+        public GestaoService(IGestaoRepository repository, ILogger<GestaoService> logger, IWabaPhoneRepository? wabaPhoneRepository = null, IAgenteRepository? agenteRepository = null, IAcessoService? acessoService = null, ICanaisWhatsappService? canaisWhatsapp = null, ICanalCentralService? canalCentral = null, IIdentidadeWhatsappService? identidadeWhatsapp = null)
         {
+            _identidadeWhatsapp = identidadeWhatsapp;
             _canaisWhatsapp = canaisWhatsapp;
             _canalCentral = canalCentral;
             _repository = repository;
@@ -522,10 +525,15 @@ namespace APIBack.Service
             var scope = BuildScope(empresaId, estabelecimentoId, companyRole, establishmentRole, isSuperAdmin);
             EnsureCanManageUsers(scope);
             await EnsureTargetUserAccessibleAsync(scope, targetUserId, userId, blockSelfMutation: false);
+            var telefoneAnterior = (await _repository.ObterUsuarioResumoAsync(targetUserId))?.TelefoneE164;
 
             var command = await BuildSaveUsuarioCommandAsync(scope, userId, request, targetUserId);
             await _repository.SalvarUsuarioAsync(command);
             await TryEnsureAgenteAsync(command, targetUserId);
+            if (command.TelefoneInformado && !string.Equals(telefoneAnterior, command.TelefoneE164, StringComparison.Ordinal))
+            {
+                await TryRevogarWhatsappAsync(targetUserId, userId, MotivoRevogacaoWhatsapp.TelefoneAlterado);
+            }
 
             var updated = (await ListarUsuariosInternalAsync(scope, targetUserId)).FirstOrDefault();
             return updated ?? throw new InvalidOperationException("Usuario atualizado mas nao encontrado no retorno.");
@@ -547,6 +555,10 @@ namespace APIBack.Service
 
             var ativo = NormalizeToken(status) != "inativo";
             await _repository.AtualizarStatusUsuarioAsync(targetUserId, ativo);
+            if (!ativo)
+            {
+                await TryRevogarWhatsappAsync(targetUserId, userId, MotivoRevogacaoWhatsapp.ContaInativa);
+            }
         }
 
         public async Task RemoverUsuarioAsync(
@@ -562,6 +574,32 @@ namespace APIBack.Service
             EnsureCanManageUsers(scope);
             await EnsureTargetUserAccessibleAsync(scope, targetUserId, userId, blockSelfMutation: true);
             await _repository.RemoverUsuarioAsync(targetUserId);
+            await TryRevogarWhatsappAsync(targetUserId, userId, MotivoRevogacaoWhatsapp.AcessoRemovido);
+        }
+
+        /// <summary>O proprio usuario, ou quem gerencia usuarios com o alvo no escopo e acima do nivel dele.</summary>
+        public async Task GarantirAcessoAsync(int atorUsuarioId, Guid? empresaId, Guid? estabelecimentoId, string? companyRole, string? establishmentRole,
+            bool isSuperAdmin, int alvoUsuarioId)
+        {
+            if (atorUsuarioId == alvoUsuarioId)
+            {
+                return;
+            }
+
+            var scope = BuildScope(empresaId, estabelecimentoId, companyRole, establishmentRole, isSuperAdmin);
+            EnsureCanManageUsers(scope);
+            await EnsureTargetUserAccessibleAsync(scope, alvoUsuarioId, atorUsuarioId, blockSelfMutation: false);
+        }
+
+        /// <summary>
+        /// Nao derruba a alteracao do usuario: a autorizacao do WhatsApp ja confere telefone atual e conta ativa a cada mensagem,
+        /// entao o acesso cai na hora mesmo se esta gravacao falhar. Aqui fica o registro (estado e auditoria).
+        /// </summary>
+        private async Task TryRevogarWhatsappAsync(int targetUserId, int actorUserId, string motivo)
+        {
+            if (_identidadeWhatsapp == null) return;
+            try { await _identidadeWhatsapp.RevogarAsync(targetUserId, actorUserId, motivo); }
+            catch (Exception ex) { _logger.LogError(ex, "Falha ao registrar revogacao do WhatsApp do usuario {Id} ({Motivo})", targetUserId, motivo); }
         }
 
         private static readonly string[] MotoboyVehicleTypes = { "moto", "bicicleta", "carro", "a_pe" };
@@ -923,6 +961,25 @@ namespace APIBack.Service
                         },
                     Vinculos = vinculos
                 });
+            }
+
+            if (_identidadeWhatsapp != null)
+            {
+                try
+                {
+                    var estados = await _identidadeWhatsapp.EstadosAsync(summaryRows
+                        .Select(item => new UsuarioIdentidade(item.Id, item.TelefoneE164, !item.DeletedAt.HasValue))
+                        .ToArray());
+                    foreach (var item in result)
+                    {
+                        item.WhatsappEstado = estados.TryGetValue(item.Id, out var estado) ? estado : EstadoVinculoWhatsapp.NaoVerificado;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // Lista nao cai por causa do WhatsApp (ex.: migration _05 ainda nao aplicada); fica "nao_verificado".
+                    _logger.LogWarning(ex, "Falha ao ler o estado do WhatsApp dos usuarios.");
+                }
             }
 
             return result;
@@ -1506,7 +1563,8 @@ namespace APIBack.Service
             return $"{main} - {extras}";
         }
 
-        private static Dictionary<string, List<string>>? BuildEffectivePermissions(
+        /// <summary>Internal: a autorizacao do WhatsApp (IdentidadeWhatsappService) usa a mesma regra de permissao efetiva.</summary>
+        internal static Dictionary<string, List<string>>? BuildEffectivePermissions(
             Dictionary<string, Dictionary<string, List<string>>> defaultsByRole,
             string? role,
             string? rawCustomPermissions)

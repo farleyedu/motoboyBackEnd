@@ -1,3 +1,4 @@
+using APIBack.Acompanhamento.Saude;
 using Dapper;
 using Npgsql;
 
@@ -35,6 +36,8 @@ namespace APIBack.Service
         public DateTime? ProximoVencimento { get; set; }
         public DateTimeOffset? UltimoPagamentoEm { get; set; }
         public int NotasAbertas { get; set; }
+        /// <summary>Decisao unica de saude (mesmo calculo do Quadro). Nulo = o calculo nao rodou (migracao pendente); a tela cai no calculo local.</summary>
+        public SaudeAvaliacao? Saude { get; set; }
     }
 
     public sealed class DinheiroTipoDto
@@ -231,7 +234,26 @@ SELECT e.id, e.nome_fantasia AS Nome, e.id_empresa AS EmpresaId, emp.nome_fantas
             var rows = await connection.QueryAsync<CarteiraLojaDto>(new CommandDefinition(sql, new { Hoje = Hoje.ToDateTime(TimeOnly.MinValue) }, cancellationToken: ct));
             // Mesmos nomes de modulo que pacotes e estabelecimentos devolvem (Pedidos, iFood...), nao os do enum (PEDIDOS, IFOOD):
             // a aba Plano e modulos compara as duas listas.
-            return rows.Select(r => { r.Modulos = APIBack.Model.Gestao.EstabelecimentoModuleMapper.ToUiModules(string.Empty, r.Modulos).ToArray(); return r; }).ToList();
+            var lista = rows.Select(r => { r.Modulos = APIBack.Model.Gestao.EstabelecimentoModuleMapper.ToUiModules(string.Empty, r.Modulos).ToArray(); return r; }).ToList();
+            await AnexarSaudeAsync(connection, lista, ct);
+            return lista;
+        }
+
+        /// <summary>Mesma decisao do Quadro (SaudeCalculador + limites do banco). Falha de saude nunca derruba a carteira.</summary>
+        private async Task AnexarSaudeAsync(NpgsqlConnection connection, List<CarteiraLojaDto> lista, CancellationToken ct)
+        {
+            try
+            {
+                var agora = _clock.GetUtcNow();
+                var limites = await SaudeSql.LimitesAsync(connection, ct);
+                var porLoja = (await SaudeSql.EntradasDasLojasAsync(connection, agora, null, ct)).Where(e => e.LojaId.HasValue).ToDictionary(e => e.LojaId!.Value);
+                foreach (var loja in lista)
+                    if (porLoja.TryGetValue(loja.Id, out var entrada)) loja.Saude = SaudeCalculador.Avaliar(entrada, limites, agora);
+            }
+            catch (PostgresException)
+            {
+                // Migracao do acompanhamento pendente: a carteira sai sem saude do servidor.
+            }
         }
 
         public async Task<DinheiroMesDto> DinheiroAsync(DateOnly mes, CancellationToken ct = default)

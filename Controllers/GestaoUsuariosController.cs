@@ -4,6 +4,7 @@ using System.Threading.Tasks;
 using APIBack.DTOs.Common;
 using APIBack.DTOs.Gestao;
 using APIBack.DTOs.Motoboy;
+using APIBack.IdentidadeWhatsapp;
 using APIBack.Service;
 using APIBack.Service.Interface;
 using Microsoft.AspNetCore.Http;
@@ -18,11 +19,16 @@ namespace APIBack.Controllers
     {
         private readonly IGestaoService _service;
         private readonly ILogger<GestaoUsuariosController> _logger;
+        private readonly IIdentidadeWhatsappService _identidadeWhatsapp;
+        private readonly IIdentidadeWhatsappEscopo _escopoWhatsapp;
 
-        public GestaoUsuariosController(IGestaoService service, ILogger<GestaoUsuariosController> logger)
+        public GestaoUsuariosController(IGestaoService service, ILogger<GestaoUsuariosController> logger,
+            IIdentidadeWhatsappService identidadeWhatsapp, IIdentidadeWhatsappEscopo escopoWhatsapp)
         {
             _service = service;
             _logger = logger;
+            _identidadeWhatsapp = identidadeWhatsapp;
+            _escopoWhatsapp = escopoWhatsapp;
         }
 
         [HttpGet]
@@ -243,6 +249,83 @@ namespace APIBack.Controllers
             {
                 _logger.LogError(ex, "Erro ao remover usuario {TargetUserId} para UserId={UserId}", userId, CurrentUserId.Value);
                 return StatusCode(500, ApiResponse<object>.Fail("Erro ao remover usuario."));
+            }
+        }
+
+        [HttpGet("{userId:int}/whatsapp/vinculo")]
+        [ProducesResponseType(typeof(ApiResponse<VinculoWhatsappView>), StatusCodes.Status200OK)]
+        public Task<IActionResult> ObterVinculoWhatsapp(int userId) =>
+            ExecutarWhatsappAsync(userId, escrita: false, () => _identidadeWhatsapp.ObterAsync(userId));
+
+        /// <summary>Envia um codigo novo ao telefone gravado do usuario. Nunca devolve o codigo.</summary>
+        [HttpPost("{userId:int}/whatsapp/verificacao")]
+        [ProducesResponseType(typeof(ApiResponse<VinculoWhatsappView>), StatusCodes.Status200OK)]
+        public Task<IActionResult> IniciarVerificacaoWhatsapp(int userId) =>
+            ExecutarWhatsappAsync(userId, escrita: true, () => _identidadeWhatsapp.IniciarVerificacaoAsync(userId, CurrentUserId!.Value));
+
+        /// <summary>So o proprio usuario: prova que recebeu o codigo no WhatsApp dele.</summary>
+        [HttpPost("{userId:int}/whatsapp/confirmacao")]
+        [ProducesResponseType(typeof(ApiResponse<VinculoWhatsappView>), StatusCodes.Status200OK)]
+        public Task<IActionResult> ConfirmarWhatsapp(int userId, [FromBody] ConfirmarWhatsappRequest? request) =>
+            ExecutarWhatsappAsync(userId, escrita: true, () => _identidadeWhatsapp.ConfirmarAsync(userId, CurrentUserId!.Value, request?.Codigo));
+
+        [HttpPost("{userId:int}/whatsapp/revogacao")]
+        [ProducesResponseType(typeof(ApiResponse<VinculoWhatsappView>), StatusCodes.Status200OK)]
+        public Task<IActionResult> RevogarWhatsapp(int userId) =>
+            ExecutarWhatsappAsync(userId, escrita: true, () => _identidadeWhatsapp.RevogarAsync(userId, CurrentUserId!.Value, MotivoRevogacaoWhatsapp.Manual));
+
+        /// <summary>
+        /// O proprio usuario sempre pode; outro usuario exige a permissao de usuarios e o alvo no escopo (abaixo do nivel do ator).
+        /// Erros: 401 sem login, 403 fora do escopo, 404 usuario, 409 conflito/telefone, 422 codigo/telefone, 429 limite, 503 envio.
+        /// </summary>
+        private async Task<IActionResult> ExecutarWhatsappAsync(int userId, bool escrita, Func<Task<VinculoWhatsappView>> acao)
+        {
+            if (!CurrentUserId.HasValue)
+            {
+                return UnauthorizedResponse();
+            }
+
+            var proprio = CurrentUserId.Value == userId;
+            if (!proprio && !(escrita
+                    ? HasAnyPermission(("Usuarios", "editar"), ("Configuracoes", "editar"))
+                    : HasAnyPermission(("Usuarios", "visualizar"), ("Configuracoes", "visualizar"))))
+            {
+                return ForbiddenResponse();
+            }
+
+            try
+            {
+                await _escopoWhatsapp.GarantirAcessoAsync(
+                    CurrentUserId.Value,
+                    CurrentEmpresaId,
+                    CurrentEstabelecimentoId,
+                    CurrentCompanyRole,
+                    CurrentEstablishmentRole,
+                    CurrentIsSuperAdmin,
+                    userId);
+                return Ok(ApiResponse<VinculoWhatsappView>.Ok(await acao()));
+            }
+            catch (IdentidadeWhatsappException ex)
+            {
+                if (ex.TenteNovamenteEm.HasValue)
+                {
+                    var segundos = Math.Max(1, (int)Math.Ceiling((ex.TenteNovamenteEm.Value - DateTime.UtcNow).TotalSeconds));
+                    Response.Headers["Retry-After"] = segundos.ToString();
+                }
+                return StatusCode(ex.Status, ApiResponse<object>.Fail(ex.Message, ex.Codigo, ex.TenteNovamenteEm.HasValue ? new { tenteNovamenteEm = ex.TenteNovamenteEm } : null));
+            }
+            catch (KeyNotFoundException ex)
+            {
+                return NotFound(ApiResponse<object>.Fail(ex.Message));
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                return StatusCode(StatusCodes.Status403Forbidden, ApiResponse<object>.Fail(ex.Message));
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Erro no WhatsApp do usuario {TargetUserId} para UserId={UserId}", userId, CurrentUserId.Value);
+                return StatusCode(500, ApiResponse<object>.Fail("Erro ao processar o WhatsApp do usuario."));
             }
         }
 

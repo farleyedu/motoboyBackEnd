@@ -120,7 +120,10 @@ namespace APIBack.DTOs.Gestao
         public int Id { get; set; }
         public string Nome { get; set; } = string.Empty;
         public string Email { get; set; } = string.Empty;
+        /// <summary>Telefone gravado, sempre E.164 (+5534991480112).</summary>
         public string? Telefone { get; set; }
+        /// <summary>Estado efetivo do vinculo do WhatsApp: nao_verificado, pendente, verificado, suspenso ou revogado.</summary>
+        public string WhatsappEstado { get; set; } = "nao_verificado";
         public string Status { get; set; } = "ativo";
         public bool IsSuperAdmin { get; set; }
         public DateTime? CreatedAt { get; set; }
@@ -263,5 +266,10 @@ namespace APIBack.DTOs.Gestao
     public class AtualizarStatusUsuarioRequest
     {
         public string Status { get; set; } = string.Empty;
+    }
+
+    public class ConfirmarWhatsappRequest
+    {
+        public string? Codigo { get; set; }
     }
 }

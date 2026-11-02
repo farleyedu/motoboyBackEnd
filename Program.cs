@@ -126,6 +126,11 @@ builder.Services.AddScoped<IGestaoOperacaoRepository, GestaoOperacaoRepository>(
 builder.Services.AddScoped<IGestaoOperacaoService, GestaoOperacaoService>();
 builder.Services.AddScoped<IGestaoRepository, GestaoRepository>();
 builder.Services.AddScoped<IGestaoService, GestaoService>();
+// Identidade por WhatsApp: vinculo verificado do telefone do usuario interno (docs/crm-inteligente/02-backend-whatsapp-ia.md, A1).
+builder.Services.AddScoped<APIBack.IdentidadeWhatsapp.IIdentidadeWhatsappRepository, APIBack.IdentidadeWhatsapp.IdentidadeWhatsappRepository>();
+builder.Services.AddScoped<APIBack.IdentidadeWhatsapp.IIdentidadeWhatsappEnviador, APIBack.IdentidadeWhatsapp.MetaIdentidadeWhatsappEnviador>();
+builder.Services.AddScoped<APIBack.IdentidadeWhatsapp.IIdentidadeWhatsappService, APIBack.IdentidadeWhatsapp.IdentidadeWhatsappService>();
+builder.Services.AddScoped<APIBack.IdentidadeWhatsapp.IIdentidadeWhatsappEscopo>(sp => (GestaoService)sp.GetRequiredService<IGestaoService>());
 builder.Services.AddScoped<IExperienceRepository, ExperienceRepository>();
 builder.Services.AddScoped<ExperienceService>();
 builder.Services.AddScoped<MotoboyContaService>();

@@ -76,6 +76,7 @@ SELECT a.id_estabelecimento FROM assinatura a JOIN estabelecimentos e ON e.id = 
                 await InadimplenciaEAvisosAsync(cx, politica, agora, ct);
                 await ExpirarComprasAsync(cx, agora, ct);
                 await SincronizarPreapprovalsAsync(cx, agora, ct);
+                await AtualizarSaudeAsync(cx, agora, ct);
             }
             finally
             {
@@ -211,6 +212,28 @@ SELECT id, id_estabelecimento, descricao, valor, vencimento, meio FROM comercial
                 if (c.Meio == "cartao_recorrente" && hoje < FusoComercial.Data(c.Vencimento)) continue;
                 foreach (var aviso in Inadimplencia.AvisosDevidos(c.Id, c.Descricao, c.Valor, FusoComercial.Data(c.Vencimento), hoje, politica))
                     await AssinaturaSql.AvisarAsync(cx, null, c.Loja, c.Id, aviso.Chave, aviso.Tipo, aviso.Mensagem, ct);
+            }
+        }
+
+        /// <summary>
+        /// Saude das lojas, depois de todos os passos de pagamento (so le assinatura e cobranca; nunca altera a verdade do pagamento nem
+        /// suspende por prazo de teste). Grava a faixa e o historico quando ela muda e registra os marcos do fim do teste sem repetir.
+        /// Falha aqui so e registrada: o ciclo das assinaturas ja terminou.
+        /// </summary>
+        private async Task AtualizarSaudeAsync(NpgsqlConnection cx, DateTimeOffset agora, CancellationToken ct)
+        {
+            try
+            {
+                if (!await Acompanhamento.Saude.SaudeSql.ExisteAsync(cx, "acompanhamento_saude_regra", ct)) return;
+                var avaliadas = await Acompanhamento.Saude.SaudeService.AvaliarLojasAsync(cx, agora, null, comOportunidades: false, ct);
+                foreach (var (entrada, saude) in avaliadas)
+                    await Acompanhamento.Saude.SaudeSql.RegistrarAvisosDoTesteAsync(cx, entrada, saude, ct);
+                var mudaram = await Acompanhamento.Saude.SaudeSql.PersistirFaixasAsync(cx, avaliadas, ct);
+                if (mudaram > 0) _logger.LogInformation("[assinatura.worker] ev=saude_faixas_atualizadas total={Total}", mudaram);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogWarning("[assinatura.worker] ev=saude_falhou erro={Erro} msg={Msg}", ex.GetType().Name, ex.Message);
             }
         }
 
