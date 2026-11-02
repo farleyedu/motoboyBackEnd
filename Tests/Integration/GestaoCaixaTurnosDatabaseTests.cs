@@ -40,7 +40,7 @@ CREATE TABLE ifood_order_snapshots(merchant_id uuid, external_order_id uuid, est
 INSERT INTO estabelecimentos VALUES (@loja, 'America/Sao_Paulo'); INSERT INTO usuario VALUES (7, 'Marina'), (8, 'Júlia do caixa');", new { loja });
                 foreach (var m in new[] { "20261105_01_gestao_fundacao.sql", "20261106_01_gestao_documentos.sql", "20261107_01_gestao_vinculos.sql",
                              "20261110_01_gestao_caixa.sql", "20261118_01_gestao_caixa_correcoes.sql", "20261123_01_gestao_caixa_aprovacao.sql",
-                             "20261125_01_gestao_caixa_turnos.sql" })
+                             "20261125_01_gestao_caixa_turnos.sql", "20261126_01_gestao_caixa_operacao.sql" })
                     await c.ExecuteAsync(await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "Migrations", "Delivery", m)));
             }
             var livro = new AcontecimentosService(fonte, Array.Empty<IAcontecimentoAssinante>(), NullLogger<AcontecimentosService>.Instance);
@@ -102,6 +102,24 @@ INSERT INTO estabelecimentos VALUES (@loja, 'America/Sao_Paulo'); INSERT INTO us
             dia = await caixa.Fechar(loja, 8, operador, new FecharCaixaRequest(hoje, new ContagemCaixa(new Dictionary<int, int> { [50] = 1, [20] = 1, [10] = 1 }, 0), maq, null, 80), default);
             var fechamentos = await caixa.Fechamentos(loja, new DateOnly(hoje.Year, hoje.Month, 1), default);
             Assert.Equal(new[] { (2, true), (1, false) }, fechamentos.Select(f => (f.Turno, f.Ajustavel)));
+
+            // O operador fechou o 2º turno (dentro da tolerância): fica esperando o gerente e nenhum caixa novo abre antes disso.
+            Assert.True(dia.AprovacaoPendente);
+            var operacao = await caixa.Operacao(loja, default);
+            Assert.Equal((hoje, "fechado", 2), (operacao.Dia, operacao.Situacao, operacao.Turno));
+            Assert.Equal("05:00", operacao.ViradaDoDia);
+            Assert.True(Assert.Single(operacao.Pendentes).Fechado);
+            Assert.Equal("SEM_APROVACAO", (await Assert.ThrowsAsync<GestaoException>(() =>
+                caixa.NovoTurno(loja, 8, operador, new NovoTurnoRequest(hoje, 80), default))).Codigo);
+            Assert.Equal("SEM_PERMISSAO", (await Assert.ThrowsAsync<GestaoException>(() =>
+                caixa.DecidirFechamento(loja, 8, operador, hoje, new DecisaoDoFechamentoRequest("aprovar", null, null, null, null), default))).Codigo);
+
+            // O gerente aprova: o visto não mexe no livro e libera o próximo caixa.
+            dia = await caixa.DecidirFechamento(loja, 7, gerente, hoje, new DecisaoDoFechamentoRequest("aprovar", null, null, null, null), default);
+            Assert.False(dia.AprovacaoPendente);
+            Assert.Empty((await caixa.Operacao(loja, default)).Pendentes);
+            dia = await caixa.NovoTurno(loja, 8, operador, new NovoTurnoRequest(hoje, 80), default);
+            Assert.Equal((3, true), (dia.Turno, dia.Aberto));
             Assert.Equal($"{hoje:yyyy-MM-dd}:t1", fechamentos[1].Id);
 
             await using (var c = await fonte.OpenConnectionAsync())

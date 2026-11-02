@@ -27,7 +27,7 @@ public sealed partial class CaixaService
         await using (var c = await dataSource.OpenConnectionAsync(ct))
         {
             var row = await Fechado(c, loja, hoje);
-            await SemOutroAguardando(c, loja);
+            await SemPendencia(c, loja);
             var contas = await ContasDoCaixa(c, loja, null, ct);
             var gaveta = await Saldo(loja, contas.Gaveta, ct);
             var acerto = CaixaRegras.R2(req.Fundo - gaveta);
@@ -37,7 +37,8 @@ public sealed partial class CaixaService
             {
                 ChaveIdempotencia = $"caixa:abertura:{hoje:yyyy-MM-dd}:v{row.Versao + 1}", Tipo = TipoAbertura, Modulo = ModuloGestao.Caixa,
                 DataFato = agora, Descricao = $"Abertura do {turno}º turno · fundo R$ {req.Fundo:N2}",
-                Origem = new OrigemRef { Tipo = "caixa", Id = hoje.ToString("yyyy-MM-dd") },
+                // A origem leva a versão: o livro não aceita duas aberturas com a mesma origem (a do 1º turno é só o dia).
+                Origem = new OrigemRef { Tipo = "caixa", Id = $"{hoje:yyyy-MM-dd}:v{row.Versao + 1}" },
                 Dados = JsonSerializer.SerializeToElement(new { fundo = req.Fundo, gavetaAntes = gaveta, turno }, Json),
                 Lancamentos = acerto == 0 ? new() : Transferencia(acerto > 0 ? contas.Cofre : contas.Gaveta,
                     acerto > 0 ? contas.Gaveta : contas.Cofre, Math.Abs(acerto), hoje, "Acerto do fundo de troco"),
@@ -67,7 +68,7 @@ UPDATE gestao_caixa_dias SET fundo = @Fundo, aberto_por = @usuario, aberto_em = 
         await using (var c = await dataSource.OpenConnectionAsync(ct))
         {
             var row = await Fechado(c, loja, hoje);
-            await SemOutroAguardando(c, loja);
+            await SemPendencia(c, loja, row.Dia);
             var comDiferenca = row.Contado != row.Esperado || (await AjustesDoCiclo(c, loja, row)).Count > 0;
             if (acesso.Papel != GestaoPapeis.Gerente && (comDiferenca || row.AprovadoPor is not null))
                 throw new GestaoException("SEM_PERMISSAO", "Este fechamento teve diferença ou foi aprovado pelo gerente: só o gerente desfaz.", 403);
@@ -104,7 +105,7 @@ UPDATE gestao_caixa_dias SET versao = versao + 1, ciclo_desde = @agora" + Limpar
     /// <summary>Tudo o que o fechamento e o envio ao gerente gravaram no dia volta a vazio (o que era fica em gestao_caixa_turnos).</summary>
     private const string Limpar = @",
        fechado_por = NULL, fechado_em = NULL, fechamento_id = NULL, recolhimento_id = NULL, esperado = NULL, contado = NULL,
-       maquininha = NULL, maquininha_esperado = NULL, justificativa = NULL, fica = NULL, cofre = NULL, aprovado_por = NULL,
+       maquininha = NULL, maquininha_esperado = NULL, justificativa = NULL, fica = NULL, cofre = NULL, aprovado_por = NULL, aprovado_em = NULL,
        envio_em = NULL, envio_por = NULL, envio = NULL, devolvido_em = NULL, devolvido_por = NULL, devolucao_motivo = NULL";
 
     private static GestaoException JaAbriu() =>
@@ -120,12 +121,22 @@ UPDATE gestao_caixa_dias SET versao = versao + 1, ciclo_desde = @agora" + Limpar
         return row;
     }
 
-    private static async Task SemOutroAguardando(NpgsqlConnection c, Guid loja)
+    /// <summary>
+    /// Nenhum caixa novo abre (outro turno ou o dia seguinte) enquanto houver fechamento esperando o gerente: enviado para decidir ou
+    /// fechado pelo operador sem aprovação. <paramref name="exceto"/>: o próprio dia que está sendo desfeito (reabrir não abre outro).
+    /// </summary>
+    private static async Task SemPendencia(NpgsqlConnection c, Guid loja, DateTime? exceto = null)
     {
-        if (await c.ExecuteScalarAsync<DateTime?>(@"SELECT dia FROM gestao_caixa_dias
- WHERE estabelecimento_id = @loja AND envio_em IS NOT NULL AND fechado_em IS NULL ORDER BY dia LIMIT 1", new { loja }) is { } pendente)
+        var p = await c.QueryFirstOrDefaultAsync<DiaRow>($@"SELECT {ColunasDia} FROM gestao_caixa_dias
+ WHERE estabelecimento_id = @loja AND (CAST(@exceto AS date) IS NULL OR dia <> @exceto)
+   AND ((envio_em IS NOT NULL AND fechado_em IS NULL) OR (fechado_em IS NOT NULL AND aprovado_em IS NULL))
+ ORDER BY dia LIMIT 1", new { loja, exceto });
+        if (p is null) return;
+        if (p.FechadoEm is null)
             throw new GestaoException("AGUARDANDO_APROVACAO",
-                $"O caixa de {pendente:dd/MM} espera a aprovação do gerente. Ele precisa ser fechado antes de abrir outro.", 409);
+                $"O caixa de {p.Dia:dd/MM} espera a aprovação do gerente. Ele precisa ser fechado antes de abrir outro.", 409);
+        throw new GestaoException("SEM_APROVACAO",
+            $"O caixa de {p.Dia:dd/MM}{(p.FechadoPorNome is null ? "" : $", fechado por {p.FechadoPorNome},")} espera o gerente aprovar. Só depois abre outro caixa.", 409);
     }
 
     /// <summary>Correções do fechamento atual (as de um fechamento já desfeito ficaram no ciclo anterior).</summary>
@@ -139,16 +150,13 @@ UPDATE gestao_caixa_dias SET versao = versao + 1, ciclo_desde = @agora" + Limpar
         c.ExecuteAsync(@"
 INSERT INTO gestao_caixa_turnos (id, estabelecimento_id, dia, versao, turno, destino, por, em, motivo, estornos, fundo, aberto_por, aberto_em,
        ciclo_desde, fechado_por, fechado_em, fechamento_id, recolhimento_id, esperado, contado, maquininha, maquininha_esperado, justificativa,
-       fica, cofre, aprovado_por)
+       fica, cofre, aprovado_por, aprovado_em)
 SELECT @id, estabelecimento_id, dia, versao, turno, @destino, @por, @em, @motivo, CAST(@estornos AS jsonb), fundo, aberto_por, aberto_em,
        ciclo_desde, fechado_por, fechado_em, fechamento_id, recolhimento_id, esperado, contado, maquininha, maquininha_esperado, justificativa,
-       fica, cofre, aprovado_por
+       fica, cofre, aprovado_por, aprovado_em
   FROM gestao_caixa_dias WHERE estabelecimento_id = @loja AND dia = @dia AND versao = @versao AND fechado_em IS NOT NULL",
             new { id = Guid.NewGuid(), loja, dia = dia.ToDateTime(TimeOnly.MinValue), versao, destino, por, em, motivo,
                 estornos = JsonSerializer.Serialize(estornos) }, tx);
-
-    /// <summary>2º turno em diante: a fita e o fundo contam a partir da abertura do turno.</summary>
-    private static DateTimeOffset? InicioDoTurno(DiaRow? row) => row is { Turno: > 1 } ? Utc(row.AbertoEm) : null;
 
     private static string SufixoDaVersao(DiaRow? row) => row is { Versao: > 0 } ? $":v{row.Versao}" : "";
 

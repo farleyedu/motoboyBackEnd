@@ -27,6 +27,10 @@ public sealed class GestaoCaixaController(ICaixaService service, IPedidoCoreServ
         return await service.CarregarDia(loja, dia, ct);
     });
 
+    /// <summary>Que dia o caixa está rodando (dia em operação, virada, turno) e os fechamentos que impedem abrir outro.</summary>
+    [HttpGet("operacao")]
+    public Task<IActionResult> Operacao(CancellationToken ct) => Run(false, async (loja, _, _) => await service.Operacao(loja, ct));
+
     [HttpPost("abrir")]
     public Task<IActionResult> Abrir([FromBody] AbrirCaixaRequest? req, CancellationToken ct) => Run(false, async (loja, usuario, acesso) =>
         await service.Abrir(loja, usuario, acesso, req ?? throw Vazio(), ct));

@@ -42,7 +42,17 @@ public sealed record FechamentoDto(string Id, DateOnly Dia, int Operador, DateTi
 public sealed record CaixaDoDia(DateOnly Dia, bool Aberto, DateTimeOffset? AbertoEm, int? Por, decimal Fundo, IReadOnlyList<LinhaFita> Fita,
     IReadOnlyList<PedidoEmAberto> PedidosEmAberto, FechamentoDto? Fechamento, string? PorNome = null, decimal? FundoOriginal = null,
     IReadOnlyList<CorrecaoFundoDto>? CorrecoesFundo = null, int SolicitacoesPendentes = 0, EnvioDoFechamento? Aguardando = null,
-    DevolucaoDoFechamento? Devolvido = null, string? AprovadoPorNome = null, int Turno = 1, IReadOnlyList<FechamentoAnterior>? Anteriores = null);
+    DevolucaoDoFechamento? Devolvido = null, string? AprovadoPorNome = null, int Turno = 1, IReadOnlyList<FechamentoAnterior>? Anteriores = null,
+    bool AprovacaoPendente = false);
+
+/// <summary>
+/// Que dia o caixa está rodando. <c>Dia</c> = dia em operação (o do caixa aberto; sem caixa aberto, o da virada); <c>DiaDoCalendario</c>
+/// = a data de agora na loja; <c>ViradaDoDia</c> = "HH:mm" em que o dia de operação vira. <c>Situacao</c>: <c>sem_caixa</c> (o dia
+/// ainda não abriu), <c>aberto</c>, <c>aguardando</c> (fechamento enviado ao gerente) ou <c>fechado</c>. <c>Pendentes</c>: fechamentos
+/// esperando o gerente (nenhum caixa novo abre enquanto houver).
+/// </summary>
+public sealed record OperacaoDoCaixa(DateOnly Dia, DateOnly DiaDoCalendario, string ViradaDoDia, string Situacao, int Turno,
+    IReadOnlyList<FechamentoAguardando> Pendentes);
 
 /// <summary>
 /// Um fechamento que saiu do dia. <c>Destino</c> = <c>novo_turno</c> (o fechamento vale; o dia abriu outro turno) ou <c>reaberto</c>
@@ -59,9 +69,14 @@ public sealed record ReabrirCaixaRequest(DateOnly Dia, string? Motivo);
 
 /// <summary>Configuração do caixa da loja, decidida pelo gerente.</summary>
 /// <param name="ToleranciaFechamento">Diferença (para mais ou para menos) que o operador fecha sozinho; acima disso vai para o gerente.</param>
-public sealed record ConfigDoCaixa(decimal ToleranciaFechamento, bool OperadorVeSaldo);
+/// <param name="ViradaDoDia">"HH:mm" em que o dia de operação vira (padrão 05:00, de 00:00 a 08:00).</param>
+public sealed record ConfigDoCaixa(decimal ToleranciaFechamento, bool OperadorVeSaldo, string ViradaDoDia = "05:00")
+{
+    [System.Text.Json.Serialization.JsonIgnore]
+    public TimeSpan Virada => TimeSpan.TryParse(ViradaDoDia, out var v) ? v : TimeSpan.FromHours(5);
+}
 
-public sealed record SalvarConfigDoCaixaRequest(decimal? ToleranciaFechamento, bool? OperadorVeSaldo);
+public sealed record SalvarConfigDoCaixaRequest(decimal? ToleranciaFechamento, bool? OperadorVeSaldo, string? ViradaDoDia = null);
 
 /// <summary>O que o operador contou e enviou ao gerente (nada disso está no livro até a aprovação).</summary>
 public sealed record EnvioDoFechamento(DateTimeOffset Em, int Por, string? PorNome, ContagemCaixa Contagem, decimal Esperado, decimal Contado,
@@ -77,7 +92,9 @@ public sealed record DevolucaoDoFechamento(DateTimeOffset Em, int Por, string? P
 public sealed record DecisaoDoFechamentoRequest(string? Decisao, ContagemCaixa? Recontagem, string? Justificativa, decimal? Fica, string? Motivo);
 
 /// <summary>Fechamento esperando o gerente (aviso no painel).</summary>
-public sealed record FechamentoAguardando(DateOnly Dia, DateTimeOffset Em, string? PorNome, decimal Diferenca, decimal Contado, decimal Esperado);
+/// <param name="Fechado">true: o operador fechou (já está no livro) e só falta o gerente aprovar; false: enviado, esperando a decisão.</param>
+public sealed record FechamentoAguardando(DateOnly Dia, DateTimeOffset Em, string? PorNome, decimal Diferenca, decimal Contado, decimal Esperado,
+    bool Fechado = false);
 
 /// <summary>Contagem por cédula (200, 100, 50, 20, 10, 5, 2) mais o total em moedas.</summary>
 public sealed record ContagemCaixa(IReadOnlyDictionary<int, int>? Notas, decimal Moedas);

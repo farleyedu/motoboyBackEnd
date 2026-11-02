@@ -45,6 +45,7 @@ public interface ICaixaService
     Task<IReadOnlyList<FechamentoAguardando>> Aguardando(Guid loja, CancellationToken ct);
     Task<CaixaDoDia> DecidirFechamento(Guid loja, int usuario, GestaoPapeis.Acesso acesso, DateOnly dia, DecisaoDoFechamentoRequest req, CancellationToken ct);
     // Abrir de novo depois de fechar: novo turno ou reabrir o mesmo (CaixaService.Turnos.cs).
+    Task<OperacaoDoCaixa> Operacao(Guid loja, CancellationToken ct);
     Task<CaixaDoDia> NovoTurno(Guid loja, int usuario, GestaoPapeis.Acesso acesso, NovoTurnoRequest req, CancellationToken ct);
     Task<CaixaDoDia> Reabrir(Guid loja, int usuario, GestaoPapeis.Acesso acesso, ReabrirCaixaRequest req, CancellationToken ct);
 }
@@ -93,6 +94,7 @@ public sealed partial class CaixaService(NpgsqlDataSource dataSource, IAcontecim
         public DateTime? CicloDesde { get; set; }
         public Guid? RecolhimentoId { get; set; }
         public int? AprovadoPor { get; set; }
+        public DateTime? AprovadoEm { get; set; }
     }
 
     private const string ColunasDia = @"dia, fundo, aberto_por, aberto_em, fechado_por, fechado_em, fechamento_id, esperado, contado,
@@ -102,15 +104,34 @@ public sealed partial class CaixaService(NpgsqlDataSource dataSource, IAcontecim
        envio_em, envio_por, envio::text AS envio, (SELECT u.nome::text FROM usuario u WHERE u.id = envio_por) AS envio_por_nome,
        devolvido_em, devolvido_por, devolucao_motivo, (SELECT u.nome::text FROM usuario u WHERE u.id = devolvido_por) AS devolvido_por_nome,
        (SELECT u.nome::text FROM usuario u WHERE u.id = aprovado_por) AS aprovado_por_nome,
-       versao, turno, ciclo_desde, recolhimento_id, aprovado_por";
+       versao, turno, ciclo_desde, recolhimento_id, aprovado_por, aprovado_em";
 
-    public async Task<DateOnly> Hoje(Guid loja, CancellationToken ct) =>
+    /// <summary>
+    /// O dia em operação do caixa (o "hoje" de todas as regras do caixa): o dia do caixa aberto (ou esperando o gerente), mesmo depois
+    /// da meia-noite ou da virada; sem caixa aberto, o dia pela virada da loja (antes da virada ainda é o dia anterior).
+    /// </summary>
+    public async Task<DateOnly> Hoje(Guid loja, CancellationToken ct)
+    {
+        await using var c = await dataSource.OpenConnectionAsync(ct);
+        return await DiaEmOperacao(c, loja, ct);
+    }
+
+    private async Task<DateOnly> DiaEmOperacao(NpgsqlConnection c, Guid loja, CancellationToken ct) =>
+        await c.ExecuteScalarAsync<DateTime?>("SELECT max(dia) FROM gestao_caixa_dias WHERE estabelecimento_id = @loja AND fechado_em IS NULL",
+            new { loja }) is { } aberto ? DateOnly.FromDateTime(aberto) : await DiaPelaVirada(c, loja, ct);
+
+    /// <summary>O dia de operação pelo relógio: a data da loja descontada a virada (05:00 → até as 04:59 ainda é o dia anterior).</summary>
+    private async Task<DateOnly> DiaPelaVirada(NpgsqlConnection c, Guid loja, CancellationToken ct) =>
+        AcontecimentoRegras.DiaLocal(_relogio.GetUtcNow() - (await LerConfig(c, loja)).Virada, await livro.Fuso(loja, ct));
+
+    private async Task<DateOnly> HojeDoCalendario(Guid loja, CancellationToken ct) =>
         AcontecimentoRegras.DiaLocal(_relogio.GetUtcNow(), await livro.Fuso(loja, ct));
 
     public async Task<CaixaDoDia?> CarregarDia(Guid loja, DateOnly dia, CancellationToken ct)
     {
-        if (dia > await Hoje(loja, ct)) return null;
         await using var c = await dataSource.OpenConnectionAsync(ct);
+        var emOperacao = await DiaEmOperacao(c, loja, ct);
+        if (dia > emOperacao && dia > await HojeDoCalendario(loja, ct)) return null;
         var row = await Dia(c, loja, dia);
         if (row is null) return new CaixaDoDia(dia, false, null, null, 0, Array.Empty<LinhaFita>(), Array.Empty<PedidoEmAberto>(), null);
         var contas = await ContasDoCaixa(c, loja, null, ct);
@@ -118,14 +139,15 @@ public sealed partial class CaixaService(NpgsqlDataSource dataSource, IAcontecim
         var fundo = correcoes.Count == 0 ? row.Fundo : correcoes[^1].FundoNovo;
         var pendentes = await PendentesPorMovimento(c, loja, dia);
         var aberto = row.FechadoEm is null && row.EnvioEm is null;
-        var fita = await Fita(loja, dia, contas.Gaveta, ct, fundo, aberto, pendentes.Movimentos, InicioDoTurno(row));
+        var (inicio, fim) = await JanelaDoCaixa(c, loja, row, ct);
+        var fita = await Fita(loja, dia, contas.Gaveta, ct, fundo, aberto, pendentes.Movimentos, inicio, fim);
         // Pedido em aberto é pendência de hoje: dia fechado ou passado não reconstrói o que estava ativo (o banco guarda só o status atual).
-        var emAberto = row.FechadoEm is null && dia == await Hoje(loja, ct)
+        var emAberto = row.FechadoEm is null && dia == emOperacao
             ? await PedidosEmAbertoQuery.Carregar(c, loja, ct) : Array.Empty<PedidoEmAberto>();
         return new CaixaDoDia(dia, aberto, Utc(row.AbertoEm), row.AbertoPor, fundo, fita, emAberto,
             row.FechadoEm is null ? null : await Fechamento(c, loja, row), row.AbertoPorNome, row.Fundo, correcoes, pendentes.Total,
             row.FechadoEm is null ? EnvioDe(row) : null, row.FechadoEm is null ? DevolucaoDe(row) : null, row.AprovadoPorNome,
-            row.Turno, await Anteriores(c, loja, dia));
+            row.Turno, await Anteriores(c, loja, dia), AprovacaoPendente: row.FechadoEm is not null && row.AprovadoEm is null);
     }
 
     public async Task<CaixaDoDia> Abrir(Guid loja, int usuario, GestaoPapeis.Acesso acesso, AbrirCaixaRequest req, CancellationToken ct)
@@ -135,10 +157,8 @@ public sealed partial class CaixaService(NpgsqlDataSource dataSource, IAcontecim
         await using (var c = await dataSource.OpenConnectionAsync(ct))
         {
             if (await Dia(c, loja, hoje) is not null) return (await CarregarDia(loja, hoje, ct))!;
-            if (await c.ExecuteScalarAsync<DateTime?>(@"SELECT dia FROM gestao_caixa_dias
- WHERE estabelecimento_id = @loja AND envio_em IS NOT NULL AND fechado_em IS NULL ORDER BY dia LIMIT 1", new { loja }) is { } pendente)
-                throw new GestaoException("AGUARDANDO_APROVACAO",
-                    $"O caixa de {pendente:dd/MM} espera a aprovação do gerente. Ele precisa ser fechado antes de abrir outro.", 409);
+            // Nenhum caixa abre com fechamento esperando o gerente (enviado ou fechado pelo operador sem aprovação).
+            await SemPendencia(c, loja);
             var contas = await ContasDoCaixa(c, loja, usuario, ct);
             // A partir da 6C5 o dinheiro da entrega com motoboy espera o acerto nesta conta (VendaDoPedido usa se existir).
             await GarantirContaMotoboys(c, loja, usuario, ct);
@@ -314,7 +334,8 @@ SELECT s.id, a.id, coalesce(s.descricao, a.descricao),
         var diferenca = CaixaRegras.Diferenca(esperado, contado);
         CaixaRegras.ExigirJustificativa(diferenca, req.Justificativa);
         var (fica, cofre) = CaixaRegras.Repartir(contado, req.Fica);
-        var fita = await Fita(loja, hoje, contas.Gaveta, ct, desde: InicioDoTurno(await Dia(c, loja, hoje)));
+        var janela = await JanelaDoCaixa(c, loja, (await Dia(c, loja, hoje))!, ct);
+        var fita = await Fita(loja, hoje, contas.Gaveta, ct, inicio: janela.Inicio, fim: janela.Fim);
         var maqEsperado = FormaCaixa.Maquininha.ToDictionary(f => f, f => CaixaRegras.R2(fita.Where(l => l.Tipo == "venda" && l.Forma == f).Sum(l => l.Valor)));
         var maquininha = FormaCaixa.Maquininha.ToDictionary(f => f, f => CaixaRegras.R2(req.Maquininha?.GetValueOrDefault(f) ?? 0));
         var justificativa = diferenca == 0 ? null : Cortar(req.Justificativa!.Trim(), 300);
@@ -323,8 +344,9 @@ SELECT s.id, a.id, coalesce(s.descricao, a.descricao),
             await Enviar(c, loja, usuario, hoje, req, esperado, contado, diferenca, maquininha, maqEsperado, justificativa, fica, ct);
             return (await CarregarDia(loja, hoje, ct))!;
         }
+        // Gerente (ou acima) fecha já aprovado; o fechamento do operador espera o gerente antes de abrir outro caixa.
         return await Concluir(c, loja, usuario, acesso, hoje, req.Contagem, contado, esperado, maquininha, maqEsperado, justificativa, fica, cofre,
-            fechadoPor: usuario, aprovadoPor: null, hoje, ct);
+            fechadoPor: usuario, aprovadoPor: acesso.Papel == GestaoPapeis.Gerente ? usuario : null, hoje, ct);
     }
 
     /// <summary>Publica o fechamento (e o recolhimento ao cofre) no livro e fecha o dia. <paramref name="publicaComo"/> assina no livro.</summary>
@@ -344,7 +366,7 @@ SELECT s.id, a.id, coalesce(s.descricao, a.descricao),
         {
             ChaveIdempotencia = $"caixa:fechamento:{dia}{sufixo}", Tipo = TipoFechamento, Modulo = ModuloGestao.Caixa, DataFato = _relogio.GetUtcNow(),
             Descricao = diferenca == 0 ? "Fechamento do caixa · bateu" : $"Fechamento do caixa · {(diferenca < 0 ? "faltou" : "sobrou")} R$ {Math.Abs(diferenca):N2}",
-            Origem = new OrigemRef { Tipo = "caixa", Id = dia },
+            Origem = new OrigemRef { Tipo = "caixa", Id = dia + sufixo },
             Dados = JsonSerializer.SerializeToElement(new
             {
                 contagem, esperado, contado, diferenca, justificativa, maquininha, maquininhaEsperado = maqEsperado,
@@ -369,13 +391,14 @@ SELECT s.id, a.id, coalesce(s.descricao, a.descricao),
             recolhimento = (await livro.Publicar(c, tx, loja, usuario, new PublicarAcontecimentoRequest
             {
                 ChaveIdempotencia = $"caixa:recolhimento:{dia}{sufixo}", Tipo = TipoRecolhimento, Modulo = ModuloGestao.Caixa, DataFato = _relogio.GetUtcNow(),
-                Descricao = $"Recolhimento ao cofre · R$ {cofre:N2}", Origem = new OrigemRef { Tipo = "caixa", Id = dia },
+                Descricao = $"Recolhimento ao cofre · R$ {cofre:N2}", Origem = new OrigemRef { Tipo = "caixa", Id = dia + sufixo },
                 Lancamentos = Transferencia(contas.Gaveta, contas.Cofre, cofre, hoje, "Recolhimento ao cofre"),
             }, ct)).Id;
         var n = await c.ExecuteAsync(@"
 UPDATE gestao_caixa_dias SET fechado_por = @fechadoPor, fechado_em = @agora, fechamento_id = @fechamentoId, recolhimento_id = @recolhimento,
        esperado = @esperado, contado = @contado, maquininha = CAST(@maquininha AS jsonb), maquininha_esperado = CAST(@maqEsperado AS jsonb),
-       justificativa = @justificativa, fica = @fica, cofre = @cofre, aprovado_por = @aprovadoPor
+       justificativa = @justificativa, fica = @fica, cofre = @cofre, aprovado_por = @aprovadoPor,
+       aprovado_em = CASE WHEN CAST(@aprovadoPor AS integer) IS NULL THEN NULL ELSE @agora END
  WHERE estabelecimento_id = @loja AND dia = @dia AND fechado_em IS NULL", new
         {
             loja, dia = hoje.ToDateTime(TimeOnly.MinValue), fechadoPor, aprovadoPor, agora = _relogio.GetUtcNow(), fechamentoId = f.Id, recolhimento, esperado,
@@ -444,9 +467,10 @@ VALUES (@ajusteId, @loja, @dia, @usuario, @agora, @atual, @ContadoNovo, @motivo,
     // ---------------------------------------------------------------- apoio
 
     /// <summary>Fita do dia a partir do livro: abertura, vendas (todas as formas) e o que mexeu na gaveta.</summary>
-    /// <param name="desde">Início do turno (2º turno em diante): o que veio antes é do turno que já fechou.</param>
+    /// <param name="inicio">Início da janela do caixa (ver JanelaDoCaixa).</param>
+    /// <param name="fim">Fechamento do caixa; aberto, sem fim (a madrugada do dia seguinte ainda é dele).</param>
     private async Task<IReadOnlyList<LinhaFita>> Fita(Guid loja, DateOnly dia, Guid gaveta, CancellationToken ct, decimal? fundoEfetivo = null,
-        bool diaAberto = false, IReadOnlyDictionary<Guid, Guid>? pendentes = null, DateTimeOffset? desde = null)
+        bool diaAberto = false, IReadOnlyDictionary<Guid, Guid>? pendentes = null, DateTimeOffset? inicio = null, DateTimeOffset? fim = null)
     {
         LinhaFita Marca(LinhaFita l, AcontecimentoDto a)
         {
@@ -456,13 +480,15 @@ VALUES (@ajusteId, @loja, @dia, @usuario, @agora, @atual, @ContadoNovo, @motivo,
                 Corrigivel = diaAberto && !estornada && pendente is null && Estornavel(a, gaveta) };
         }
         var fuso = await livro.Fuso(loja, ct);
-        var acontecimentos = await livro.LinhaDoTempo(loja, new PeriodoFiltro { Mes = new DateOnly(dia.Year, dia.Month, 1), Dia = dia, Limite = 1000 }, ct);
+        // O dia e a madrugada seguinte: o caixa que passa da meia-noite continua sendo do dia em que abriu.
+        var acontecimentos = await livro.LinhaDoTempo(loja, new PeriodoFiltro { Dia = dia, Ate = dia.AddDays(1), Limite = 1000 }, ct);
         var motoboys = (await livro.Contas(loja, ct)).Where(k => k.Tipo == TipoConta.Recebivel && k.Subtipo == APIBack.GestaoLogica.Vendas.VendaDoPedido.SubtipoMotoboys)
             .Select(k => k.Id).ToHashSet();
         // Fechamento, recolhimento e ajuste não entram na fita; o estorno deles (caixa reaberto) também não.
         var doFechamento = acontecimentos.Where(a => a.Tipo is TipoFechamento or TipoRecolhimento or TipoAjusteFechamento).Select(a => a.Id).ToHashSet();
         var fita = new List<LinhaFita>();
-        foreach (var a in acontecimentos.Where(a => desde is null || a.DataFato >= desde).OrderBy(a => a.DataFato).ThenBy(a => a.RegistradoEm))
+        foreach (var a in acontecimentos.Where(a => (inicio is null || a.DataFato >= inicio) && (fim is null || a.DataFato <= fim))
+                     .OrderBy(a => a.DataFato).ThenBy(a => a.RegistradoEm))
         {
             if (a.CorrigeId is { } corrigido && doFechamento.Contains(corrigido)) continue;
             var hora = TimeZoneInfo.ConvertTime(a.DataFato, fuso).ToString("HH:mm");
@@ -572,11 +598,28 @@ INSERT INTO gestao_caixas (estabelecimento_id, conta_gaveta_id, conta_cofre_id) 
     private async Task<decimal> Saldo(Guid loja, Guid conta, CancellationToken ct) =>
         (await livro.Contas(loja, ct)).First(x => x.Id == conta).Saldo;
 
+    /// <summary>Só o dia em operação recebe lançamento. Caixa de outro dia ainda aberto precisa fechar antes.</summary>
     private async Task<DateOnly> SoHoje(Guid loja, DateOnly dia, CancellationToken ct)
     {
         var hoje = await Hoje(loja, ct);
-        if (dia != hoje) throw Invalido("O caixa registra só o dia de hoje. Para corrigir um dia passado, ajuste o fechamento.");
-        return hoje;
+        if (dia == hoje) return hoje;
+        if (dia > hoje) throw Invalido($"O dia em operação ainda é {hoje:dd/MM}: feche o caixa dele antes de abrir {dia:dd/MM}.");
+        throw new GestaoException("DIA_PASSADO", $"O dia em operação agora é {hoje:dd/MM}. Para corrigir {dia:dd/MM}, ajuste o fechamento.", 409);
+    }
+
+    /// <summary>
+    /// De quando até quando o caixa vale: do início do dia (ou do fechamento do caixa anterior, se ele passou da meia-noite) até o
+    /// fechamento; no 2º turno em diante, da abertura do turno. Aberto, vale até agora (inclusive depois da meia-noite).
+    /// </summary>
+    private async Task<(DateTimeOffset Inicio, DateTimeOffset? Fim)> JanelaDoCaixa(NpgsqlConnection c, Guid loja, DiaRow row, CancellationToken ct)
+    {
+        DateTimeOffset? fim = row.FechadoEm is { } f ? Utc(f) : null;
+        if (row.Turno > 1) return (Utc(row.AbertoEm), fim);
+        var fuso = await livro.Fuso(loja, ct);
+        var meiaNoite = new DateTimeOffset(TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(row.Dia.Date, DateTimeKind.Unspecified), fuso), TimeSpan.Zero);
+        var anterior = await c.ExecuteScalarAsync<DateTime?>(@"SELECT max(fechado_em) FROM gestao_caixa_dias
+ WHERE estabelecimento_id = @loja AND dia < @dia", new { loja, dia = row.Dia });
+        return (anterior is { } a && Utc(a) > meiaNoite ? Utc(a).AddTicks(1) : meiaNoite, fim);
     }
 
     private static async Task<DiaRow?> Dia(NpgsqlConnection c, Guid loja, DateOnly dia) =>

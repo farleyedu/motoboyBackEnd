@@ -29,27 +29,59 @@ public sealed partial class CaixaService
     {
         if (req.ToleranciaFechamento is { } t && (t < 0 || t > 100_000 || decimal.Round(t, 2) != t))
             throw Invalido("Tolerância: zero ou mais, até 2 casas.");
+        TimeSpan? virada = null;
+        if (req.ViradaDoDia is { } v)
+        {
+            if (!TimeSpan.TryParse(v, out var tv) || tv < TimeSpan.Zero || tv > TimeSpan.FromHours(8) || tv.Seconds != 0)
+                throw Invalido("Virada do dia: um horário entre 00:00 e 08:00.");
+            virada = tv;
+        }
         await using var c = await dataSource.OpenConnectionAsync(ct);
         var atual = await LerConfig(c, loja);
         await c.ExecuteAsync(@"
-INSERT INTO gestao_caixa_config (estabelecimento_id, tolerancia_fechamento, operador_ve_saldo, atualizado_por, atualizado_em)
-VALUES (@loja, @tolerancia, @veSaldo, @usuario, now())
+INSERT INTO gestao_caixa_config (estabelecimento_id, tolerancia_fechamento, operador_ve_saldo, virada_do_dia, atualizado_por, atualizado_em)
+VALUES (@loja, @tolerancia, @veSaldo, @virada, @usuario, now())
 ON CONFLICT (estabelecimento_id) DO UPDATE SET tolerancia_fechamento = EXCLUDED.tolerancia_fechamento,
-       operador_ve_saldo = EXCLUDED.operador_ve_saldo, atualizado_por = EXCLUDED.atualizado_por, atualizado_em = now()", new
+       operador_ve_saldo = EXCLUDED.operador_ve_saldo, virada_do_dia = EXCLUDED.virada_do_dia, atualizado_por = EXCLUDED.atualizado_por,
+       atualizado_em = now()", new
         {
             loja, usuario, tolerancia = req.ToleranciaFechamento ?? atual.ToleranciaFechamento, veSaldo = req.OperadorVeSaldo ?? atual.OperadorVeSaldo,
+            virada = virada ?? atual.Virada,
         });
         return await LerConfig(c, loja);
     }
 
+    /// <summary>Fechamentos esperando o gerente: os enviados (nada no livro) e os que o operador fechou e falta aprovar.</summary>
     public async Task<IReadOnlyList<FechamentoAguardando>> Aguardando(Guid loja, CancellationToken ct)
     {
         await using var c = await dataSource.OpenConnectionAsync(ct);
+        return await Pendentes(c, loja);
+    }
+
+    private static async Task<IReadOnlyList<FechamentoAguardando>> Pendentes(NpgsqlConnection c, Guid loja)
+    {
         var dias = await c.QueryAsync<DiaRow>($@"SELECT {ColunasDia} FROM gestao_caixa_dias
- WHERE estabelecimento_id = @loja AND envio_em IS NOT NULL AND fechado_em IS NULL ORDER BY dia", new { loja });
-        return dias.Select(d => (Dia: d.Dia, Envio: EnvioDe(d))).Where(x => x.Envio is not null)
-            .Select(x => new FechamentoAguardando(DateOnly.FromDateTime(x.Dia), x.Envio!.Em, x.Envio.PorNome, x.Envio.Diferenca, x.Envio.Contado,
-                x.Envio.Esperado)).ToList();
+ WHERE estabelecimento_id = @loja AND ((envio_em IS NOT NULL AND fechado_em IS NULL) OR (fechado_em IS NOT NULL AND aprovado_em IS NULL))
+ ORDER BY dia", new { loja });
+        return dias.Select(d =>
+        {
+            if (d.FechadoEm is { } fechado)
+                return new FechamentoAguardando(DateOnly.FromDateTime(d.Dia), Utc(fechado), d.FechadoPorNome, CaixaRegras.Diferenca(d.Esperado!.Value, d.Contado!.Value),
+                    d.Contado!.Value, d.Esperado!.Value, Fechado: true);
+            var e = EnvioDe(d);
+            return e is null ? null : new FechamentoAguardando(DateOnly.FromDateTime(d.Dia), e.Em, e.PorNome, e.Diferenca, e.Contado, e.Esperado);
+        }).OfType<FechamentoAguardando>().ToList();
+    }
+
+    /// <summary>O que o painel precisa para saber que dia o caixa está rodando e o que impede abrir outro.</summary>
+    public async Task<OperacaoDoCaixa> Operacao(Guid loja, CancellationToken ct)
+    {
+        await using var c = await dataSource.OpenConnectionAsync(ct);
+        var dia = await DiaEmOperacao(c, loja, ct);
+        var row = await Dia(c, loja, dia);
+        var situacao = row is null ? "sem_caixa" : row.FechadoEm is not null ? "fechado" : row.EnvioEm is not null ? "aguardando" : "aberto";
+        var config = await LerConfig(c, loja);
+        return new OperacaoDoCaixa(dia, await HojeDoCalendario(loja, ct), config.ViradaDoDia, situacao, row?.Turno ?? 1, await Pendentes(c, loja));
     }
 
     public async Task<CaixaDoDia> DecidirFechamento(Guid loja, int usuario, GestaoPapeis.Acesso acesso, DateOnly dia, DecisaoDoFechamentoRequest req,
@@ -60,7 +92,17 @@ ON CONFLICT (estabelecimento_id) DO UPDATE SET tolerancia_fechamento = EXCLUDED.
         if (decisao is not (DecisaoAprovar or DecisaoDevolver)) throw Invalido("Decisão: aprovar ou devolver.");
         await using var c = await dataSource.OpenConnectionAsync(ct);
         var row = await Dia(c, loja, dia) ?? throw new GestaoException("NAO_ENCONTRADO", "Não há caixa neste dia.", 404);
-        if (row.FechadoEm is not null) throw new GestaoException("FECHADO", "Este caixa já foi fechado.", 409);
+        if (row.FechadoEm is not null)
+        {
+            // Fechado pelo operador: aprovar só dá o visto (já está no livro). Depois disso o próximo caixa pode abrir.
+            if (decisao != DecisaoAprovar || row.AprovadoEm is not null) throw new GestaoException("FECHADO", "Este caixa já foi fechado e aprovado.", 409);
+            await using var tx = await c.BeginTransactionAsync(ct);
+            await c.ExecuteAsync(@"UPDATE gestao_caixa_dias SET aprovado_por = @usuario, aprovado_em = now()
+ WHERE estabelecimento_id = @loja AND dia = @dia AND fechado_em IS NOT NULL AND aprovado_em IS NULL", new { loja, dia = row.Dia, usuario }, tx);
+            await GestaoTempoReal.AvisarNoCommit(c, tx, loja, Guid.NewGuid(), GestaoTempoReal.Caixa);
+            await tx.CommitAsync(ct);
+            return (await CarregarDia(loja, dia, ct))!;
+        }
         if (row.EnvioEm is null || row.Envio is null || row.EnvioPor is not { } operador)
             throw new GestaoException("SEM_ENVIO", "Este caixa não tem fechamento esperando aprovação.", 409);
         var envio = JsonSerializer.Deserialize<EnvioGravado>(row.Envio, Json)!;
@@ -122,10 +164,10 @@ UPDATE gestao_caixa_dias SET envio_em = now(), envio_por = @usuario, envio = CAS
 
     private static async Task<ConfigDoCaixa> LerConfig(NpgsqlConnection c, Guid loja)
     {
-        var linha = await c.QuerySingleOrDefaultAsync<(decimal Tolerancia, bool VeSaldo)?>(
-            "SELECT tolerancia_fechamento, operador_ve_saldo FROM gestao_caixa_config WHERE estabelecimento_id = @loja", new { loja });
-        // Sem configuração: toda diferença vai para o gerente e o operador vê o saldo (como era).
-        return linha is { } l ? new ConfigDoCaixa(l.Tolerancia, l.VeSaldo) : new ConfigDoCaixa(0m, true);
+        var linha = await c.QuerySingleOrDefaultAsync<(decimal Tolerancia, bool VeSaldo, TimeSpan Virada)?>(
+            "SELECT tolerancia_fechamento, operador_ve_saldo, virada_do_dia FROM gestao_caixa_config WHERE estabelecimento_id = @loja", new { loja });
+        // Sem configuração: toda diferença vai para o gerente, o operador vê o saldo e o dia vira às 05:00.
+        return linha is { } l ? new ConfigDoCaixa(l.Tolerancia, l.VeSaldo, l.Virada.ToString(@"hh\:mm")) : new ConfigDoCaixa(0m, true);
     }
 
     private static EnvioDoFechamento? EnvioDe(DiaRow d)
