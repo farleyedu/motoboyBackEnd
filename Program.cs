@@ -386,6 +386,12 @@ builder.Services.AddScoped<APIBack.AssistenteComercial.Audio.IAudioService, APIB
 // Ocupa o assistente interno do pipeline so se ninguem registrou outro (o assistente geral e de outra etapa).
 Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddScoped<APIBack.Atendimento.IAssistenteInternoWhatsapp, APIBack.AssistenteComercial.Audio.AudioAssistenteInterno>(builder.Services);
 builder.Services.AddHostedService<APIBack.AssistenteComercial.Audio.AudioWorker>();
+// Objecoes, recomendacoes e coaching (tarefa 16). Redator de IA desligado ate existir um fornecedor configurado; descontos/regras financeiras nao existem.
+builder.Services.Configure<APIBack.AssistenteComercial.Inteligencia.InteligenciaOptions>(builder.Configuration.GetSection(APIBack.AssistenteComercial.Inteligencia.InteligenciaOptions.Secao));
+builder.Services.AddScoped<APIBack.AssistenteComercial.Inteligencia.IInteligenciaStore, APIBack.AssistenteComercial.Inteligencia.InteligenciaPostgresStore>();
+builder.Services.AddScoped<APIBack.AssistenteComercial.Inteligencia.ICatalogoComercial, APIBack.AssistenteComercial.Inteligencia.CatalogoComercialPacotes>();
+builder.Services.AddScoped<APIBack.AssistenteComercial.Inteligencia.IRedatorRecomendacao, APIBack.AssistenteComercial.Inteligencia.RedatorDesligado>();
+builder.Services.AddScoped<APIBack.AssistenteComercial.Inteligencia.IInteligenciaService, APIBack.AssistenteComercial.Inteligencia.InteligenciaService>();
 builder.Services.AddScoped<APIBack.Atendimento.IWaEventoProcessor, APIBack.Atendimento.WaEventoProcessor>();
 builder.Services.AddScoped<APIBack.Atendimento.IIngressoDeConversa>(sp => sp.GetRequiredService<ConversationService>());
 builder.Services.AddScoped<APIBack.Atendimento.IPipelineDeMensagem, APIBack.Atendimento.PipelineDeMensagem>();
