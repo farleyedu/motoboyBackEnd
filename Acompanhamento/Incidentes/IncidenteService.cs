@@ -110,6 +110,45 @@ SELECT id_estabelecimento, ultimo_erro, ultimo_erro_em
             }
         }
 
+        /// <summary>Minutos que um trabalho de impressao pode ficar sem sair antes de contar como falha (parametro; ajustavel pelo proprietario).</summary>
+        public const int ImpressaoMinutosSemSair = 10;
+
+        /// <summary>Texto da causa a partir do que foi medido. Puro, para teste.</summary>
+        public static (string Causa, string Codigo) CausaImpressao(int travados, bool falhou, int minutos = ImpressaoMinutosSemSair) =>
+            falhou
+                ? ($"Impressão falhando: {travados} pedido{(travados == 1 ? "" : "s")} com erro de impressão na última hora", "job_falhou")
+                : ($"{travados} pedido{(travados == 1 ? "" : "s")} sem imprimir há mais de {minutos} minutos (estação ou impressora parada)", "job_parado");
+
+        /// <summary>
+        /// Impressao: trabalho pendente/enviado ha mais de N minutos ainda valido, ou com erro na ultima hora. So lojas com trabalho real; loja sem
+        /// impressao configurada nunca aparece. Executor indeterminado: pode ser a estacao da loja desligada ou falha nossa.
+        /// </summary>
+        private async Task<Deteccao> DetectarImpressaoAsync(NpgsqlConnection cx, CancellationToken ct)
+        {
+            try
+            {
+                var linhas = await cx.QueryAsync<(Guid LojaId, DateTime Inicio, int Qtd, bool Falhou)>(new CommandDefinition(@"
+SELECT estabelecimento_id, MIN(criado_em), COUNT(*)::int, BOOL_OR(estado = 'falhou')
+  FROM impressao_job
+ WHERE descartado = FALSE AND criado_em > now() - interval '6 hours'
+   AND ((estado IN ('pendente', 'entregue', 'enviado') AND criado_em < now() - make_interval(mins => @Min) AND expira_em > now())
+        OR (estado = 'falhou' AND criado_em > now() - interval '60 minutes'))
+ GROUP BY estabelecimento_id;", new { Min = ImpressaoMinutosSemSair }, cancellationToken: ct));
+                var sinais = linhas.Select(l =>
+                {
+                    var (causa, codigo) = CausaImpressao(l.Qtd, l.Falhou);
+                    return new SinalFalha(CategoriasIncidente.Impressao, "impressao_job.estado", Assinatura(CategoriasIncidente.Impressao, codigo), l.LojaId,
+                        new DateTimeOffset(DateTime.SpecifyKind(l.Inicio, DateTimeKind.Utc)), causa, ExecutoresIncidente.Indeterminado,
+                        JsonSerializer.Serialize(new { origem = "impressao_job", trabalhos = l.Qtd, falhou = l.Falhou, minutos = ImpressaoMinutosSemSair }));
+                }).ToList();
+                return new Deteccao(CategoriasIncidente.Impressao, true, sinais, null);
+            }
+            catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.UndefinedTable or PostgresErrorCodes.UndefinedColumn)
+            {
+                return new Deteccao(CategoriasIncidente.Impressao, false, Array.Empty<SinalFalha>(), "tabela impressao_job ausente neste banco");
+            }
+        }
+
         private static string Resumo(string? s) => string.IsNullOrWhiteSpace(s) ? "sem detalhe" : (s.Length > 120 ? s[..120] : s);
 
         private static string Chave(string origem, SinalFalha s) => $"{origem}:{s.Assinatura}:{s.LojaId}:{s.Inicio.ToUniversalTime():yyyyMMddTHHmmssZ}";
@@ -119,7 +158,7 @@ SELECT id_estabelecimento, ultimo_erro, ultimo_erro_em
         private async Task SincronizarAsync(CancellationToken ct)
         {
             await using var leitura = await _db.OpenConnectionAsync(ct);
-            var deteccoes = new[] { await DetectarIfoodAsync(leitura, ct), await DetectarCanalMetaAsync(leitura, ct) };
+            var deteccoes = new[] { await DetectarIfoodAsync(leitura, ct), await DetectarCanalMetaAsync(leitura, ct), await DetectarImpressaoAsync(leitura, ct) };
             await using var cx = await _db.OpenConnectionAsync(ct);
             await using var tx = await cx.BeginTransactionAsync(ct);
             await TravaAsync(cx, tx, ct);
@@ -262,9 +301,10 @@ SELECT i.id AS Id, i.categoria AS Categoria, i.estado AS Estado, i.inicio AS Ini
         {
             var ifood = await DetectarIfoodAsync(cx, ct);
             var meta = await DetectarCanalMetaAsync(cx, ct);
+            var impressao = await DetectarImpressaoAsync(cx, ct);
             return CategoriasIncidente.FonteFaltante.Select(kv =>
             {
-                var d = kv.Key == CategoriasIncidente.Ifood ? ifood : kv.Key == CategoriasIncidente.CanalMeta ? meta : null;
+                var d = kv.Key == CategoriasIncidente.Ifood ? ifood : kv.Key == CategoriasIncidente.CanalMeta ? meta : kv.Key == CategoriasIncidente.Impressao ? impressao : null;
                 if (d != null) return d.Ok ? new CoberturaDto(kv.Key, "monitorado", null) : new CoberturaDto(kv.Key, "sem_monitoramento", d.Indisponivel);
                 return new CoberturaDto(kv.Key, "sem_monitoramento", kv.Value);
             }).ToList();

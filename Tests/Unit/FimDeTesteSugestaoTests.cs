@@ -44,6 +44,19 @@ namespace APIBack.Tests.Unit
         }
 
         [Fact]
+        public void Causa_da_impressao_diz_o_que_foi_medido_e_o_codigo_agrupa_lojas_com_o_mesmo_problema()
+        {
+            var (parado, codParado) = APIBack.Acompanhamento.Incidentes.IncidenteService.CausaImpressao(3, false);
+            var (erro, codErro) = APIBack.Acompanhamento.Incidentes.IncidenteService.CausaImpressao(1, true);
+            Assert.Contains("3 pedidos sem imprimir há mais de 10 minutos", parado);
+            Assert.Contains("1 pedido com erro", erro);
+            Assert.NotEqual(codParado, codErro);
+            // Mesmo problema em lojas diferentes tem a mesma assinatura: e o que permite agrupar em incidente (3+ lojas).
+            Assert.Equal(APIBack.Acompanhamento.Incidentes.IncidenteService.Assinatura("impressao", codParado),
+                APIBack.Acompanhamento.Incidentes.IncidenteService.Assinatura("impressao", codParado));
+        }
+
+        [Fact]
         public void Plano_pago_ativa_sozinho_e_loja_ja_operando_sem_teste_nao_tem_sugestao()
         {
             Assert.Equal("ativar_ao_terminar", SaudeService.SugerirFimDeTeste(true, false, true, 3, 30, new[] { Falha() })!.Acao);

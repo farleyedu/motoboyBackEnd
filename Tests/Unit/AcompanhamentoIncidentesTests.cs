@@ -92,7 +92,8 @@ public class AcompanhamentoIncidentesTests
         Assert.Equal(11, CategoriasIncidente.FonteFaltante.Count);
         Assert.Null(CategoriasIncidente.FonteFaltante[CategoriasIncidente.Ifood]);
         Assert.Null(CategoriasIncidente.FonteFaltante[CategoriasIncidente.CanalMeta]);
-        foreach (var kv in CategoriasIncidente.FonteFaltante.Where(k => k.Key is not ("ifood" or "canal_meta")))
+        Assert.Null(CategoriasIncidente.FonteFaltante[CategoriasIncidente.Impressao]); // impressao_job (prompt 04, sessao 4)
+        foreach (var kv in CategoriasIncidente.FonteFaltante.Where(k => k.Key is not ("ifood" or "canal_meta" or "impressao")))
             Assert.False(string.IsNullOrWhiteSpace(kv.Value), kv.Key);
     }
 

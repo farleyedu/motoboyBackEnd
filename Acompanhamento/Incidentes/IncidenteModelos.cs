@@ -25,7 +25,7 @@ namespace APIBack.Acompanhamento.Incidentes
             [CanalMeta] = null,
             [Robo] = "telemetria de execucao do robo (heartbeat/erros por loja)",
             [FilaPedidos] = "metrica de atraso da fila de pedidos por loja",
-            [Impressao] = "retorno de status do agente de impressao por loja",
+            [Impressao] = null, // detectada por impressao_job (pendente ha mais de N minutos ou com erro)
             [MotoboySemPosicao] = "telemetria de ultima posicao por motoboy ativo",
             [Endereco] = "taxa de falha de geocodificacao/consulta de endereco por loja",
             [Cardapio] = "verificacao de publicacao e erros do cardapio web por loja",
