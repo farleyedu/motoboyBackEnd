@@ -371,6 +371,21 @@ builder.Services.AddScoped<APIBack.GestaoMensagens.IGestaoPainel, APIBack.Gestao
 builder.Services.AddScoped<APIBack.GestaoMensagens.IGestaoMarcos, APIBack.GestaoMensagens.GestaoMarcosRelacionamento>();
 builder.Services.AddScoped<APIBack.GestaoMensagens.IGestaoMensagensService, APIBack.GestaoMensagens.GestaoMensagensService>();
 builder.Services.AddScoped<APIBack.GestaoMensagens.IGestaoMensagensRetorno, APIBack.GestaoMensagens.GestaoMensagensRetorno>();
+// Assistente de visitas por audio (docs/crm-inteligente/02-backend-whatsapp-ia.md, Parte B). Processamento externo desligado ate a configuracao
+// CrmAssistente:Audio estar completa (fornecedor, modelo, custos, teto, limites); o worker so le a fila do banco.
+builder.Services.Configure<APIBack.AssistenteComercial.Audio.AssistenteAudioOptions>(builder.Configuration.GetSection(APIBack.AssistenteComercial.Audio.AssistenteAudioOptions.Secao));
+builder.Services.AddHttpClient("crm-assistente-audio", client => client.Timeout = System.Threading.Timeout.InfiniteTimeSpan);
+builder.Services.AddScoped<APIBack.AssistenteComercial.Audio.IAudioStore, APIBack.AssistenteComercial.Audio.AudioPostgresStore>();
+builder.Services.AddScoped<APIBack.AssistenteComercial.Audio.IAudioCrm, APIBack.AssistenteComercial.Audio.AudioCrmRepositorio>();
+builder.Services.AddScoped<APIBack.AssistenteComercial.Audio.IVerificacaoFuncionario, APIBack.AssistenteComercial.Audio.VerificacaoFuncionario>();
+builder.Services.AddScoped<APIBack.AssistenteComercial.Audio.IMidiaAudio, APIBack.AssistenteComercial.Audio.MidiaAudioMeta>();
+builder.Services.AddScoped<APIBack.AssistenteComercial.Audio.ITranscritor, APIBack.AssistenteComercial.Audio.TranscritorOpenAiCompat>();
+builder.Services.AddScoped<APIBack.AssistenteComercial.Audio.IInterpretador, APIBack.AssistenteComercial.Audio.InterpretadorClaude>();
+builder.Services.AddScoped<APIBack.AssistenteComercial.Audio.IRetornoWhatsapp, APIBack.AssistenteComercial.Audio.RetornoWhatsappMeta>();
+builder.Services.AddScoped<APIBack.AssistenteComercial.Audio.IAudioService, APIBack.AssistenteComercial.Audio.AudioService>();
+// Ocupa o assistente interno do pipeline so se ninguem registrou outro (o assistente geral e de outra etapa).
+Microsoft.Extensions.DependencyInjection.Extensions.ServiceCollectionDescriptorExtensions.TryAddScoped<APIBack.Atendimento.IAssistenteInternoWhatsapp, APIBack.AssistenteComercial.Audio.AudioAssistenteInterno>(builder.Services);
+builder.Services.AddHostedService<APIBack.AssistenteComercial.Audio.AudioWorker>();
 builder.Services.AddScoped<APIBack.Atendimento.IWaEventoProcessor, APIBack.Atendimento.WaEventoProcessor>();
 builder.Services.AddScoped<APIBack.Atendimento.IIngressoDeConversa>(sp => sp.GetRequiredService<ConversationService>());
 builder.Services.AddScoped<APIBack.Atendimento.IPipelineDeMensagem, APIBack.Atendimento.PipelineDeMensagem>();

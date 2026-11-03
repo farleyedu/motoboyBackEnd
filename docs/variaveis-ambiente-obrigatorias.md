@@ -224,3 +224,19 @@ git (antes desta limpeza) deve ser tratada como comprometida:
 Esta lista foi gerada por inspecao estatica dos arquivos `appsettings*.json` em
 2026-07-22. Rotacao efetiva nos provedores externos precisa ser confirmada
 manualmente — nao e verificavel por leitura de codigo.
+
+## Assistente de visitas por audio (`CrmAssistente:Audio`)
+
+Sem estes valores o processamento externo fica **desligado**: a entrada falha com `IA_INDISPONIVEL` e o detalhe lista o que falta. Nenhum tem padrao no codigo (fornecedor, modelo, custo e teto sao decisao do negocio). Variavel de ambiente: `CrmAssistente__Audio__<Campo>`.
+
+| Campo | O que e |
+|---|---|
+| `Habilitado` | Chave geral (`true` para ligar). |
+| `TranscricaoProvedor` / `TranscricaoEndpoint` / `TranscricaoModelo` / `TranscricaoChave` | Hoje `openai-compat` (POST multipart `/audio/transcriptions`, https). |
+| `InterpretacaoProvedor` / `InterpretacaoModelo` / `InterpretacaoChave` | Hoje `anthropic`. |
+| `CustoPorMinutoTranscricao`, `CustoPorMilTokensEntrada`, `CustoPorMilTokensSaida` | Tabela de custo, na mesma unidade do teto. |
+| `TetoMensalCusto` | Soma do mes (inclui reserva do pior caso por entrada); acima disso a entrada fica `bloqueada` (`TETO_MENSAL_EXCEDIDO`). |
+| `MaxBytes`, `MaxDuracaoSegundos`, `MaxTokensSaida`, `TimeoutSegundos`, `MaxTentativas` | Limites por audio; `AtrasoTentativaSegundos` (padrao 30) dobra a cada falha. |
+| `RetencaoDias` | Transcricao e proposta de entradas encerradas sao apagadas apos este prazo. O audio nunca e gravado. |
+
+Cada vendedor precisa consentir (`POST /api/crm/assistente/consentimento`) antes de qualquer audio ser baixado ou enviado a fornecedor.
