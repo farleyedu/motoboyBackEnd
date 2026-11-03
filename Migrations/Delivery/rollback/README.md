@@ -70,3 +70,18 @@ que ja existe. So semeia estabelecimento ativo, com Delivery e **sem dado real**
   `seed_demo_erro: ...` = falhou, nada ficou pela metade e sera tentado na proxima subida)
 - semear de novo: apague `20260927_90_seed_uberlandia` e as linhas `seed_demo_%` do ledger.
 - desfazer: `20260927_90_seed_uberlandia.down.sql` (remove so o que o seed criou).
+
+## CRM inteligente (24 a 27/11) - ordem e limites
+
+Total real em `Migrations/Delivery`: 199 arquivos `.sql`. Das 13 de 24 a 27/11, 7 ja tinham rollback (`24_01`, `25_01`, `26_01`, `27_01`, `27_02`, `27_04`, `27_08`). Foram adicionados `27_03`, `27_05`, `27_06`, `27_07`, `27_15` e `27_16`. Os de `caixa` (25 e 26) ficam fora desta revisao.
+
+Ordem inversa da aplicacao, cada um na propria transacao: `16` -> `15` -> `07` -> `06` -> `05` -> `03`. O `15` so roda depois do `16` (FK de `crm_objecao`); o `06` so depois do `07` quando ha eventos de Gestao pendentes.
+
+Travas: `03`, `15` e `16` recusam rodar com dados. Para apagar de proposito, exporte as tabelas e rode `SET zippy.rollback_confirmado = 'sim';` na mesma sessao antes do script. `06` e `07` recusam com numero de teste extra, finalidade `gestao` ou mensagem pendente/bloqueada.
+
+Parciais por seguranca (nao apagam dado permanente):
+- **`27_05` identidade**: remove so o indice. Vinculo e auditoria nunca sao apagados. Para desligar o uso: `UPDATE usuario_whatsapp_vinculo SET estado='revogado', codigo_hash=NULL, codigo_expira_em=NULL, revogado_em=NOW(), motivo='rollback manual', versao=versao+1 WHERE estado IN ('pendente','verificado','suspenso');` (so com aprovacao, e registre na auditoria).
+- **`27_07` ingresso**: remove so os indices. As colunas de rota/destino em `wa_evento` ficam (nulaveis, ignoradas pelo worker antigo) porque provam o roteamento das mensagens ja processadas. Remocao fisica das colunas: manual, depois de exportar `wa_evento`.
+- **`27_06` canais de teste**: remove `teste`/`finalidade_teste` e as constraints; o numero principal, tokens e destinos ficam intactos.
+
+Validacao: os scripts foram escritos e revisados sem banco. O ciclo `up -> down -> up` ainda precisa rodar em PostgreSQL descartavel (nunca em producao) com `TEST_DELIVERY_DATABASE`.
