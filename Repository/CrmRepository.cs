@@ -1425,6 +1425,105 @@ SELECT CASE
             return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
         }
 
+        public async Task RegistrarPropostaLegadaAsync(Guid oportunidadeId, int usuarioId, string propostaJson, decimal? valorMensal, decimal? valorImplantacao, DateTimeOffset? enviadaEm)
+        {
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            if (!await connection.ExecuteScalarAsync<bool>("SELECT to_regclass('acompanhamento_proposta_versao') IS NOT NULL;", transaction: transaction))
+            {
+                return;
+            }
+
+            // Mesma ordem das passagens: oportunidade -> acompanhamento.
+            await connection.ExecuteAsync("SELECT 1 FROM crm_oportunidade WHERE id = @OportunidadeId FOR UPDATE;", new { OportunidadeId = oportunidadeId }, transaction);
+            var acompanhamento = await connection.ExecuteScalarAsync<Guid?>(
+                "SELECT id FROM acompanhamento WHERE oportunidade_id = @OportunidadeId FOR UPDATE;", new { OportunidadeId = oportunidadeId }, transaction);
+
+            var mesma = await connection.ExecuteScalarAsync<bool>(@"
+SELECT EXISTS (SELECT 1 FROM acompanhamento_proposta_versao
+                WHERE oportunidade_id = @OportunidadeId AND status IN ('enviada', 'em_negociacao') AND dados = CAST(@Dados AS jsonb));",
+                new { OportunidadeId = oportunidadeId, Dados = propostaJson }, transaction);
+            if (mesma)
+            {
+                return;
+            }
+
+            var anterior = await connection.ExecuteScalarAsync<int?>(@"
+UPDATE acompanhamento_proposta_versao SET status = 'substituida', edicao = edicao + 1, atualizada_em = NOW()
+ WHERE oportunidade_id = @OportunidadeId AND status IN ('enviada', 'em_negociacao') RETURNING versao;",
+                new { OportunidadeId = oportunidadeId }, transaction);
+            await connection.ExecuteAsync(@"
+UPDATE acompanhamento_proposta_versao SET status = 'guardada', edicao = edicao + 1, atualizada_em = NOW()
+ WHERE oportunidade_id = @OportunidadeId AND status = 'rascunho';", new { OportunidadeId = oportunidadeId }, transaction);
+
+            var quando = enviadaEm?.UtcDateTime;
+            var validade = enviadaEm.HasValue ? APIBack.Acompanhamento.Fases.PropostaRegras.Validade(enviadaEm.Value).ToDateTime(TimeOnly.MinValue) : (DateTime?)null;
+            var versao = await connection.ExecuteScalarAsync<int>(@"
+INSERT INTO acompanhamento_proposta_versao (oportunidade_id, versao, status, valor_mensal, valor_implantacao, dados, criada_por, apresentada_por,
+                                            enviada_em, validade_ate, canal, origem, revisa_versao)
+SELECT @OportunidadeId, COALESCE(MAX(versao), 0) + 1, 'enviada', @ValorMensal, @ValorImplantacao, CAST(@Dados AS jsonb), @UsuarioId, @UsuarioId,
+       @EnviadaEm, @ValidadeAte, 'nao_informado', 'crm_legado', @Anterior
+  FROM acompanhamento_proposta_versao WHERE oportunidade_id = @OportunidadeId
+RETURNING versao;",
+                new
+                {
+                    OportunidadeId = oportunidadeId, ValorMensal = valorMensal, ValorImplantacao = valorImplantacao, Dados = propostaJson, UsuarioId = usuarioId,
+                    EnviadaEm = quando, ValidadeAte = validade, Anterior = anterior
+                }, transaction);
+
+            if (acompanhamento.HasValue)
+            {
+                await connection.ExecuteAsync(@"
+INSERT INTO acompanhamento_relacionamento_evento (acompanhamento_id, tipo, detalhe, usuario_id) VALUES (@Acompanhamento, 'proposta_enviada', CAST(@Detalhe AS jsonb), @UsuarioId);",
+                    new
+                    {
+                        Acompanhamento = acompanhamento, UsuarioId = usuarioId,
+                        Detalhe = APIBack.Acompanhamento.Relacionamento.RelacionamentoRegras.SerializarDetalhe(new
+                        {
+                            versao, canal = "nao_informado", origem = "crm_legado", valorMensal, enviadaEm = quando, substituiu = anterior
+                        })
+                    }, transaction);
+            }
+
+            await transaction.CommitAsync();
+        }
+
+        public async Task EspelharResponsavelLegadoAsync(Guid oportunidadeId, int? novo, int? anterior, int usuarioId)
+        {
+            await using var connection = await _dataSource.OpenConnectionAsync();
+            await using var transaction = await connection.BeginTransactionAsync();
+            if (!await connection.ExecuteScalarAsync<bool>("SELECT to_regclass('acompanhamento_relacionamento') IS NOT NULL;", transaction: transaction))
+            {
+                return;
+            }
+
+            await connection.ExecuteAsync("SELECT 1 FROM crm_oportunidade WHERE id = @OportunidadeId FOR UPDATE;", new { OportunidadeId = oportunidadeId }, transaction);
+            var acompanhamento = await connection.ExecuteScalarAsync<Guid?>(
+                "SELECT id FROM acompanhamento WHERE oportunidade_id = @OportunidadeId FOR UPDATE;", new { OportunidadeId = oportunidadeId }, transaction);
+            if (!acompanhamento.HasValue)
+            {
+                return;
+            }
+
+            var mudou = await connection.ExecuteAsync(@"
+UPDATE acompanhamento_relacionamento
+   SET responsavel_usuario_id = @Novo, responsavel_desde = NOW(), versao = versao + 1, atualizado_em = NOW()
+ WHERE acompanhamento_id = @Acompanhamento AND responsavel_usuario_id IS DISTINCT FROM @Novo;",
+                new { Acompanhamento = acompanhamento, Novo = novo }, transaction);
+            if (mudou > 0)
+            {
+                await connection.ExecuteAsync(@"
+INSERT INTO acompanhamento_relacionamento_evento (acompanhamento_id, tipo, detalhe, usuario_id) VALUES (@Acompanhamento, 'passou', CAST(@Detalhe AS jsonb), @UsuarioId);",
+                    new
+                    {
+                        Acompanhamento = acompanhamento, UsuarioId = usuarioId,
+                        Detalhe = APIBack.Acompanhamento.Relacionamento.RelacionamentoRegras.SerializarDetalhe(new { de = anterior, para = novo, motivo = "Alterado pelo CRM antigo." })
+                    }, transaction);
+            }
+
+            await transaction.CommitAsync();
+        }
+
         /// <summary>Guarda a proposta do fechamento como versao aceita (proxima versao da oportunidade). Sem a tabela, nao faz nada.</summary>
         private static async Task RegistrarPropostaAceitaAsync(NpgsqlConnection connection, NpgsqlTransaction transaction, CrmCloseOpportunityCommand command)
         {
@@ -1436,10 +1535,10 @@ SELECT CASE
             }
 
             await connection.ExecuteAsync(@"
-UPDATE acompanhamento_proposta_versao SET status = 'guardada'
- WHERE oportunidade_id = @OportunidadeId AND status IN ('rascunho', 'enviada');
-INSERT INTO acompanhamento_proposta_versao (oportunidade_id, versao, status, valor_mensal, valor_implantacao, dados, criada_por, enviada_em)
-SELECT @OportunidadeId, COALESCE(MAX(versao), 0) + 1, 'aceita', @ValorMensal, @ValorImplantacao, CAST(@Dados AS jsonb), @UsuarioId, NOW()
+UPDATE acompanhamento_proposta_versao SET status = 'guardada', edicao = edicao + 1, atualizada_em = NOW()
+ WHERE oportunidade_id = @OportunidadeId AND status IN ('rascunho', 'enviada', 'em_negociacao');
+INSERT INTO acompanhamento_proposta_versao (oportunidade_id, versao, status, valor_mensal, valor_implantacao, dados, criada_por, enviada_em, canal, origem)
+SELECT @OportunidadeId, COALESCE(MAX(versao), 0) + 1, 'aceita', @ValorMensal, @ValorImplantacao, CAST(@Dados AS jsonb), @UsuarioId, NOW(), 'nao_informado', 'crm_legado'
   FROM acompanhamento_proposta_versao WHERE oportunidade_id = @OportunidadeId;",
                 new
                 {

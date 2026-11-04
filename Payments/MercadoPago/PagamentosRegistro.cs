@@ -6,6 +6,8 @@ using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Options;
+using APIBack.Payments.Conexao;
+using APIBack.Payments.Provedores;
 
 namespace APIBack.Payments.MercadoPago
 {
@@ -40,6 +42,10 @@ namespace APIBack.Payments.MercadoPago
             services.AddScoped<IPixChargeService, PixChargeService>();
             services.AddScoped<ICardPaymentService, CardPaymentService>();
             services.AddScoped<IPagamentoEstornoService, PagamentoEstornoService>();
+            services.AddScoped<IInfinitePayConexaoLojaService, InfinitePayConexaoLojaService>();
+            services.AddScoped<PagamentoProvedorLojaService>();
+            services.AddScoped<IPagamentoProvedorLojaService>(sp => sp.GetRequiredService<PagamentoProvedorLojaService>());
+            services.AddScoped<IPagamentoProvedorPreferenciaResolver>(sp => sp.GetRequiredService<PagamentoProvedorLojaService>());
             services.AddScoped<IMercadoPagoWebhookService, MercadoPagoWebhookService>();
             services.AddHostedService<PagamentoConciliadorWorker>();
             services.AddHostedService<PagamentoOutboxPublisher>();

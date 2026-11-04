@@ -8,6 +8,11 @@ namespace APIBack.Repository.Interface
 {
     public interface ICrmRepository : APIBack.Acompanhamento.Relacionamento.ILeadStore
     {
+        /// <summary>O /crm declarou a proposta: grava versao enviada (nao_informado, crm_legado). A mesma proposta de novo nao cria outra versao.</summary>
+        Task RegistrarPropostaLegadaAsync(Guid oportunidadeId, int usuarioId, string propostaJson, decimal? valorMensal, decimal? valorImplantacao, DateTimeOffset? enviadaEm);
+        /// <summary>Troca de responsavel pelo /crm: a ficha e a carteira leem o relacionamento, que acompanha.</summary>
+        Task EspelharResponsavelLegadoAsync(Guid oportunidadeId, int? novo, int? anterior, int usuarioId);
+
         Task<IReadOnlyCollection<CrmOportunidadeRow>> ListarOportunidadesAsync(string? status, string? tipo, int? responsavelUsuarioId, string? busca);
         Task<CrmOportunidadeRow?> ObterOportunidadeAsync(Guid oportunidadeId);
         Task<Guid> CriarOportunidadeAsync(CrmOportunidadeRow oportunidade);

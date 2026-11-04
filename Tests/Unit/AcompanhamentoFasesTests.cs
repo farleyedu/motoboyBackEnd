@@ -95,11 +95,11 @@ public class AcompanhamentoFasesTests
     public void Requisitos_de_fechar_na_conversa_sao_quem_decide_aceite_plano_e_documento()
     {
         var def = PassagensCatalogo.Obter(F.Conversa, F.Implantacao)!;
-        Assert.Equal(new[] { "quemDecide", "aceite", "plano", "documento" }, def.Requisitos.Select(r => r.Chave));
+        Assert.Equal(new[] { "quemDecide", "aceite", "plano", "documento", "valor" }, def.Requisitos.Select(r => r.Chave));
         Assert.DoesNotContain(def.Requisitos, r => r.Chave == "proposta"); // fecha sem proposta formal
 
         var avaliacao = PassagemMotor.Avaliar(Guid.NewGuid(), 1, new LojaFatos { Fase = F.Conversa }, F.Implantacao,
-            new DadosPassagem { QuemDecide = "Ana", Aceite = "por telefone", Plano = "rota", Documento = "123" }, Agora);
+            new DadosPassagem { QuemDecide = "Ana", Aceite = "por telefone", Plano = "rota", Documento = "123", ValorMensal = 199 }, Agora);
         Assert.Equal(new[] { "aceite", "documento" }, avaliacao.Requisitos.Where(r => !r.Pronto).Select(r => r.Chave));
     }
 
@@ -307,17 +307,17 @@ public class AcompanhamentoFasesTests
     {
         var (svc, store) = Servico();
         var op = store.NovaOportunidade();
-        var dados = new DadosPassagem { ChaveIdempotencia = "duplo-clique", De = F.Conversa, QuemDecide = "Ana", PedidosPorDia = 40, DorPrincipal = "motoboy" };
+        var dados = new DadosPassagem { ChaveIdempotencia = "duplo-clique", De = F.Conversa, Documento = Cnpj };
 
-        var primeira = await svc.ExecutarAsync(op, F.Proposta, dados, 7, AutoresPassagem.Usuario);
-        var segunda = await svc.ExecutarAsync(op, F.Proposta, dados, 7, AutoresPassagem.Usuario);
+        var primeira = await svc.ExecutarAsync(op, F.Teste, dados, 7, AutoresPassagem.Usuario);
+        var segunda = await svc.ExecutarAsync(op, F.Teste, dados, 7, AutoresPassagem.Usuario);
 
         Assert.False(primeira.Repetida);
         Assert.True(segunda.Repetida);
         Assert.Equal(primeira.Passagem.Id, segunda.Passagem.Id);
         Assert.Equal(primeira.Versao, segunda.Versao);
         Assert.Single(store.Passagens(op));
-        Assert.Single(segunda.Historico, h => h.Para == F.Proposta);
+        Assert.Single(segunda.Historico, h => h.Para == F.Implantacao);
 
         // A mesma chave para outra passagem e erro, nao repeticao.
         var outra = await Assert.ThrowsAsync<AcompanhamentoException>(() =>
@@ -457,6 +457,570 @@ public class AcompanhamentoFasesTests
             svc.AvaliarAsync(Guid.NewGuid(), F.Proposta, null))).Status);
     }
 
+
+    // ---- jornada comercial: Proposta so com envio registrado
+
+    private const string Whatsapp = "whatsapp";
+
+    private static PropostaRequest RascunhoPronto(decimal? valor = 249m) => new()
+    {
+        QuemDecide = "Ana", PedidosPorDia = 40, DorPrincipal = "motoboy atrasa", ValorMensal = valor, ValorImplantacao = 100, Plano = "rota"
+    };
+
+    private static EnviarPropostaRequest Envio(PropostaDto v, string chave = "envio-1", string canal = Whatsapp) => new()
+    {
+        Canal = canal, Destinatario = "Ana (dona)", ChaveIdempotencia = chave, VersaoEsperada = v.Edicao
+    };
+
+    private static async Task<(AcompanhamentoService Svc, MemoriaStore Store, Guid Op, PropostaDto Enviada)> EmProposta(decimal valor = 249m)
+    {
+        var (svc, store) = Servico();
+        var op = store.NovaOportunidade();
+        var rascunho = (await svc.CriarPropostaAsync(op, RascunhoPronto(valor), 7)).Proposta;
+        var enviada = await svc.EnviarPropostaAsync(op, rascunho.Id, Envio(rascunho), 7);
+        return (svc, store, op, enviada.Proposta);
+    }
+
+    [Fact]
+    public async Task Post_direto_para_proposta_e_recusado_apontando_registrar_envio()
+    {
+        var (svc, store) = Servico();
+        var op = store.NovaOportunidade();
+
+        // Nem com tudo preenchido: o envio nao vem do corpo da passagem.
+        var ex = await Assert.ThrowsAsync<AcompanhamentoException>(() => svc.ExecutarAsync(op, F.Proposta,
+            new DadosPassagem { ChaveIdempotencia = "k", De = F.Conversa, QuemDecide = "Ana", PedidosPorDia = 40, DorPrincipal = "motoboy" }, 7, AutoresPassagem.Usuario));
+
+        Assert.Equal(422, ex.Status);
+        var detalhes = Assert.IsType<RecusaDetalhesDto>(ex.Details);
+        Assert.Equal("Registrar envio", detalhes.Caminho);
+        Assert.Equal("propostaEnviada", Assert.Single(detalhes.RequisitosPendentes).Chave);
+        Assert.Equal(F.Conversa, store.Estado(op).Fase);
+        Assert.Empty(store.Passagens(op));
+        Assert.Equal("Enviar a proposta", PassagensCatalogo.Obter(F.Conversa, F.Proposta)!.Nome);
+    }
+
+    [Fact]
+    public async Task Rascunho_nao_muda_a_fase_e_nao_conta_para_aceitar()
+    {
+        var (svc, store) = Servico();
+        var op = store.NovaOportunidade();
+
+        var criado = await svc.CriarPropostaAsync(op, RascunhoPronto(), 7);
+
+        Assert.Equal(StatusProposta.Rascunho, criado.Proposta.Status);
+        Assert.True(criado.Proposta.Pronta);
+        Assert.Equal(F.Conversa, criado.FaseAtual);
+        Assert.False((await svc.AvaliarAsync(op, F.Implantacao, DadosCompletos())).Requisitos.Any(r => r.Chave == "proposta"));
+
+        // Duas abas: o rascunho aberto continua sendo o mesmo.
+        var denovo = await svc.CriarPropostaAsync(op, new PropostaRequest(), 7);
+        Assert.True(denovo.Repetida);
+        Assert.Equal(criado.Proposta.Id, denovo.Proposta.Id);
+        Assert.Single(store.Propostas(op));
+    }
+
+    [Fact]
+    public async Task Rascunho_aproveita_decisor_contato_e_valores_ja_conhecidos()
+    {
+        var (svc, store) = Servico();
+        var op = store.NovaOportunidade();
+        store.DefinirContexto(op, new PropostaContexto("Ana", "+5534991480112", "ana@loja.com", "Ana (dona)", 199m, 50m));
+
+        var p = (await svc.CriarPropostaAsync(op, new PropostaRequest { DorPrincipal = "motoboy" }, 7)).Proposta;
+
+        Assert.Equal("Ana (dona)", p.Dados.QuemDecide);
+        Assert.Equal("+5534991480112", p.Dados.Telefone);
+        Assert.Equal(199m, p.ValorMensal);
+        Assert.Equal(50m, p.ValorImplantacao);
+        Assert.Equal(new[] { "pedidosPorDia" }, p.Pendencias.Select(x => x.Chave));
+        Assert.False(p.Pronta);
+    }
+
+    [Fact]
+    public async Task Enviar_em_conversa_passa_para_proposta_na_mesma_transacao_com_validade_de_7_dias()
+    {
+        var (svc, store) = Servico();
+        var op = store.NovaOportunidade();
+        var rascunho = (await svc.CriarPropostaAsync(op, RascunhoPronto(), 7)).Proposta;
+
+        var r = await svc.EnviarPropostaAsync(op, rascunho.Id, Envio(rascunho), 7);
+
+        Assert.Equal(F.Proposta, r.FaseAtual);
+        Assert.Equal(StatusProposta.Enviada, r.Proposta.Status);
+        Assert.Equal(new DateOnly(2026, 11, 9), r.Proposta.ValidadeAte);
+        Assert.Equal(7, r.Proposta.ApresentadaPor);
+        Assert.Equal(Whatsapp, r.Proposta.Canal);
+        Assert.NotNull(r.Passagem);
+        Assert.Equal("Enviar a proposta", r.Passagem!.Nome);
+        Assert.Equal(new[] { "conversa>proposta" }, store.Historico(op).Where(h => h.De != null).Select(h => $"{h.De}>{h.Para}"));
+        Assert.Equal(StatusProposta.Enviada, store.Espelho(op)?.Status);
+        Assert.Contains(store.Eventos(op), e => e.Tipo == "proposta_enviada" && e.Detalhe.Contains("\"canal\":\"whatsapp\""));
+    }
+
+    [Fact]
+    public async Task Enviar_de_novo_com_a_mesma_chave_nao_faz_de_novo_e_outra_versao_nao_reaproveita_a_chave()
+    {
+        var (svc, store, op, enviada) = await EmProposta();
+        var rascunho = store.Propostas(op).Single();
+
+        var repetida = await svc.EnviarPropostaAsync(op, enviada.Id, Envio(enviada), 7);
+        Assert.True(repetida.Repetida);
+        Assert.Single(store.Passagens(op));
+        Assert.Single(store.Eventos(op), e => e.Tipo == "proposta_enviada");
+
+        var revisao = (await svc.CriarPropostaAsync(op, new PropostaRequest { ValorMensal = 199 }, 7)).Proposta;
+        var ex = await Assert.ThrowsAsync<AcompanhamentoException>(() => svc.EnviarPropostaAsync(op, revisao.Id, Envio(revisao), 7));
+        Assert.Equal(CodigosAcompanhamento.ChaveIdempotenciaReutilizada, ex.Code);
+        Assert.Equal(StatusProposta.Enviada, store.Propostas(op).Single(p => p.Id == rascunho.Id).Status);
+    }
+
+    [Fact]
+    public async Task Revisao_em_proposta_substitui_a_anterior_sem_mudar_a_fase_e_preserva_as_duas()
+    {
+        var (svc, store, op, v1) = await EmProposta();
+
+        var rascunho = (await svc.CriarPropostaAsync(op, new PropostaRequest { ValorMensal = 199 }, 7)).Proposta;
+        Assert.Equal(2, rascunho.Versao);
+        Assert.Equal(1, rascunho.RevisaVersao);
+        Assert.Equal(100m, rascunho.ValorImplantacao); // copiou a anterior
+        Assert.Equal("Ana", rascunho.Dados.QuemDecide);
+
+        var r = await svc.EnviarPropostaAsync(op, rascunho.Id, Envio(rascunho, "envio-2", "email"), 7);
+
+        Assert.Equal(F.Proposta, r.FaseAtual);
+        Assert.Null(r.Passagem);
+        Assert.Single(store.Passagens(op));
+        Assert.Equal(StatusProposta.Substituida, store.Propostas(op).Single(p => p.Id == v1.Id).Status);
+        Assert.Equal(StatusProposta.Enviada, store.Propostas(op).Single(p => p.Id == rascunho.Id).Status);
+
+        // Na lista, a atual e a vigente e as duas continuam legiveis.
+        var lista = await svc.PropostasAsync(op);
+        Assert.Equal(rascunho.Id, lista.Atual!.Id);
+        Assert.Equal(new[] { 2, 1 }, lista.Versoes.Select(x => x.Versao));
+    }
+
+    [Theory]
+    [InlineData(null, "valor")]
+    [InlineData(0, "valor")]
+    public async Task Proposta_sem_valor_ou_com_zero_sem_consciencia_nao_vai_para_envio(int? valor, string pendencia)
+    {
+        var (svc, store) = Servico();
+        var op = store.NovaOportunidade();
+        var rascunho = (await svc.CriarPropostaAsync(op, RascunhoPronto(valor), 7)).Proposta;
+
+        var ex = await Assert.ThrowsAsync<AcompanhamentoException>(() => svc.EnviarPropostaAsync(op, rascunho.Id, Envio(rascunho), 7));
+
+        Assert.Equal(CodigosAcompanhamento.RequisitosPendentes, ex.Code);
+        Assert.Contains(((RecusaDetalhesDto)ex.Details!).RequisitosPendentes, r => r.Chave == pendencia);
+        Assert.Equal(F.Conversa, store.Estado(op).Fase);
+        Assert.Equal(StatusProposta.Rascunho, store.Propostas(op).Single().Status);
+    }
+
+    [Fact]
+    public async Task Zero_consciente_e_aceito_e_fica_no_historico()
+    {
+        var (svc, store) = Servico();
+        var op = store.NovaOportunidade();
+        var pedido = RascunhoPronto(0);
+        pedido.ValorZeroConsciente = true;
+        var rascunho = (await svc.CriarPropostaAsync(op, pedido, 7)).Proposta;
+
+        var r = await svc.EnviarPropostaAsync(op, rascunho.Id, Envio(rascunho), 7);
+
+        Assert.True(r.Proposta.ValorZeroConsciente);
+        Assert.Contains("R$ 0 consciente", store.Historico(op).Last().Motivo);
+        Assert.Contains(store.Eventos(op), e => e.Tipo == "proposta_enviada" && e.Detalhe.Contains("\"valorZeroConsciente\":true"));
+
+        // Na revisao o R$ 0 nao vem junto: cada versao confirma o seu.
+        var revisao = (await svc.CriarPropostaAsync(op, new PropostaRequest(), 7)).Proposta;
+        Assert.False(revisao.ValorZeroConsciente);
+        Assert.False(revisao.Pronta);
+    }
+
+    [Fact]
+    public async Task Mudar_o_valor_desfaz_a_confirmacao_de_zero()
+    {
+        var v = new PropostaVersao { ValorMensal = 0, ValorZeroConsciente = true };
+        PropostaRegras.Sobrepor(v, new PropostaRequest { ValorMensal = 150 });
+        Assert.False(v.ValorZeroConsciente);
+
+        PropostaRegras.Sobrepor(v, new PropostaRequest { ValorMensal = 0 });
+        Assert.False(v.ValorZeroConsciente);
+        Assert.False(PropostaRegras.ValorDefinido(v.ValorMensal, v.ValorZeroConsciente));
+    }
+
+    [Theory]
+    [InlineData("nao_informado", CodigosAcompanhamento.CanalInvalido)]
+    [InlineData("telepatia", CodigosAcompanhamento.CanalInvalido)]
+    public async Task Canal_que_nao_foi_declarado_e_recusado(string canal, string codigo)
+    {
+        var (svc, store) = Servico();
+        var op = store.NovaOportunidade();
+        var r = (await svc.CriarPropostaAsync(op, RascunhoPronto(), 7)).Proposta;
+        var ex = await Assert.ThrowsAsync<AcompanhamentoException>(() => svc.EnviarPropostaAsync(op, r.Id, Envio(r, canal: canal), 7));
+        Assert.Equal(codigo, ex.Code);
+    }
+
+    [Fact]
+    public async Task Envio_sem_destinatario_sem_chave_ou_no_futuro_nao_entra()
+    {
+        var (svc, store) = Servico();
+        var op = store.NovaOportunidade();
+        var r = (await svc.CriarPropostaAsync(op, RascunhoPronto(), 7)).Proposta;
+
+        async Task<string> Falha(EnviarPropostaRequest e) => (await Assert.ThrowsAsync<AcompanhamentoException>(() => svc.EnviarPropostaAsync(op, r.Id, e, 7))).Code;
+
+        var semDestinatario = Envio(r); semDestinatario.Destinatario = " ";
+        Assert.Equal(CodigosAcompanhamento.DestinatarioObrigatorio, await Falha(semDestinatario));
+        var semChave = Envio(r); semChave.ChaveIdempotencia = null;
+        Assert.Equal(CodigosAcompanhamento.ChaveIdempotenciaObrigatoria, await Falha(semChave));
+        var futuro = Envio(r); futuro.EnviadaEm = Agora.AddDays(1);
+        Assert.Equal(CodigosAcompanhamento.EnvioNoFuturo, await Falha(futuro));
+        var semVersao = Envio(r); semVersao.VersaoEsperada = null;
+        Assert.Equal(CodigosAcompanhamento.VersaoObrigatoria, await Falha(semVersao));
+        Assert.Equal(StatusProposta.Rascunho, store.Propostas(op).Single().Status);
+    }
+
+    [Fact]
+    public async Task Evidencia_tem_de_ser_mensagem_real_desta_oportunidade()
+    {
+        var (svc, store) = Servico();
+        var op = store.NovaOportunidade();
+        var real = Guid.NewGuid();
+        store.Mensagens.Add(real);
+        var r = (await svc.CriarPropostaAsync(op, RascunhoPronto(), 7)).Proposta;
+
+        var alheia = Envio(r); alheia.MensagemId = Guid.NewGuid();
+        var ex = await Assert.ThrowsAsync<AcompanhamentoException>(() => svc.EnviarPropostaAsync(op, r.Id, alheia, 7));
+        Assert.Equal(CodigosAcompanhamento.EvidenciaInvalida, ex.Code);
+
+        var certa = Envio(r); certa.MensagemId = real;
+        Assert.Equal(real, (await svc.EnviarPropostaAsync(op, r.Id, certa, 7)).Proposta.EvidenciaMensagemId);
+    }
+
+    [Fact]
+    public async Task Edicao_e_envio_conferem_a_versao_que_a_tela_viu()
+    {
+        var (svc, store) = Servico();
+        var op = store.NovaOportunidade();
+        var r = (await svc.CriarPropostaAsync(op, RascunhoPronto(), 7)).Proposta;
+
+        var editado = (await svc.EditarPropostaAsync(op, r.Id, new PropostaRequest { ValorMensal = 300, VersaoEsperada = r.Edicao }, 7)).Proposta;
+        Assert.Equal(300m, editado.ValorMensal);
+        Assert.True(editado.Edicao > r.Edicao);
+
+        var edicao = await Assert.ThrowsAsync<AcompanhamentoException>(() =>
+            svc.EditarPropostaAsync(op, r.Id, new PropostaRequest { ValorMensal = 1, VersaoEsperada = r.Edicao }, 8));
+        Assert.Equal(409, edicao.Status);
+        Assert.Equal(CodigosAcompanhamento.PropostaMudou, edicao.Code);
+        var envio = await Assert.ThrowsAsync<AcompanhamentoException>(() => svc.EnviarPropostaAsync(op, r.Id, Envio(r), 8));
+        Assert.Equal(CodigosAcompanhamento.PropostaMudou, envio.Code);
+        Assert.Equal(300m, store.Propostas(op).Single().ValorMensal);
+    }
+
+    [Fact]
+    public async Task Proposta_enviada_nao_se_edita_so_se_revisa()
+    {
+        var (svc, _, op, enviada) = await EmProposta();
+        var ex = await Assert.ThrowsAsync<AcompanhamentoException>(() =>
+            svc.EditarPropostaAsync(op, enviada.Id, new PropostaRequest { ValorMensal = 1, VersaoEsperada = enviada.Edicao }, 7));
+        Assert.Equal(CodigosAcompanhamento.PropostaNaoEditavel, ex.Code);
+    }
+
+    [Fact]
+    public async Task Dois_envios_ao_mesmo_tempo_so_um_passa()
+    {
+        var (svc, store) = Servico();
+        var op = store.NovaOportunidade();
+        var r = (await svc.CriarPropostaAsync(op, RascunhoPronto(), 7)).Proposta;
+
+        var status = await Task.WhenAll(Enumerable.Range(0, 10).Select(i => Task.Run(async () =>
+        {
+            try { await svc.EnviarPropostaAsync(op, r.Id, Envio(r, "k" + i), 7); return 200; }
+            catch (AcompanhamentoException ex) { return ex.Status; }
+        })));
+
+        Assert.Equal(1, status.Count(s => s == 200));
+        Assert.All(status.Where(s => s != 200), s => Assert.Equal(409, s));
+        Assert.Single(store.Passagens(op));
+        Assert.Single(store.Eventos(op), e => e.Tipo == "proposta_enviada");
+    }
+
+    [Fact]
+    public async Task Mesmo_envio_em_paralelo_grava_uma_vez()
+    {
+        var (svc, store) = Servico();
+        var op = store.NovaOportunidade();
+        var r = (await svc.CriarPropostaAsync(op, RascunhoPronto(), 7)).Proposta;
+
+        var resultados = await Task.WhenAll(Enumerable.Range(0, 10).Select(_ => Task.Run(() => svc.EnviarPropostaAsync(op, r.Id, Envio(r), 7))));
+
+        Assert.Equal(9, resultados.Count(x => x.Repetida));
+        Assert.Single(store.Passagens(op));
+    }
+
+    [Fact]
+    public async Task Resposta_ajuste_vira_negociacao_e_recusa_nao_muda_a_fase()
+    {
+        var (svc, store, op, v1) = await EmProposta();
+
+        var ajuste = await svc.ResponderPropostaAsync(op, v1.Id, new ResponderPropostaRequest { Resposta = "pediu_ajuste", Nota = "quer parcelar" }, 7);
+        Assert.Equal(StatusProposta.EmNegociacao, ajuste.Proposta.Status);
+        Assert.Equal("quer parcelar", ajuste.Proposta.RespostaNota);
+
+        var repetida = await svc.ResponderPropostaAsync(op, v1.Id, new ResponderPropostaRequest { Resposta = "pediu_ajuste", Nota = "quer parcelar" }, 7);
+        Assert.True(repetida.Repetida);
+        Assert.Single(store.Eventos(op), e => e.Tipo == "proposta_resposta");
+
+        var recusa = await svc.ResponderPropostaAsync(op, v1.Id, new ResponderPropostaRequest { Resposta = "recusou" }, 7);
+        Assert.Equal(StatusProposta.Recusada, recusa.Proposta.Status);
+        Assert.Equal(F.Proposta, recusa.FaseAtual);
+
+        // Recusada nao se aceita; a saida e voltar a conversar ou perder.
+        var aceite = await svc.AvaliarAsync(op, F.Implantacao, new DadosPassagem { Aceite = "verbal", Documento = Cnpj });
+        Assert.Contains(aceite.Requisitos, r => r.Chave == "proposta" && !r.Pronto);
+        var volta = await svc.ExecutarAsync(op, F.Conversa, new DadosPassagem { ChaveIdempotencia = "v", Motivo = "esfriou" }, 7, AutoresPassagem.Usuario);
+        Assert.Equal(F.Conversa, volta.FaseAtual);
+        Assert.Equal(StatusProposta.Recusada, store.Propostas(op).Single().Status); // recusada fica como foi
+    }
+
+    [Theory]
+    [InlineData("interessado")]
+    [InlineData("sem_resposta")]
+    public async Task Resposta_sem_desfecho_mantem_a_proposta_vigente(string resposta)
+    {
+        var (svc, _, op, v1) = await EmProposta();
+        var r = await svc.ResponderPropostaAsync(op, v1.Id, new ResponderPropostaRequest { Resposta = resposta }, 7);
+        Assert.Equal(StatusProposta.Enviada, r.Proposta.Status);
+        Assert.Equal(resposta, r.Proposta.Resposta);
+    }
+
+    [Fact]
+    public async Task Resposta_invalida_ou_de_rascunho_e_recusada_e_a_chave_nao_serve_para_outra_resposta()
+    {
+        var (svc, store) = Servico();
+        var op = store.NovaOportunidade();
+        var r = (await svc.CriarPropostaAsync(op, RascunhoPronto(), 7)).Proposta;
+
+        Assert.Equal(CodigosAcompanhamento.RespostaInvalida, (await Assert.ThrowsAsync<AcompanhamentoException>(() =>
+            svc.ResponderPropostaAsync(op, r.Id, new ResponderPropostaRequest { Resposta = "talvez" }, 7))).Code);
+        Assert.Equal(CodigosAcompanhamento.PropostaNaoEditavel, (await Assert.ThrowsAsync<AcompanhamentoException>(() =>
+            svc.ResponderPropostaAsync(op, r.Id, new ResponderPropostaRequest { Resposta = "interessado" }, 7))).Code);
+
+        var e = (await svc.EnviarPropostaAsync(op, r.Id, Envio(r), 7)).Proposta;
+        await svc.ResponderPropostaAsync(op, e.Id, new ResponderPropostaRequest { Resposta = "interessado", ChaveIdempotencia = "r1" }, 7);
+        var outra = await Assert.ThrowsAsync<AcompanhamentoException>(() =>
+            svc.ResponderPropostaAsync(op, e.Id, new ResponderPropostaRequest { Resposta = "recusou", ChaveIdempotencia = "r1" }, 7));
+        Assert.Equal(CodigosAcompanhamento.ChaveIdempotenciaReutilizada, outra.Code);
+    }
+
+    [Fact]
+    public async Task Aceite_exige_versao_enviada_e_usa_o_valor_dela()
+    {
+        var (svc, store) = Servico();
+        var op = store.NovaOportunidade();
+        await svc.CriarPropostaAsync(op, RascunhoPronto(), 7);
+        store.ForcarFase(op, F.Proposta); // rascunho antigo em Proposta: a migracao devolve, mas o portao segura sozinho
+
+        var ex = await Assert.ThrowsAsync<AcompanhamentoException>(() => svc.ExecutarAsync(op, F.Implantacao,
+            new DadosPassagem { ChaveIdempotencia = "a", Aceite = "verbal", Documento = Cnpj }, 7, AutoresPassagem.Usuario));
+        Assert.Contains(((RecusaDetalhesDto)ex.Details!).RequisitosPendentes, r => r.Chave == "proposta");
+        Assert.Empty(store.Passagens(op));
+
+        var (svc2, store2, op2, enviada) = await EmProposta(315m);
+        var aceita = await svc2.ExecutarAsync(op2, F.Implantacao,
+            new DadosPassagem { ChaveIdempotencia = "a", Aceite = "assinado", Documento = Cnpj, ValorMensal = 1 }, 7, AutoresPassagem.Usuario);
+
+        Assert.Equal(F.Implantacao, aceita.FaseAtual);
+        Assert.Equal(StatusProposta.Aceita, store2.Propostas(op2).Single(p => p.Id == enviada.Id).Status);
+        Assert.Equal(315m, store2.ValorDoContrato(op2)); // o da proposta, nao o do corpo
+    }
+
+    [Fact]
+    public async Task Proposta_vencida_pode_ser_aceita_e_o_evento_registra()
+    {
+        var (svc, store, op, v) = await EmProposta();
+        store.Relogio.Instante = Agora.AddDays(10);
+
+        Assert.True((await svc.PropostasAsync(op)).Atual!.Vencida);
+        var r = await svc.ExecutarAsync(op, F.Implantacao, new DadosPassagem { ChaveIdempotencia = "a", Aceite = "whatsapp", Documento = Cnpj }, 7, AutoresPassagem.Usuario);
+
+        Assert.Equal(F.Implantacao, r.FaseAtual);
+        Assert.Contains(store.Eventos(op), e => e.Tipo == "proposta_aceita" && e.Detalhe.Contains("\"aceitaAposValidade\":true"));
+        Assert.Equal(v.Id, store.Propostas(op).Single(p => p.Status == StatusProposta.Aceita).Id);
+    }
+
+    [Fact]
+    public async Task Proposta_legada_sem_mensalidade_nao_aceita_ate_revisar()
+    {
+        var (svc, store) = Servico();
+        var op = store.NovaOportunidade();
+        store.AdicionarProposta(op, new PropostaVersao { OportunidadeId = store.Estado(op).OportunidadeId!.Value, Versao = 1, Status = StatusProposta.Enviada, Canal = CanaisProposta.NaoInformado, Origem = OrigensProposta.CrmLegado });
+        store.ForcarFase(op, F.Proposta);
+
+        var ex = await Assert.ThrowsAsync<AcompanhamentoException>(() => svc.ExecutarAsync(op, F.Implantacao,
+            new DadosPassagem { ChaveIdempotencia = "a", Aceite = "verbal", Documento = Cnpj }, 7, AutoresPassagem.Usuario));
+        Assert.Equal("valor", Assert.Single(((RecusaDetalhesDto)ex.Details!).RequisitosPendentes).Chave);
+    }
+
+    [Fact]
+    public async Task Renegociar_revisa_sem_mudar_a_fase_e_voltar_guarda_a_versao()
+    {
+        var (svc, store, op, v) = await EmProposta();
+
+        var ex = await Assert.ThrowsAsync<AcompanhamentoException>(() =>
+            svc.ExecutarAsync(op, F.Conversa, new DadosPassagem { ChaveIdempotencia = "r", Motivo = "renegociar" }, 7, AutoresPassagem.Usuario));
+        Assert.Contains("revisão", Assert.Single(((RecusaDetalhesDto)ex.Details!).RequisitosPendentes).Pendencia);
+        Assert.Equal(F.Proposta, store.Estado(op).Fase);
+
+        await svc.ExecutarAsync(op, F.Conversa, new DadosPassagem { ChaveIdempotencia = "v", Motivo = "mudou_quem_decide" }, 7, AutoresPassagem.Usuario);
+        Assert.Equal(StatusProposta.Guardada, store.Propostas(op).Single(p => p.Id == v.Id).Status);
+    }
+
+    [Theory]
+    [InlineData("perdido")]
+    [InlineData("teste")]
+    public async Task Sair_guarda_a_versao_aberta_cancela_o_passo_e_retomar_nao_a_conta(string destino)
+    {
+        var (svc, store, op, v) = await EmProposta();
+        store.AbrirPasso(op);
+
+        await svc.ExecutarAsync(op, destino, new DadosPassagem { ChaveIdempotencia = "s", Motivo = "sem verba", TentarDeNovo = "nao", Documento = Cnpj }, 7, AutoresPassagem.Usuario);
+
+        Assert.Equal(StatusProposta.Guardada, store.Propostas(op).Single(p => p.Id == v.Id).Status);
+        Assert.False(store.TemPassoAberto(op));
+        if (destino == F.Perdido)
+        {
+            await svc.ExecutarAsync(op, F.Conversa, new DadosPassagem { ChaveIdempotencia = "c" }, 7, AutoresPassagem.Usuario);
+            var aceite = await svc.AvaliarAsync(op, F.Proposta, new DadosPassagem());
+            Assert.Contains(aceite.Requisitos, r => r.Chave == "propostaEnviada" && !r.Pronto);
+        }
+    }
+
+    [Fact]
+    public async Task Fechar_na_conversa_exige_mensalidade_e_zero_so_consciente()
+    {
+        var (svc, store) = Servico();
+        var op = store.NovaOportunidade();
+        DadosPassagem Dados(string chave) => new() { ChaveIdempotencia = chave, De = F.Conversa, QuemDecide = "Ana", Aceite = "verbal", Plano = "rota", Documento = Cnpj };
+
+        var sem = await Assert.ThrowsAsync<AcompanhamentoException>(() => svc.ExecutarAsync(op, F.Implantacao, Dados("a"), 7, AutoresPassagem.Usuario));
+        Assert.Equal("valor", Assert.Single(((RecusaDetalhesDto)sem.Details!).RequisitosPendentes).Chave);
+        var zeroSemCiencia = Dados("b"); zeroSemCiencia.ValorMensal = 0;
+        await Assert.ThrowsAsync<AcompanhamentoException>(() => svc.ExecutarAsync(op, F.Implantacao, zeroSemCiencia, 7, AutoresPassagem.Usuario));
+        Assert.Empty(store.Passagens(op));
+
+        var zero = Dados("c"); zero.ValorMensal = 0; zero.ValorZeroConsciente = true;
+        var r = await svc.ExecutarAsync(op, F.Implantacao, zero, 7, AutoresPassagem.Usuario);
+        Assert.Contains("valor R$ 0 consciente", r.Historico.Single(h => h.Para == F.Implantacao).Motivo);
+    }
+
+    [Fact]
+    public async Task Teste_sem_compromisso_segue_sem_valor()
+    {
+        var (svc, store) = Servico();
+        var op = store.NovaOportunidade();
+        var r = await svc.ExecutarAsync(op, F.Teste, new DadosPassagem { ChaveIdempotencia = "t", Documento = Cpf }, 7, AutoresPassagem.Usuario);
+        Assert.Equal(F.Implantacao, r.FaseAtual);
+    }
+
+    [Fact]
+    public async Task Proposta_em_teste_nao_muda_a_fase_e_sem_oportunidade_explica()
+    {
+        var (svc, store) = Servico();
+        var loja = store.NovaLoja(SituacoesComerciais.Teste, oportunidade: true);
+        var r = (await svc.CriarPropostaAsync(loja, RascunhoPronto(), 7)).Proposta;
+        var enviada = await svc.EnviarPropostaAsync(loja, r.Id, Envio(r), 7);
+        Assert.Equal(F.Teste, enviada.FaseAtual);
+        Assert.Null(enviada.Passagem);
+        Assert.Equal(StatusProposta.Enviada, enviada.Proposta.Status);
+
+        var sem = store.NovaLoja(SituacoesComerciais.Teste);
+        var ex = await Assert.ThrowsAsync<AcompanhamentoException>(() => svc.CriarPropostaAsync(sem, RascunhoPronto(), 7));
+        Assert.Equal(CodigosAcompanhamento.PropostaSemOportunidade, ex.Code);
+        Assert.False((await svc.PropostasAsync(sem)).PodeRegistrar);
+
+        var operando = store.NovaLoja(SituacoesComerciais.Ativo, testeConcluido: true, oportunidade: true);
+        Assert.Equal(CodigosAcompanhamento.PropostaForaDaFase, (await Assert.ThrowsAsync<AcompanhamentoException>(() =>
+            svc.CriarPropostaAsync(operando, RascunhoPronto(), 7))).Code);
+    }
+
+    [Fact]
+    public void Recusa_de_teste_para_conquista_aponta_o_que_existe()
+    {
+        var recusa = PassagensCatalogo.Recusa(F.Teste, F.Proposta, new LojaFatos { Fase = F.Teste })!;
+        Assert.Equal("Registrar a proposta durante o teste, sem mudar a fase", recusa.Caminho);
+    }
+
+    [Theory]
+    [InlineData("ativo", "proposta", false, "conversa")]
+    [InlineData("ativo", "quase", false, "conversa")]
+    [InlineData("ativo", "aguardando", true, "proposta")]
+    [InlineData("ativo", "proposta", true, "proposta")]
+    [InlineData("perdido", "proposta", true, "perdido")]
+    [InlineData("fechado", "proposta", true, null)]
+    public void Crm_legado_so_leva_a_proposta_com_envio_registrado(string status, string coluna, bool envio, string? fase) =>
+        Assert.Equal(fase, F.FaseDaOportunidade(status, coluna, envio));
+
+    [Fact]
+    public void Espelho_para_o_crm_legado_traz_mensalidade_e_data_de_envio_no_fuso_comercial()
+    {
+        var v = new PropostaVersao
+        {
+            ValorMensal = 300, ValorImplantacao = 50, EnviadaEm = new DateTimeOffset(2026, 11, 3, 1, 30, 0, TimeSpan.Zero),
+            Dados = new PropostaDados { MarketingMensalidade = 100 }
+        };
+        var json = System.Text.Json.JsonDocument.Parse(PropostaRegras.Espelho(v)).RootElement;
+        Assert.Equal(200m, json.GetProperty("saaSMensalidade").GetDecimal());
+        Assert.Equal(100m, json.GetProperty("marketingMensalidade").GetDecimal());
+        Assert.Equal(50m, json.GetProperty("implantacao").GetDecimal());
+        Assert.StartsWith("2026-11-02", json.GetProperty("enviadaEm").GetString());
+    }
+
+    // ---- datas no fuso comercial e textos honestos
+
+    [Fact]
+    public void Depois_das_21h_a_data_ainda_e_a_de_hoje()
+    {
+        var noite = new DateTimeOffset(2026, 11, 3, 1, 30, 0, TimeSpan.Zero); // 22:30 de 02/11 em Sao Paulo
+        var loja = LojaPronta(F.Operando);
+        var pausa = PassagemMotor.Avaliar(Guid.NewGuid(), 1, loja, F.Pausa,
+            new DadosPassagem { Motivo = "férias", DataVolta = new DateOnly(2026, 11, 3) }, noite);
+        Assert.True(pausa.PodeExecutar); // amanha no fuso, embora em UTC ja seja "hoje"
+
+        var perder = PassagemMotor.Planejar(LojaPronta(F.Conversa), F.Perdido, new DadosPassagem { Motivo = "x", TentarDeNovo = "30" }, "k", 7, AutoresPassagem.Usuario, noite);
+        Assert.Equal(new DateOnly(2026, 12, 2), perder.RetomarEm);
+        var ativar = PassagemMotor.Planejar(LojaPronta(F.Teste), F.Operando, DadosCompletos(), "k", 7, AutoresPassagem.Usuario, noite);
+        Assert.Equal(new DateOnly(2026, 11, 3), ativar.CobrancaIniciaEm);
+        Assert.Equal(new DateOnly(2026, 11, 9), PropostaRegras.Validade(noite));
+    }
+
+    [Fact]
+    public void Automacao_sem_worker_nao_e_prometida()
+    {
+        // So "Comecar o teste" acontece sem a equipe: a loja clica em Comecar a operar e a fase concilia.
+        var sozinhas = PassagensCatalogo.Todas.Where(p => p.Quem == QuemDecide.SozinhoOuVoce).Select(p => $"{p.De}>{p.Para}");
+        Assert.Equal(new[] { "implantacao>teste" }, sozinhas);
+        Assert.All(PassagensCatalogo.Todas, p =>
+        {
+            Assert.DoesNotContain("Volta sozinha", p.Volta);
+            Assert.DoesNotContain("começa sozinho", p.OQueAcontece);
+            Assert.DoesNotContain("Suspende a cobrança", p.OQueAcontece);
+        });
+    }
+
+    [Fact]
+    public void Migracao_da_jornada_trava_a_devolucao_dos_dados_e_tem_rollback()
+    {
+        var pasta = Path.Combine(AppContext.BaseDirectory, "Migrations", "Delivery");
+        var sql = File.ReadAllText(Path.Combine(pasta, "20261127_17_crm_jornada_comercial.sql"));
+        Assert.Contains("IF NOT (SELECT primeira FROM crm_jornada_17_execucao)", sql); // atencao legitima nao vira precisa_ajuda a cada boot
+        Assert.Contains("'Sem proposta enviada registrada: voltou para Conversa.'", sql);
+        Assert.Contains("'nao_informado', 'crm_legado'", sql);
+        Assert.True(File.Exists(Path.Combine(pasta, "rollback", "20261127_17_crm_jornada_comercial.down.sql")));
+    }
+
     // ---- fechamento legado (/api/crm/oportunidades/{id}/fechar)
 
     [Fact]
@@ -490,6 +1054,60 @@ public class AcompanhamentoFasesTests
         await Assert.ThrowsAsync<RequestValidationException>(() => crm.FecharOportunidadeAsync(7, oportunidadeId,
             new FecharCrmOportunidadeRequest { StatusInicial = "implantacao", DiaVencimento = 10, Aceite = "talvez" }));
         repo.Verify(r => r.FecharOportunidadeAsync(It.IsAny<CrmCloseOpportunityCommand>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Modal_do_crm_legado_grava_versao_enviada_sem_mudar_o_contrato()
+    {
+        var repo = RepoLegado(out var id);
+        var crm = new CrmService(repo.Object, Mock.Of<IReservaRepository>(), new ConfigurationBuilder().Build(), NullLogger<CrmService>.Instance);
+        repo.Setup(r => r.AtualizarOportunidadeAsync(It.IsAny<CrmOportunidadeRow>())).Returns(Task.CompletedTask);
+
+        try
+        {
+            await crm.AtualizarOportunidadeAsync(7, id, new AtualizarCrmOportunidadeRequest { Proposta = new CrmPropostaDto { SaaSMensalidade = 249, MarketingMensalidade = 50, Implantacao = 100 } });
+        }
+        catch (NullReferenceException)
+        {
+            // O resumo final depende de mais leituras do repositorio; aqui so importa o que foi gravado.
+        }
+
+        repo.Verify(r => r.RegistrarPropostaLegadaAsync(id, 7, It.IsAny<string>(), 299m, 100m, It.IsAny<DateTimeOffset?>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Mover_para_proposta_no_crm_legado_grava_versao_enviada()
+    {
+        var repo = RepoLegado(out var id);
+        var crm = new CrmService(repo.Object, Mock.Of<IReservaRepository>(), new ConfigurationBuilder().Build(), NullLogger<CrmService>.Instance);
+
+        try
+        {
+            await crm.MoverOportunidadeAsync(7, id, new MoverCrmOportunidadeRequest { ColunaDestino = "proposta", Proposta = new CrmPropostaDto { SaaSMensalidade = 199 } });
+        }
+        catch (NullReferenceException)
+        {
+        }
+
+        repo.Verify(r => r.RegistrarPropostaLegadaAsync(id, 7, It.IsAny<string>(), 199m, It.IsAny<decimal?>(), It.IsAny<DateTimeOffset?>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Troca_de_responsavel_no_crm_legado_chega_na_ficha()
+    {
+        var repo = RepoLegado(out var id);
+        repo.Setup(r => r.ListarEquipeZippyAsync()).ReturnsAsync(new[] { new CrmResponsavelRow { Id = 7 }, new CrmResponsavelRow { Id = 9 } });
+        var crm = new CrmService(repo.Object, Mock.Of<IReservaRepository>(), new ConfigurationBuilder().Build(), NullLogger<CrmService>.Instance);
+
+        try
+        {
+            await crm.AtualizarOportunidadeAsync(7, id, new AtualizarCrmOportunidadeRequest { ResponsavelUsuarioId = 9 });
+        }
+        catch (NullReferenceException)
+        {
+        }
+
+        repo.Verify(r => r.EspelharResponsavelLegadoAsync(id, 9, 7, 7), Times.Once);
     }
 
     private static Mock<ICrmRepository> RepoLegado(out Guid oportunidadeId)
@@ -561,6 +1179,276 @@ public class AcompanhamentoFasesTests
         Assert.Equal("teste", await db.Scalar<string>("SELECT situacao_comercial FROM estabelecimentos")); // continua operando
     }
 
+    // ---- jornada comercial no banco real: migracao, rollback e o SQL dos stores
+
+    private const string SqlCrm = @"
+CREATE TYPE crm_oportunidade_status AS ENUM ('ativo', 'perdido', 'fechado');
+CREATE TYPE crm_kanban_col AS ENUM ('conversa', 'reuniao', 'proposta', 'quase', 'aguardando');
+CREATE TABLE usuario (id int PRIMARY KEY, nome text, email text, is_super_admin boolean, deleted_at timestamptz);
+INSERT INTO usuario (id, nome, is_super_admin) VALUES (7, 'Farley', TRUE), (8, 'Socio', TRUE);
+CREATE TABLE crm_oportunidade (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), nome_empresa text NOT NULL DEFAULT 'Bistrô', nome_contato text NOT NULL DEFAULT 'Ana', telefone text NOT NULL DEFAULT '+5534991480112',
+  email text, cnpj text, tipo text DEFAULT 'saas', responsavel_usuario_id int, coluna crm_kanban_col NOT NULL DEFAULT 'conversa', status crm_oportunidade_status NOT NULL DEFAULT 'ativo',
+  proposta_json jsonb, proposta_enviada_em timestamptz, valor_mensal_est numeric, valor_impl_est numeric, deleted_at timestamptz, closed_at timestamptz, updated_at timestamptz DEFAULT NOW());
+CREATE TABLE crm_oportunidade_historico (id bigserial PRIMARY KEY, id_oportunidade uuid, id_usuario int NOT NULL, acao text, detalhe text);
+CREATE TABLE crm_contrato (id uuid PRIMARY KEY DEFAULT gen_random_uuid(), id_oportunidade uuid, estabelecimento_id uuid, responsavel_usuario_id int, created_at timestamptz DEFAULT NOW());";
+
+    private static string Migracao(string nome) => File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Migrations", "Delivery", nome));
+    private const string M17 = "20261127_17_crm_jornada_comercial.sql";
+
+    /// <summary>Banco com CRM, ate a migracao 16 (a 17 e aplicada por quem chama, para semear dados antigos antes).</summary>
+    private static async Task<Banco> BancoComCrm()
+    {
+        var db = await Banco.Criar(SituacoesComerciais.Ativo, antesDaMigracao: SqlCrm, ate17: false);
+        return db;
+    }
+
+    private static async Task<Guid> Oportunidade(Banco db, string coluna, string? propostaJson = null, string? fase = "proposta")
+    {
+        await using var cx = await db.Source.OpenConnectionAsync();
+        var id = await cx.ExecuteScalarAsync<Guid>(@"
+INSERT INTO crm_oportunidade (coluna, proposta_json, proposta_enviada_em) VALUES (@C::crm_kanban_col, @J::jsonb, CASE WHEN @J::text IS NULL THEN NULL ELSE TIMESTAMPTZ '2026-11-01 15:00:00+00' END) RETURNING id;",
+            new { C = coluna, J = propostaJson });
+        if (fase != null) await cx.ExecuteAsync("INSERT INTO acompanhamento (oportunidade_id, fase) VALUES (@O, @F);", new { O = id, F = fase });
+        return id;
+    }
+
+    [DeliveryDatabaseFact]
+    public async Task Banco_migracao_devolve_para_conversa_converte_o_legado_e_e_idempotente()
+    {
+        await using var db = await BancoComCrm();
+        var semEnvio = await Oportunidade(db, "proposta");
+        await db.Execute(@"INSERT INTO acompanhamento_proposta_versao (oportunidade_id, versao, status, valor_mensal) VALUES (@O, 1, 'rascunho', 150);", new { O = semEnvio });
+        var legado = await Oportunidade(db, "quase", "{\"saaSMensalidade\": 249, \"marketingMensalidade\": 50, \"implantacao\": 100}");
+        var legadoSemAcompanhamento = await Oportunidade(db, "aguardando", "{\"saaSMensalidade\": 99}", fase: null);
+        var soColuna = await Oportunidade(db, "proposta", fase: null);
+        var perdida = await Oportunidade(db, "conversa", fase: "perdido");
+        await db.Execute(@"
+INSERT INTO acompanhamento_proposta_versao (oportunidade_id, versao, status) VALUES (@O, 1, 'rascunho');
+INSERT INTO acompanhamento_proximo_passo (acompanhamento_id, tipo, data) SELECT id, 'ligacao', DATE '2026-01-01' FROM acompanhamento WHERE oportunidade_id = @O;
+INSERT INTO acompanhamento_marcacao (acompanhamento_id, tipo, motivo, por_usuario_id) SELECT id, 'atencao', 'pedidos cairam', 7 FROM acompanhamento WHERE oportunidade_id = @O;
+INSERT INTO acompanhamento_marcacao (acompanhamento_id, tipo, motivo, por_usuario_id, removida_em) SELECT id, 'atencao', 'antiga', 7, NOW() FROM acompanhamento WHERE oportunidade_id = @O;", new { O = perdida });
+
+        await db.Execute(Migracao(M17));
+
+        // Sem envio: Conversa, rascunho guardado, coluna do CRM e historico do sistema.
+        Assert.Equal("conversa", await db.Scalar<string>($"SELECT fase FROM acompanhamento WHERE oportunidade_id = '{semEnvio}'"));
+        Assert.Equal("guardada", await db.Scalar<string>($"SELECT status FROM acompanhamento_proposta_versao WHERE oportunidade_id = '{semEnvio}'"));
+        Assert.Equal("conversa", await db.Scalar<string>($"SELECT coluna::text FROM crm_oportunidade WHERE id = '{semEnvio}'"));
+        Assert.Equal(1, await db.Scalar<long>($"SELECT count(*) FROM acompanhamento_historico h JOIN acompanhamento a ON a.id = h.acompanhamento_id WHERE a.oportunidade_id = '{semEnvio}' AND h.de = 'proposta' AND h.para = 'conversa' AND h.autor_tipo = 'sistema'"));
+
+        // Com proposta_json: versao enviada, canal nao informado, valores e validade pela data de envio; a fase fica.
+        Assert.Equal("proposta", await db.Scalar<string>($"SELECT fase FROM acompanhamento WHERE oportunidade_id = '{legado}'"));
+        Assert.Equal("enviada|nao_informado|crm_legado|299|100|2026-11-08", await db.Scalar<string>(
+            $"SELECT concat_ws('|', status, canal, origem, trim_scale(valor_mensal), trim_scale(valor_implantacao), validade_ate) FROM acompanhamento_proposta_versao WHERE oportunidade_id = '{legado}'"));
+        Assert.Equal(1, await db.Scalar<long>("SELECT count(*) FROM acompanhamento_relacionamento_evento WHERE tipo = 'proposta_enviada'"));
+        Assert.Equal("aguardando", await db.Scalar<string>($"SELECT coluna::text FROM crm_oportunidade WHERE id = '{legadoSemAcompanhamento}'"));
+        Assert.Equal("enviada", await db.Scalar<string>($"SELECT status FROM acompanhamento_proposta_versao WHERE oportunidade_id = '{legadoSemAcompanhamento}'"));
+        Assert.Equal("conversa", await db.Scalar<string>($"SELECT coluna::text FROM crm_oportunidade WHERE id = '{soColuna}'"));
+
+        // Saiu do quadro: versao e passo nao voltam a contar. Marcacao ativa convertida; a removida fica como foi gravada.
+        Assert.Equal("guardada", await db.Scalar<string>($"SELECT status FROM acompanhamento_proposta_versao WHERE oportunidade_id = '{perdida}'"));
+        Assert.Equal("cancelado", await db.Scalar<string>("SELECT estado FROM acompanhamento_proximo_passo"));
+        Assert.Equal("precisa_ajuda", await db.Scalar<string>("SELECT tipo FROM acompanhamento_marcacao WHERE removida_em IS NULL"));
+        Assert.Equal("atencao", await db.Scalar<string>("SELECT tipo FROM acompanhamento_marcacao WHERE removida_em IS NOT NULL"));
+
+        // Roda a cada boot: nada duplica e uma "atencao" gravada depois continua "atencao".
+        await db.Execute("UPDATE acompanhamento_marcacao SET removida_em = NOW() WHERE removida_em IS NULL; " +
+            "INSERT INTO acompanhamento_marcacao (acompanhamento_id, tipo, motivo, por_usuario_id) SELECT id, 'atencao', 'nova', 7 FROM acompanhamento WHERE fase = 'perdido';");
+        var versoes = await db.Scalar<long>("SELECT count(*) FROM acompanhamento_proposta_versao");
+        await db.Execute(Migracao(M17));
+        Assert.Equal(versoes, await db.Scalar<long>("SELECT count(*) FROM acompanhamento_proposta_versao"));
+        Assert.Equal("atencao", await db.Scalar<string>("SELECT tipo FROM acompanhamento_marcacao WHERE removida_em IS NULL"));
+        Assert.Equal(1, await db.Scalar<long>("SELECT count(*) FROM acompanhamento_historico WHERE de = 'proposta'"));
+    }
+
+    [DeliveryDatabaseFact]
+    public async Task Banco_rollback_da_jornada_recusa_com_dados_e_devolve_o_esquema()
+    {
+        await using var db = await BancoComCrm();
+        await db.Execute(Migracao(M17));
+        var op = await Oportunidade(db, "proposta", fase: "conversa");
+        var svc = db.Servico();
+        var r = (await svc.CriarPropostaAsync(op, RascunhoPronto(), 7)).Proposta;
+        await svc.EnviarPropostaAsync(op, r.Id, Envio(r), 7);
+
+        var down = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Migrations", "Delivery", "rollback", "20261127_17_crm_jornada_comercial.down.sql"));
+        await Assert.ThrowsAsync<PostgresException>(() => db.Execute(down));
+        Assert.True(await db.Scalar<bool>("SELECT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'acompanhamento_proposta_versao'::regclass AND attname = 'edicao')"));
+
+        await using (var cx = await db.Source.OpenConnectionAsync())
+        {
+            await cx.ExecuteAsync("SET zippy.rollback_confirmado = 'sim';");
+            await cx.ExecuteAsync(down);
+        }
+        Assert.False(await db.Scalar<bool>("SELECT EXISTS (SELECT 1 FROM pg_attribute WHERE attrelid = 'acompanhamento_proposta_versao'::regclass AND attname = 'edicao' AND NOT attisdropped)"));
+        Assert.Equal("enviada", await db.Scalar<string>("SELECT status FROM acompanhamento_proposta_versao"));
+
+        // O rollback nao bloqueia a migracao de voltar depois.
+        await db.Execute(Migracao(M17));
+    }
+
+    [DeliveryDatabaseFact]
+    public async Task Banco_ciclo_da_proposta_grava_espelho_passagem_evento_e_encerra_ao_perder()
+    {
+        await using var db = await BancoComCrm();
+        await db.Execute(Migracao(M17));
+        var op = await Oportunidade(db, "conversa", fase: null);
+        await db.Execute($"UPDATE crm_oportunidade SET valor_mensal_est = 199, decisor = 'Ana' WHERE id = '{op}'");
+        var svc = db.Servico();
+
+        var r = (await svc.CriarPropostaAsync(op, new PropostaRequest { PedidosPorDia = 40, DorPrincipal = "atraso", ValorMensal = 249, ValorImplantacao = 100 }, 7)).Proposta;
+        Assert.Equal("Ana", r.Dados.QuemDecide);
+        Assert.Equal("conversa", await db.Scalar<string>("SELECT fase FROM acompanhamento"));
+        Assert.True((await svc.CriarPropostaAsync(op, new PropostaRequest(), 7)).Repetida);
+
+        var editado = (await svc.EditarPropostaAsync(op, r.Id, new PropostaRequest { ValorMensal = 300, Plano = "Rota", VersaoEsperada = r.Edicao }, 7)).Proposta;
+        var enviado = await svc.EnviarPropostaAsync(op, r.Id, Envio(editado), 7);
+        Assert.Equal(F.Proposta, enviado.FaseAtual);
+        Assert.True((await svc.EnviarPropostaAsync(op, r.Id, Envio(editado), 7)).Repetida);
+        Assert.Equal("proposta", await db.Scalar<string>($"SELECT coluna::text FROM crm_oportunidade WHERE id = '{op}'"));
+        Assert.Equal(300m, await db.Scalar<decimal>($"SELECT (proposta_json ->> 'saaSMensalidade')::numeric FROM crm_oportunidade WHERE id = '{op}'"));
+        Assert.Equal(1, await db.Scalar<long>("SELECT count(*) FROM crm_oportunidade_historico WHERE acao = 'Proposta registrada'"));
+        Assert.Equal(enviado.Passagem!.Id, await db.Scalar<Guid>("SELECT passagem_id FROM acompanhamento_proposta_versao"));
+
+        var ajuste = await svc.ResponderPropostaAsync(op, r.Id, new ResponderPropostaRequest { Resposta = "pediu_ajuste", Nota = "parcelar" }, 7);
+        Assert.Equal(StatusProposta.EmNegociacao, ajuste.Proposta.Status);
+
+        var v2 = (await svc.CriarPropostaAsync(op, new PropostaRequest { ValorMensal = 280 }, 7)).Proposta;
+        Assert.Equal(2, v2.Versao);
+        var e2 = await svc.EnviarPropostaAsync(op, v2.Id, Envio(v2, "envio-2", "email"), 7);
+        Assert.Null(e2.Passagem);
+        Assert.Equal("substituida,enviada", await db.Scalar<string>("SELECT string_agg(status, ',' ORDER BY versao) FROM acompanhamento_proposta_versao"));
+
+        // O indice unico segura rascunho duplicado mesmo fora do servico.
+        await svc.CriarPropostaAsync(op, new PropostaRequest { ValorMensal = 270 }, 7);
+        await Assert.ThrowsAsync<PostgresException>(() => db.Execute($"INSERT INTO acompanhamento_proposta_versao (oportunidade_id, versao, status) VALUES ('{op}', 9, 'rascunho')"));
+
+        await db.Execute(@"INSERT INTO acompanhamento_proximo_passo (acompanhamento_id, tipo, data) SELECT id, 'ligacao', CURRENT_DATE FROM acompanhamento;
+INSERT INTO acompanhamento_relacionamento (acompanhamento_id) SELECT id FROM acompanhamento;");
+        await svc.ExecutarAsync(op, F.Perdido, new DadosPassagem { ChaveIdempotencia = "p", Motivo = "sem verba", TentarDeNovo = "nao" }, 7, AutoresPassagem.Usuario);
+        Assert.Equal("substituida,guardada,guardada", await db.Scalar<string>("SELECT string_agg(status, ',' ORDER BY versao) FROM acompanhamento_proposta_versao"));
+        Assert.Equal("cancelado", await db.Scalar<string>("SELECT estado FROM acompanhamento_proximo_passo"));
+        Assert.Equal(2, await db.Scalar<long>("SELECT versao FROM acompanhamento_relacionamento"));
+        Assert.Equal(1, await db.Scalar<long>("SELECT count(*) FROM acompanhamento_relacionamento_evento WHERE tipo = 'atividade_cancelada'"));
+    }
+
+    [DeliveryDatabaseFact]
+    public async Task Banco_ciclo_da_atividade_fila_e_jornada_rodam_no_sql_real()
+    {
+        await using var db = await BancoComCrm();
+        await db.Execute(Migracao(M17));
+        var op = await Oportunidade(db, "conversa", fase: null);
+        await db.Execute($"UPDATE crm_oportunidade SET responsavel_usuario_id = 7 WHERE id = '{op}'");
+        var acompanhamento = new AcompanhamentoPostgresStore(db.Source, new MemoryCache(new MemoryCacheOptions()));
+        var rel = new APIBack.Acompanhamento.Relacionamento.RelacionamentoService(new APIBack.Acompanhamento.Relacionamento.RelacionamentoPostgresStore(db.Source, acompanhamento));
+        var hoje = APIBack.Acompanhamento.Relacionamento.RelacionamentoRegras.Hoje(DateTimeOffset.UtcNow);
+
+        var r1 = await rel.DefinirProximoPassoAsync(op, new() { Tipo = "ligacao", Data = hoje, Nota = "ligar cedo" }, 7);
+        var r2 = await rel.DefinirProximoPassoAsync(op, new() { Tipo = "ligacao", Data = hoje, Nota = "ligar tarde" }, 7);
+        Assert.Equal("ligar tarde", r2.ProximoPasso!.Nota);
+        Assert.Equal("Farley", r2.Responsavel!.Nome);
+
+        var fila = await rel.AtividadesAsync("hoje", 7);
+        var item = Assert.Single(fila.Itens);
+        Assert.Equal("ligar tarde", item.Nota);
+        Assert.Equal(r2.Versao, item.VersaoRelacionamento);
+        var lembrete = Assert.Single((await rel.EquipeAsync(7)).Lembretes);
+        Assert.Equal(("ligar tarde", "Farley"), (lembrete.Nota, lembrete.Responsavel!.Nome));
+
+        var r3 = await rel.ReagendarPassoAsync(op, r2.ProximoPasso.Id, new() { Data = hoje.AddDays(2), Motivo = "viajou", VersaoEsperada = r2.Versao }, 7);
+        Assert.Equal("ligar tarde", r3.ProximoPasso!.Nota);
+        Assert.Single((await rel.AtividadesAsync("proximas", null)).Itens);
+
+        var r4 = await rel.ConcluirPassoAsync(op, r3.ProximoPasso.Id, new()
+        {
+            Resultado = "interessado", Nota = "pediu proposta", VersaoEsperada = r3.Versao, Proximo = new() { Tipo = "proposta", Data = hoje.AddDays(1) }
+        }, 7);
+        Assert.Equal("proposta", r4.ProximoPasso!.Tipo);
+        Assert.Equal(r3.ProximoPasso.Id, await db.Scalar<Guid>("SELECT origem_passo_id FROM acompanhamento_proximo_passo WHERE estado = 'aberto'"));
+        Assert.True((await rel.ConcluirPassoAsync(op, r3.ProximoPasso.Id, new() { Resultado = "interessado" }, 7)).Repetida);
+        var feita = Assert.Single((await rel.AtividadesAsync("feitas", 7)).Itens);
+        Assert.Equal(("feito", "interessado", "pediu proposta"), (feita.Estado, feita.Resultado, feita.ResultadoNota));
+
+        // Saude: atividade realizada conta como ultimo passo; agendar sozinho nao contaria.
+        await using (var cx = await db.Source.OpenConnectionAsync())
+        {
+            var entrada = Assert.Single(await APIBack.Acompanhamento.Saude.SaudeSql.EntradasDasOportunidadesAsync(cx, CancellationToken.None));
+            Assert.Equal(feita.RealizadoEm!.Value.ToUnixTimeSeconds(), entrada.UltimoPassoEm!.Value.ToUnixTimeSeconds());
+        }
+
+        await rel.CancelarPassoAsync(op, r4.ProximoPasso.Id, new() { Motivo = "loja fechou no feriado" }, 7);
+        Assert.Equal(new[] { "cancelado", "feito", "reagendado", "substituido" },
+            (await QueryStrings(db, "SELECT estado FROM acompanhamento_proximo_passo ORDER BY estado")).ToArray());
+
+        var marcada = await rel.MarcarAsync(op, new() { Tipo = "precisa_ajuda", Motivo = "pedidos cairam", Categoria = "uso", AcaoEsperada = "ligar" }, 7);
+        Assert.Equal("uso", marcada.Marcacao!.Categoria);
+        Assert.Equal("marcada", marcada.Eventos.First().Tipo);
+        var sem = await rel.DesmarcarAsync(op, "resolvido com a Ana", 7, marcada.Versao);
+        Assert.Null(sem.Marcacao);
+        Assert.Equal("resolvido com a Ana", sem.Eventos.First().Detalhe!.Value.GetProperty("resolucao").GetString());
+
+        // Evento antigo em PascalCase e com o nome antigo continua legivel.
+        await db.Execute("INSERT INTO acompanhamento_relacionamento_evento (acompanhamento_id, tipo, detalhe, em) SELECT id, 'marcou', '{\"Tipo\":\"atencao\",\"Motivo\":\"antigo\"}', NOW() - INTERVAL '10 days' FROM acompanhamento;");
+        await db.Execute("INSERT INTO acompanhamento_contato_marco (acompanhamento_id, direcao, em, referencia) SELECT id, 'recebida', NOW() - INTERVAL '1 hour', 'wamid.1' FROM acompanhamento;");
+
+        var itens = new List<APIBack.Acompanhamento.Relacionamento.JornadaItemDto>();
+        string? cursor = null;
+        do
+        {
+            var pagina = await rel.JornadaAsync(op, cursor, 3);
+            itens.AddRange(pagina.Itens);
+            cursor = pagina.ProximoCursor;
+        } while (cursor != null);
+        Assert.Equal(itens.Count, itens.Select(i => i.Id).Distinct().Count());
+        Assert.Equal(itens.OrderByDescending(i => i.Em).Select(i => i.Id), itens.Select(i => i.Id));
+        Assert.Contains(itens, i => i.Categoria == "atividade_executada" && i.Resultado == "interessado" && i.Detalhe == "pediu proposta" && i.Autor.Nome == "Farley");
+        Assert.Contains(itens, i => i.Categoria == "contato" && i.Autor.Nome == "Sistema");
+        Assert.Contains(itens, i => i.Categoria == "sinalizacao" && i.Detalhe == "antigo");
+        Assert.Contains(itens, i => i.Categoria == "fase");
+    }
+
+    [DeliveryDatabaseFact]
+    public async Task Banco_saida_registrada_muda_a_fase_com_passagem_e_passo_concorre_com_passagem_sem_travar()
+    {
+        await using var db = await BancoComCrm();
+        await db.Execute(Migracao(M17));
+        var acompanhamento = new AcompanhamentoPostgresStore(db.Source, new MemoryCache(new MemoryCacheOptions()));
+        var rel = new APIBack.Acompanhamento.Relacionamento.RelacionamentoService(new APIBack.Acompanhamento.Relacionamento.RelacionamentoPostgresStore(db.Source, acompanhamento));
+        var hoje = APIBack.Acompanhamento.Relacionamento.RelacionamentoRegras.Hoje(DateTimeOffset.UtcNow);
+
+        var saida = await rel.RegistrarCancelamentoAsync(db.Loja, new()
+        {
+            ChaveIdempotencia = "s", Pedido = "quer sair", Leitura = "preco", Canal = "whatsapp", Resultado = "saiu", SaidaQuando = "aviso_30_dias"
+        }, 7);
+        Assert.Equal("saindo", saida.FaseAtual);
+        Assert.Equal("saindo", await db.Scalar<string>("SELECT fase FROM acompanhamento"));
+        Assert.Equal("aviso_30_dias", await db.Scalar<string>("SELECT saida_quando FROM acompanhamento"));
+        Assert.Equal("Pediu para cancelar", await db.Scalar<string>("SELECT nome FROM acompanhamento_passagem"));
+        Assert.Equal(1, await db.Scalar<long>("SELECT count(*) FROM acompanhamento_historico WHERE para = 'saindo' AND passagem_id IS NOT NULL"));
+
+        // Passagem e relacionamento na mesma loja: a ordem das travas e a mesma, sem deadlock nem erro cru.
+        var svc = db.Servico();
+        await rel.DefinirProximoPassoAsync(db.Loja, new() { Tipo = "ligacao", Data = hoje }, 7);
+        var r = await Task.WhenAll(Enumerable.Range(0, 8).Select(i => Task.Run(async () =>
+        {
+            try
+            {
+                if (i % 2 == 0) await svc.ExecutarAsync(db.Loja, F.Encerrado, new DadosPassagem { ChaveIdempotencia = "e" + i, De = F.Saindo }, 7, AutoresPassagem.Usuario);
+                else await rel.DefinirProximoPassoAsync(db.Loja, new() { Tipo = "visita", Data = hoje.AddDays(i) }, 7);
+                return "ok";
+            }
+            catch (AcompanhamentoException) { return "recusa"; }
+            catch (PostgresException ex) { return ex.SqlState; }
+        })));
+        Assert.DoesNotContain(PostgresErrorCodes.DeadlockDetected, r);
+    }
+
+    private static async Task<IReadOnlyList<string>> QueryStrings(Banco db, string sql)
+    {
+        await using var cx = await db.Source.OpenConnectionAsync();
+        return (await cx.QueryAsync<string>(sql)).ToList();
+    }
+
     private sealed class Banco : IAsyncDisposable
     {
         public Guid Loja { get; } = Guid.NewGuid();
@@ -568,7 +1456,7 @@ public class AcompanhamentoFasesTests
         private readonly string _schema = "acompanhamento_" + Guid.NewGuid().ToString("N");
         private string _base = "";
 
-        public static async Task<Banco> Criar(string situacao)
+        public static async Task<Banco> Criar(string situacao, string? antesDaMigracao = null, bool ate17 = true)
         {
             APIBack.Infrastructure.DapperConfiguration.Configure();
             var options = new NpgsqlConnectionStringBuilder(Environment.GetEnvironmentVariable("TEST_DELIVERY_DATABASE"));
@@ -589,7 +1477,10 @@ CREATE TABLE estabelecimento_situacao_log (id bigserial PRIMARY KEY, estabelecim
   motivo text, usuario_id int, detalhes jsonb, criado_em timestamptz DEFAULT NOW());
 INSERT INTO estabelecimentos (id, nome_fantasia, situacao_comercial, operacao_iniciada_em)
 VALUES (@L, 'Loja', @S, CASE WHEN @S = 'implantacao' THEN NULL ELSE NOW() - INTERVAL '30 days' END);", new { L = db.Loja, S = situacao });
-            await db.Execute(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Migrations", "Delivery", "20261127_01_acompanhamento_fases.sql")));
+            if (antesDaMigracao != null) await db.Execute(antesDaMigracao);
+            foreach (var migracao in new[] { "20261127_01_acompanhamento_fases.sql", "20261127_04_crm_relacionamento.sql" })
+                await db.Execute(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Migrations", "Delivery", migracao)));
+            if (ate17) await db.Execute(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Migrations", "Delivery", "20261127_17_crm_jornada_comercial.sql")));
             return db;
         }
 
@@ -635,14 +1526,16 @@ VALUES (@L, 'Loja', @S, CASE WHEN @S = 'implantacao' THEN NULL ELSE NOW() - INTE
         DorPrincipal = "motoboy atrasa",
         PendenciasBloqueantes = 0,
         TesteConcluido = fase is F.Operando or F.Saindo or F.Pausa or F.Encerrado || (fase == F.Implantacao && para == F.Operando),
-        TemProposta = fase == F.Proposta
+        TemProposta = fase == F.Proposta,
+        PropostaComValor = fase == F.Proposta,
+        EnvioRegistrado = fase == F.Conversa
     };
 
     private static DadosPassagem DadosCompletos() => new()
     {
         QuemDecide = "Ana", PedidosPorDia = 40, DorPrincipal = "motoboy atrasa", Motivo = "recomeco", Aceite = "assinado", Plano = "turbo",
         Documento = Cnpj, FormaPagamento = "pix", Dias = 7, Quando = "aviso_30_dias", OQueFez = "desconto no próximo ciclo", LojaAvisada = true,
-        DataVolta = new DateOnly(2026, 12, 1), TentarDeNovo = "30"
+        DataVolta = new DateOnly(2026, 12, 1), TentarDeNovo = "30", ValorMensal = 249
     };
 
     private static (AcompanhamentoService, MemoriaStore) Servico(int pendencias = 0)
@@ -654,12 +1547,13 @@ VALUES (@L, 'Loja', @S, CASE WHEN @S = 'implantacao' THEN NULL ELSE NOW() - INTE
         var crm = new Mock<ICrmService>();
         crm.Setup(c => c.ListarCandidatosAssociacaoAsync(It.IsAny<Guid>(), It.IsAny<string?>(), It.IsAny<string?>()))
             .ReturnsAsync(Array.Empty<CrmCandidatoAssociacaoDto>());
-        return (new AcompanhamentoService(store, prontidao.Object, crm.Object, new Relogio()), store);
+        return (new AcompanhamentoService(store, prontidao.Object, crm.Object, store.Relogio), store);
     }
 
     private sealed class Relogio : TimeProvider
     {
-        public override DateTimeOffset GetUtcNow() => Agora;
+        public DateTimeOffset Instante { get; set; } = Agora;
+        public override DateTimeOffset GetUtcNow() => Instante;
     }
 
     /// <summary>
@@ -670,6 +1564,9 @@ VALUES (@L, 'Loja', @S, CASE WHEN @S = 'implantacao' THEN NULL ELSE NOW() - INTE
     {
         private readonly ConcurrentDictionary<Guid, Registro> _registros = new();
         public ConcurrentBag<string> Efeitos { get; } = new();
+        public Relogio Relogio { get; } = new();
+        /// <summary>Mensagens reais em gestao_mensagem desta oportunidade.</summary>
+        public HashSet<Guid> Mensagens { get; } = new();
 
         private sealed class Registro
         {
@@ -677,17 +1574,23 @@ VALUES (@L, 'Loja', @S, CASE WHEN @S = 'implantacao' THEN NULL ELSE NOW() - INTE
             public List<PassagemRegistroDto> Passagens = new();
             public List<HistoricoDto> Historico = new();
             public SemaphoreSlim Trava = new(1, 1);
-            public bool TemProposta;
+            public List<PropostaVersao> Propostas = new();
+            public List<(string Tipo, string Detalhe)> Eventos = new();
+            public PropostaContexto Contexto = new(null, null, null, null, null, null);
+            public PropostaVersao? Espelho;
+            public decimal? ValorDoContrato;
+            public bool PassoAberto;
             public DateTimeOffset? OperacaoIniciadaEm;
             public DateTimeOffset? TesteTerminaEm;
         }
 
         public Guid NovaOportunidade() => Novo(new AcompanhamentoEstado { OportunidadeId = Guid.NewGuid(), Fase = F.Conversa }, null);
 
-        public Guid NovaLoja(string situacao, bool testeConcluido = false)
+        public Guid NovaLoja(string situacao, bool testeConcluido = false, bool oportunidade = false)
         {
             var id = Novo(new AcompanhamentoEstado
             {
+                OportunidadeId = oportunidade ? Guid.NewGuid() : null,
                 EstabelecimentoId = Guid.NewGuid(), SituacaoLoja = situacao, Fase = F.PadraoDaSituacao(situacao),
                 TesteConcluidoEm = testeConcluido ? Agora.AddDays(-60) : null
             }, situacao == SituacoesComerciais.Implantacao ? null : Agora.AddDays(-5));
@@ -714,6 +1617,20 @@ VALUES (@L, 'Loja', @S, CASE WHEN @S = 'implantacao' THEN NULL ELSE NOW() - INTE
         public bool PodeAtivarPelaApiLegada(Guid id) =>
             SituacaoComercialRules.PodeAtivar(_registros[id].Estado.SituacaoLoja!, _registros[id].OperacaoIniciadaEm);
         public void MudarSituacaoPorFora(Guid id, string situacao) => _registros[id].Estado.SituacaoLoja = situacao;
+        public IReadOnlyList<PropostaVersao> Propostas(Guid id) => _registros[id].Propostas;
+        public IReadOnlyList<(string Tipo, string Detalhe)> Eventos(Guid id) => _registros[id].Eventos;
+        public void DefinirContexto(Guid id, PropostaContexto contexto) => _registros[id].Contexto = contexto;
+        public PropostaVersao? Espelho(Guid id) => _registros[id].Espelho;
+        public decimal? ValorDoContrato(Guid id) => _registros[id].ValorDoContrato;
+        public void ForcarFase(Guid id, string fase) => _registros[id].Estado.Fase = fase;
+        public void AbrirPasso(Guid id) => _registros[id].PassoAberto = true;
+        public bool TemPassoAberto(Guid id) => _registros[id].PassoAberto;
+
+        public void AdicionarProposta(Guid id, PropostaVersao v)
+        {
+            v.Id = Guid.NewGuid();
+            _registros[id].Propostas.Add(v);
+        }
 
         public Task<AcompanhamentoEstado?> ResolverAsync(Guid id, CancellationToken ct) =>
             Task.FromResult(_registros.TryGetValue(id, out var r) ? Copia(r.Estado) : null);
@@ -740,7 +1657,11 @@ VALUES (@L, 'Loja', @S, CASE WHEN @S = 'implantacao' THEN NULL ELSE NOW() - INTE
             private readonly List<PassagemRegistroDto> _passagens = new();
             private readonly List<HistoricoDto> _historico = new();
             private readonly List<string> _efeitos = new();
-            private bool _temProposta;
+            private List<PropostaVersao> _propostas;
+            private readonly List<(string Tipo, string Detalhe)> _eventos = new();
+            private PropostaVersao? _espelho;
+            private decimal? _valorContrato;
+            private bool _passoAberto;
             private DateTimeOffset? _operacao, _fimTeste;
 
             public Transacao(MemoriaStore store, Registro r)
@@ -748,12 +1669,18 @@ VALUES (@L, 'Loja', @S, CASE WHEN @S = 'implantacao' THEN NULL ELSE NOW() - INTE
                 _store = store;
                 _r = r;
                 Estado = Copia(r.Estado);
-                _temProposta = r.TemProposta;
+                _propostas = r.Propostas.Select(Clone).ToList();
+                _espelho = r.Espelho;
+                _valorContrato = r.ValorDoContrato;
+                _passoAberto = r.PassoAberto;
                 _operacao = r.OperacaoIniciadaEm;
                 _fimTeste = r.TesteTerminaEm;
             }
 
             public AcompanhamentoEstado Estado { get; }
+
+            private static PropostaVersao Clone(PropostaVersao v) => (PropostaVersao)typeof(PropostaVersao)
+                .GetMethod("MemberwiseClone", System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.Invoke(v, null)!;
 
             public void Conciliar()
             {
@@ -768,7 +1695,48 @@ VALUES (@L, 'Loja', @S, CASE WHEN @S = 'implantacao' THEN NULL ELSE NOW() - INTE
                 Task.FromResult(_r.Passagens.FirstOrDefault(p => p.ChaveIdempotencia == chave));
 
             public Task<bool> CobrancaEmAbertoAsync(CancellationToken ct) => Task.FromResult(false);
-            public Task<bool> TemPropostaAsync(CancellationToken ct) => Task.FromResult(_temProposta);
+            public Task<PropostaVersao?> PropostaVigenteAsync(CancellationToken ct) =>
+                Task.FromResult(_propostas.FirstOrDefault(v => StatusProposta.Vigente(v.Status)));
+            public Task<IReadOnlyList<PropostaVersao>> PropostasAsync(CancellationToken ct) =>
+                Task.FromResult<IReadOnlyList<PropostaVersao>>(_propostas.Select(Clone).ToList());
+            public Task<PropostaContexto> ContextoPropostaAsync(CancellationToken ct) => Task.FromResult(_r.Contexto);
+
+            public Task<PropostaVersao> CriarPropostaAsync(PropostaVersao nova, CancellationToken ct)
+            {
+                nova.Id = Guid.NewGuid();
+                nova.CriadaEm = nova.AtualizadaEm = Agora;
+                _propostas.Add(nova);
+                return Task.FromResult(Clone(nova));
+            }
+
+            public Task<PropostaVersao> SalvarPropostaAsync(PropostaVersao versao, CancellationToken ct)
+            {
+                var salva = Clone(versao);
+                salva.Edicao++;
+                _propostas[_propostas.FindIndex(v => v.Id == versao.Id)] = salva;
+                return Task.FromResult(Clone(salva));
+            }
+
+            public Task EspelharPropostaAsync(PropostaVersao versao, int? usuarioId, CancellationToken ct)
+            {
+                _espelho = Clone(versao);
+                return Task.CompletedTask;
+            }
+
+            public Task<bool> MensagemConfereAsync(Guid mensagemId, CancellationToken ct) => Task.FromResult(_store.Mensagens.Contains(mensagemId));
+
+            public Task EventoAsync(string tipo, object detalhe, int? usuarioId, CancellationToken ct)
+            {
+                _eventos.Add((tipo, APIBack.Acompanhamento.Relacionamento.RelacionamentoRegras.SerializarDetalhe(detalhe)));
+                return Task.CompletedTask;
+            }
+
+            private void Guardar(bool passo)
+            {
+                foreach (var v in _propostas.Where(v => v.Status is StatusProposta.Rascunho || StatusProposta.Vigente(v.Status)))
+                    v.Status = StatusProposta.Guardada;
+                if (passo) _passoAberto = false;
+            }
 
             public Task<PassagemRegistroDto> AplicarAsync(PassagemAplicacao a, CancellationToken ct)
             {
@@ -777,9 +1745,21 @@ VALUES (@L, 'Loja', @S, CASE WHEN @S = 'implantacao' THEN NULL ELSE NOW() - INTE
                 _passagens.Add(registro);
                 switch (a.Efeito)
                 {
-                    case EfeitoPassagem.MontarProposta: _temProposta = true; break;
-                    case EfeitoPassagem.VoltarAConversar: _temProposta = false; break;
+                    case EfeitoPassagem.VoltarAConversar: Guardar(passo: false); break;
                     case EfeitoPassagem.FecharNaConversa or EfeitoPassagem.PropostaAceita or EfeitoPassagem.TesteSemCompromisso:
+                        if (a.Efeito == EfeitoPassagem.PropostaAceita)
+                        {
+                            var vigente = _propostas.Single(v => StatusProposta.Vigente(v.Status));
+                            var vencida = PropostaRegras.Vencida(vigente, APIBack.Payments.Assinaturas.FusoComercial.Data(a.Agora));
+                            vigente.Status = StatusProposta.Aceita;
+                            Guardar(passo: false);
+                            _valorContrato = vigente.ValorMensal;
+                            _eventos.Add(("proposta_aceita", APIBack.Acompanhamento.Relacionamento.RelacionamentoRegras.SerializarDetalhe(new { vigente.Versao, aceitaAposValidade = vencida })));
+                        }
+                        else
+                        {
+                            Guardar(passo: true);
+                        }
                         if (!Estado.EstabelecimentoId.HasValue)
                         {
                             Estado.EstabelecimentoId = Guid.NewGuid();
@@ -804,8 +1784,12 @@ VALUES (@L, 'Loja', @S, CASE WHEN @S = 'implantacao' THEN NULL ELSE NOW() - INTE
                         Estado.TesteConcluidoEm ??= a.Agora;
                         break;
                     case EfeitoPassagem.Reimplantar: Estado.SituacaoLoja = SituacoesComerciais.Implantacao; break;
-                    case EfeitoPassagem.Encerrar or EfeitoPassagem.PararLoja: Estado.SituacaoLoja = SituacoesComerciais.Bloqueado; break;
+                    case EfeitoPassagem.Encerrar or EfeitoPassagem.PararLoja:
+                        Guardar(passo: true);
+                        Estado.SituacaoLoja = SituacoesComerciais.Bloqueado;
+                        break;
                     case EfeitoPassagem.Perder:
+                        Guardar(passo: true);
                         if (Estado.EstabelecimentoId.HasValue) Estado.SituacaoLoja = SituacoesComerciais.Bloqueado;
                         Estado.RetomarEm = a.RetomarEm;
                         break;
@@ -837,7 +1821,12 @@ VALUES (@L, 'Loja', @S, CASE WHEN @S = 'implantacao' THEN NULL ELSE NOW() - INTE
                 _r.Estado = Copia(Estado);
                 _r.Passagens.AddRange(_passagens);
                 _r.Historico.AddRange(_historico);
-                _r.TemProposta = _temProposta;
+                _r.Propostas = _propostas.Select(Clone).ToList();
+                _r.Eventos.AddRange(_eventos);
+                _eventos.Clear();
+                _r.Espelho = _espelho;
+                _r.ValorDoContrato = _valorContrato;
+                _r.PassoAberto = _passoAberto;
                 _r.OperacaoIniciadaEm = _operacao;
                 _r.TesteTerminaEm = _fimTeste;
                 foreach (var e in _efeitos) _store.Efeitos.Add(e);

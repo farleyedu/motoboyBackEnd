@@ -39,6 +39,8 @@ namespace APIBack.Acompanhamento.Fases
         public string? TentarDeNovo { get; set; }
         /// <summary>Valor mensal combinado (proposta ou fechamento na conversa).</summary>
         public decimal? ValorMensal { get; set; }
+        /// <summary>Fechou na conversa por R$ 0 de proposito. Sem isto, valor zero e recusado.</summary>
+        public bool? ValorZeroConsciente { get; set; }
         public decimal? ValorImplantacao { get; set; }
         public string? Observacao { get; set; }
 
@@ -67,7 +69,12 @@ namespace APIBack.Acompanhamento.Fases
         public bool TesteConcluido { get; init; }
         public int ProrrogacoesNoTeste { get; init; }
         public bool CobrancaEmAberto { get; init; }
+        /// <summary>Ha versao enviada ou em negociacao: rascunho nao conta.</summary>
         public bool TemProposta { get; init; }
+        public bool PropostaComValor { get; init; }
+        public bool PropostaValorZero { get; init; }
+        /// <summary>A passagem vem do registro de envio. So o servidor liga: POST direto para Proposta e recusado.</summary>
+        public bool EnvioRegistrado { get; init; }
     }
 
     public sealed class ContextoPassagem

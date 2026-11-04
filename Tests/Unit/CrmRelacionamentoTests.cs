@@ -30,8 +30,14 @@ public class CrmRelacionamentoTests
         public int? Responsavel;
         public int? Anterior;
         public DateTimeOffset? Ate;
+        public string Fase = "operando";
+        public int SaidasIniciadas;
         public MarcacaoDto? Marcacao;
         public ProximoPassoDto? Passo;
+        public readonly Dictionary<Guid, PassoRegistro> Encerrados = new();
+        public readonly Dictionary<Guid, string?> NotasResultado = new();
+        public readonly Dictionary<Guid, DateTimeOffset> Realizados = new();
+        public readonly Dictionary<Guid, Guid> Origens = new();
         public DateTimeOffset? Enviada, Recebida;
         public bool CobrancaAberta;
         public readonly SemaphoreSlim Trava = new(1, 1);
@@ -48,6 +54,7 @@ public class CrmRelacionamentoTests
         };
         public readonly Dictionary<Guid, Item> Itens = new();
         public readonly List<(int Destinatario, string Tipo, string Mensagem)> Avisos = new();
+        public readonly List<JornadaLinha> Trilha = new();
         public readonly RelogioFalso Relogio;
 
         public Store(RelogioFalso relogio) => Relogio = relogio;
@@ -66,10 +73,23 @@ public class CrmRelacionamentoTests
         public Task<IReadOnlyList<LojaCarteiraRow>> CarteiraAsync(CancellationToken ct) =>
             Task.FromResult<IReadOnlyList<LojaCarteiraRow>>(Itens.Values.Select(i => new LojaCarteiraRow
             {
-                AcompanhamentoId = i.Id, Nome = i.Nome, Fase = "operando", ResponsavelUsuarioId = i.Responsavel, Versao = i.Versao,
+                AcompanhamentoId = i.Id, Nome = i.Nome, Fase = i.Fase, ResponsavelUsuarioId = i.Responsavel, Versao = i.Versao,
                 AnteriorUsuarioId = i.Anterior, VisivelAnteriorAte = i.Ate, ProximoPassoId = i.Passo?.Id, ProximoPassoTipo = i.Passo?.Tipo,
-                ProximoPassoData = i.Passo?.Data, UltimaEnviada = i.Enviada, UltimaRecebida = i.Recebida, Marcacao = i.Marcacao?.Tipo
+                ProximoPassoData = i.Passo?.Data, ProximoPassoNota = i.Passo?.Nota, ProximoPassoCriadoPor = i.Passo?.CriadoPor, ProximoPassoCriadoEm = i.Passo?.CriadoEm,
+                UltimaEnviada = i.Enviada, UltimaRecebida = i.Recebida, Marcacao = i.Marcacao?.Tipo
             }).ToList());
+
+        public Task<IReadOnlyList<AtividadeDto>> AtividadesAsync(string escopo, DateOnly hoje, int? responsavel, int limite, CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<AtividadeDto>>(Itens.Values
+                .Where(i => i.Passo != null && (responsavel == null || i.Responsavel == responsavel))
+                .Where(i => escopo switch { "hoje" => i.Passo!.Data == hoje, "vencidas" => i.Passo!.Data < hoje, "proximas" => i.Passo!.Data > hoje, _ => false })
+                .Select(i => new AtividadeDto(i.Passo!.Id, i.Id, null, null, i.Nome, i.Fase, i.Passo.Tipo, i.Passo.Data, i.Passo.Nota, EstadosPasso.Aberto, null, null, null,
+                    i.Responsavel.HasValue ? Equipe[i.Responsavel.Value] : null, i.Passo.CriadoEm, i.Passo.Data < hoje, i.Versao)).ToList());
+
+        public Task<IReadOnlyList<JornadaLinha>> JornadaAsync(Guid id, (DateTimeOffset Em, string Id)? depoisDe, int limite, CancellationToken ct) =>
+            Task.FromResult<IReadOnlyList<JornadaLinha>>(Trilha
+                .Where(t => depoisDe == null || t.Em < depoisDe.Value.Em || (t.Em == depoisDe.Value.Em && string.CompareOrdinal(t.Id, depoisDe.Value.Id) < 0))
+                .OrderByDescending(t => t.Em).Take(limite).ToList());
 
         public Task<IReadOnlyList<AvisoRelacionamentoDto>> AvisosAsync(int usuarioId, CancellationToken ct) =>
             Task.FromResult<IReadOnlyList<AvisoRelacionamentoDto>>(Avisos.Where(a => a.Destinatario == usuarioId)
@@ -114,7 +134,7 @@ public class CrmRelacionamentoTests
             {
                 _s = s;
                 _i = i;
-                Estado = new RelacionamentoEstado { AcompanhamentoId = i.Id, Nome = i.Nome, Versao = i.Versao, ResponsavelUsuarioId = i.Responsavel, Marcacao = i.Marcacao, ProximoPasso = i.Passo };
+                Estado = new RelacionamentoEstado { AcompanhamentoId = i.Id, Nome = i.Nome, Fase = i.Fase, Versao = i.Versao, ResponsavelUsuarioId = i.Responsavel, Marcacao = i.Marcacao, ProximoPasso = i.Passo };
             }
 
             public RelacionamentoEstado Estado { get; }
@@ -127,13 +147,58 @@ public class CrmRelacionamentoTests
 
             public Task SubstituirProximoPassoAsync(string tipo, DateOnly data, string? nota, int usuarioId, CancellationToken ct)
             {
+                if (_i.Passo is { } atual)
+                {
+                    _i.Encerrados[atual.Id] = Registro(atual, EstadosPasso.Substituido);
+                    _ultimoSubstituido = atual.Id;
+                }
                 _i.Passo = new ProximoPassoDto(Guid.NewGuid(), tipo, data, nota, usuarioId, _s.Relogio.Agora, false); _alterou = true;
                 return Task.CompletedTask;
             }
 
-            public Task AplicarMarcacaoAsync(string tipo, string motivo, int usuarioId, CancellationToken ct)
+            private static PassoRegistro Registro(ProximoPassoDto p, string estado, string? resultado = null) =>
+                new() { Id = p.Id, Tipo = p.Tipo, Data = p.Data, Nota = p.Nota, Estado = estado, Resultado = resultado };
+
+            private Guid? _ultimoSubstituido;
+
+            public Task<PassoRegistro?> PassoAsync(Guid passoId, CancellationToken ct) =>
+                Task.FromResult(_i.Passo?.Id == passoId ? Registro(_i.Passo, EstadosPasso.Aberto) : _i.Encerrados.GetValueOrDefault(passoId));
+
+            public Task<PassoRegistro?> UltimoSubstituidoAsync(CancellationToken ct) =>
+                Task.FromResult(_i.Encerrados.Values.LastOrDefault(p => p.Estado == EstadosPasso.Substituido));
+
+            public Task EncerrarPassoAsync(Guid passoId, PassoEncerramento e, int usuarioId, CancellationToken ct)
             {
-                _i.Marcacao = new MarcacaoDto(tipo, motivo, usuarioId, _s.Relogio.Agora); _alterou = true;
+                _i.Encerrados[passoId] = Registro(_i.Passo!, e.Estado, e.Resultado);
+                _i.NotasResultado[passoId] = e.Nota;
+                if (e.RealizadoEm.HasValue) _i.Realizados[passoId] = e.RealizadoEm.Value;
+                _i.Passo = null;
+                _alterou = true;
+                return Task.CompletedTask;
+            }
+
+            public Task<Guid> AbrirPassoAsync(string tipo, DateOnly data, string? nota, Guid? origem, int usuarioId, CancellationToken ct)
+            {
+                if (_i.Passo != null) throw new InvalidOperationException("Dois passos abertos: o indice unico do banco recusaria.");
+                _i.Passo = new ProximoPassoDto(Guid.NewGuid(), tipo, data, nota, usuarioId, _s.Relogio.Agora, false);
+                if (origem.HasValue) _i.Origens[_i.Passo.Id] = origem.Value;
+                _alterou = true;
+                return Task.FromResult(_i.Passo.Id);
+            }
+
+            public Task<string> IniciarSaidaAsync(Guid retencaoId, RetencaoRegistro registro, int usuarioId, CancellationToken ct)
+            {
+                if (_i.Fase == "operando")
+                {
+                    _i.Fase = "saindo";
+                    _i.SaidasIniciadas++;
+                }
+                return Task.FromResult(_i.Fase);
+            }
+
+            public Task AplicarMarcacaoAsync(string tipo, string motivo, string? categoria, string? acaoEsperada, int usuarioId, CancellationToken ct)
+            {
+                _i.Marcacao = new MarcacaoDto(tipo, motivo, usuarioId, _s.Relogio.Agora, categoria, acaoEsperada); _alterou = true;
                 return Task.CompletedTask;
             }
 
@@ -160,7 +225,7 @@ public class CrmRelacionamentoTests
 
             public Task<bool> CobrancaEmAbertoAsync(CancellationToken ct) => Task.FromResult(_i.CobrancaAberta);
             public Task AvisarAsync(int d, string tipo, string msg, int? de, CancellationToken ct) { _s.Avisos.Add((d, tipo, msg)); return Task.CompletedTask; }
-            public Task EventoAsync(string tipo, object detalhe, int? usuarioId, CancellationToken ct) { _i.Eventos.Add((tipo, usuarioId, System.Text.Json.JsonSerializer.Serialize(detalhe))); return Task.CompletedTask; }
+            public Task EventoAsync(string tipo, object detalhe, int? usuarioId, CancellationToken ct) { _i.Eventos.Add((tipo, usuarioId, RelacionamentoRegras.SerializarDetalhe(detalhe))); return Task.CompletedTask; }
 
             public Task<long> ConfirmarAsync(CancellationToken ct)
             {
@@ -566,7 +631,7 @@ public class CrmRelacionamentoTests
 
         await s.DefinirProximoPassoAsync(loja.Id, new DefinirProximoPassoRequest { Tipo = "proposta", Data = Hoje.AddDays(3) }, 1);
         Assert.Equal(2, loja.Eventos.Count);
-        Assert.Contains("\"Tipo\":\"ligacao\"", loja.Eventos[1].Detalhe); // o anterior fica registrado no evento
+        Assert.Contains("\"tipo\":\"ligacao\"", loja.Eventos[1].Detalhe); // o anterior fica registrado no evento
     }
 
     [Fact]
@@ -589,6 +654,422 @@ public class CrmRelacionamentoTests
         Assert.Equal(new[] { vencida.Passo.Id, hoje.Passo.Id }, eq.Lembretes.Select(l => l.ProximoPassoId));
         Assert.True(eq.Lembretes[0].Vencido);
         Assert.DoesNotContain(eq.Lembretes, l => l.AcompanhamentoId == futura.Id || l.AcompanhamentoId == semDono.Id);
+    }
+
+
+    // ---------------------------------------------------------------- ciclo das atividades
+
+    private static (RelacionamentoService Servico, Store Store, RelogioFalso Relogio, Item Loja, ProximoPassoDto Passo) ComPasso(int dias = 0, string? nota = "ligar cedo")
+    {
+        var (s, store, relogio) = Montar();
+        var loja = store.Novo(responsavel: 1);
+        loja.Passo = new ProximoPassoDto(Guid.NewGuid(), "ligacao", Hoje.AddDays(dias), nota, 1, T0, false);
+        return (s, store, relogio, loja, loja.Passo);
+    }
+
+    [Theory]
+    [InlineData("contato_realizado", "feito")]
+    [InlineData("interessado", "feito")]
+    [InlineData("negociacao_pendente", "feito")]
+    [InlineData("problema_encontrado", "feito")]
+    [InlineData("aguardando_terceiro", "feito")]
+    [InlineData("sem_resposta", "sem_sucesso")]
+    public async Task Concluir_grava_o_resultado_e_quem_registrou(string resultado, string estado)
+    {
+        var (s, _, _, loja, passo) = ComPasso();
+
+        var dto = await s.ConcluirPassoAsync(loja.Id, passo.Id, new ConcluirPassoRequest { Resultado = resultado, Nota = "falei com a Ana" }, 1);
+
+        Assert.Null(dto.ProximoPasso);
+        Assert.False(dto.Repetida);
+        var fechado = loja.Encerrados[passo.Id];
+        Assert.Equal(estado, fechado.Estado);
+        Assert.Equal("falei com a Ana", loja.NotasResultado[passo.Id]);
+        Assert.Equal(T0, loja.Realizados[passo.Id]);
+        Assert.Equal(2, loja.Versao);
+        Assert.Contains(loja.Eventos, e => e.Tipo == "atividade_concluida" && e.Usuario == 1);
+    }
+
+    [Fact]
+    public async Task Concluir_abre_o_seguinte_ligado_a_origem_na_mesma_transacao()
+    {
+        var (s, _, _, loja, passo) = ComPasso();
+
+        var dto = await s.ConcluirPassoAsync(loja.Id, passo.Id, new ConcluirPassoRequest
+        {
+            Resultado = "interessado", Proximo = new ProximoPassoNovoRequest { Tipo = "Reuniao", Data = Hoje.AddDays(3), Nota = "levar proposta" }
+        }, 1);
+
+        Assert.Equal("reuniao", dto.ProximoPasso!.Tipo);
+        Assert.Equal("levar proposta", dto.ProximoPasso.Nota);
+        Assert.Equal(passo.Id, loja.Origens[dto.ProximoPasso.Id]);
+        Assert.Equal(new[] { "proximo_passo", "atividade_concluida" }, loja.Eventos.Select(e => e.Tipo));
+        Assert.Equal(2, loja.Versao); // uma mudanca so
+    }
+
+    [Fact]
+    public async Task Proximo_invalido_nao_conclui_nada()
+    {
+        var (s, _, _, loja, passo) = ComPasso();
+        var ex = await Falha(() => s.ConcluirPassoAsync(loja.Id, passo.Id, new ConcluirPassoRequest
+        {
+            Resultado = "interessado", Proximo = new ProximoPassoNovoRequest { Tipo = "ligacao", Data = Hoje.AddDays(-1) }
+        }, 1));
+        Assert.Equal("PROXIMO_PASSO_NO_PASSADO", ex.Code);
+        Assert.Equal(passo.Id, loja.Passo!.Id);
+        Assert.Empty(loja.Eventos);
+    }
+
+    [Fact]
+    public async Task Repetir_o_mesmo_resultado_nao_grava_de_novo_e_outro_resultado_e_conflito()
+    {
+        var (s, _, _, loja, passo) = ComPasso();
+        var pedido = new ConcluirPassoRequest { Resultado = "interessado", VersaoEsperada = 1 };
+
+        await s.ConcluirPassoAsync(loja.Id, passo.Id, pedido, 1);
+        var denovo = await s.ConcluirPassoAsync(loja.Id, passo.Id, pedido, 1);
+
+        Assert.True(denovo.Repetida);
+        Assert.Single(loja.Eventos, e => e.Tipo == "atividade_concluida");
+        Assert.Equal(2, loja.Versao);
+
+        var outro = await Falha(() => s.ConcluirPassoAsync(loja.Id, passo.Id, new ConcluirPassoRequest { Resultado = "sem_resposta" }, 1));
+        Assert.Equal((409, "PASSO_JA_ENCERRADO"), (outro.Status, outro.Code));
+    }
+
+    [Fact]
+    public async Task Concluir_em_paralelo_grava_uma_vez()
+    {
+        var (s, _, _, loja, passo) = ComPasso();
+
+        var r = await Task.WhenAll(Enumerable.Range(0, 10).Select(_ => Task.Run(() =>
+            s.ConcluirPassoAsync(loja.Id, passo.Id, new ConcluirPassoRequest { Resultado = "contato_realizado" }, 1))));
+
+        Assert.Equal(9, r.Count(x => x.Repetida));
+        Assert.Single(loja.Eventos, e => e.Tipo == "atividade_concluida");
+    }
+
+    [Fact]
+    public async Task Concluir_confere_versao_loja_e_dados()
+    {
+        var (s, store, _, loja, passo) = ComPasso();
+
+        Assert.Equal("VERSAO_MUDOU", (await Falha(() => s.ConcluirPassoAsync(loja.Id, passo.Id, new ConcluirPassoRequest { Resultado = "interessado", VersaoEsperada = 99 }, 1))).Code);
+        Assert.Equal("RESULTADO_INVALIDO", (await Falha(() => s.ConcluirPassoAsync(loja.Id, passo.Id, new ConcluirPassoRequest { Resultado = "feito" }, 1))).Code);
+        Assert.Equal("REALIZADO_NO_FUTURO", (await Falha(() => s.ConcluirPassoAsync(loja.Id, passo.Id, new ConcluirPassoRequest { Resultado = "interessado", RealizadoEm = T0.AddHours(2) }, 1))).Code);
+        var outra = store.Novo(responsavel: 1);
+        Assert.Equal((404, "PASSO_NAO_ENCONTRADO"), Status(await Falha(() => s.ConcluirPassoAsync(outra.Id, passo.Id, new ConcluirPassoRequest { Resultado = "interessado" }, 1))));
+        Assert.Equal((403, "SEM_PERMISSAO"), Status(await Falha(() => s.ConcluirPassoAsync(loja.Id, passo.Id, new ConcluirPassoRequest { Resultado = "interessado" }, 99))));
+        Assert.Equal(passo.Id, loja.Passo!.Id);
+    }
+
+    private static (int, string) Status(RelacionamentoException ex) => (ex.Status, ex.Code);
+
+    [Fact]
+    public async Task Reagendar_encerra_o_vencido_e_abre_outro_com_a_mesma_nota()
+    {
+        var (s, _, _, loja, passo) = ComPasso(dias: -3);
+
+        var dto = await s.ReagendarPassoAsync(loja.Id, passo.Id, new ReagendarPassoRequest { Data = Hoje.AddDays(2), Motivo = "viajou", VersaoEsperada = 1 }, 1);
+
+        Assert.Equal(Hoje.AddDays(2), dto.ProximoPasso!.Data);
+        Assert.Equal("ligar cedo", dto.ProximoPasso.Nota);
+        Assert.Equal(EstadosPasso.Reagendado, loja.Encerrados[passo.Id].Estado);
+        Assert.Equal(passo.Id, loja.Origens[dto.ProximoPasso.Id]);
+
+        var denovo = await s.ReagendarPassoAsync(loja.Id, passo.Id, new ReagendarPassoRequest { Data = Hoje.AddDays(2) }, 1);
+        Assert.True(denovo.Repetida);
+        Assert.Single(loja.Eventos, e => e.Tipo == "atividade_reagendada");
+    }
+
+    [Fact]
+    public async Task Reagendar_para_o_passado_e_recusado()
+    {
+        var (s, _, _, loja, passo) = ComPasso();
+        Assert.Equal("PROXIMO_PASSO_NO_PASSADO", (await Falha(() => s.ReagendarPassoAsync(loja.Id, passo.Id, new ReagendarPassoRequest { Data = Hoje.AddDays(-1) }, 1))).Code);
+        Assert.Equal("PROXIMO_PASSO_OBRIGATORIO", (await Falha(() => s.ReagendarPassoAsync(loja.Id, passo.Id, new ReagendarPassoRequest(), 1))).Code);
+    }
+
+    [Fact]
+    public async Task Cancelar_exige_motivo_e_nao_conta_como_feito()
+    {
+        var (s, _, _, loja, passo) = ComPasso();
+
+        Assert.Equal("MOTIVO_OBRIGATORIO", (await Falha(() => s.CancelarPassoAsync(loja.Id, passo.Id, new CancelarPassoRequest { Motivo = "x" }, 1))).Code);
+        var dto = await s.CancelarPassoAsync(loja.Id, passo.Id, new CancelarPassoRequest { Motivo = "loja fechou no feriado" }, 1);
+
+        Assert.Null(dto.ProximoPasso);
+        Assert.Equal(EstadosPasso.Cancelado, loja.Encerrados[passo.Id].Estado);
+        Assert.False(loja.Realizados.ContainsKey(passo.Id));
+        Assert.True((await s.CancelarPassoAsync(loja.Id, passo.Id, new CancelarPassoRequest { Motivo = "loja fechou no feriado" }, 1)).Repetida);
+    }
+
+    [Fact]
+    public async Task Definir_passo_continua_substituindo_e_nunca_marca_como_feito()
+    {
+        var (s, _, _, loja, passo) = ComPasso();
+
+        await s.DefinirProximoPassoAsync(loja.Id, new DefinirProximoPassoRequest { Tipo = "visita", Data = Hoje.AddDays(1) }, 1);
+
+        Assert.Equal(EstadosPasso.Substituido, loja.Encerrados[passo.Id].Estado);
+        Assert.Empty(loja.Realizados);
+    }
+
+    [Fact]
+    public async Task Mudar_so_a_nota_nao_se_perde()
+    {
+        var (s, _, _, loja, passo) = ComPasso(dias: 1, nota: "antes");
+
+        var dto = await s.DefinirProximoPassoAsync(loja.Id, new DefinirProximoPassoRequest { Tipo = "ligacao", Data = passo.Data, Nota = "depois" }, 1);
+        Assert.False(dto.Repetida);
+        Assert.Equal("depois", dto.ProximoPasso!.Nota);
+
+        var semNota = await s.DefinirProximoPassoAsync(loja.Id, new DefinirProximoPassoRequest { Tipo = "ligacao", Data = passo.Data }, 1);
+        Assert.True(semNota.Repetida);
+        Assert.Equal("depois", semNota.ProximoPasso!.Nota);
+        var igual = await s.DefinirProximoPassoAsync(loja.Id, new DefinirProximoPassoRequest { Tipo = "ligacao", Data = passo.Data, Nota = "depois" }, 1);
+        Assert.True(igual.Repetida);
+    }
+
+    [Fact]
+    public async Task Desfazer_remarca_o_passo_vencido_com_a_nota_dele()
+    {
+        var (s, _, _, loja, passo) = ComPasso(dias: -2, nota: "cobrar retorno");
+        var trocado = await s.DefinirProximoPassoAsync(loja.Id, new DefinirProximoPassoRequest { Tipo = "visita", Data = Hoje.AddDays(1) }, 1);
+
+        var dto = await s.DefinirProximoPassoAsync(loja.Id, new DefinirProximoPassoRequest { Tipo = passo.Tipo, Data = passo.Data, VersaoEsperada = trocado.Versao }, 1);
+
+        Assert.Equal(passo.Data, dto.ProximoPasso!.Data);
+        Assert.Equal("cobrar retorno", dto.ProximoPasso.Nota);
+    }
+
+    [Fact]
+    public async Task Data_passada_que_nao_e_desfazer_continua_recusada()
+    {
+        var (s, _, _, loja, _) = ComPasso(dias: 1);
+        Assert.Equal("PROXIMO_PASSO_NO_PASSADO", (await Falha(() => s.DefinirProximoPassoAsync(loja.Id,
+            new DefinirProximoPassoRequest { Tipo = "ligacao", Data = Hoje.AddDays(-1) }, 1))).Code);
+    }
+
+    [Fact]
+    public async Task Lembrete_traz_nota_data_e_responsavel_e_vencido_fica_ate_resolver()
+    {
+        var (s, store, relogio, loja, passo) = ComPasso(dias: -1, nota: "ligar cedo");
+        relogio.Agora = T0.AddDays(30);
+
+        var lembrete = Assert.Single((await s.EquipeAsync(1)).Lembretes);
+        Assert.Equal("ligar cedo", lembrete.Nota);
+        Assert.Equal(T0, lembrete.CriadoEm);
+        Assert.Equal("Farley", lembrete.Responsavel!.Nome);
+        Assert.True(lembrete.Vencido);
+
+        await s.ConcluirPassoAsync(loja.Id, passo.Id, new ConcluirPassoRequest { Resultado = "contato_realizado" }, 1);
+        Assert.Empty((await s.EquipeAsync(1)).Lembretes);
+    }
+
+    [Fact]
+    public async Task Atividades_validam_o_escopo_e_filtram_por_responsavel()
+    {
+        var (s, store, _) = Montar();
+        var a = store.Novo(responsavel: 1, nome: "A");
+        var b = store.Novo(responsavel: 2, nome: "B");
+        a.Passo = new ProximoPassoDto(Guid.NewGuid(), "ligacao", Hoje, null, 1, T0, false);
+        b.Passo = new ProximoPassoDto(Guid.NewGuid(), "visita", Hoje, null, 2, T0, false);
+
+        Assert.Equal("ESCOPO_INVALIDO", (await Falha(() => s.AtividadesAsync("ontem", null))).Code);
+        Assert.Equal(2, (await s.AtividadesAsync(null, null)).Itens.Count);
+        var minhas = await s.AtividadesAsync("hoje", 1);
+        Assert.Equal(EscoposAtividade.Hoje, minhas.Escopo);
+        Assert.Equal("A", Assert.Single(minhas.Itens).Nome);
+    }
+
+    // ---------------------------------------------------------------- sinalizacao
+
+    [Fact]
+    public async Task Marcacao_aceita_precisa_ajuda_com_categoria_e_acao_e_sem_elas_continua_valendo()
+    {
+        var (s, store, _) = Montar();
+        var loja = store.Novo(responsavel: 1);
+
+        await s.MarcarAsync(loja.Id, new MarcarRequest { Tipo = "precisa_ajuda", Motivo = "pedidos cairam", Categoria = "uso", AcaoEsperada = "ligar hoje" }, 1);
+        Assert.Equal(("precisa_ajuda", "uso", "ligar hoje"), (loja.Marcacao!.Tipo, loja.Marcacao.Categoria, loja.Marcacao.AcaoEsperada));
+
+        await s.MarcarAsync(loja.Id, new MarcarRequest { Tipo = "atencao", Motivo = "tela antiga" }, 1);
+        Assert.Null(loja.Marcacao!.Categoria);
+        Assert.Equal("CATEGORIA_LONGA", (await Falha(() => s.MarcarAsync(loja.Id, new MarcarRequest { Tipo = "risco_de_saida", Motivo = "falou em sair", Categoria = new string('x', 81) }, 1))).Code);
+    }
+
+    [Fact]
+    public async Task Tirar_marcacao_exige_resolucao_e_confere_a_versao()
+    {
+        var (s, store, _) = Montar();
+        var loja = store.Novo(responsavel: 1);
+        var marcada = await s.MarcarAsync(loja.Id, new MarcarRequest { Tipo = "precisa_ajuda", Motivo = "pedidos cairam" }, 1);
+
+        Assert.Equal("MOTIVO_OBRIGATORIO", (await Falha(() => s.DesmarcarAsync(loja.Id, " ", 1))).Code);
+        Assert.Equal("VERSAO_MUDOU", (await Falha(() => s.DesmarcarAsync(loja.Id, "ja resolvido", 1, marcada.Versao - 1))).Code);
+
+        await s.DesmarcarAsync(loja.Id, "ja resolvido", 1, marcada.Versao);
+
+        Assert.Null(loja.Marcacao);
+        Assert.Contains("\"resolucao\":\"ja resolvido\"", loja.Eventos.Last().Detalhe);
+    }
+
+    [Fact]
+    public void Detalhe_novo_sai_em_camelCase_e_o_antigo_e_lido_igual()
+    {
+        Assert.Equal("{\"tipo\":\"a\",\"resultado\":\"retida\"}", RelacionamentoRegras.SerializarDetalhe(new { Tipo = "a", Resultado = "retida" }));
+
+        var antigo = RelacionamentoRegras.DetalheEmCamelCase("{\"Resultado\":\"retida\",\"Canal\":\"whatsapp\",\"motivo\":\"x\"}")!.Value;
+        Assert.Equal("retida", antigo.GetProperty("resultado").GetString());
+        Assert.Equal("whatsapp", antigo.GetProperty("canal").GetString());
+        Assert.Equal("x", antigo.GetProperty("motivo").GetString());
+        Assert.Null(RelacionamentoRegras.DetalheEmCamelCase(null));
+    }
+
+    [Theory]
+    [InlineData("marcou", "marcada")]
+    [InlineData("desmarcou", "desmarcada")]
+    [InlineData("cobrou_responsavel", "cobrou_responsavel")] // a Equipe confere a cobranca por este nome
+    [InlineData("proximo_passo", "proximo_passo")]
+    public void Tipos_antigos_de_evento_seguem_legiveis(string gravado, string lido) =>
+        Assert.Equal(lido, RelacionamentoRegras.TipoEvento(gravado));
+
+    // ---------------------------------------------------------------- saida
+
+    [Fact]
+    public async Task Registrar_a_saida_leva_para_saindo_e_repetir_nao_duplica()
+    {
+        var (s, store, _) = Montar();
+        var loja = store.Novo(responsavel: 1);
+        var pedido = new CancelamentoRequest
+        {
+            ChaveIdempotencia = "saida", Pedido = "quer sair", Leitura = "preco", Canal = "whatsapp", Resultado = "saiu", SaidaQuando = "agora"
+        };
+
+        var r = await s.RegistrarCancelamentoAsync(loja.Id, pedido, 1);
+        var denovo = await s.RegistrarCancelamentoAsync(loja.Id, pedido, 1);
+
+        Assert.Equal("saindo", r.FaseAtual);
+        Assert.Equal("saindo", loja.Fase);
+        Assert.True(denovo.Repetida);
+        Assert.Equal("saindo", denovo.FaseAtual);
+        Assert.Equal(1, loja.SaidasIniciadas);
+    }
+
+    [Fact]
+    public async Task Retencao_nao_muda_a_fase_e_loja_fora_de_operando_nao_entra_em_saindo()
+    {
+        var (s, store, _) = Montar();
+        var retida = store.Novo(responsavel: 1);
+        var r = await s.RegistrarCancelamentoAsync(retida.Id, new CancelamentoRequest
+        {
+            ChaveIdempotencia = "r", Pedido = "quer sair", Leitura = "preco", Canal = "whatsapp", Resultado = "retida"
+        }, 1);
+        Assert.Equal("operando", r.FaseAtual);
+
+        var pausada = store.Novo(responsavel: 1);
+        pausada.Fase = "pausa";
+        var p = await s.RegistrarCancelamentoAsync(pausada.Id, new CancelamentoRequest
+        {
+            ChaveIdempotencia = "p", Pedido = "quer sair", Leitura = "preco", Canal = "whatsapp", Resultado = "saiu", SaidaQuando = "agora"
+        }, 1);
+        Assert.Equal("pausa", p.FaseAtual);
+        Assert.Equal(0, pausada.SaidasIniciadas);
+    }
+
+    // ---------------------------------------------------------------- jornada
+
+    private static JornadaLinha Evento(string tipo, string detalhe = "{}", int? usuario = 1) => new()
+    {
+        Id = "e" + Guid.NewGuid().ToString("N"), Em = T0, Origem = OrigensJornada.Evento, Tipo = tipo, UsuarioId = usuario, UsuarioNome = "Farley", Detalhe = detalhe
+    };
+
+    [Theory]
+    [InlineData("proximo_passo", CategoriasJornada.AtividadePlanejada)]
+    [InlineData("atividade_reagendada", CategoriasJornada.AtividadePlanejada)]
+    [InlineData("atividade_cancelada", CategoriasJornada.AtividadePlanejada)]
+    [InlineData("atividade_concluida", CategoriasJornada.AtividadeExecutada)]
+    [InlineData("proposta_rascunho", CategoriasJornada.Proposta)]
+    [InlineData("proposta_enviada", CategoriasJornada.Proposta)]
+    [InlineData("proposta_resposta", CategoriasJornada.Proposta)]
+    [InlineData("proposta_aceita", CategoriasJornada.Proposta)]
+    [InlineData("proposta_guardada", CategoriasJornada.Proposta)]
+    [InlineData("marcou", CategoriasJornada.Sinalizacao)]
+    [InlineData("desmarcou", CategoriasJornada.Sinalizacao)]
+    [InlineData("marcada", CategoriasJornada.Sinalizacao)]
+    [InlineData("desmarcada", CategoriasJornada.Sinalizacao)]
+    [InlineData("passou", CategoriasJornada.Decisao)]
+    [InlineData("assumiu", CategoriasJornada.Decisao)]
+    [InlineData("cobrou_responsavel", CategoriasJornada.Decisao)]
+    [InlineData("retencao_registrada", CategoriasJornada.Decisao)]
+    [InlineData("saida_registrada", CategoriasJornada.Decisao)]
+    [InlineData("lead_criado", CategoriasJornada.Sistema)]
+    [InlineData("algo_novo", CategoriasJornada.Sistema)]
+    public void Jornada_classifica_cada_evento(string tipo, string categoria) =>
+        Assert.Equal(categoria, JornadaRegras.Item(Evento(tipo)).Categoria);
+
+    [Fact]
+    public void Jornada_le_evento_antigo_e_preserva_motivo()
+    {
+        var item = JornadaRegras.Item(Evento("desmarcou", "{\"Tipo\":\"atencao\",\"marcadaPor\":2,\"motivo\":\"resolvido com a Ana\"}"));
+        Assert.Equal("Marcação tirada: atenção", item.Titulo);
+        Assert.Equal("resolvido com a Ana", item.Detalhe);
+        Assert.Equal(new JornadaAutorDto(1, "Farley"), item.Autor);
+    }
+
+    [Fact]
+    public void Jornada_mostra_fase_saude_contato_e_autor_sistema()
+    {
+        var passagem = Guid.NewGuid().ToString();
+        var fase = JornadaRegras.Item(new JornadaLinha { Id = "h1", Em = T0, Origem = OrigensJornada.Historico, Tipo = "fase", De = "conversa", Para = "proposta", Nome = "Enviar a proposta", Motivo = "v1", Referencia = passagem });
+        Assert.Equal((CategoriasJornada.Fase, "Enviar a proposta", "proposta"), (fase.Categoria, fase.Titulo, fase.Resultado));
+        Assert.Equal(new JornadaReferenciaDto("passagem", passagem), fase.Referencia);
+        Assert.Equal(new JornadaAutorDto(null, "Sistema"), fase.Autor);
+
+        var inicio = JornadaRegras.Item(new JornadaLinha { Id = "h0", Em = T0, Origem = OrigensJornada.Historico, Tipo = "fase", Para = "conversa" });
+        Assert.Equal("Início em Conversa", inicio.Titulo);
+
+        var saude = JornadaRegras.Item(new JornadaLinha { Id = "h2", Em = T0, Origem = OrigensJornada.Historico, Tipo = "faixa", De = "bem", Para = "precisa_ajuda" });
+        Assert.Equal((CategoriasJornada.Sistema, "Saúde: bem → precisa de ajuda"), (saude.Categoria, saude.Titulo));
+
+        var contato = JornadaRegras.Item(new JornadaLinha { Id = "c1", Em = T0, Origem = OrigensJornada.Contato, Tipo = "recebida", Referencia = "wamid.1" });
+        Assert.Equal((CategoriasJornada.Contato, "Mensagem recebida"), (contato.Categoria, contato.Titulo));
+
+        var pendente = JornadaRegras.Item(new JornadaLinha { Id = "p1", Em = T0, Origem = OrigensJornada.Passagem, Tipo = "pendente_aprovacao", Nome = "Prorrogar o teste", UsuarioId = 2 });
+        Assert.Equal((CategoriasJornada.Decisao, "pendente de aprovação"), (pendente.Categoria, pendente.Resultado));
+    }
+
+    [Fact]
+    public async Task Jornada_pagina_por_cursor_sem_repetir_nem_perder_item()
+    {
+        var (s, store, _) = Montar();
+        var loja = store.Novo(responsavel: 1);
+        for (var i = 0; i < 7; i++)
+            store.Trilha.Add(new JornadaLinha { Id = $"e{i:D20}", Em = T0.AddMinutes(-i), Origem = OrigensJornada.Evento, Tipo = "proximo_passo", Detalhe = "{\"tipo\":\"ligacao\"}" });
+
+        var vistos = new List<string>();
+        string? cursor = null;
+        var paginas = 0;
+        do
+        {
+            var pagina = await s.JornadaAsync(loja.Id, cursor, 3);
+            vistos.AddRange(pagina.Itens.Select(i => i.Id));
+            cursor = pagina.ProximoCursor;
+            paginas++;
+        } while (cursor != null);
+
+        Assert.Equal(3, paginas);
+        Assert.Equal(store.Trilha.Select(t => t.Id), vistos);
+        Assert.Equal("CURSOR_INVALIDO", (await Falha(() => s.JornadaAsync(loja.Id, "nao-e-cursor", null))).Code);
+    }
+
+    [Fact]
+    public void Limite_da_jornada_tem_padrao_e_teto()
+    {
+        Assert.Equal(JornadaRegras.LimitePadrao, JornadaRegras.Limite(null));
+        Assert.Equal(JornadaRegras.LimitePadrao, JornadaRegras.Limite(0));
+        Assert.Equal(JornadaRegras.LimiteMaximo, JornadaRegras.Limite(5000));
     }
 
     // ---------------------------------------------------------------- contato real
@@ -634,7 +1115,7 @@ public class CrmRelacionamentoTests
         await s.DesmarcarAsync(loja.Id, "ja resolvido", 2); // o responsavel pode
         Assert.Null(loja.Marcacao);
         Assert.Equal("SEM_MARCACAO", (await Falha(() => s.DesmarcarAsync(loja.Id, "ja resolvido", 2))).Code);
-        Assert.Equal(new[] { "marcou", "marcou", "desmarcou" }, loja.Eventos.Select(e => e.Tipo));
+        Assert.Equal(new[] { "marcada", "marcada", "desmarcada" }, loja.Eventos.Select(e => e.Tipo));
     }
 
     // ---------------------------------------------------------------- cancelamento / retencao

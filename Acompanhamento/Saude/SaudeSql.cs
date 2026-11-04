@@ -128,6 +128,7 @@ SELECT id, em, usuario_id, motivo, antes::text, depois::text FROM acompanhamento
 GREATEST(
   (SELECT MAX(p.criada_em) FROM acompanhamento_passagem p WHERE p.acompanhamento_id = ac.id AND p.autor_tipo = 'usuario'),
   (SELECT MAX(h.em) FROM acompanhamento_historico h WHERE h.acompanhamento_id = ac.id AND h.autor_tipo = 'usuario'),
+  (SELECT MAX(pp.realizado_em) FROM acompanhamento_proximo_passo pp WHERE pp.acompanhamento_id = ac.id),
   {NOTA}
   {CHAMADO})";
 

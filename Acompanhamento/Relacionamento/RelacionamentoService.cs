@@ -28,15 +28,40 @@ namespace APIBack.Acompanhamento.Relacionamento
         public string Nome { get; set; } = string.Empty;
         public string Fase { get; set; } = string.Empty;
         public int? ResponsavelUsuarioId { get; set; }
+        public string? ResponsavelNome { get; set; }
         public long Versao { get; set; }
         public int? AnteriorUsuarioId { get; set; }
         public DateTimeOffset? VisivelAnteriorAte { get; set; }
         public Guid? ProximoPassoId { get; set; }
         public string? ProximoPassoTipo { get; set; }
         public DateOnly? ProximoPassoData { get; set; }
+        public string? ProximoPassoNota { get; set; }
+        public int? ProximoPassoCriadoPor { get; set; }
+        public DateTimeOffset? ProximoPassoCriadoEm { get; set; }
         public DateTimeOffset? UltimaEnviada { get; set; }
         public DateTimeOffset? UltimaRecebida { get; set; }
         public string? Marcacao { get; set; }
+    }
+
+    /// <summary>Uma linha de acompanhamento_proximo_passo, aberta ou encerrada.</summary>
+    public sealed class PassoRegistro
+    {
+        public Guid Id { get; set; }
+        public string Tipo { get; set; } = string.Empty;
+        public DateOnly Data { get; set; }
+        public string? Nota { get; set; }
+        public string Estado { get; set; } = EstadosPasso.Aberto;
+        public string? Resultado { get; set; }
+    }
+
+    /// <summary>Encerramento de um passo: o estado final e o que a pessoa registrou.</summary>
+    public sealed class PassoEncerramento
+    {
+        public string Estado { get; set; } = string.Empty;
+        public string? Resultado { get; set; }
+        public string? Nota { get; set; }
+        public DateTimeOffset? RealizadoEm { get; set; }
+        public string? Motivo { get; set; }
     }
 
     public sealed class RetencaoRegistro
@@ -68,6 +93,9 @@ namespace APIBack.Acompanhamento.Relacionamento
         Task<UsuarioEquipeDto?> UsuarioDaEquipeAsync(int usuarioId, CancellationToken ct);
         Task<IReadOnlyList<UsuarioEquipeDto>> MembrosAsync(CancellationToken ct);
         Task<IReadOnlyList<LojaCarteiraRow>> CarteiraAsync(CancellationToken ct);
+        Task<IReadOnlyList<AtividadeDto>> AtividadesAsync(string escopo, DateOnly hoje, int? responsavelUsuarioId, int limite, CancellationToken ct);
+        /// <summary>Linhas da trilha, da mais nova para a mais antiga, depois do cursor. Paginacao por chave: nao depende da janela do quadro.</summary>
+        Task<IReadOnlyList<JornadaLinha>> JornadaAsync(Guid acompanhamentoId, (DateTimeOffset Em, string Id)? depoisDe, int limite, CancellationToken ct);
         Task<IReadOnlyList<AvisoRelacionamentoDto>> AvisosAsync(int usuarioId, CancellationToken ct);
         Task<int> MarcarAvisosLidosAsync(int usuarioId, IReadOnlyCollection<long> ids, CancellationToken ct);
         Task<RelacionamentoDto?> LerAsync(Guid acompanhamentoId, int eventos, CancellationToken ct);
@@ -82,12 +110,19 @@ namespace APIBack.Acompanhamento.Relacionamento
         RelacionamentoEstado Estado { get; }
         Task DefinirResponsavelAsync(int novo, int? anterior, DateTimeOffset visivelAnteriorAte, CancellationToken ct);
         Task SubstituirProximoPassoAsync(string tipo, DateOnly data, string? nota, int usuarioId, CancellationToken ct);
-        Task AplicarMarcacaoAsync(string tipo, string motivo, int usuarioId, CancellationToken ct);
+        Task<PassoRegistro?> PassoAsync(Guid passoId, CancellationToken ct);
+        /// <summary>O passo trocado por ultimo: desfazer remarca ele, mesmo com a data ja vencida.</summary>
+        Task<PassoRegistro?> UltimoSubstituidoAsync(CancellationToken ct);
+        Task EncerrarPassoAsync(Guid passoId, PassoEncerramento encerramento, int usuarioId, CancellationToken ct);
+        Task<Guid> AbrirPassoAsync(string tipo, DateOnly data, string? nota, Guid? origemPassoId, int usuarioId, CancellationToken ct);
+        Task AplicarMarcacaoAsync(string tipo, string motivo, string? categoria, string? acaoEsperada, int usuarioId, CancellationToken ct);
         Task RemoverMarcacaoAsync(int usuarioId, string motivo, CancellationToken ct);
         Task RegistrarCobrancaAsync(int cobrador, int responsavel, string? mensagem, CancellationToken ct);
         Task<DateTimeOffset?> UltimaCobrancaAsync(int cobrador, CancellationToken ct);
         Task<RetencaoDto?> RetencaoPorChaveAsync(string chave, CancellationToken ct);
         Task<RetencaoDto> RegistrarRetencaoAsync(RetencaoRegistro registro, CancellationToken ct);
+        /// <summary>Quem esta Operando passa para Saindo na mesma transacao (passagem, data de saida e historico). Devolve a fase depois.</summary>
+        Task<string> IniciarSaidaAsync(Guid retencaoId, RetencaoRegistro registro, int usuarioId, CancellationToken ct);
         Task<bool> CobrancaEmAbertoAsync(CancellationToken ct);
         Task AvisarAsync(int destinatario, string tipo, string mensagem, int? de, CancellationToken ct);
         Task EventoAsync(string tipo, object detalhe, int? usuarioId, CancellationToken ct);
@@ -103,8 +138,13 @@ namespace APIBack.Acompanhamento.Relacionamento
         Task<RelacionamentoDto> AssumirAsync(Guid id, AssumirRequest? request, int usuarioId, CancellationToken ct = default);
         Task<RelacionamentoDto> CobrarResponsavelAsync(Guid id, CobrarResponsavelRequest? request, int usuarioId, CancellationToken ct = default);
         Task<RelacionamentoDto> DefinirProximoPassoAsync(Guid id, DefinirProximoPassoRequest request, int usuarioId, CancellationToken ct = default);
+        Task<RelacionamentoDto> ConcluirPassoAsync(Guid id, Guid passoId, ConcluirPassoRequest request, int usuarioId, CancellationToken ct = default);
+        Task<RelacionamentoDto> ReagendarPassoAsync(Guid id, Guid passoId, ReagendarPassoRequest request, int usuarioId, CancellationToken ct = default);
+        Task<RelacionamentoDto> CancelarPassoAsync(Guid id, Guid passoId, CancelarPassoRequest request, int usuarioId, CancellationToken ct = default);
+        Task<AtividadesDto> AtividadesAsync(string? escopo, int? responsavelUsuarioId, CancellationToken ct = default);
+        Task<JornadaDto> JornadaAsync(Guid id, string? cursor, int? limite, CancellationToken ct = default);
         Task<RelacionamentoDto> MarcarAsync(Guid id, MarcarRequest request, int usuarioId, CancellationToken ct = default);
-        Task<RelacionamentoDto> DesmarcarAsync(Guid id, string? motivo, int usuarioId, CancellationToken ct = default);
+        Task<RelacionamentoDto> DesmarcarAsync(Guid id, string? motivo, int usuarioId, long? versaoEsperada = null, CancellationToken ct = default);
         Task<RetencaoDto> RegistrarCancelamentoAsync(Guid id, CancelamentoRequest request, int usuarioId, CancellationToken ct = default);
         Task<int> MarcarAvisosLidosAsync(IReadOnlyCollection<long> ids, int usuarioId, CancellationToken ct = default);
         /// <summary>Porta para o modulo de mensagens: so registra envio/recebimento que de fato aconteceu (referencia externa unica).</summary>
@@ -142,13 +182,14 @@ namespace APIBack.Acompanhamento.Relacionamento
             var lojas = linhas.Select(l =>
             {
                 var passo = l.ProximoPassoId.HasValue && l.ProximoPassoData.HasValue
-                    ? new ProximoPassoDto(l.ProximoPassoId.Value, l.ProximoPassoTipo ?? string.Empty, l.ProximoPassoData.Value, null, null, default, l.ProximoPassoData.Value < hoje)
+                    ? new ProximoPassoDto(l.ProximoPassoId.Value, l.ProximoPassoTipo ?? string.Empty, l.ProximoPassoData.Value, l.ProximoPassoNota, l.ProximoPassoCriadoPor,
+                        l.ProximoPassoCriadoEm ?? default, l.ProximoPassoData.Value < hoje)
                     : null;
                 var transitoria = l.AnteriorUsuarioId.HasValue && l.VisivelAnteriorAte > agora;
                 return new LojaEquipeDto
                 {
                     AcompanhamentoId = l.AcompanhamentoId, OportunidadeId = l.OportunidadeId, EstabelecimentoId = l.EstabelecimentoId,
-                    Nome = l.Nome, Fase = l.Fase, ResponsavelUsuarioId = l.ResponsavelUsuarioId, Versao = l.Versao, ProximoPasso = passo,
+                    Nome = l.Nome, Fase = l.Fase, ResponsavelUsuarioId = l.ResponsavelUsuarioId, ResponsavelNome = l.ResponsavelNome, Versao = l.Versao, ProximoPasso = passo,
                     AguardandoRespostaDesde = R.CalcularEspera(l.UltimaEnviada, l.UltimaRecebida).Desde, Marcacao = l.Marcacao,
                     VisaoTransitoriaUsuarioId = transitoria ? l.AnteriorUsuarioId : null, VisaoTransitoriaAte = transitoria ? l.VisivelAnteriorAte : null
                 };
@@ -169,7 +210,10 @@ namespace APIBack.Acompanhamento.Relacionamento
                 Lembretes = lojas.Where(l => l.ProximoPasso != null && l.ProximoPasso.Data <= hoje)
                     .OrderBy(l => l.ProximoPasso!.Data)
                     .Select(l => new LembreteProximoPassoDto(l.ProximoPasso!.Id, l.AcompanhamentoId, l.EstabelecimentoId, l.Nome, l.ProximoPasso.Tipo,
-                        l.ProximoPasso.Data, l.ResponsavelUsuarioId, l.ProximoPasso.Vencido)).ToList(),
+                        l.ProximoPasso.Data, l.ResponsavelUsuarioId, l.ProximoPasso.Vencido, l.ProximoPasso.Nota, l.ProximoPasso.CriadoEm,
+                        l.ResponsavelUsuarioId is { } r
+                            ? membros.FirstOrDefault(m => m.Id == r) ?? (l.ResponsavelNome == null ? null : new UsuarioEquipeDto(r, l.ResponsavelNome))
+                            : null)).ToList(),
                 Avisos = (await _store.AvisosAsync(usuarioId, ct)).ToList()
             };
         }
@@ -276,6 +320,7 @@ namespace APIBack.Acompanhamento.Relacionamento
 
                 var responsavel = e.ResponsavelUsuarioId.Value;
                 await tx.RegistrarCobrancaAsync(autor.Id, responsavel, mensagem, ct);
+                // O nome fica: a tela da Equipe confirma a cobranca por ele.
                 await tx.EventoAsync("cobrou_responsavel", new { responsavel, mensagem }, autor.Id, ct);
                 await tx.AvisarAsync(responsavel, "cobranca",
                     $"{autor.Nome} pediu atencao em {e.Nome}" + (mensagem == null ? "." : $": {mensagem}"), autor.Id, ct);
@@ -288,7 +333,8 @@ namespace APIBack.Acompanhamento.Relacionamento
 
         public async Task<RelacionamentoDto> DefinirProximoPassoAsync(Guid id, DefinirProximoPassoRequest request, int usuarioId, CancellationToken ct = default)
         {
-            R.ValidarProximoPasso(request.Tipo, request.Data, Hoje);
+            var hoje = Hoje;
+            R.ValidarProximoPasso(request.Tipo, request.Data, DateOnly.MinValue); // a data passada e conferida na trava: desfazer pode remarcar o vencido
             var tipo = request.Tipo!.Trim().ToLowerInvariant();
             var data = request.Data!.Value;
             var nota = string.IsNullOrWhiteSpace(request.Nota) ? null : request.Nota.Trim();
@@ -301,9 +347,18 @@ namespace APIBack.Acompanhamento.Relacionamento
                 var e = tx.Estado;
                 ChecarVersao(e, request.VersaoEsperada);
                 var atual = e.ProximoPasso;
-                repetida = atual != null && atual.Tipo == tipo && atual.Data == data;
+                // Mesmo tipo e data com nota nova e mudanca: a nota nao se perde. Sem nota no pedido, nada muda.
+                repetida = atual != null && atual.Tipo == tipo && atual.Data == data && (nota == null || nota == atual.Nota);
                 if (!repetida)
                 {
+                    if (data < hoje)
+                    {
+                        // Data passada so para desfazer: e o passo que acabou de ser trocado, e a nota dele volta junto.
+                        var trocado = await tx.UltimoSubstituidoAsync(ct);
+                        if (trocado == null || trocado.Tipo != tipo || trocado.Data != data)
+                            throw new RelacionamentoException(422, "PROXIMO_PASSO_NO_PASSADO", "A data do proximo passo nao pode estar no passado.");
+                        nota ??= trocado.Nota;
+                    }
                     await tx.SubstituirProximoPassoAsync(tipo, data, nota, autor.Id, ct);
                     await tx.EventoAsync("proximo_passo", new { tipo, data, nota, anterior = atual == null ? null : new { atual.Tipo, atual.Data } }, autor.Id, ct);
                     await tx.ConfirmarAsync(ct);
@@ -312,6 +367,144 @@ namespace APIBack.Acompanhamento.Relacionamento
             var dto = await LerAsync(acompanhamento, ct);
             dto.Repetida = repetida;
             return dto;
+        }
+
+        /// <summary>
+        /// Encerra o passo com o resultado que a pessoa registrou e, se ela disse o que vem depois, abre o seguinte na mesma transacao.
+        /// Repetir com o mesmo resultado devolve repetida, sem gravar de novo.
+        /// </summary>
+        public async Task<RelacionamentoDto> ConcluirPassoAsync(Guid id, Guid passoId, ConcluirPassoRequest request, int usuarioId, CancellationToken ct = default)
+        {
+            var resultado = request.Resultado?.Trim().ToLowerInvariant();
+            if (resultado == null || !ResultadosPasso.Todos.Contains(resultado))
+                throw new RelacionamentoException(422, "RESULTADO_INVALIDO", "Informe o resultado da atividade.", new { resultados = ResultadosPasso.Todos });
+            var realizadoEm = request.RealizadoEm ?? Agora;
+            if (realizadoEm > Agora.AddMinutes(5)) throw new RelacionamentoException(422, "REALIZADO_NO_FUTURO", "A atividade nao pode ter sido feita no futuro.");
+            if (request.Proximo != null) R.ValidarProximoPasso(request.Proximo.Tipo, request.Proximo.Data, Hoje);
+            var nota = string.IsNullOrWhiteSpace(request.Nota) ? null : request.Nota.Trim();
+            var autor = await ExigirEquipeAsync(usuarioId, ct);
+
+            var acompanhamento = await ResolverAsync(id, ct);
+            bool repetida;
+            await using (var tx = await _store.AbrirAsync(acompanhamento, ct))
+            {
+                var passo = await ExigirPassoAsync(tx, passoId, ct);
+                repetida = passo.Estado != EstadosPasso.Aberto && passo.Resultado == resultado;
+                if (!repetida)
+                {
+                    ExigirAberto(passo);
+                    ChecarVersao(tx.Estado, request.VersaoEsperada);
+                    await tx.EncerrarPassoAsync(passoId, new PassoEncerramento
+                    {
+                        Estado = ResultadosPasso.Estado(resultado), Resultado = resultado, Nota = nota, RealizadoEm = realizadoEm
+                    }, autor.Id, ct);
+
+                    Guid? seguinte = null;
+                    if (request.Proximo != null)
+                    {
+                        var tipo = request.Proximo.Tipo!.Trim().ToLowerInvariant();
+                        var proximaNota = string.IsNullOrWhiteSpace(request.Proximo.Nota) ? null : request.Proximo.Nota.Trim();
+                        seguinte = await tx.AbrirPassoAsync(tipo, request.Proximo.Data!.Value, proximaNota, passoId, autor.Id, ct);
+                        await tx.EventoAsync("proximo_passo", new { passoId = seguinte, tipo, data = request.Proximo.Data, nota = proximaNota, origemPassoId = passoId }, autor.Id, ct);
+                    }
+                    await tx.EventoAsync("atividade_concluida", new
+                    {
+                        passoId, passo.Tipo, passo.Data, resultado, nota, realizadoEm, estado = ResultadosPasso.Estado(resultado), proximoPassoId = seguinte
+                    }, autor.Id, ct);
+                    await tx.ConfirmarAsync(ct);
+                }
+            }
+            var dto = await LerAsync(acompanhamento, ct);
+            dto.Repetida = repetida;
+            return dto;
+        }
+
+        public async Task<RelacionamentoDto> ReagendarPassoAsync(Guid id, Guid passoId, ReagendarPassoRequest request, int usuarioId, CancellationToken ct = default)
+        {
+            if (!request.Data.HasValue) throw new RelacionamentoException(422, "PROXIMO_PASSO_OBRIGATORIO", "Informe a nova data.");
+            var data = request.Data.Value;
+            if (data < Hoje) throw new RelacionamentoException(422, "PROXIMO_PASSO_NO_PASSADO", "A data do proximo passo nao pode estar no passado.");
+            var motivo = string.IsNullOrWhiteSpace(request.Motivo) ? null : request.Motivo.Trim();
+            var autor = await ExigirEquipeAsync(usuarioId, ct);
+
+            var acompanhamento = await ResolverAsync(id, ct);
+            bool repetida;
+            await using (var tx = await _store.AbrirAsync(acompanhamento, ct))
+            {
+                var passo = await ExigirPassoAsync(tx, passoId, ct);
+                repetida = (passo.Estado == EstadosPasso.Aberto && passo.Data == data)
+                    || (passo.Estado == EstadosPasso.Reagendado && tx.Estado.ProximoPasso?.Data == data);
+                if (!repetida)
+                {
+                    ExigirAberto(passo);
+                    ChecarVersao(tx.Estado, request.VersaoEsperada);
+                    await tx.EncerrarPassoAsync(passoId, new PassoEncerramento { Estado = EstadosPasso.Reagendado, Motivo = motivo }, autor.Id, ct);
+                    var novo = await tx.AbrirPassoAsync(passo.Tipo, data, passo.Nota, passoId, autor.Id, ct);
+                    await tx.EventoAsync("atividade_reagendada", new { passoId, novoPassoId = novo, passo.Tipo, de = passo.Data, para = data, motivo }, autor.Id, ct);
+                    await tx.ConfirmarAsync(ct);
+                }
+            }
+            var dto = await LerAsync(acompanhamento, ct);
+            dto.Repetida = repetida;
+            return dto;
+        }
+
+        public async Task<RelacionamentoDto> CancelarPassoAsync(Guid id, Guid passoId, CancelarPassoRequest request, int usuarioId, CancellationToken ct = default)
+        {
+            R.ExigirMotivo(request.Motivo);
+            var motivo = request.Motivo!.Trim();
+            var autor = await ExigirEquipeAsync(usuarioId, ct);
+
+            var acompanhamento = await ResolverAsync(id, ct);
+            bool repetida;
+            await using (var tx = await _store.AbrirAsync(acompanhamento, ct))
+            {
+                var passo = await ExigirPassoAsync(tx, passoId, ct);
+                repetida = passo.Estado == EstadosPasso.Cancelado;
+                if (!repetida)
+                {
+                    ExigirAberto(passo);
+                    ChecarVersao(tx.Estado, request.VersaoEsperada);
+                    await tx.EncerrarPassoAsync(passoId, new PassoEncerramento { Estado = EstadosPasso.Cancelado, Motivo = motivo }, autor.Id, ct);
+                    await tx.EventoAsync("atividade_cancelada", new { passoId, passo.Tipo, passo.Data, motivo }, autor.Id, ct);
+                    await tx.ConfirmarAsync(ct);
+                }
+            }
+            var dto = await LerAsync(acompanhamento, ct);
+            dto.Repetida = repetida;
+            return dto;
+        }
+
+        private static async Task<PassoRegistro> ExigirPassoAsync(IRelacionamentoTx tx, Guid passoId, CancellationToken ct) =>
+            await tx.PassoAsync(passoId, ct) ?? throw new RelacionamentoException(404, "PASSO_NAO_ENCONTRADO", "Atividade nao encontrada nesta loja.");
+
+        private static void ExigirAberto(PassoRegistro passo)
+        {
+            if (passo.Estado != EstadosPasso.Aberto)
+                throw new RelacionamentoException(409, "PASSO_JA_ENCERRADO", "Esta atividade ja foi encerrada. Recarregue antes de continuar.", new { passo.Estado, passo.Resultado });
+        }
+
+        // ---- leitura: fila e jornada
+
+        public async Task<AtividadesDto> AtividadesAsync(string? escopo, int? responsavelUsuarioId, CancellationToken ct = default)
+        {
+            var e = (escopo ?? EscoposAtividade.Hoje).Trim().ToLowerInvariant();
+            if (!EscoposAtividade.Todos.Contains(e))
+                throw new RelacionamentoException(422, "ESCOPO_INVALIDO", "Escopo invalido.", new { escopos = EscoposAtividade.Todos });
+            var hoje = Hoje;
+            return new AtividadesDto(e, hoje, await _store.AtividadesAsync(e, hoje, responsavelUsuarioId, JornadaRegras.LimiteMaximo, ct));
+        }
+
+        public async Task<JornadaDto> JornadaAsync(Guid id, string? cursor, int? limite, CancellationToken ct = default)
+        {
+            var depoisDe = JornadaRegras.LerCursor(cursor);
+            var tamanho = JornadaRegras.Limite(limite);
+            var acompanhamento = await ResolverAsync(id, ct);
+            // Um a mais: diz se ha proxima pagina sem contar a trilha inteira.
+            var linhas = await _store.JornadaAsync(acompanhamento, depoisDe, tamanho + 1, ct);
+            var pagina = linhas.Take(tamanho).ToList();
+            return new JornadaDto(acompanhamento, pagina.Select(JornadaRegras.Item).ToList(),
+                linhas.Count > tamanho ? JornadaRegras.Cursor(pagina[^1]) : null);
         }
 
         // ---- marcacao
@@ -323,6 +516,10 @@ namespace APIBack.Acompanhamento.Relacionamento
                 throw new RelacionamentoException(422, "MARCACAO_TIPO_INVALIDO", "Tipo de marcacao invalido.", new { tipos = TiposMarcacao.Todos });
             R.ExigirMotivo(request.Motivo);
             var motivo = request.Motivo!.Trim();
+            var categoria = string.IsNullOrWhiteSpace(request.Categoria) ? null : request.Categoria.Trim();
+            var acaoEsperada = string.IsNullOrWhiteSpace(request.AcaoEsperada) ? null : request.AcaoEsperada.Trim();
+            if (categoria is { Length: > R.CategoriaMaxima }) throw new RelacionamentoException(422, "CATEGORIA_LONGA", $"A categoria pode ter ate {R.CategoriaMaxima} caracteres.");
+            if (acaoEsperada is { Length: > R.AcaoEsperadaMaxima }) throw new RelacionamentoException(422, "ACAO_ESPERADA_LONGA", $"A acao esperada pode ter ate {R.AcaoEsperadaMaxima} caracteres.");
             var autor = await ExigirEquipeAsync(usuarioId, ct);
 
             var acompanhamento = await ResolverAsync(id, ct);
@@ -332,14 +529,14 @@ namespace APIBack.Acompanhamento.Relacionamento
                 ChecarVersao(e, request.VersaoEsperada);
                 if (e.Marcacao?.Tipo == tipo)
                     throw new RelacionamentoException(409, "MARCACAO_JA_ATIVA", "Esta loja ja tem essa marcacao.");
-                await tx.AplicarMarcacaoAsync(tipo, motivo, autor.Id, ct);
-                await tx.EventoAsync("marcou", new { tipo, motivo, substituiu = e.Marcacao?.Tipo }, autor.Id, ct);
+                await tx.AplicarMarcacaoAsync(tipo, motivo, categoria, acaoEsperada, autor.Id, ct);
+                await tx.EventoAsync("marcada", new { tipo, motivo, categoria, acaoEsperada, substituiu = e.Marcacao?.Tipo }, autor.Id, ct);
                 await tx.ConfirmarAsync(ct);
             }
             return await LerAsync(acompanhamento, ct);
         }
 
-        public async Task<RelacionamentoDto> DesmarcarAsync(Guid id, string? motivo, int usuarioId, CancellationToken ct = default)
+        public async Task<RelacionamentoDto> DesmarcarAsync(Guid id, string? motivo, int usuarioId, long? versaoEsperada = null, CancellationToken ct = default)
         {
             R.ExigirMotivo(motivo);
             var autor = await ExigirEquipeAsync(usuarioId, ct);
@@ -347,13 +544,14 @@ namespace APIBack.Acompanhamento.Relacionamento
             await using (var tx = await _store.AbrirAsync(acompanhamento, ct))
             {
                 var e = tx.Estado;
+                ChecarVersao(e, versaoEsperada);
                 var atual = e.Marcacao ?? throw new RelacionamentoException(404, "SEM_MARCACAO", "Esta loja nao tem marcacao ativa.");
                 // Quem marcou e o responsavel (ou, sem responsavel, qualquer um da equipe) podem tirar; os demais pedem para eles.
                 var pode = atual.PorUsuarioId == autor.Id || e.ResponsavelUsuarioId == autor.Id || !e.ResponsavelUsuarioId.HasValue;
                 if (!pode)
                     throw new RelacionamentoException(403, "SEM_PERMISSAO", "So quem marcou ou o responsavel da loja pode tirar a marcacao.");
                 await tx.RemoverMarcacaoAsync(autor.Id, motivo!.Trim(), ct);
-                await tx.EventoAsync("desmarcou", new { atual.Tipo, marcadaPor = atual.PorUsuarioId, motivo = motivo.Trim() }, autor.Id, ct);
+                await tx.EventoAsync("desmarcada", new { atual.Tipo, marcadaPor = atual.PorUsuarioId, resolucao = motivo.Trim(), motivo = motivo.Trim() }, autor.Id, ct);
                 await tx.ConfirmarAsync(ct);
             }
             return await LerAsync(acompanhamento, ct);
@@ -375,6 +573,7 @@ namespace APIBack.Acompanhamento.Relacionamento
             if (existente != null)
             {
                 existente.Repetida = true;
+                existente.FaseAtual = tx.Estado.Fase;
                 return existente;
             }
             ChecarVersao(tx.Estado, request.VersaoEsperada);
@@ -384,6 +583,9 @@ namespace APIBack.Acompanhamento.Relacionamento
                 throw new RelacionamentoException(422, "PAUSA_COM_COBRANCA_EM_ABERTO", "Com cobranca em aberto a loja nao entra em pausa: resolva a cobranca antes.");
 
             var salvo = await tx.RegistrarRetencaoAsync(registro, ct);
+            salvo.FaseAtual = registro.Resultado == ResultadosRetencao.Saiu
+                ? await tx.IniciarSaidaAsync(salvo.Id, registro, autor.Id, ct)
+                : tx.Estado.Fase;
             await tx.EventoAsync(registro.Resultado == ResultadosRetencao.Saiu ? "saida_registrada" : "retencao_registrada", new
             {
                 retencaoId = salvo.Id, registro.Resultado, registro.Canal, oferta = registro.OfertaTipo, aprovada = registro.OfertaAprovada,

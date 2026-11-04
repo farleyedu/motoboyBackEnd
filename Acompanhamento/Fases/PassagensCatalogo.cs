@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using APIBack.Payments.Assinaturas;
 using APIBack.Service;
 using F = APIBack.Acompanhamento.Fases.FasesAcompanhamento;
 
@@ -9,7 +10,7 @@ namespace APIBack.Acompanhamento.Fases
     /// <summary>O que a passagem faz no servidor (ver <see cref="AcompanhamentoService"/> e o store).</summary>
     public enum EfeitoPassagem
     {
-        MontarProposta,
+        EnviarProposta,
         VoltarAConversar,
         FecharNaConversa,
         PropostaAceita,
@@ -33,9 +34,10 @@ namespace APIBack.Acompanhamento.Fases
     /// <summary>Um requisito da passagem. <see cref="Pendencia"/> devolve nulo quando esta pronto, ou o que falta.</summary>
     public sealed record RequisitoDef(string Chave, string Descricao, Func<ContextoPassagem, string?> Pendencia);
 
+    /// <summary><paramref name="Caminho"/>: o caminho apontado quando falta requisito. Nulo = o nome da passagem.</summary>
     public sealed record PassagemDef(
         string De, string Para, string Nome, string Quem, IReadOnlyList<RequisitoDef> Requisitos,
-        string OQueAcontece, string Volta, EfeitoPassagem Efeito);
+        string OQueAcontece, string Volta, EfeitoPassagem Efeito, string? Caminho = null);
 
     /// <summary>Passagem que nao existe: o motivo, o caminho em texto e, quando ha, a sequencia de fases possivel.</summary>
     public sealed record RecusaPassagem(string Motivo, string Caminho, IReadOnlyList<string> Sequencia);
@@ -46,7 +48,8 @@ namespace APIBack.Acompanhamento.Fases
     /// </summary>
     public static class PassagensCatalogo
     {
-        public static readonly string[] Motivos = { "renegociar", "esfriou", "mudou_quem_decide" };
+        /// <summary>Por que a proposta volta para a conversa. Renegociar nao volta: revisa a proposta, sem mudar a fase.</summary>
+        public static readonly string[] Motivos = { "esfriou", "mudou_quem_decide" };
         public static readonly string[] Aceites = { "verbal", "whatsapp", "assinado" };
         public static readonly string[] QuandoSai = { "aviso_30_dias", "fim_do_ciclo", "agora" };
         public static readonly string[] MotivosReimplantar = { "troca_de_dono", "novo_cnpj", "recomeco" };
@@ -92,7 +95,7 @@ namespace APIBack.Acompanhamento.Fases
             if (de == F.Implantacao && F.EmConquista(para))
                 return new("A loja já foi criada.", "Perder e retomar depois", new[] { F.Implantacao, F.Perdido, F.Conversa });
             if (de == F.Teste && F.EmConquista(para))
-                return new("A loja já está testando.", "Mandar a proposta durante o teste, sem mudar a fase", Array.Empty<string>());
+                return new("A loja já está testando.", "Registrar a proposta durante o teste, sem mudar a fase", Array.Empty<string>());
             if (de == F.Saindo)
                 return new("Saindo só vai para Operando (ficou) ou Encerrado.", "—", Array.Empty<string>());
             if (de == para)
@@ -134,25 +137,26 @@ namespace APIBack.Acompanhamento.Fases
         {
             var list = new List<PassagemDef>
             {
-                new(F.Conversa, F.Proposta, "Montar a proposta", QuemDecide.Voce,
-                    new[] { QuemDecideRequisito, PedidosPorDia, DorPrincipal },
-                    "Proposta em rascunho; validade de 7 dias a partir do envio.", "Sim", EfeitoPassagem.MontarProposta),
+                new(F.Conversa, F.Proposta, "Enviar a proposta", QuemDecide.Voce,
+                    new[] { PropostaEnviada },
+                    "Entra em Proposta só com o envio registrado; validade de 7 dias a partir do envio.", "Sim",
+                    EfeitoPassagem.EnviarProposta, CaminhoRegistrarEnvio),
                 new(F.Proposta, F.Conversa, "Voltar a conversar", QuemDecide.Voce,
-                    new[] { Escolha("motivo", "Motivo (renegociar, esfriou, mudou quem decide)", d => d.Motivo, Motivos) },
+                    new[] { MotivoDeVolta },
                     "A proposta fica guardada como versão.", "Sim", EfeitoPassagem.VoltarAConversar),
                 new(F.Conversa, F.Implantacao, "Fechou na conversa, sem proposta formal", QuemDecide.Voce,
-                    new[] { QuemDecideRequisito, Aceite, PlanoDoCatalogo, Documento },
+                    new[] { QuemDecideRequisito, Aceite, PlanoDoCatalogo, Documento, ValorCombinado },
                     "Cria empresa e loja em implantação, sem operar; cria o checklist; cobrança só depois do teste.",
                     "Se desistir, vira Perdido e a loja é desativada.", EfeitoPassagem.FecharNaConversa),
                 new(F.Proposta, F.Implantacao, "Proposta aceita", QuemDecide.Voce,
-                    new[] { PropostaRegistrada, Aceite, Documento },
+                    new[] { PropostaRegistrada, ValorDaProposta, Aceite, Documento },
                     "Cria empresa e loja em implantação, com o valor da proposta aceita; cobrança só depois do teste.",
                     "Se desistir, vira Perdido e a loja é desativada.", EfeitoPassagem.PropostaAceita),
                 new(F.Conversa, F.Teste, "Teste sem compromisso", QuemDecide.Voce, new[] { Documento },
-                    "Cria a loja, que passa por Implantação; o teste começa sozinho quando ela ficar pronta.",
+                    "Cria a loja, que passa por Implantação; o teste começa quando a loja clicar em Começar a operar ou quando você passar para Teste.",
                     "Se desistir, vira Perdido e a loja é desativada.", EfeitoPassagem.TesteSemCompromisso),
                 new(F.Proposta, F.Teste, "Teste sem compromisso", QuemDecide.Voce, new[] { Documento },
-                    "Cria a loja, que passa por Implantação; o teste começa sozinho quando ela ficar pronta.",
+                    "Cria a loja, que passa por Implantação; o teste começa quando a loja clicar em Começar a operar ou quando você passar para Teste.",
                     "Se desistir, vira Perdido e a loja é desativada.", EfeitoPassagem.TesteSemCompromisso),
                 new(F.Implantacao, F.Teste, "Começar o teste", QuemDecide.SozinhoOuVoce, new[] { LojaCriada, ChecklistSemTrava },
                     "15 dias com tudo liberado; a cobrança não começa.", "Não volta; prorrogue o teste.", EfeitoPassagem.ComecarTeste),
@@ -169,21 +173,22 @@ namespace APIBack.Acompanhamento.Fases
                 new(F.Saindo, F.Operando, "Ficou", QuemDecide.Voce,
                     new[] { Texto("oQueFez", "O que fez a loja ficar", d => d.OQueFez) },
                     "Cancela a saída; a oferta vale no próximo ciclo.", "—", EfeitoPassagem.Ficou),
-                new(F.Saindo, F.Encerrado, "Encerrar", QuemDecide.SozinhoOuVoce, new[] { SemCobrancaEmAberto },
-                    "Bloqueia e para a cobrança; o histórico fica.", "Pode voltar.", EfeitoPassagem.Encerrar),
+                new(F.Saindo, F.Encerrado, "Encerrar", QuemDecide.Voce, new[] { SemCobrancaEmAberto },
+                    "Bloqueia e para a cobrança; o histórico fica. A data de saída não encerra sozinha: registre aqui.", "Pode voltar.", EfeitoPassagem.Encerrar),
                 new(F.Operando, F.Encerrado, "Parar a loja", QuemDecide.Voce,
                     new[] { Texto("motivo", "Motivo", d => d.Motivo), LojaAvisada },
                     "A equipe entra mas não acessa nada; cardápio e robô param; entregas na rua terminam; a cobrança para.",
                     "Desbloquear devolve tudo.", EfeitoPassagem.PararLoja),
                 new(F.Operando, F.Pausa, "Declarar pausa", QuemDecide.Voce,
                     new[] { Texto("motivo", "Motivo", d => d.Motivo), DataDeVolta },
-                    "Suspende a cobrança; a falta de uso não deixa a loja vermelha.", "Volta sozinha na data.", EfeitoPassagem.DeclararPausa),
-                new(F.Pausa, F.Operando, "Voltar da pausa", QuemDecide.SozinhoOuVoce, Array.Empty<RequisitoDef>(),
-                    "A cobrança volta.", "—", EfeitoPassagem.VoltarDaPausa),
+                    "Registra a pausa: a falta de uso não deixa a loja vermelha. A cobrança não muda.",
+                    "Não volta sozinha: registre a volta na data.", EfeitoPassagem.DeclararPausa),
+                new(F.Pausa, F.Operando, "Voltar da pausa", QuemDecide.Voce, Array.Empty<RequisitoDef>(),
+                    "A loja volta a contar como operando.", "—", EfeitoPassagem.VoltarDaPausa),
                 new(F.Operando, F.Implantacao, "Reimplantar", QuemDecide.Voce,
                     new[] { Escolha("motivo", "Motivo (troca de dono, novo CNPJ, recomeço)", d => d.Motivo, MotivosReimplantar) },
-                    "Checklist novo; a cobrança continua; sem novo teste.", "Volta ao fechar o checklist.", EfeitoPassagem.Reimplantar),
-                new(F.Implantacao, F.Operando, "Voltar a operar (reimplantação)", QuemDecide.SozinhoOuVoce, new[] { ChecklistSemTrava },
+                    "Checklist novo; a cobrança continua; sem novo teste.", "Com o checklist fechado, registre a volta.", EfeitoPassagem.Reimplantar),
+                new(F.Implantacao, F.Operando, "Voltar a operar (reimplantação)", QuemDecide.Voce, new[] { ChecklistSemTrava },
                     "Volta a operar sem novo teste; a cobrança seguiu durante a reimplantação.", "—", EfeitoPassagem.VoltarAOperar),
             };
 
@@ -195,8 +200,8 @@ namespace APIBack.Acompanhamento.Fases
                     "Retomar.", EfeitoPassagem.Perder));
             }
 
-            list.Add(new(F.Perdido, F.Conversa, "Retomar", QuemDecide.SozinhoOuVoce, Array.Empty<RequisitoDef>(),
-                "Volta com o histórico; precisa de próximo passo.", "—", EfeitoPassagem.Retomar));
+            list.Add(new(F.Perdido, F.Conversa, "Retomar", QuemDecide.Voce, Array.Empty<RequisitoDef>(),
+                "Volta com o histórico; precisa de próximo passo. A data de tentar de novo é lembrete: não retoma sozinha.", "—", EfeitoPassagem.Retomar));
             list.Add(new(F.Encerrado, F.Conversa, "Quer voltar", QuemDecide.Voce, Array.Empty<RequisitoDef>(),
                 "Volta com todo o histórico.", "—", EfeitoPassagem.QuerVoltar));
             return list;
@@ -217,12 +222,6 @@ namespace APIBack.Acompanhamento.Fases
         private static readonly RequisitoDef QuemDecideRequisito = new("quemDecide", "Quem decide",
             c => string.IsNullOrWhiteSpace(c.Dados.QuemDecide ?? c.Loja.QuemDecide) ? "Informe quem decide na loja." : null);
 
-        private static readonly RequisitoDef PedidosPorDia = new("pedidosPorDia", "Pedidos por dia",
-            c => (c.Dados.PedidosPorDia ?? c.Loja.PedidosPorDia) is > 0 ? null : "Informe quantos pedidos a loja faz por dia.");
-
-        private static readonly RequisitoDef DorPrincipal = new("dorPrincipal", "Dor principal",
-            c => string.IsNullOrWhiteSpace(c.Dados.DorPrincipal ?? c.Loja.DorPrincipal) ? "Informe a dor principal da loja." : null);
-
         private static readonly RequisitoDef Aceite = new("aceite", "Aceite (verbal, WhatsApp, assinado)",
             c => Array.IndexOf(Aceites, (c.Dados.Aceite ?? string.Empty).Trim().ToLowerInvariant()) >= 0
                 ? null : "Registre o aceite: verbal, whatsapp ou assinado.");
@@ -238,8 +237,28 @@ namespace APIBack.Acompanhamento.Fases
         private static readonly RequisitoDef Documento = new("documento", "CNPJ ou CPF",
             c => DocumentoRegras.Valido(c.Dados.Documento ?? c.Loja.Documento) ? null : "Informe um CNPJ ou CPF válido.");
 
-        private static readonly RequisitoDef PropostaRegistrada = new("proposta", "Proposta registrada",
-            c => c.Loja.TemProposta ? null : "Não há proposta registrada para aceitar.");
+        private const string CaminhoRegistrarEnvio = "Registrar envio";
+
+        // So o registro de envio liga este fato: nao vem do corpo da passagem.
+        private static readonly RequisitoDef PropostaEnviada = new("propostaEnviada", "Proposta enviada e registrada",
+            c => c.Loja.EnvioRegistrado ? null : "Registre o envio da proposta: a fase muda junto, sem precisar mover o cartão.");
+
+        private static readonly RequisitoDef MotivoDeVolta = new("motivo", "Motivo (esfriou, mudou quem decide)", c =>
+        {
+            var v = (c.Dados.Motivo ?? string.Empty).Trim().ToLowerInvariant();
+            if (v == "renegociar") return "Para renegociar, faça uma revisão da proposta: a fase não muda.";
+            return Array.IndexOf(Motivos, v) >= 0 ? null : $"Escolha {string.Join(", ", Motivos)}.";
+        });
+
+        private static readonly RequisitoDef ValorCombinado = new("valor", "Mensalidade combinada",
+            c => PropostaRegras.ValorDefinido(c.Dados.ValorMensal, c.Dados.ValorZeroConsciente == true)
+                ? null : "Informe a mensalidade combinada. R$ 0 só com confirmação consciente.");
+
+        private static readonly RequisitoDef ValorDaProposta = new("valor", "Mensalidade da proposta",
+            c => !c.Loja.TemProposta || c.Loja.PropostaComValor ? null : "A proposta enviada não tem mensalidade: revise e registre o envio de novo.");
+
+        private static readonly RequisitoDef PropostaRegistrada = new("proposta", "Proposta enviada",
+            c => c.Loja.TemProposta ? null : "Não há proposta enviada para aceitar.");
 
         private static readonly RequisitoDef LojaCriada = new("loja", "Loja criada",
             c => c.Loja.TemLoja ? null : "A loja ainda não foi criada.");
@@ -262,7 +281,7 @@ namespace APIBack.Acompanhamento.Fases
             c => c.Dados.LojaAvisada == true ? null : "Confirme que a loja foi avisada.");
 
         private static readonly RequisitoDef DataDeVolta = new("dataVolta", "Data de volta",
-            c => c.Dados.DataVolta is { } d && d > DateOnly.FromDateTime(c.Agora.UtcDateTime) ? null : "Informe uma data de volta futura.");
+            c => c.Dados.DataVolta is { } d && d > FusoComercial.Data(c.Agora) ? null : "Informe uma data de volta futura.");
     }
 
     /// <summary>CPF (11 digitos) ou CNPJ (14 digitos) com digitos verificadores.</summary>

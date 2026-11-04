@@ -5,6 +5,7 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using APIBack.Model.CRM;
+using APIBack.Payments.Assinaturas;
 using APIBack.Repository;
 using APIBack.Service;
 using Dapper;
@@ -115,6 +116,9 @@ VALUES (@Id, 'fase', @De, @Para, @Usuario, @Autor, @Motivo, @Passagem);",
             _cache = cache;
         }
 
+        private const string VersaoVigenteExiste =
+            "SELECT EXISTS (SELECT 1 FROM acompanhamento_proposta_versao WHERE oportunidade_id = @O AND status IN ('enviada', 'em_negociacao'));";
+
         internal const string EstadoColunas = @"
 a.id, a.oportunidade_id AS OportunidadeId, a.estabelecimento_id AS EstabelecimentoId, e.id_empresa AS EmpresaId,
 COALESCE(e.nome_fantasia, '') AS Nome, a.fase, a.fase_desde AS FaseDesde, a.faixa, a.versao, e.situacao_comercial AS SituacaoLoja,
@@ -160,7 +164,8 @@ SELECT c.id_oportunidade FROM crm_contrato c
                 new { Id = id }, cancellationToken: ct));
             if (op is not { } o) return null;
 
-            var fase = F.FaseDaOportunidade(o.Status, o.Coluna);
+            var enviada = await cx.ExecuteScalarAsync<bool>(new CommandDefinition(VersaoVigenteExiste, new { O = id }, cancellationToken: ct));
+            var fase = F.FaseDaOportunidade(o.Status, o.Coluna, enviada);
             if (fase == null)
             {
                 // Fechada pelo /crm legado: o acompanhamento e o da loja do contrato.
@@ -341,9 +346,53 @@ SELECT id, 'fase', NULL, fase, 'sistema', 'Início do acompanhamento' FROM novo;
         private sealed class PropostaRow
         {
             public Guid Id { get; set; }
+            public Guid OportunidadeId { get; set; }
+            public int Versao { get; set; }
+            public long Edicao { get; set; }
+            public string Status { get; set; } = string.Empty;
             public decimal? ValorMensal { get; set; }
             public decimal? ValorImplantacao { get; set; }
+            public bool ValorZeroConsciente { get; set; }
             public string Dados { get; set; } = "{}";
+            public string? Canal { get; set; }
+            public string? Destinatario { get; set; }
+            public int? ApresentadaPor { get; set; }
+            public Guid? EvidenciaMensagemId { get; set; }
+            public string? Origem { get; set; }
+            public int? RevisaVersao { get; set; }
+            public string? Resposta { get; set; }
+            public string? RespostaNota { get; set; }
+            public DateTime? RespostaEm { get; set; }
+            public string? ChaveEnvio { get; set; }
+            public string? ChaveResposta { get; set; }
+            public int? CriadaPor { get; set; }
+            public DateTime CriadaEm { get; set; }
+            public DateTime? EnviadaEm { get; set; }
+            public DateTime? ValidadeAte { get; set; }
+            public DateTime AtualizadaEm { get; set; }
+            public Guid? PassagemId { get; set; }
+
+            public PropostaVersao ToVersao() => new()
+            {
+                Id = Id, OportunidadeId = OportunidadeId, Versao = Versao, Edicao = Edicao, Status = Status, ValorMensal = ValorMensal, ValorImplantacao = ValorImplantacao,
+                ValorZeroConsciente = ValorZeroConsciente, Dados = LerDados(Dados), Canal = Canal, Destinatario = Destinatario, ApresentadaPor = ApresentadaPor,
+                EvidenciaMensagemId = EvidenciaMensagemId, Origem = Origem, RevisaVersao = RevisaVersao, Resposta = Resposta, RespostaNota = RespostaNota,
+                RespostaEm = Utc(RespostaEm), ChaveEnvio = ChaveEnvio, ChaveResposta = ChaveResposta, CriadaPor = CriadaPor, CriadaEm = Utc(CriadaEm),
+                EnviadaEm = Utc(EnviadaEm), ValidadeAte = Dia(ValidadeAte), AtualizadaEm = Utc(AtualizadaEm), PassagemId = PassagemId
+            };
+        }
+
+        private const string PropostaColunas = @"
+id, oportunidade_id AS OportunidadeId, versao, edicao, status, valor_mensal AS ValorMensal, valor_implantacao AS ValorImplantacao,
+valor_zero_consciente AS ValorZeroConsciente, dados::text AS Dados, canal, destinatario, apresentada_por AS ApresentadaPor,
+evidencia_mensagem_id AS EvidenciaMensagemId, origem, revisa_versao AS RevisaVersao, resposta, resposta_nota AS RespostaNota, resposta_em AS RespostaEm,
+chave_envio AS ChaveEnvio, chave_resposta AS ChaveResposta, criada_por AS CriadaPor, criada_em AS CriadaEm, enviada_em AS EnviadaEm,
+validade_ate::timestamp AS ValidadeAte, atualizada_em AS AtualizadaEm, passagem_id AS PassagemId";
+
+        private static PropostaDados LerDados(string json)
+        {
+            try { return JsonSerializer.Deserialize<PropostaDados>(json, JsonOpcoes) ?? new PropostaDados(); }
+            catch (JsonException) { return new PropostaDados(); }
         }
 
         /// <summary>Uma passagem em andamento. Sem commit, o dispose desfaz.</summary>
@@ -385,7 +434,10 @@ SELECT id, 'fase', NULL, fase, 'sistema', 'Início do acompanhamento' FROM novo;
                 {
                     var op = await _cx.QuerySingleOrDefaultAsync<(string Status, string Coluna)?>(new CommandDefinition(
                         "SELECT status::text, coluna::text FROM crm_oportunidade WHERE id = @Id;", new { Id = Estado.OportunidadeId }, _tx, cancellationToken: ct));
-                    var daOportunidade = op is { } o ? F.FaseDaOportunidade(o.Status, o.Coluna) : null;
+                    // Proposta recusada continua em Proposta: a falta de versao vigente so impede ENTRAR na fase.
+                    var enviada = Estado.Fase == F.Proposta || await _cx.ExecuteScalarAsync<bool>(new CommandDefinition(
+                        VersaoVigenteExiste, new { O = Estado.OportunidadeId }, _tx, cancellationToken: ct));
+                    var daOportunidade = op is { } o ? F.FaseDaOportunidade(o.Status, o.Coluna, enviada) : null;
                     nova = daOportunidade != null && daOportunidade != Estado.Fase ? daOportunidade : null;
                     motivo = "Oportunidade alterada no CRM";
                 }
@@ -396,6 +448,8 @@ SELECT id, 'fase', NULL, fase, 'sistema', 'Início do acompanhamento' FROM novo;
 
                 if (nova == null) return;
                 await AcompanhamentoSql.MudarFaseAsync(_cx, _tx, Estado.Id, Estado.Fase, nova, null, AutoresPassagem.Sistema, motivo, null, ct);
+                if (nova is F.Perdido or F.Encerrado) await EncerrarAbertosAsync(motivo, null, propostas: true, passo: true, ct);
+                else if (nova == F.Conversa) await EncerrarAbertosAsync(motivo, null, propostas: true, passo: false, ct);
                 await RecarregarAsync(ct);
             }
 
@@ -414,16 +468,106 @@ SELECT EXISTS (SELECT 1 FROM comercial_cobranca WHERE id_estabelecimento = @Loja
                     new { Loja = Estado.EstabelecimentoId }, _tx, cancellationToken: ct));
             }
 
-            public async Task<bool> TemPropostaAsync(CancellationToken ct)
+            public async Task<PropostaVersao?> PropostaVigenteAsync(CancellationToken ct) =>
+                (await PropostasAsync(ct)).FirstOrDefault(v => StatusProposta.Vigente(v.Status));
+
+            public async Task<IReadOnlyList<PropostaVersao>> PropostasAsync(CancellationToken ct)
             {
-                if (!Estado.OportunidadeId.HasValue) return false;
-                if (await _cx.ExecuteScalarAsync<bool>(new CommandDefinition(@"
-SELECT EXISTS (SELECT 1 FROM acompanhamento_proposta_versao WHERE oportunidade_id = @O AND status IN ('rascunho', 'enviada'));",
-                        new { O = Estado.OportunidadeId }, _tx, cancellationToken: ct)))
-                    return true;
-                return _crm && await _cx.ExecuteScalarAsync<bool>(new CommandDefinition(
-                    "SELECT COALESCE(NULLIF(btrim(proposta_json::text), ''), 'null') <> 'null' FROM crm_oportunidade WHERE id = @O;",
+                if (!Estado.OportunidadeId.HasValue) return Array.Empty<PropostaVersao>();
+                var linhas = await _cx.QueryAsync<PropostaRow>(new CommandDefinition(
+                    "SELECT " + PropostaColunas + " FROM acompanhamento_proposta_versao WHERE oportunidade_id = @O ORDER BY versao;",
                     new { O = Estado.OportunidadeId }, _tx, cancellationToken: ct));
+                return linhas.Select(l => l.ToVersao()).ToList();
+            }
+
+            public async Task<PropostaContexto> ContextoPropostaAsync(CancellationToken ct)
+            {
+                if (!_crm || !Estado.OportunidadeId.HasValue) return new PropostaContexto(null, null, null, null, null, null);
+                return await _cx.QuerySingleAsync<PropostaContexto>(new CommandDefinition(@"
+SELECT nome_contato AS Contato, COALESCE(whatsapp_e164, telefone) AS Telefone, email AS Email, decisor AS Decisor,
+       valor_mensal_est AS ValorMensal, valor_impl_est AS ValorImplantacao
+  FROM crm_oportunidade WHERE id = @O;", new { O = Estado.OportunidadeId }, _tx, cancellationToken: ct));
+            }
+
+            public async Task<PropostaVersao> CriarPropostaAsync(PropostaVersao n, CancellationToken ct)
+            {
+                var row = await _cx.QuerySingleAsync<PropostaRow>(new CommandDefinition(@"
+INSERT INTO acompanhamento_proposta_versao (oportunidade_id, versao, status, valor_mensal, valor_implantacao, valor_zero_consciente, dados, criada_por, origem, revisa_versao)
+VALUES (@OportunidadeId, @Versao, @Status, @ValorMensal, @ValorImplantacao, @ValorZeroConsciente, CAST(@Dados AS jsonb), @CriadaPor, @Origem, @RevisaVersao)
+RETURNING " + PropostaColunas + ";", new
+                {
+                    n.OportunidadeId, n.Versao, n.Status, n.ValorMensal, n.ValorImplantacao, n.ValorZeroConsciente,
+                    Dados = JsonSerializer.Serialize(n.Dados, JsonOpcoes), n.CriadaPor, n.Origem, n.RevisaVersao
+                }, _tx, cancellationToken: ct));
+                return row.ToVersao();
+            }
+
+            public async Task<PropostaVersao> SalvarPropostaAsync(PropostaVersao v, CancellationToken ct)
+            {
+                var row = await _cx.QuerySingleAsync<PropostaRow>(new CommandDefinition(@"
+UPDATE acompanhamento_proposta_versao
+   SET status = @Status, valor_mensal = @ValorMensal, valor_implantacao = @ValorImplantacao, valor_zero_consciente = @ValorZeroConsciente,
+       dados = CAST(@Dados AS jsonb), canal = @Canal, destinatario = @Destinatario, apresentada_por = @ApresentadaPor,
+       evidencia_mensagem_id = @EvidenciaMensagemId, revisa_versao = @RevisaVersao, resposta = @Resposta, resposta_nota = @RespostaNota,
+       resposta_em = @RespostaEm, chave_envio = @ChaveEnvio, chave_resposta = @ChaveResposta, enviada_em = @EnviadaEm, validade_ate = @ValidadeAte,
+       passagem_id = @PassagemId, edicao = edicao + 1, atualizada_em = NOW()
+ WHERE id = @Id
+RETURNING " + PropostaColunas + ";", new
+                {
+                    v.Id, v.Status, v.ValorMensal, v.ValorImplantacao, v.ValorZeroConsciente, Dados = JsonSerializer.Serialize(v.Dados, JsonOpcoes), v.Canal,
+                    v.Destinatario, v.ApresentadaPor, v.EvidenciaMensagemId, v.RevisaVersao, v.Resposta, v.RespostaNota, RespostaEm = v.RespostaEm?.UtcDateTime,
+                    v.ChaveEnvio, v.ChaveResposta, EnviadaEm = v.EnviadaEm?.UtcDateTime, ValidadeAte = v.ValidadeAte?.ToDateTime(TimeOnly.MinValue), v.PassagemId
+                }, _tx, cancellationToken: ct));
+                return row.ToVersao();
+            }
+
+            public async Task EspelharPropostaAsync(PropostaVersao v, int? usuarioId, CancellationToken ct)
+            {
+                if (!_crm) return;
+                await ExecAsync("UPDATE crm_oportunidade SET proposta_json = CAST(@J AS jsonb), proposta_enviada_em = @Em, updated_at = NOW() WHERE id = @O;",
+                    new { J = PropostaRegras.Espelho(v), Em = v.EnviadaEm?.UtcDateTime, O = v.OportunidadeId }, ct);
+                if (usuarioId.HasValue)
+                    await ExecAsync("INSERT INTO crm_oportunidade_historico (id_oportunidade, id_usuario, acao, detalhe) VALUES (@O, @U, 'Proposta registrada', @D);",
+                        new { O = v.OportunidadeId, U = usuarioId, D = $"Versão {v.Versao} enviada por {v.Canal} para {v.Destinatario}." }, ct);
+            }
+
+            public async Task<bool> MensagemConfereAsync(Guid mensagemId, CancellationToken ct)
+            {
+                if (!await AcompanhamentoSql.TabelaExisteAsync(_cx, _tx, "gestao_mensagem", ct)) return false;
+                return await _cx.ExecuteScalarAsync<bool>(new CommandDefinition(@"
+SELECT EXISTS (SELECT 1 FROM gestao_mensagem m
+                WHERE m.id = @M AND m.direcao = 'saida' AND m.estado IN ('enviado', 'entregue', 'lido', 'enviado_por_fora')
+                  AND (m.oportunidade_id = @O OR (@E::uuid IS NOT NULL AND m.estabelecimento_id = @E)));",
+                    new { M = mensagemId, O = Estado.OportunidadeId, E = Estado.EstabelecimentoId }, _tx, cancellationToken: ct));
+            }
+
+            public Task EventoAsync(string tipo, object detalhe, int? usuarioId, CancellationToken ct) =>
+                ExecAsync("INSERT INTO acompanhamento_relacionamento_evento (acompanhamento_id, tipo, detalhe, usuario_id) VALUES (@Id, @Tipo, CAST(@D AS jsonb), @U);",
+                    new { Id = Estado.Id, Tipo = tipo, D = JsonSerializer.Serialize(detalhe, JsonOpcoes), U = usuarioId }, ct);
+
+            /// <summary>Quem saiu do caminho nao deixa versao aberta nem passo aberto: nada disso volta a contar ao retomar.</summary>
+            private async Task EncerrarAbertosAsync(string? motivo, int? usuarioId, bool propostas, bool passo, CancellationToken ct)
+            {
+                if (propostas && Estado.OportunidadeId.HasValue)
+                {
+                    var guardadas = (await _cx.QueryAsync<int>(new CommandDefinition(@"
+UPDATE acompanhamento_proposta_versao SET status = 'guardada', edicao = edicao + 1, atualizada_em = NOW()
+ WHERE oportunidade_id = @O AND status IN ('rascunho', 'enviada', 'em_negociacao') RETURNING versao;",
+                        new { O = Estado.OportunidadeId }, _tx, cancellationToken: ct))).ToList();
+                    if (guardadas.Count > 0) await EventoAsync("proposta_guardada", new { versoes = guardadas, motivo }, usuarioId, ct);
+                }
+                if (!passo) return;
+
+                var cancelados = (await _cx.QueryAsync<(Guid Id, string Tipo, DateTime Data)>(new CommandDefinition(@"
+UPDATE acompanhamento_proximo_passo
+   SET estado = 'cancelado', encerrado_em = NOW(), encerrado_por = @U, encerrado_motivo = @M
+ WHERE acompanhamento_id = @Id AND estado = 'aberto' RETURNING id, tipo, data;",
+                    new { Id = Estado.Id, U = usuarioId, M = motivo ?? "Encerrado com a passagem." }, _tx, cancellationToken: ct))).ToList();
+                if (cancelados.Count == 0) return;
+                foreach (var c in cancelados)
+                    await EventoAsync("atividade_cancelada", new { passoId = c.Id, tipo = c.Tipo, data = DateOnly.FromDateTime(c.Data), motivo, automatica = true }, usuarioId, ct);
+                // O relacionamento mudou: quem estava com a versao antiga na tela recebe 409 em vez de agir sobre um passo que acabou.
+                await ExecAsync("UPDATE acompanhamento_relacionamento SET versao = versao + 1, atualizado_em = NOW() WHERE acompanhamento_id = @Id;", new { Id = Estado.Id }, ct);
             }
 
             public async Task<PassagemRegistroDto> AplicarAsync(PassagemAplicacao a, CancellationToken ct)
@@ -472,30 +616,24 @@ UPDATE acompanhamento
                 var d = a.Dados;
                 switch (a.Efeito)
                 {
-                    case EfeitoPassagem.MontarProposta:
-                        await ExecAsync(@"
-INSERT INTO acompanhamento_proposta_versao (oportunidade_id, versao, status, valor_mensal, valor_implantacao, dados, criada_por, passagem_id)
-SELECT @O, COALESCE(MAX(versao), 0) + 1, 'rascunho', @Valor, @Implantacao, CAST(@Dados AS jsonb), @Usuario, @Passagem
-  FROM acompanhamento_proposta_versao WHERE oportunidade_id = @O;",
-                            new
-                            {
-                                O = ExigirOportunidade(), Valor = d.ValorMensal, Implantacao = d.ValorImplantacao, Usuario = a.UsuarioId, Passagem = passagemId,
-                                Dados = JsonSerializer.Serialize(new { d.QuemDecide, d.PedidosPorDia, d.DorPrincipal, d.Observacao }, JsonOpcoes)
-                            }, ct);
+                    case EfeitoPassagem.EnviarProposta:
+                        // A versao ja foi marcada como enviada por quem registrou o envio; aqui so a coluna do /crm acompanha.
                         await CrmAsync("UPDATE crm_oportunidade SET coluna = 'proposta', updated_at = NOW() WHERE id = @O AND status::text = 'ativo';", ct);
                         break;
 
                     case EfeitoPassagem.VoltarAConversar:
-                        // A proposta fica guardada como versao; a proxima "Montar a proposta" abre outra.
-                        await ExecAsync(@"
-UPDATE acompanhamento_proposta_versao SET status = 'guardada' WHERE oportunidade_id = @O AND status IN ('rascunho', 'enviada');",
-                            new { O = ExigirOportunidade() }, ct);
+                        // A proposta fica guardada como versao; o proximo envio abre outra.
+                        await EncerrarAbertosAsync(a.Motivo, a.UsuarioId, propostas: true, passo: false, ct);
                         await CrmAsync("UPDATE crm_oportunidade SET coluna = 'conversa', updated_at = NOW() WHERE id = @O AND status::text = 'ativo';", ct);
                         break;
 
                     case EfeitoPassagem.FecharNaConversa:
-                    case EfeitoPassagem.PropostaAceita:
                     case EfeitoPassagem.TesteSemCompromisso:
+                        await EncerrarAbertosAsync(a.Motivo ?? a.Definicao.Nome, a.UsuarioId, propostas: true, passo: true, ct);
+                        await CriarLojaEmImplantacaoAsync(a, passagemId, ct);
+                        break;
+
+                    case EfeitoPassagem.PropostaAceita:
                         await CriarLojaEmImplantacaoAsync(a, passagemId, ct);
                         break;
 
@@ -539,6 +677,7 @@ UPDATE acompanhamento SET teste_concluido_em = COALESCE(teste_concluido_em, NOW(
 
                     case EfeitoPassagem.Encerrar:
                     case EfeitoPassagem.PararLoja:
+                        await EncerrarAbertosAsync(a.Motivo ?? a.Definicao.Nome, a.UsuarioId, propostas: true, passo: true, ct);
                         await SituacaoAsync("bloquear", a, ct, motivo: a.Motivo ?? "Saída encerrada");
                         break;
 
@@ -551,6 +690,7 @@ UPDATE acompanhamento SET teste_concluido_em = COALESCE(teste_concluido_em, NOW(
                         break;
 
                     case EfeitoPassagem.Perder:
+                        await EncerrarAbertosAsync(a.Motivo, a.UsuarioId, propostas: true, passo: true, ct);
                         if (Estado.EstabelecimentoId.HasValue && Estado.SituacaoLoja != SituacoesComerciais.Bloqueado)
                             await SituacaoAsync("bloquear", a, ct, motivo: "Perdido: " + a.Motivo);
                         await ExecAsync("UPDATE acompanhamento SET retomar_em = @Em, teste_quando_pronta = FALSE WHERE id = @Id;",
@@ -584,24 +724,22 @@ UPDATE crm_oportunidade SET status = 'ativo', coluna = 'conversa', closed_at = N
                 if (a.TesteQuandoPronta)
                     await ExecAsync("UPDATE acompanhamento SET teste_quando_pronta = TRUE WHERE id = @Id;", new { Id = Estado.Id }, ct);
 
-                PropostaRow? proposta = null;
-                if (Estado.OportunidadeId.HasValue)
+                PropostaVersao? proposta = null;
+                if (a.Efeito == EfeitoPassagem.PropostaAceita)
                 {
-                    proposta = await _cx.QuerySingleOrDefaultAsync<PropostaRow>(new CommandDefinition(@"
-SELECT id, valor_mensal AS ValorMensal, valor_implantacao AS ValorImplantacao, dados::text AS Dados
-  FROM acompanhamento_proposta_versao WHERE oportunidade_id = @O AND status IN ('rascunho', 'enviada')
- ORDER BY versao DESC LIMIT 1;", new { O = Estado.OportunidadeId }, _tx, cancellationToken: ct));
-                    if (a.Efeito == EfeitoPassagem.PropostaAceita)
+                    proposta = await PropostaVigenteAsync(ct)
+                        ?? throw new AcompanhamentoException(422, CodigosAcompanhamento.RequisitosPendentes, "Não há proposta enviada para aceitar.");
+                    var aposValidade = PropostaRegras.Vencida(proposta, FusoComercial.Data(a.Agora));
+                    proposta.Status = StatusProposta.Aceita;
+                    proposta.PassagemId = passagemId;
+                    await SalvarPropostaAsync(proposta, ct);
+                    await EncerrarAbertosAsync(a.Motivo, a.UsuarioId, propostas: true, passo: false, ct); // o rascunho de revisao que sobrou
+                    await EventoAsync("proposta_aceita", new
                     {
-                        if (proposta != null)
-                            await ExecAsync("UPDATE acompanhamento_proposta_versao SET status = 'aceita', passagem_id = @P WHERE id = @Id;",
-                                new { Id = proposta.Id, P = passagemId }, ct);
-                        else
-                            await ExecAsync(@"
-INSERT INTO acompanhamento_proposta_versao (oportunidade_id, versao, status, dados, criada_por, passagem_id)
-SELECT @O, COALESCE(MAX(versao), 0) + 1, 'aceita', COALESCE((SELECT NULLIF(btrim(proposta_json::text), '')::jsonb FROM crm_oportunidade WHERE id = @O), '{}'::jsonb), @U, @P
-  FROM acompanhamento_proposta_versao WHERE oportunidade_id = @O;", new { O = Estado.OportunidadeId, U = a.UsuarioId, P = passagemId }, ct);
-                    }
+                        proposta.Versao, proposta.ValorMensal, proposta.ValorImplantacao, proposta.ValorZeroConsciente,
+                        aceite = Limpo(d.Aceite)?.ToLowerInvariant(), aceitaAposValidade = aposValidade
+                    }, a.UsuarioId, ct);
+                    await ExecAsync("UPDATE acompanhamento SET valor_mensal = @V WHERE id = @Id;", new { Id = Estado.Id, V = proposta.ValorMensal }, ct);
                 }
 
                 if (Estado.EstabelecimentoId.HasValue)
@@ -618,8 +756,10 @@ SELECT id, nome_empresa AS NomeEmpresa, nome_contato AS NomeContato, telefone, e
   FROM crm_oportunidade WHERE id = @O;", new { O = ExigirOportunidade() }, _tx, cancellationToken: ct));
                 var responsavel = op.ResponsavelUsuarioId ?? a.UsuarioId
                     ?? throw new AcompanhamentoException(422, CodigosAcompanhamento.RequisitosPendentes, "Defina o responsável da oportunidade.");
-                var hoje = DateOnly.FromDateTime(a.Agora.UtcDateTime);
-                var valorMensal = (a.Efeito == EfeitoPassagem.PropostaAceita ? proposta?.ValorMensal : null) ?? d.ValorMensal ?? 0m;
+                var hoje = FusoComercial.Data(a.Agora);
+                // O valor vem da versao aceita ou do que foi combinado; "Teste sem compromisso" segue sem valor (cobranca so na ativacao).
+                var valorMensal = proposta != null ? proposta.ValorMensal!.Value : d.ValorMensal ?? 0m;
+                var marketing = proposta?.Dados.MarketingMensalidade ?? 0m;
 
                 var command = new CrmCloseOpportunityCommand
                 {
@@ -640,8 +780,10 @@ SELECT id, nome_empresa AS NomeEmpresa, nome_contato AS NomeContato, telefone, e
                     DataInicioCobranca = hoje.AddDays(SituacaoComercialRules.DiasTeste).ToDateTime(TimeOnly.MinValue),
                     Observacoes = Limpo(d.Observacao),
                     EstabelecimentoTipoSlug = Limpo(d.EstabelecimentoTipoSlug),
-                    MensalidadeSaas = valorMensal,
-                    ImplantacaoValor = (a.Efeito == EfeitoPassagem.PropostaAceita ? proposta?.ValorImplantacao : null) ?? d.ValorImplantacao ?? 0m,
+                    MensalidadeSaas = valorMensal - marketing,
+                    MensalidadeMarketing = marketing,
+                    MarketingValorFixo = proposta?.Dados.MarketingValorFixo ?? 0m,
+                    ImplantacaoValor = proposta?.ValorImplantacao ?? d.ValorImplantacao ?? 0m,
                     PropostaJson = op.PropostaJson,
                     SemLancamentos = true,
                     RegistrarPropostaAceita = false,

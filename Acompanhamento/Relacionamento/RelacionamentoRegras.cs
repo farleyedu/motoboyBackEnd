@@ -2,6 +2,7 @@ using System;
 using System.Globalization;
 using System.Linq;
 using System.Text;
+using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace APIBack.Acompanhamento.Relacionamento
@@ -16,6 +17,11 @@ namespace APIBack.Acompanhamento.Relacionamento
         public const int LoteMaximo = 100;
         public const int MotivoMinimo = 5;
         public const double LimiarParecido = 0.6;
+
+        public const int CategoriaMaxima = 80;
+        public const int AcaoEsperadaMaxima = 300;
+
+        private static readonly JsonSerializerOptions JsonDetalhe = new(JsonSerializerDefaults.Web);
 
         private static readonly Regex NaoAlfanumerico = new("[^a-z0-9]+", RegexOptions.Compiled);
         private static readonly Regex E164 = new(@"^\+[1-9][0-9]{7,14}$", RegexOptions.Compiled);
@@ -71,6 +77,37 @@ namespace APIBack.Acompanhamento.Relacionamento
             if (string.IsNullOrWhiteSpace(motivo) || motivo.Trim().Length < MotivoMinimo)
                 throw new RelacionamentoException(422, codigo, $"Explique o motivo (minimo {MotivoMinimo} caracteres).");
         }
+
+        /// <summary>Detalhe de evento sempre em camelCase: e o que as telas leem.</summary>
+        public static string SerializarDetalhe(object detalhe) => JsonSerializer.Serialize(detalhe, JsonDetalhe);
+
+        /// <summary>
+        /// Detalhe gravado para a tela. Eventos antigos sairam em PascalCase em parte (Resultado, Tipo): as chaves de primeiro nivel
+        /// sao lidas em camelCase, sem reescrever o que esta gravado.
+        /// </summary>
+        public static JsonElement? DetalheEmCamelCase(string? json)
+        {
+            if (string.IsNullOrWhiteSpace(json)) return null;
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object) return doc.RootElement.Clone();
+
+            var saida = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+            foreach (var p in doc.RootElement.EnumerateObject())
+            {
+                var nome = JsonNamingPolicy.CamelCase.ConvertName(p.Name);
+                // Se a chave ja existe em camelCase, ela vale: e a escrita mais nova.
+                if (nome == p.Name || !saida.ContainsKey(nome)) saida[nome] = p.Value.Clone();
+            }
+            return JsonSerializer.SerializeToElement(saida);
+        }
+
+        /// <summary>Nomes antigos dos eventos (a tela sempre esperou estes). "cobrou_responsavel" fica: a Equipe confere a cobranca por ele.</summary>
+        public static string TipoEvento(string tipo) => tipo switch
+        {
+            "marcou" => "marcada",
+            "desmarcou" => "desmarcada",
+            _ => tipo
+        };
 
         public static void ValidarProximoPasso(string? tipo, DateOnly? data, DateOnly hoje)
         {

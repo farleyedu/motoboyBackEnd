@@ -85,10 +85,12 @@ namespace APIBack.Payments.MercadoPago
         public Guid Id { get; set; }
         public Guid IdEstabelecimento { get; set; }
         public string Ambiente { get; set; } = Ambientes.Sandbox;
+        public string Provedor { get; set; } = "mercadopago";
         public string Origem { get; set; } = string.Empty;
         public string ContaTipo { get; set; } = string.Empty;
         public Guid? IdContaLoja { get; set; }
         public Guid? IdContaZippy { get; set; }
+        public Guid? IdInfinitePayContaVersao { get; set; }
         public int? PedidoId { get; set; }
         public Guid? PrePedidoId { get; set; }
         public Guid? ConversaId { get; set; }
@@ -118,6 +120,8 @@ namespace APIBack.Payments.MercadoPago
         public Guid? IdTentativa { get; set; }
         public Guid IdEstabelecimento { get; set; }
         public string Ambiente { get; set; } = Ambientes.Sandbox;
+        public string Provedor { get; set; } = "mercadopago";
+        public string? ReferenciaProvedor { get; set; }
         public long MpPaymentId { get; set; }
         /// <summary>Order (ORD...) da Orders API que originou o pagamento; null nos pagamentos da API v1 (assinaturas).</summary>
         public string? MpOrderId { get; set; }

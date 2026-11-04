@@ -69,6 +69,48 @@ namespace APIBack.Acompanhamento.Fases
                 return Ok(ApiResponse<PassagemResultadoDto>.Ok(resultado));
             }, id);
 
+        // ---- propostas: {versaoId} e a linha da versao; versaoEsperada e a "edicao" que a tela leu
+
+        [HttpGet("api/acompanhamento/lojas/{id:guid}/propostas")]
+        public Task<IActionResult> Propostas(Guid id) =>
+            ExecutarComErrosAsync(async () =>
+            {
+                Response.Headers.CacheControl = "no-store";
+                return Ok(ApiResponse<PropostasDto>.Ok(await _service.PropostasAsync(id, HttpContext.RequestAborted)));
+            }, id);
+
+        /// <summary>Cria rascunho ou revisao (copia a anterior). Ja ha rascunho aberto = devolve ele, com repetida = true.</summary>
+        [HttpPost("api/acompanhamento/lojas/{id:guid}/propostas")]
+        public Task<IActionResult> CriarProposta(Guid id, [FromBody] PropostaRequest? request) =>
+            ExecutarComErrosAsync(async () => Ok(ApiResponse<PropostaResultadoDto>.Ok(
+                await _service.CriarPropostaAsync(id, request ?? new PropostaRequest(), CurrentUserId, HttpContext.RequestAborted))), id);
+
+        [HttpPut("api/acompanhamento/lojas/{id:guid}/propostas/{versaoId:guid}")]
+        public Task<IActionResult> EditarProposta(Guid id, Guid versaoId, [FromBody] PropostaRequest? request) =>
+            ExecutarComErrosAsync(async () => Ok(ApiResponse<PropostaResultadoDto>.Ok(
+                await _service.EditarPropostaAsync(id, versaoId, request ?? new PropostaRequest(), CurrentUserId, HttpContext.RequestAborted))), id);
+
+        /// <summary>Registra o envio declarado. Mesma chave = mesma resposta (repetida = true). A chave tambem pode vir em Idempotency-Key.</summary>
+        [HttpPost("api/acompanhamento/lojas/{id:guid}/propostas/{versaoId:guid}/enviar")]
+        public Task<IActionResult> EnviarProposta(Guid id, Guid versaoId, [FromBody] EnviarPropostaRequest? request) =>
+            ExecutarComErrosAsync(async () =>
+            {
+                request ??= new EnviarPropostaRequest();
+                if (string.IsNullOrWhiteSpace(request.ChaveIdempotencia) && Request.Headers.TryGetValue("Idempotency-Key", out var chave))
+                    request.ChaveIdempotencia = chave.ToString();
+                return Ok(ApiResponse<PropostaResultadoDto>.Ok(await _service.EnviarPropostaAsync(id, versaoId, request, CurrentUserId, HttpContext.RequestAborted)));
+            }, id);
+
+        [HttpPost("api/acompanhamento/lojas/{id:guid}/propostas/{versaoId:guid}/resposta")]
+        public Task<IActionResult> ResponderProposta(Guid id, Guid versaoId, [FromBody] ResponderPropostaRequest? request) =>
+            ExecutarComErrosAsync(async () =>
+            {
+                request ??= new ResponderPropostaRequest();
+                if (string.IsNullOrWhiteSpace(request.ChaveIdempotencia) && Request.Headers.TryGetValue("Idempotency-Key", out var chave))
+                    request.ChaveIdempotencia = chave.ToString();
+                return Ok(ApiResponse<PropostaResultadoDto>.Ok(await _service.ResponderPropostaAsync(id, versaoId, request, CurrentUserId, HttpContext.RequestAborted)));
+            }, id);
+
         private async Task<IActionResult> ExecutarComErrosAsync(Func<Task<IActionResult>> acao, Guid id)
         {
             var access = EnsureCrmAccess();

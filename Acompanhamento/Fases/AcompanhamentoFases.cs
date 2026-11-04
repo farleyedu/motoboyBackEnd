@@ -67,14 +67,14 @@ namespace APIBack.Acompanhamento.Fases
         };
 
         /// <summary>
-        /// Fase de uma oportunidade sem loja, pelo /crm legado: perdido; proposta (colunas proposta, quase, aguardando); senao conversa.
-        /// Nulo = fechada (a fase vem da loja).
+        /// Fase de uma oportunidade sem loja, pelo /crm legado: perdido; proposta (colunas proposta, quase, aguardando) so com envio
+        /// registrado; senao conversa. Nulo = fechada (a fase vem da loja).
         /// </summary>
-        public static string? FaseDaOportunidade(string? status, string? coluna) => status switch
+        public static string? FaseDaOportunidade(string? status, string? coluna, bool temEnvioRegistrado) => status switch
         {
             "perdido" => Perdido,
             "fechado" => null,
-            _ => coluna is "proposta" or "quase" or "aguardando" ? Proposta : Conversa
+            _ => temEnvioRegistrado && coluna is "proposta" or "quase" or "aguardando" ? Proposta : Conversa
         };
 
         /// <summary>Nulo = a fase gravada continua valendo; senao, a fase para a qual a situacao da loja levou.</summary>
@@ -120,6 +120,18 @@ namespace APIBack.Acompanhamento.Fases
         public const string NaoEncontrado = "ACOMPANHAMENTO_NAO_ENCONTRADO";
         public const string FaseInvalida = "FASE_INVALIDA";
         public const string TesteObrigatorio = "TESTE_OBRIGATORIO";
+        public const string PropostaNaoEncontrada = "PROPOSTA_NAO_ENCONTRADA";
+        public const string PropostaMudou = "PROPOSTA_MUDOU";
+        public const string PropostaNaoEditavel = "PROPOSTA_NAO_EDITAVEL";
+        public const string PropostaForaDaFase = "PROPOSTA_FORA_DA_FASE";
+        public const string PropostaSemOportunidade = "PROPOSTA_SEM_OPORTUNIDADE";
+        public const string PropostaValorInvalido = "PROPOSTA_VALOR_INVALIDO";
+        public const string VersaoObrigatoria = "VERSAO_OBRIGATORIA";
+        public const string CanalInvalido = "CANAL_INVALIDO";
+        public const string DestinatarioObrigatorio = "DESTINATARIO_OBRIGATORIO";
+        public const string EnvioNoFuturo = "ENVIO_NO_FUTURO";
+        public const string EvidenciaInvalida = "EVIDENCIA_INVALIDA";
+        public const string RespostaInvalida = "RESPOSTA_INVALIDA";
     }
 
     /// <summary>Recusa de passagem ou conflito, com o corpo de "details" da resposta.</summary>

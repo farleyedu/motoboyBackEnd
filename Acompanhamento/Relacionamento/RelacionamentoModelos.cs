@@ -15,8 +15,28 @@ namespace APIBack.Acompanhamento.Relacionamento
 
     public static class TiposMarcacao
     {
-        public const string Atencao = "atencao", RiscoDeSaida = "risco_de_saida", NaoIncomodar = "nao_incomodar";
-        public static readonly string[] Todos = { Atencao, RiscoDeSaida, NaoIncomodar };
+        public const string Atencao = "atencao", PrecisaDeAjuda = "precisa_ajuda", RiscoDeSaida = "risco_de_saida", NaoIncomodar = "nao_incomodar";
+        public static readonly string[] Todos = { Atencao, PrecisaDeAjuda, RiscoDeSaida, NaoIncomodar };
+    }
+
+    public static class EstadosPasso
+    {
+        public const string Aberto = "aberto", Feito = "feito", SemSucesso = "sem_sucesso", Reagendado = "reagendado", Cancelado = "cancelado", Substituido = "substituido";
+    }
+
+    /// <summary>Resultado de um toque ao concluir. Quem marca e uma pessoa: "sem_resposta" conta a tentativa, mas grava sem_sucesso.</summary>
+    public static class ResultadosPasso
+    {
+        public const string ContatoRealizado = "contato_realizado", SemResposta = "sem_resposta", Interessado = "interessado",
+            NegociacaoPendente = "negociacao_pendente", ProblemaEncontrado = "problema_encontrado", AguardandoTerceiro = "aguardando_terceiro";
+        public static readonly string[] Todos = { ContatoRealizado, SemResposta, Interessado, NegociacaoPendente, ProblemaEncontrado, AguardandoTerceiro };
+        public static string Estado(string resultado) => resultado == SemResposta ? EstadosPasso.SemSucesso : EstadosPasso.Feito;
+    }
+
+    public static class EscoposAtividade
+    {
+        public const string Hoje = "hoje", Vencidas = "vencidas", Proximas = "proximas", Feitas = "feitas";
+        public static readonly string[] Todos = { Hoje, Vencidas, Proximas, Feitas };
     }
 
     public static class CanaisRetencao
@@ -72,7 +92,7 @@ namespace APIBack.Acompanhamento.Relacionamento
     /// <summary>"Aguardando resposta" so existe depois de uma mensagem efetivamente enviada e sem recebimento posterior.</summary>
     public sealed record EsperaRespostaDto(bool Aguardando, DateTimeOffset? Desde, DateTimeOffset? UltimaEnviada, DateTimeOffset? UltimaRecebida);
 
-    public sealed record MarcacaoDto(string Tipo, string Motivo, int PorUsuarioId, DateTimeOffset Desde);
+    public sealed record MarcacaoDto(string Tipo, string Motivo, int PorUsuarioId, DateTimeOffset Desde, string? Categoria = null, string? AcaoEsperada = null);
 
     public sealed record VisaoAnteriorDto(int UsuarioId, DateTimeOffset Ate);
 
@@ -105,6 +125,7 @@ namespace APIBack.Acompanhamento.Relacionamento
         public string Nome { get; set; } = string.Empty;
         public string Fase { get; set; } = string.Empty;
         public int? ResponsavelUsuarioId { get; set; }
+        public string? ResponsavelNome { get; set; }
         public long Versao { get; set; }
         public ProximoPassoDto? ProximoPasso { get; set; }
         public DateTimeOffset? AguardandoRespostaDesde { get; set; }
@@ -114,7 +135,16 @@ namespace APIBack.Acompanhamento.Relacionamento
         public DateTimeOffset? VisaoTransitoriaAte { get; set; }
     }
 
-    public sealed record LembreteProximoPassoDto(Guid ProximoPassoId, Guid AcompanhamentoId, Guid? EstabelecimentoId, string Nome, string Tipo, DateOnly Data, int? ResponsavelUsuarioId, bool Vencido);
+    /// <summary>Vencido continua aqui ate alguem resolver (concluir, reagendar ou cancelar).</summary>
+    public sealed record LembreteProximoPassoDto(Guid ProximoPassoId, Guid AcompanhamentoId, Guid? EstabelecimentoId, string Nome, string Tipo, DateOnly Data,
+        int? ResponsavelUsuarioId, bool Vencido, string? Nota = null, DateTimeOffset? CriadoEm = null, UsuarioEquipeDto? Responsavel = null);
+
+    /// <summary>GET /api/acompanhamento/atividades. <c>VersaoRelacionamento</c> e o valor de versaoEsperada ao agir sobre a atividade.</summary>
+    public sealed record AtividadeDto(Guid Id, Guid AcompanhamentoId, Guid? OportunidadeId, Guid? EstabelecimentoId, string Nome, string Fase, string Tipo, DateOnly Data,
+        string? Nota, string Estado, string? Resultado, string? ResultadoNota, DateTimeOffset? RealizadoEm, UsuarioEquipeDto? Responsavel, DateTimeOffset CriadoEm,
+        bool Vencido, long VersaoRelacionamento);
+
+    public sealed record AtividadesDto(string Escopo, DateOnly Hoje, IReadOnlyList<AtividadeDto> Itens);
 
     public sealed record AvisoRelacionamentoDto(long Id, Guid AcompanhamentoId, string Tipo, string Mensagem, int? DeUsuarioId, DateTimeOffset CriadoEm, bool Lido);
 
@@ -163,6 +193,8 @@ namespace APIBack.Acompanhamento.Relacionamento
         public int? CriadoPor { get; set; }
         public DateTimeOffset CriadoEm { get; set; }
         public bool Repetida { get; set; }
+        /// <summary>Fase depois do registro: quem operava e saiu passa para Saindo na mesma transacao.</summary>
+        public string? FaseAtual { get; set; }
         /// <summary>Sempre falso: registrar a oferta nao executa desconto, estorno nem cobranca.</summary>
         public bool ExecutouFinanceiro { get; set; }
     }
@@ -207,10 +239,49 @@ namespace APIBack.Acompanhamento.Relacionamento
         public long? VersaoEsperada { get; set; }
     }
 
+    public sealed class ProximoPassoNovoRequest
+    {
+        public string? Tipo { get; set; }
+        [JsonConverter(typeof(FlexibleNullableDateOnlyJsonConverter))]
+        public DateOnly? Data { get; set; }
+        public string? Nota { get; set; }
+    }
+
+    public sealed class ConcluirPassoRequest
+    {
+        public string? Resultado { get; set; }
+        public string? Nota { get; set; }
+        /// <summary>Quando foi feito. Omitido = agora; no futuro = 422.</summary>
+        public DateTimeOffset? RealizadoEm { get; set; }
+        /// <summary>"E depois?": abre o seguinte na mesma transacao, ligado por origem_passo_id.</summary>
+        public ProximoPassoNovoRequest? Proximo { get; set; }
+        public long? VersaoEsperada { get; set; }
+    }
+
+    public sealed class ReagendarPassoRequest
+    {
+        [JsonConverter(typeof(FlexibleNullableDateOnlyJsonConverter))]
+        public DateOnly? Data { get; set; }
+        public string? Motivo { get; set; }
+        public long? VersaoEsperada { get; set; }
+    }
+
+    public sealed class CancelarPassoRequest
+    {
+        public string? Motivo { get; set; }
+        public long? VersaoEsperada { get; set; }
+    }
+
     public sealed class MarcarRequest
     {
         public string? Tipo { get; set; }
         public string? Motivo { get; set; }
+        /// <summary>Texto livre, ate 80 caracteres. Opcional.</summary>
+        public string? Categoria { get; set; }
+        /// <summary>O que se espera que aconteca, ate 300 caracteres. Opcional.</summary>
+        public string? AcaoEsperada { get; set; }
+        /// <summary>DELETE: a resolucao escrita (vale tambem no campo motivo).</summary>
+        public string? Resolucao { get; set; }
         public long? VersaoEsperada { get; set; }
     }
 

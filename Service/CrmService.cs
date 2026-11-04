@@ -139,6 +139,7 @@ namespace APIBack.Service
 
             ThrowIfValidationErrors(errors);
 
+            var responsavelAntes = row.ResponsavelUsuarioId;
             row.NomeEmpresa = NormalizeNullable(request.NomeEmpresa) ?? row.NomeEmpresa;
             row.NomeContato = NormalizeNullable(request.NomeContato) ?? row.NomeContato;
             row.Telefone = NormalizeNullable(request.Telefone) ?? row.Telefone;
@@ -167,6 +168,14 @@ namespace APIBack.Service
 
             await _crmRepository.AtualizarOportunidadeAsync(row);
             await _crmRepository.AdicionarHistoricoOportunidadeAsync(oportunidadeId, usuarioId, historico, detalhe);
+            if (request.Proposta != null)
+            {
+                await RegistrarPropostaLegadaAsync(usuarioId, oportunidadeId, row.PropostaJson!, request.Proposta, row.PropostaEnviadaEm);
+            }
+            if (row.ResponsavelUsuarioId != responsavelAntes)
+            {
+                await _crmRepository.EspelharResponsavelLegadoAsync(oportunidadeId, row.ResponsavelUsuarioId, responsavelAntes, usuarioId);
+            }
             return (await ObterOportunidadeResumoAsync(oportunidadeId))!;
         }
 
@@ -721,6 +730,7 @@ namespace APIBack.Service
                     closedAt: row.ClosedAt);
 
                 await _crmRepository.AdicionarHistoricoOportunidadeAsync(row.Id, usuarioId, "Movido para Proposta", BuildPropostaHistorico(request));
+                await RegistrarPropostaLegadaAsync(usuarioId, row.Id, SerializeProposta(request), request, ToDateTimeOffset(request.EnviadaEm) ?? DateTimeOffset.UtcNow);
             }
             else
             {
@@ -740,9 +750,21 @@ namespace APIBack.Service
                     closedAt: row.ClosedAt);
 
                 await _crmRepository.AdicionarHistoricoOportunidadeAsync(row.Id, usuarioId, "Movido para Proposta", "Lead movido para proposta.");
+                var gravada = DeserializeProposta(row.PropostaJson, row.PropostaEnviadaEm) ?? new CrmPropostaDto();
+                await RegistrarPropostaLegadaAsync(usuarioId, row.Id, row.PropostaJson!, gravada, row.PropostaEnviadaEm);
             }
 
             return (await ObterOportunidadeResumoAsync(row.Id))!;
+        }
+
+        /// <summary>
+        /// O modal do /crm declara a proposta: vira versao enviada (canal nao informado, origem crm_legado), sem mudar o contrato HTTP.
+        /// Sem valor maior que zero a versao fica sem mensalidade: para aceitar, alguem revisa.
+        /// </summary>
+        private Task RegistrarPropostaLegadaAsync(int usuarioId, Guid oportunidadeId, string json, CrmPropostaDto proposta, DateTimeOffset? enviadaEm)
+        {
+            var mensal = (proposta.SaaSMensalidade ?? 0m) + (proposta.MarketingMensalidade ?? 0m);
+            return _crmRepository.RegistrarPropostaLegadaAsync(oportunidadeId, usuarioId, json, mensal > 0 ? mensal : null, proposta.Implantacao, enviadaEm);
         }
 
         private async Task<CrmOportunidadeResumoDto> MoverParaQuaseAsync(int usuarioId, CrmOportunidadeRow row, CrmDatasQuaseFechadoRequest? request)

@@ -426,7 +426,7 @@ Token: 32 bytes aleatórios em base64url (43 caracteres), só o SHA-256 fica no 
 ### 8.7 Loja autenticada (✅ núcleo)
 | Método e rota | Resposta `data` | Erros |
 |---|---|---|
-| `GET /api/v2/pagamentos/{intentId}` (`Financeiro:visualizar`) | `PagamentoResumoDto` `{ id, origem, status, versao, valor, valorPago, valorEstornado, descricao, pedidoId, prePedidoId, conversaId, metodo, statusPagamento, statusDetalhe, cartaoBandeira, cartaoFinal, expiraEm, pagoEm, criadoEm, atualizadoEm }` | 403, 404 |
+| `GET /api/v2/pagamentos/{intentId}` (`Financeiro:visualizar`) | `PagamentoResumoDto` `{ id, provedor, origem, status, versao, valor, valorPago, valorEstornado, descricao, pedidoId, prePedidoId, conversaId, metodo, statusPagamento, statusDetalhe, cartaoBandeira, cartaoFinal, expiraEm, pagoEm, criadoEm, atualizadoEm }` | 403, 404 |
 | `GET /api/v2/pagamentos?pedidoId=&prePedidoId=&conversaId=` (`Financeiro:visualizar`) | `PagamentoResumoDto[]` (máx. 50) | 400, 403 |
 | `POST /api/v2/pagamentos/{intentId}/estornos` (`Financeiro:cancelar`) | corpo `{ valor?, motivo?, idempotencyKey }` (ou header `Idempotency-Key`) → `EstornoResult` | 400, 403, 404, 409, 422, 502, 503 |
 
@@ -470,3 +470,59 @@ As variáveis `Payments__Asaas__*` podem ser apagadas do Render.
 9. Comissão de marketplace: manter **zero** (não enviar `application_fee`).
 10. Gerar e guardar a **chave mestra** (`PAGAMENTOS_CHAVE_MESTRA`) no Render (secret) com backup em cofre; testar rotação em sandbox.
 11. Produção: `Payments__MercadoPago__Ambiente=producao`, `NotificationUrl` apontando para a API de produção, CORS do painel liberado para o callback.
+
+---
+
+## 11. Base multi-gateway e InfinitePay (contrato v1)
+
+### 11.1 Auditoria do acoplamento e decisão mínima
+
+- `pagamento_intent` é a raiz idempotente e já guarda origem, ambiente e snapshot da conta MP. `cardapio`/`chat` recebem na conta da loja; `assinatura`/`compra_extra`, na conta Zippy.
+- `pagamento_tentativa` e `pagamento` ainda possuem campos externos específicos do MP. A migration `20261104_10_pagamentos_multigateway.sql` acrescenta `provedor` e `referencia_provedor` sem remover os campos MP.
+- Toda linha anterior e toda criação pelo código atual usa `provedor=mercadopago` por padrão. Não existe troca automática de recebedor.
+- Uma intenção InfinitePay futura deve nascer com `provedor=infinitepay`, `conta_tipo=loja` e `id_infinitepay_conta_versao` preenchido. Esse vínculo é imutável: mudar a preferência ou rotacionar a API Key só afeta novas intenções.
+- InfinitePay opera apenas em ambiente real. Não existe `sandbox` oficial; o status local não deve ser apresentado como OAuth ou conexão técnica validada.
+
+### 11.2 Contas, versões e preferências
+
+- `pagamento_provedor_loja`: habilitação e estado por loja/provedor: `nao_configurado|configurado|recebimento_validado|erro`.
+- `pagamento_preferencia_provedor`: escolha explícita por fluxo `checkout_online|pix_exclusivo`. Ausência de linha preserva o legado Mercado Pago; linha desabilitada não faz fallback.
+- `infinitepay_conta_loja`: uma configuração por estabelecimento, com InfiniteTag normalizada, sem `$`, estado e versão atual.
+- `infinitepay_conta_versao`: snapshot imutável do handle e da API Key opcional cifrada. Só uma versão fica ativa; versões antigas permanecem para intenções pendentes.
+- A API Key usa `SegredoContexto.InfinitePayApiKey(idVersao)`, entra uma única vez, nunca aparece em GET, erro, auditoria ou log. Omissão no PUT mantém a chave; nova chave ou novo handle cria versão.
+- `configurado` significa apenas configuração local consistente. `recebimento_validado` só poderá ser gravado após cobrança real autorizada e confirmação de servidor; esta etapa não executa esse teste.
+
+### 11.3 Capacidades
+
+| Provedor | pix_embedded | checkout_hospedado | pix_exclusivo | cartao_hospedado | desconto_pix | estorno_api |
+|---|---:|---:|---:|---:|---:|---:|
+| `mercadopago` | sim | não | sim | não | não | sim |
+| `infinitepay` | não | sim | não | sim | sim | não |
+
+InfinitePay devolve link externo onde o cliente escolhe Pix ou cartão. `payment_methods_enabled` não torna o checkout Pix-only, pois cartão permanece disponível. Recurso incompatível deve retornar `PAG_RECURSO_NAO_SUPORTADO`, nunca simular QR, copia-e-cola, cancelamento ou estorno por API.
+
+### 11.4 Rotas autenticadas para a UI (prompt 03)
+
+Contrato de resposta segue `{ success, data, error, code, details }`; `data.versaoContrato=1` na lista de provedores. Loja é sempre a selecionada no token.
+
+| Método e rota | Corpo | Resposta `data` | Acesso/erros |
+|---|---|---|---|
+| `GET /api/v2/integracoes/infinitepay` | — | `{ status, infiniteTag, habilitada, temApiKey, versao, recebimentoValidadoEm, ultimoErro, validacao: nao_validada|configurado_nao_validado|recebimento_validado }` | ver: gerente ou `Financeiro:visualizar` |
+| `PUT /api/v2/integracoes/infinitepay` | `{ infiniteTag, apiKey?, habilitada }` | mesmo GET, nunca retorna a chave | gerenciar: dono/gerentes; 400, 403, 503 |
+| `GET /api/v2/integracoes/pagamentos/provedores` | — | `{ versaoContrato: 1, checkoutOnline, pixExclusivo, provedores: [{ provedor, habilitado, status, capacidades }] }` | ver |
+| `PUT /api/v2/integracoes/pagamentos/provedores/preferencias` | `{ checkoutOnline: mercadopago|infinitepay, pixExclusivo: mercadopago|null }` | mesmo GET | gerenciar; `PAG_PROVEDOR_NAO_CONFIGURADO`, `PAG_RECURSO_NAO_SUPORTADO` |
+
+Selecionar `infinitepay` exige configuração habilitada. Não há rota “testar chave”: a documentação oficial não oferece verificação sem operação real. O passo final é uma cobrança real de baixo valor, autorizada separadamente, confirmada via `POST /payment_check`.
+
+### 11.5 Confirmação futura e isolamento
+
+- Redirect, query string e callback nunca provam pagamento. Webhook InfinitePay não usa a assinatura HMAC do Mercado Pago.
+- Antes de qualquer efeito, o servidor deve chamar `POST /payment_check` e conferir `order_nsu`, `transaction_nsu`, `slug`, handle/conta, versão ligada à intenção e `amount` original. `paid_amount` é informativo e pode divergir.
+- Toda consulta de configuração usa `id_estabelecimento` do token. O cliente não escolhe IDs de conta/versão; uma versão de outra loja é rejeitada.
+- Não há split, recorrência, estorno ou cancelamento InfinitePay por API neste contrato.
+
+### 11.6 Chat Pix-only e reversão
+
+“Cobrar Pix” no WhatsApp continua exclusivamente Mercado Pago. Loja apenas com InfinitePay recebe indisponibilidade para esse fluxo. Uma futura ação distinta “Link de pagamento (Pix ou cartão)” depende de aprovação de produto e não faz parte desta etapa.
+
+Reversão operacional: definir `checkoutOnline=mercadopago`, manter ou desabilitar `pixExclusivo`, e marcar InfinitePay `habilitada=false`. Intenções antigas continuam na versão InfinitePay original. O rollback SQL só é permitido antes de existir qualquer configuração, preferência ou intenção InfinitePay, evitando apagar histórico financeiro.

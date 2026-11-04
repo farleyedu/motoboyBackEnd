@@ -83,6 +83,7 @@ namespace APIBack.Payments.Controllers
     public sealed class PagamentoResumoDto
     {
         public Guid Id { get; set; }
+        public string Provedor { get; set; } = "mercadopago";
         public string Origem { get; set; } = string.Empty;
         public string Status { get; set; } = string.Empty;
         public int Versao { get; set; }
@@ -128,7 +129,7 @@ namespace APIBack.Payments.Controllers
         }
 
         private const string Sql = @"
-SELECT i.id, i.origem, i.status, i.versao, i.valor, i.valor_pago, i.valor_estornado, i.descricao, i.pedido_id, i.pre_pedido_id, i.conversa_id,
+SELECT i.id, i.provedor, i.origem, i.status, i.versao, i.valor, i.valor_pago, i.valor_estornado, i.descricao, i.pedido_id, i.pre_pedido_id, i.conversa_id,
        p.metodo, p.status AS status_pagamento, p.mp_status_detail AS status_detalhe, p.cartao_bandeira, p.cartao_final,
        COALESCE(p.expira_em, i.expira_em) AS expira_em, i.pago_em, i.created_at AS criado_em, i.updated_at AS atualizado_em
   FROM pagamento_intent i

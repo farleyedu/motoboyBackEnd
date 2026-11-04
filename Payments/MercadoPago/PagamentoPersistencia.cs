@@ -88,11 +88,11 @@ VALUES (@Id, @Loja, @Evento, @Grupo, CAST(@Payload AS jsonb))", new
 
     public static class PagamentoIntentSql
     {
-        public const string Colunas = @"id, id_estabelecimento, ambiente, origem, conta_tipo, id_conta_loja, id_conta_zippy, pedido_id, pre_pedido_id,
+        public const string Colunas = @"id, id_estabelecimento, ambiente, provedor, origem, conta_tipo, id_conta_loja, id_conta_zippy, id_infinitepay_conta_versao, pedido_id, pre_pedido_id,
 conversa_id, cliente_id, origem_ref_id, valor, moeda, descricao, status, versao, external_reference, idempotency_key, valor_pago,
 valor_estornado, token_publico_hash, expira_em, pago_em, criado_por, created_at, updated_at";
 
-        public const string ColunasPagamento = @"id, id_intent, id_tentativa, id_estabelecimento, ambiente, mp_payment_id, mp_order_id, mp_collector_id, metodo,
+        public const string ColunasPagamento = @"id, id_intent, id_tentativa, id_estabelecimento, ambiente, provedor, referencia_provedor, mp_payment_id, mp_order_id, mp_collector_id, metodo,
 payment_method_id, payment_type_id, status, mp_status, mp_status_detail, valor, valor_estornado, moeda, pix_copia_cola, pix_qr_code_base64,
 pix_ticket_url, cartao_bandeira, cartao_final, parcelas, live_mode, expira_em, aprovado_em, mp_atualizado_em, versao, created_at, updated_at";
 

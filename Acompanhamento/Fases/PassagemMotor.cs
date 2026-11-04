@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using APIBack.Payments.Assinaturas;
 using F = APIBack.Acompanhamento.Fases.FasesAcompanhamento;
 
 namespace APIBack.Acompanhamento.Fases
@@ -59,7 +60,8 @@ namespace APIBack.Acompanhamento.Fases
             var pendentes = avaliacao.Requisitos.Where(x => !x.Pronto).ToList();
             var motivo = "Falta: " + string.Join("; ", pendentes.Select(p => p.Descricao)) + ".";
             return new AcompanhamentoException(422, CodigosAcompanhamento.RequisitosPendentes, motivo,
-                new RecusaDetalhesDto(avaliacao.FaseAtual, avaliacao.Para, motivo, avaliacao.Passagem!.Nome,
+                new RecusaDetalhesDto(avaliacao.FaseAtual, avaliacao.Para, motivo,
+                    PassagensCatalogo.Obter(avaliacao.FaseAtual, avaliacao.Para)?.Caminho ?? avaliacao.Passagem!.Nome,
                     new[] { avaliacao.FaseAtual, avaliacao.Para }, pendentes));
         }
 
@@ -68,7 +70,7 @@ namespace APIBack.Acompanhamento.Fases
         {
             var def = PassagensCatalogo.Obter(loja.Fase, para)
                 ?? throw new InvalidOperationException($"Passagem {loja.Fase} -> {para} nao existe.");
-            var hoje = DateOnly.FromDateTime(agora.UtcDateTime);
+            var hoje = FusoComercial.Data(agora);
             var efeito = def.Efeito;
 
             // Teste sem compromisso: a loja nasce em implantacao e o teste comeca sozinho quando ela ficar pronta.
@@ -88,9 +90,7 @@ namespace APIBack.Acompanhamento.Fases
                 Chave = chave,
                 UsuarioId = usuarioId,
                 AutorTipo = autorTipo,
-                Motivo = Limpo(dados.Motivo) ?? Limpo(dados.OQueFez) ?? (efeito is EfeitoPassagem.FecharNaConversa or EfeitoPassagem.PropostaAceita
-                    ? "aceite " + Limpo(dados.Aceite)?.ToLowerInvariant()
-                    : null),
+                Motivo = Motivo(efeito, dados, loja),
                 Agora = agora,
                 TesteQuandoPronta = efeito == EfeitoPassagem.TesteSemCompromisso,
                 DiasProrrogacao = efeito == EfeitoPassagem.ProrrogarTeste ? dados.Dias : null,
@@ -99,6 +99,21 @@ namespace APIBack.Acompanhamento.Fases
                 SaidaEm = efeito == EfeitoPassagem.PediuParaCancelar ? SaidaEm(dados.Quando, hoje) : null,
                 CobrancaIniciaEm = efeito == EfeitoPassagem.AtivarPlano ? hoje.AddDays(1) : null
             };
+        }
+
+        /// <summary>O R$ 0 consciente fica escrito no historico da fase, junto do aceite.</summary>
+        private static string? Motivo(EfeitoPassagem efeito, DadosPassagem d, LojaFatos loja)
+        {
+            var motivo = Limpo(d.Motivo) ?? Limpo(d.OQueFez) ?? (efeito is EfeitoPassagem.FecharNaConversa or EfeitoPassagem.PropostaAceita
+                ? "aceite " + Limpo(d.Aceite)?.ToLowerInvariant()
+                : null);
+            var valorZero = efeito switch
+            {
+                EfeitoPassagem.FecharNaConversa => d.ValorMensal == 0,
+                EfeitoPassagem.PropostaAceita => loja.PropostaValorZero,
+                _ => false
+            };
+            return valorZero ? $"{motivo}; valor R$ 0 consciente" : motivo;
         }
 
         /// <summary>Data de saida: 30 dias de aviso, agora, ou fim do ciclo (nulo: o ciclo vem da assinatura).</summary>
@@ -110,7 +125,7 @@ namespace APIBack.Acompanhamento.Fases
         };
 
         /// <summary>Fatos da loja a partir do estado gravado e do que so o banco sabe.</summary>
-        public static LojaFatos Fatos(AcompanhamentoEstado estado, int? pendenciasBloqueantes, bool cobrancaEmAberto, bool temProposta) => new()
+        public static LojaFatos Fatos(AcompanhamentoEstado estado, int? pendenciasBloqueantes, bool cobrancaEmAberto, PropostaVersao? vigente) => new()
         {
             Fase = estado.Fase,
             TemOportunidade = estado.OportunidadeId.HasValue,
@@ -124,7 +139,9 @@ namespace APIBack.Acompanhamento.Fases
             TesteConcluido = estado.TesteConcluidoEm.HasValue,
             ProrrogacoesNoTeste = estado.ProrrogacoesNoTeste,
             CobrancaEmAberto = cobrancaEmAberto,
-            TemProposta = temProposta
+            TemProposta = vigente != null,
+            PropostaComValor = vigente != null && PropostaRegras.ValorDefinido(vigente.ValorMensal, vigente.ValorZeroConsciente),
+            PropostaValorZero = vigente is { ValorMensal: 0 }
         };
 
         private static string? Limpo(string? valor) => string.IsNullOrWhiteSpace(valor) ? null : valor.Trim();
