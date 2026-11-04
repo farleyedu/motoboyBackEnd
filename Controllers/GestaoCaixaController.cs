@@ -156,6 +156,14 @@ public sealed class GestaoCaixaController(ICaixaService service, IPedidoCoreServ
         await service.Receber(loja, usuario, acesso, req ?? throw Vazio(), ct));
 
     /// <summary>
+    /// Recebe antes de entregar: registra o pagamento de um pedido ainda em operação sem concluí-lo (receber não é entregar). Pedido já
+    /// pago, com motoboy, do iFood ou entregue → 409.
+    /// </summary>
+    [HttpPost("recebimentos-antecipados")]
+    public Task<IActionResult> ReceberAntecipado([FromBody] RecebimentoAntecipadoRequest? req, CancellationToken ct) => Run(false, async (loja, usuario, acesso) =>
+        await service.ReceberAntecipado(loja, usuario, acesso, req ?? throw Vazio(), ct));
+
+    /// <summary>
     /// Venda de balcão (decisão do dono, 01/11): vira pedido sem endereço com itens do cardápio, entregue e pago na hora; a venda vai para o
     /// livro pela conclusão do balcão (dinheiro na gaveta, Pix e cartão na maquininha). Exige o caixa de hoje aberto.
     /// </summary>
@@ -164,6 +172,9 @@ public sealed class GestaoCaixaController(ICaixaService service, IPedidoCoreServ
     {
         var r = req ?? throw Vazio();
         if (!acesso.PodeLancar) throw new GestaoException("SEM_PERMISSAO", "Você não pode registrar no caixa.", 403);
+        // Balcão é retirada. Entrega por motoboy tem endereço, taxa e zona: nasce pelo pedido do Delivery, não por aqui.
+        if (APIBack.Model.Delivery.PedidoModalidade.Normalize(r.Modalidade) == APIBack.Model.Delivery.PedidoModalidade.Delivery)
+            throw new GestaoException("CAMPO_INVALIDO", "Pedido para entrega leva endereço: crie pelo pedido de entrega.", 422);
         var chave = BalcaoRegras.Chave(r.ChaveIdempotencia);
         var concluir = r.Concluir ?? true;
         // Seguindo o fluxo, a forma pode ficar para a retirada: a venda fica a receber no Caixa quando o pedido for concluído.

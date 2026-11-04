@@ -33,6 +33,8 @@ namespace APIBack.Service
 
         // ---- Nucleo de pedido (Fase 2). Padroes = comportamento anterior (pedido manual pendente) ----
         public string Origem { get; init; } = APIBack.Model.Delivery.PedidoOrigem.Atendente;
+        /// <summary>retirada ou delivery (<see cref="APIBack.Model.Delivery.PedidoModalidade"/>); nulo = quem criou não afirmou.</summary>
+        public string? Modalidade { get; init; }
         public string? OrigemRef { get; init; }
         public Guid? ConversaId { get; init; }
         /// <summary>Cliente resolvido (achado por telefone ou criado) pelo nucleo; null quando o telefone e invalido (Fase 3c).</summary>

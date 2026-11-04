@@ -83,6 +83,7 @@ SELECT cl.telefone_e164 FROM conversas c JOIN clientes cl ON cl.id = c.id_client
 SELECT p.id AS Id,
        COALESCE(p.status_pedido, 1) AS StatusPedido,
        {origemExpr}::text AS Origem,
+       to_jsonb(p)->>'modalidade' AS Modalidade,
        p.nome_cliente::text AS NomeCliente,
        p.telefone_cliente::text AS TelefoneCliente,
        COALESCE(p.entrega_bairro, p.region)::text AS Bairro,
@@ -342,6 +343,7 @@ AND (il.display_number ILIKE @Like OR il.external_order_id::text ILIKE @Like OR 
             dto.Status = StatusPedidoExtensions.ToApiKey(row.StatusPedido);
             dto.Origem = row.Origem ?? "atendente";
             dto.NomeCliente = row.NomeCliente;
+            dto.Modalidade = row.Modalidade;
             dto.TelefoneCliente = row.TelefoneCliente;
             dto.Bairro = row.Bairro;
             dto.EnderecoEntrega = row.EnderecoEntrega;
@@ -402,6 +404,7 @@ AND (il.display_number ILIKE @Like OR il.external_order_id::text ILIKE @Like OR 
             public int StatusPedido { get; set; }
             public string? Origem { get; set; }
             public string? NomeCliente { get; set; }
+            public string? Modalidade { get; set; }
             public string? TelefoneCliente { get; set; }
             public string? Bairro { get; set; }
             public string? EnderecoEntrega { get; set; }

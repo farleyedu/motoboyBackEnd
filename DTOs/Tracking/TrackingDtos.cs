@@ -152,6 +152,8 @@ namespace APIBack.DTOs.Tracking
         // Pagamento e entrega (antes o painel mostrava "A confirmar" fixo).
         public string? TipoPagamento { get; set; }
         public string? StatusPagamento { get; set; }
+        /// <summary>retirada ou delivery; nulo = desconhecida. Retirada não entra na fila de motoboys.</summary>
+        public string? Modalidade { get; set; }
         public decimal? Troco { get; set; }
         public decimal? DistanciaKm { get; set; }
         public string? Observacoes { get; set; }

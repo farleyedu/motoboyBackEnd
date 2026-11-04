@@ -9,6 +9,8 @@ namespace APIBack.DTOs.Delivery
         /// <summary>rascunho, pendente, atribuido, em_rota, concluido ou cancelado.</summary>
         public string Status { get; set; } = "pendente";
         public string Origem { get; set; } = "atendente";
+        /// <summary>retirada ou delivery; nulo = desconhecida (pedido antigo). iFood: vale o tipo na identidade externa.</summary>
+        public string? Modalidade { get; set; }
         public IfoodPedidoIdentityDto? IdentidadeExterna { get; set; }
         public string? NomeCliente { get; set; }
         public string? TelefoneCliente { get; set; }

@@ -154,6 +154,15 @@ SELECT m.id
                 return;
             }
 
+            // Retirada e entregue na loja: nao vai para motoboy (a modalidade foi gravada por quem criou o pedido; nula = desconhecida e passa).
+            if (await PedidoColumnTypes.HasModalidadeAsync(connection, transaction) && await connection.ExecuteScalarAsync<string?>(
+                    "SELECT modalidade FROM pedido WHERE id = @PedidoId AND id_estabelecimento = @EstabelecimentoId;",
+                    new { PedidoId = pedidoId, EstabelecimentoId = estabelecimentoId }, transaction) == APIBack.Model.Delivery.PedidoModalidade.Retirada)
+            {
+                throw new DeliveryDomainException(409, "PEDIDO_RETIRADA",
+                    "Pedido de retirada nao vai para motoboy: entregue ao cliente no balcao.");
+            }
+
             if ((currentStatus == StatusPedido.Atribuido || currentStatus == StatusPedido.AguardandoMotoboy) && pedido.MotoboyResponsavel.HasValue)
             {
                 // Pedido esperando a vez na fila de outro motoboy: o atendente pode move-lo.

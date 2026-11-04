@@ -107,7 +107,8 @@ namespace APIBack.Service
                 // pendente e a venda fica a receber até o Caixa receber.
                 TipoPagamento = balcao.TipoPagamento, StatusPagamento = balcao.TipoPagamento is null ? null : "Pago",
                 Troco = balcao.ValorRecebido, Observacoes = balcao.Observacoes, PrevisaoMinutos = 1,
-                Origem = PedidoOrigem.Atendente, OrigemRef = CleanRef($"caixa:{balcao.Chave}"),
+                // Venda de balcão é sempre retirada: nunca entra na fila de motoboy (o endereço "Balcão" não é de entrega).
+                Origem = PedidoOrigem.Atendente, Modalidade = APIBack.Model.Delivery.PedidoModalidade.Retirada, OrigemRef = CleanRef($"caixa:{balcao.Chave}"),
                 ClienteId = await _clientes.ResolverOuCriarAsync(estabelecimentoId, balcao.TelefoneCliente, nome),
             };
             var created = await _queue.CreatePedidoAsync(estabelecimentoId, actorUserId, order);
@@ -285,6 +286,8 @@ namespace APIBack.Service
             return manual with
             {
                 Origem = origin,
+                // Esta é a criação de pedido de entrega (endereço, zona e taxa): quem é retirada diz (cardápio web, Caixa). Sem dizer, é delivery.
+                Modalidade = APIBack.Model.Delivery.PedidoModalidade.Normalize(request.Modalidade) ?? APIBack.Model.Delivery.PedidoModalidade.Delivery,
                 OrigemRef = origemRef,
                 ConversaId = request.ConversaId,
                 ClienteId = clienteId,

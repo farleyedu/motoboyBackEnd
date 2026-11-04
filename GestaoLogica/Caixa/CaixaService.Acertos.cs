@@ -408,6 +408,7 @@ VALUES (@id, @loja, @pedido, @venda, @dinheiro, @integracao, @cartao, @ifood, @c
     private async Task<List<LinhaVenda>> LinhasAReceber(NpgsqlConnection c, NpgsqlTransaction? tx, Guid loja, Guid? gaveta, string? pedido) =>
         (await c.QueryAsync<LinhaVenda>(SqlVendas + @"
    AND a.dados->>'motoboyId' IS NULL AND s.status = 'a_receber' AND (s.conta_id IS NULL OR s.conta_id = @gaveta)
+   AND NOT coalesce(a.dados->'pendencias' @> '[""pago_antes_sem_caixa""]'::jsonb, false)
    AND (CAST(@pedido AS text) IS NULL OR a.origem_id = @pedido)
  ORDER BY a.data_fato, s.linha", new { loja, desde = _relogio.GetUtcNow().AddDays(-DiasDePendencia), gaveta, pedido }, tx))
             .Where(l => l.Liquido > 0).ToList();

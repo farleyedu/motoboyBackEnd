@@ -259,6 +259,8 @@ namespace APIBack.DTOs.Delivery
         // ---- Nucleo de pedido (Fase 2) --------------------------------------------------
         /// <summary>atendente (padrao), cardapio_web, ifood, ia_whatsapp ou simulador.</summary>
         public string? Origem { get; set; }
+        /// <summary>retirada ou delivery. Sem ela vale delivery: esta rota cria pedido de entrega; retirada precisa dizer.</summary>
+        public string? Modalidade { get; set; }
         /// <summary>
         /// Referencia externa para idempotencia (ex.: id do pedido no iFood). O cabecalho
         /// Idempotency-Key vale como origemRef quando este campo nao vem.

@@ -559,6 +559,8 @@ namespace APIBack.Service
                 TipoPagamento = pedido.PagamentoOnline ? CardapioPagamentoRules.FormaPagamentoDoPedido(pedido.MetodoOnline) : pedido.FormaPagamento,
                 Observacoes = observacoes,
                 Origem = PedidoOrigem.CardapioWeb,
+                // O cliente escolheu no cardápio: entrega vai para motoboy, retirada não.
+                Modalidade = EhEntrega(pedido) ? APIBack.Model.Delivery.PedidoModalidade.Delivery : APIBack.Model.Delivery.PedidoModalidade.Retirada,
                 OrigemRef = pedido.Codigo,
                 ConversaId = pedido.IdConversa,
                 Itens = itens.Select(item => new PedidoItemRequest

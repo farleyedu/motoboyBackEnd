@@ -64,6 +64,11 @@ namespace APIBack.Repository
 
             var extraColumns = coreSchema ? ", origem, origem_ref, conversa_id, cliente_id, subtotal, taxa_entrega, desconto" : string.Empty;
             var extraValues = coreSchema ? ", @Origem, @OrigemRef, @ConversaId, @ClienteId, @Subtotal, @TaxaEntrega, @Desconto" : string.Empty;
+            if (coreSchema && await PedidoColumnTypes.HasModalidadeAsync(connection, transaction))
+            {
+                extraColumns += ", modalidade";
+                extraValues += ", @Modalidade";
+            }
             var status = order.Rascunho ? StatusPedido.Rascunho : StatusPedido.Pendente;
 
             var pedidoId = await connection.ExecuteScalarAsync<int>($@"
@@ -209,6 +214,7 @@ UPDATE pedido
             order.CodigoEntrega,
             EstabelecimentoId = estabelecimentoId,
             order.Origem,
+            order.Modalidade,
             order.OrigemRef,
             order.ConversaId,
             order.ClienteId,

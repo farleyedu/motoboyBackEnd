@@ -32,6 +32,7 @@ public static class PedidosEmAbertoQuery
         public string? StatusPagamento { get; set; }
         public string? TipoPagamento { get; set; }
         public int? MotoboyResponsavel { get; set; }
+        public string? Modalidade { get; set; }
     }
 
     public static async Task<IReadOnlyList<PedidoEmAberto>> Carregar(NpgsqlConnection c, Guid loja, CancellationToken ct)
@@ -39,7 +40,7 @@ public static class PedidosEmAbertoQuery
         var colunas = (await c.QueryAsync<string>(new CommandDefinition(@"
 SELECT column_name::text FROM information_schema.columns
  WHERE table_schema = current_schema() AND table_name = 'pedido'
-   AND column_name IN ('origem', 'canal', 'status_pagamento', 'tipo_pagamento', 'motoboy_responsavel')", cancellationToken: ct))).ToHashSet();
+   AND column_name IN ('origem', 'canal', 'status_pagamento', 'tipo_pagamento', 'motoboy_responsavel', 'modalidade')", cancellationToken: ct))).ToHashSet();
         var temIfood = await c.ExecuteScalarAsync<bool>(new CommandDefinition(
             "SELECT to_regclass('ifood_order_links') IS NOT NULL AND to_regclass('ifood_order_snapshots') IS NOT NULL", cancellationToken: ct));
 
@@ -48,6 +49,7 @@ SELECT column_name::text FROM information_schema.columns
         var statusPagamento = colunas.Contains("status_pagamento") ? "p.status_pagamento::text" : "NULL::text";
         var tipoPagamento = colunas.Contains("tipo_pagamento") ? "p.tipo_pagamento::text" : "NULL::text";
         var motoboy = colunas.Contains("motoboy_responsavel") ? "p.motoboy_responsavel" : "NULL::integer";
+        var modalidade = colunas.Contains("modalidade") ? "p.modalidade::text" : "NULL::text";
         var ifood = temIfood
             ? @"l.display_number::text AS NumeroIfood, s.order_type::text AS TipoIfood, s.order_amount AS TotalIfood, s.pending_amount AS PendenteIfood"
             : "NULL::text AS NumeroIfood, NULL::text AS TipoIfood, NULL::numeric AS TotalIfood, NULL::numeric AS PendenteIfood";
@@ -60,7 +62,7 @@ SELECT column_name::text FROM information_schema.columns
         var linhas = await c.QueryAsync<Linha>(new CommandDefinition($@"
 SELECT p.id AS Id, p.status_pedido AS Status, p.value::text AS Valor, p.data_pedido::text AS DataPedido,
        {origem} AS Origem, {canal} AS Canal, {statusPagamento} AS StatusPagamento, {tipoPagamento} AS TipoPagamento,
-       {motoboy} AS MotoboyResponsavel, {ifood}
+       {motoboy} AS MotoboyResponsavel, {modalidade} AS Modalidade, {ifood}
   FROM pedido p
   {juncoes}
  WHERE p.id_estabelecimento = @loja AND COALESCE(p.status_pedido, 1) = ANY(@status)
@@ -78,7 +80,17 @@ SELECT p.id AS Id, p.status_pedido AS Status, p.value::text AS Valor, p.data_ped
         var (pagamento, forma, responsavel) = CaixaRegras.SituacaoDoPagamento(l.StatusPagamento, l.TipoPagamento, ifood, l.PendenteIfood,
             l.MotoboyResponsavel.HasValue);
         return new PedidoEmAberto(numero, Onde(l, ifood), CaixaRegras.R2(valor), StatusPedidoExtensions.ToApiKey(l.Status), DiaOriginal(l.DataPedido),
-            l.Id, pagamento, forma, responsavel);
+            l.Id, pagamento, forma, responsavel, ModalidadeDe(l, ifood), l.MotoboyResponsavel);
+    }
+
+    /// <summary>
+    /// Só o que alguém afirmou: a coluna gravada pela origem ou, no iFood, o tipo do pedido no app. Sem isso é nula (desconhecida):
+    /// nunca se deduz delivery pela falta de endereço nem retirada pela falta de motoboy.
+    /// </summary>
+    internal static string? ModalidadeDe(Linha l, bool ifood)
+    {
+        if (!string.IsNullOrWhiteSpace(l.Modalidade)) return l.Modalidade.Trim().ToLowerInvariant();
+        return ifood ? APIBack.Model.Delivery.PedidoModalidade.DoTipoIfood(l.TipoIfood) : null;
     }
 
     internal static string Onde(Linha l, bool ifood)

@@ -446,6 +446,7 @@ SELECT
     p.horario_entrega::text AS HorarioEntregaRaw,
     p.tipo_pagamento::text AS TipoPagamento,
     p.status_pagamento::text AS StatusPagamento,
+    to_jsonb(p)->>'modalidade' AS Modalidade,
     CASE WHEN p.troco::text ~ {numeric} THEN p.troco::text::NUMERIC END AS Troco,
     CASE WHEN p.distancia_km::text ~ {numeric} THEN p.distancia_km::text::NUMERIC END AS DistanciaKm,
     p.observacoes::text AS Observacoes,
@@ -745,6 +746,7 @@ LEFT JOIN LATERAL (
             public string? HorarioEntregaRaw { get; set; }
             public string? TipoPagamento { get; set; }
             public string? StatusPagamento { get; set; }
+            public string? Modalidade { get; set; }
             public decimal? Troco { get; set; }
             public decimal? DistanciaKm { get; set; }
             public string? Observacoes { get; set; }
@@ -807,6 +809,7 @@ LEFT JOIN LATERAL (
                 HorarioEntrega = DeliveryRules.ParseStoredDateTime(row.HorarioEntregaRaw, dataPedido),
                 TipoPagamento = row.TipoPagamento,
                 StatusPagamento = row.StatusPagamento,
+                Modalidade = row.Modalidade,
                 Troco = row.Troco,
                 DistanciaKm = row.DistanciaKm,
                 Observacoes = row.Observacoes,

@@ -51,6 +51,19 @@ public static class VendaRegras
     public static bool PagoOnline(string? texto) => Chave(texto).Contains("online");
 
     /// <summary>
+    /// Pendência da venda cujo dinheiro entrou na gaveta antes da conclusão, com o caixa fechado na hora de publicar: o cliente já pagou,
+    /// então a linha não pode voltar a "A receber" (seria cobrar de novo). Fica fora da cobrança até alguém reconciliar.
+    /// </summary>
+    public const string PagoAntesSemCaixa = "pago_antes_sem_caixa";
+
+    /// <summary>
+    /// O pedido chegou à conclusão já pago e ninguém recebeu nada na entrega: quem entrega não está com esse dinheiro, nem presta contas
+    /// dele. (Quem cobra na entrega manda <paramref name="conferidos"/>; iFood tem regra própria.)
+    /// </summary>
+    public static bool PagoAntesDaEntrega(string? statusPagamento, IReadOnlyList<DeliveryPaymentPart>? conferidos, bool ifood) =>
+        !ifood && DeliveryCompletionRules.IsPaid(statusPagamento) && conferidos is not { Count: > 0 };
+
+    /// <summary>
     /// Partes da venda. iFood: o pre-pago e recebivel iFood e o cobrado na entrega segue a forma conferida. Pagamentos conferidos
     /// (app do motoboy) valem sobre o texto do pedido. Mesma forma soma; nada se perde nem duplica. Sem pagamento conferido, a forma
     /// do pedido só vale como recebida se o pedido está pago (<paramref name="pedidoPago"/>) ou foi pago online; fora isso é só a
@@ -128,6 +141,9 @@ SELECT s.order_amount AS Total, s.prepaid_amount AS Prepago, s.order_type AS Tip
         var partes = VendaRegras.Composicao(total, pedido.TipoPagamento, conferidos, ifood == null ? null : ifood.Prepago ?? 0m,
             DeliveryCompletionRules.IsPaid(pedido.StatusPagamento));
 
+        var pagoAntes = VendaRegras.PagoAntesDaEntrega(pedido.StatusPagamento, conferidos, ifood != null);
+        // Dinheiro já recebido antes não está com o motoboy: não entra na conta dele nem no acerto.
+        var dinheiroComMotoboy = motoboyId.HasValue && !pagoAntes;
         var agora = new DateTimeOffset(DateTime.SpecifyKind(pedido.Agora, DateTimeKind.Utc));
         var fuso = HorarioRegras.ResolverFuso(await AcontecimentoSql.Fuso(c, tx, loja));
         var hoje = DateOnly.FromDateTime(TimeZoneInfo.ConvertTime(agora, fuso).DateTime);
@@ -144,8 +160,10 @@ SELECT s.order_amount AS Total, s.prepaid_amount AS Prepago, s.order_type AS Tip
             var (conta, recebido, pendencia) = semConfirmacao ? ((Guid?)null, false, "pagamento_nao_confirmado") : p.Forma switch
             {
                 // O dinheiro esta com o motoboy, nao na gaveta: entra no acerto (CaixaService.Acertar liquida para a gaveta).
-                VendaRegras.Din when motoboyId.HasValue && contas.Motoboys is { } mb => (mb, false, (string?)null),
+                VendaRegras.Din when dinheiroComMotoboy && contas.Motoboys is { } mb => (mb, false, (string?)null),
                 VendaRegras.Din when contas.Gaveta is { } g && contas.CaixaAberto => (g, true, (string?)null),
+                // Pago antes e o caixa fechou nesse meio tempo: sem conta para receber agora, mas nunca "falta cobrar".
+                VendaRegras.Din when pagoAntes && contas.Gaveta != null => ((Guid?)null, false, VendaRegras.PagoAntesSemCaixa),
                 VendaRegras.Din => ((Guid?)null, false, contas.Gaveta == null ? "sem_conta_caixa" : "caixa_fechado"),
                 VendaRegras.Pix => (contas.Maquininha, contas.Maquininha.HasValue, contas.Maquininha == null ? "sem_conta_maquininha" : null),
                 VendaRegras.Deb or VendaRegras.Cre => (contas.Maquininha, false, contas.Maquininha == null ? "sem_conta_maquininha" : null),
@@ -169,7 +187,8 @@ SELECT s.order_amount AS Total, s.prepaid_amount AS Prepago, s.order_type AS Tip
         };
         if (principal != null) dados["forma"] = principal;
         if (ifood != null) dados["ifoodTipo"] = ifood.Tipo;
-        if (motoboyId.HasValue) dados["motoboyId"] = motoboyId.Value;
+        // Sem "motoboyId" a venda não entra nas pendências de acerto. Pago online continua lá (a integração é conferida no acerto, como sempre).
+        if (motoboyId.HasValue && (!pagoAntes || VendaRegras.PagoOnline(pedido.TipoPagamento))) dados["motoboyId"] = motoboyId.Value;
         if (pendencias.Count > 0) dados["pendencias"] = pendencias;
 
         try

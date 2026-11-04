@@ -40,7 +40,7 @@ public sealed record LinhaFita(string Id, string Hora, string Tipo, string Descr
 /// <c>Responsavel</c> = quem cobra o que falta: caixa, motoboy (acerta depois) ou ifood. Nulo quando o pedido já está pago.
 /// </summary>
 public sealed record PedidoEmAberto(string Numero, string Onde, decimal Valor, string Situacao, string? Dia = null, int PedidoId = 0,
-    string? Pagamento = null, string? FormaPrevista = null, string? Responsavel = null);
+    string? Pagamento = null, string? FormaPrevista = null, string? Responsavel = null, string? Modalidade = null, int? MotoboyId = null);
 
 public sealed record AjusteFechamento(Guid Id, DateTimeOffset Em, int Por, decimal ContadoAnterior, decimal ContadoNovo, string Motivo,
     string? PorNome = null);
@@ -243,6 +243,12 @@ public sealed record VendaAReceber(int PedidoId, string Numero, string Descricao
 public sealed record RecebimentoRequest(string? ChaveIdempotencia, DateOnly Dia, int PedidoId, string? Forma, decimal ValorRecebido,
     IReadOnlyList<ParteDoRecebimento>? Pagamentos = null);
 
+/// <summary>
+/// Recebimento antecipado: o cliente paga no Caixa um pedido ainda em operação (sem entregá-lo nem concluí-lo). Uma forma só; dinheiro
+/// leva <c>ValorRecebido</c>. Pedido pago, com motoboy, do iFood ou já entregue é recusado (409).
+/// </summary>
+public sealed record RecebimentoAntecipadoRequest(string? ChaveIdempotencia, DateOnly Dia, int PedidoId, string? Forma, decimal? ValorRecebido = null);
+
 public sealed record ParteDoRecebimento(string? Forma, decimal Valor, decimal? ValorRecebido = null);
 
 /// <summary>
@@ -250,7 +256,7 @@ public sealed record ParteDoRecebimento(string? Forma, decimal Valor, decimal? V
 /// e pago na hora; false: segue o fluxo da loja e, sem <c>Forma</c>, o cliente paga na retirada (a venda fica a receber).
 /// </summary>
 public sealed record VendaBalcaoRequest(string? ChaveIdempotencia, DateOnly Dia, List<APIBack.DTOs.Delivery.PedidoItemRequest>? Itens, string? Forma,
-    decimal? ValorRecebido, string? Cliente = null, string? Telefone = null, string? Observacao = null, bool? Concluir = null);
+    decimal? ValorRecebido, string? Cliente = null, string? Telefone = null, string? Observacao = null, bool? Concluir = null, string? Modalidade = null);
 
 /// <param name="JaExistia">Reenvio com a mesma chave: o pedido e a venda já existiam (nada foi duplicado).</param>
 /// <param name="Status">Situação do pedido criado: "concluido" (entregue na hora) ou "pendente" (segue o fluxo).</param>

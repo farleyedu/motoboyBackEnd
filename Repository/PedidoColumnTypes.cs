@@ -123,6 +123,19 @@ SELECT (SELECT COUNT(*) FROM information_schema.columns
             return present;
         }
 
+        private static volatile bool _modalidadeKnown;
+
+        /// <summary>True quando a migration 20261128_01 (pedido.modalidade) foi aplicada. So cacheia o "sim".</summary>
+        public static async Task<bool> HasModalidadeAsync(NpgsqlConnection connection, NpgsqlTransaction? transaction)
+        {
+            if (_modalidadeKnown) return true;
+            var present = await connection.ExecuteScalarAsync<bool>(@"
+SELECT EXISTS (SELECT 1 FROM information_schema.columns
+                WHERE table_schema = current_schema() AND table_name = 'pedido' AND column_name = 'modalidade');", transaction: transaction);
+            if (present) _modalidadeKnown = true;
+            return present;
+        }
+
         private static volatile bool _encerramentoSchemaKnown;
 
         /// <summary>

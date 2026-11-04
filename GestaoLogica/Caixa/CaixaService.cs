@@ -41,6 +41,8 @@ public interface ICaixaService
     Task<AcertoDto> CorrigirAcerto(Guid loja, int usuario, GestaoPapeis.Acesso acesso, Guid acertoId, CorrigirAcertoRequest req, CancellationToken ct);
     Task<IReadOnlyList<VendaAReceber>> AReceberNoCaixa(Guid loja, CancellationToken ct);
     Task<CaixaDoDia> Receber(Guid loja, int usuario, GestaoPapeis.Acesso acesso, RecebimentoRequest req, CancellationToken ct);
+    /// <summary>Paga no Caixa um pedido ainda em operação, sem concluí-lo (CaixaService.Antecipado.cs).</summary>
+    Task<CaixaDoDia> ReceberAntecipado(Guid loja, int usuario, GestaoPapeis.Acesso acesso, RecebimentoAntecipadoRequest req, CancellationToken ct);
     // Aprovação do fechamento pelo gerente (CaixaService.Aprovacao.cs).
     Task<ConfigDoCaixa> Config(Guid loja, CancellationToken ct);
     Task<ConfigDoCaixa> SalvarConfig(Guid loja, int usuario, SalvarConfigDoCaixaRequest req, CancellationToken ct);
