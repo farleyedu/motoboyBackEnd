@@ -18,12 +18,29 @@ public static class MovimentoCaixa
     public static readonly string[] Todos = { Sangria, Suprimento, Pagamento, Devolucao };
 }
 
-/// <summary>Linha da fita. <c>Tipo</c>: abre, venda, sup, sang, pag, canc. <c>Valor</c> com sinal (saída da gaveta negativa).</summary>
-public sealed record LinhaFita(string Id, string Hora, string Tipo, string Descricao, string Forma, decimal Valor,
-    bool Corrigivel = false, bool Estornada = false, Guid? SolicitacaoPendente = null);
+/// <summary>Para onde foi o dinheiro de uma linha da fita. Só <c>gaveta</c> mexe no dinheiro físico do caixa.</summary>
+public static class FormaDestino
+{
+    public const string Gaveta = "gaveta", Maquininha = "maquininha", Ifood = "ifood", Motoboy = "motoboy";
+}
 
-/// <summary><c>Situacao</c> = chave oficial do status (pendente, atribuido, em_rota, aguardando_motoboy). <c>Dia</c> = dia (AAAA-MM-DD) em que o pedido foi feito, quando legível.</summary>
-public sealed record PedidoEmAberto(string Numero, string Onde, decimal Valor, string Situacao, string? Dia = null);
+/// <summary>
+/// Linha da fita. <c>Tipo</c>: abre, venda, sup, sang, pag, canc. <c>Valor</c> com sinal (saída da gaveta negativa).
+/// <c>PedidoId</c> = pedido de onde a linha veio (vínculo do livro; nulo em movimento de gaveta que não é de pedido) e <c>Destino</c> =
+/// <see cref="FormaDestino"/> (gaveta, maquininha, ifood, motoboy ou outro): venda é faturamento, só <c>gaveta</c> é dinheiro físico.
+/// </summary>
+public sealed record LinhaFita(string Id, string Hora, string Tipo, string Descricao, string Forma, decimal Valor,
+    bool Corrigivel = false, bool Estornada = false, Guid? SolicitacaoPendente = null, int? PedidoId = null, string? Destino = null);
+
+/// <summary>
+/// <c>Situacao</c> = eixo operacional: chave oficial do status (pendente, atribuido, em_rota, aguardando_motoboy). <c>Dia</c> = dia
+/// (AAAA-MM-DD) em que o pedido foi feito, quando legível. <c>PedidoId</c> = id do pedido (0 só em resposta antiga).
+/// Eixo financeiro, independente do operacional: <c>Pagamento</c> = <see cref="PagamentoDoPedido"/> (pago, a_receber ou
+/// recebivel_externo), <c>FormaPrevista</c> = din, pix, deb, cre ou nulo (a forma combinada NÃO confirma recebimento) e
+/// <c>Responsavel</c> = quem cobra o que falta: caixa, motoboy (acerta depois) ou ifood. Nulo quando o pedido já está pago.
+/// </summary>
+public sealed record PedidoEmAberto(string Numero, string Onde, decimal Valor, string Situacao, string? Dia = null, int PedidoId = 0,
+    string? Pagamento = null, string? FormaPrevista = null, string? Responsavel = null);
 
 public sealed record AjusteFechamento(Guid Id, DateTimeOffset Em, int Por, decimal ContadoAnterior, decimal ContadoNovo, string Motivo,
     string? PorNome = null);
@@ -50,10 +67,12 @@ public sealed record CaixaDoDia(DateOnly Dia, bool Aberto, DateTimeOffset? Abert
 /// Que dia o caixa está rodando. <c>Dia</c> = dia em operação (o do caixa aberto; sem caixa aberto, o da virada); <c>DiaDoCalendario</c>
 /// = a data de agora na loja; <c>ViradaDoDia</c> = "HH:mm" em que o dia de operação vira. <c>Situacao</c>: <c>sem_caixa</c> (o dia
 /// ainda não abriu), <c>aberto</c>, <c>aguardando</c> (fechamento enviado ao gerente) ou <c>fechado</c>. <c>Pendentes</c>: fechamentos
-/// esperando o gerente (nenhum caixa novo abre enquanto houver).
+/// esperando o gerente (nenhum caixa novo abre enquanto houver). <c>LojaAberta</c>: estado operacional oficial da loja (o caixa só
+/// abre com a loja aberta); fechada, <c>MotivoLojaFechada</c> (SEM_HORARIO | FORA_HORARIO | PAUSADA) e <c>AvisoLojaFechada</c> dizem o
+/// que fazer. Sem a informação, <c>LojaAberta</c> vem verdadeiro e o servidor decide ao abrir.
 /// </summary>
 public sealed record OperacaoDoCaixa(DateOnly Dia, DateOnly DiaDoCalendario, string ViradaDoDia, string Situacao, int Turno,
-    IReadOnlyList<FechamentoAguardando> Pendentes);
+    IReadOnlyList<FechamentoAguardando> Pendentes, bool LojaAberta = true, string? MotivoLojaFechada = null, string? AvisoLojaFechada = null);
 
 /// <summary>
 /// Um fechamento que saiu do dia. <c>Destino</c> = <c>novo_turno</c> (o fechamento vale; o dia abriu outro turno) ou <c>reaberto</c>

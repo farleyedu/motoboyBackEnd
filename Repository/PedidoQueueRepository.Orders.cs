@@ -76,7 +76,7 @@ VALUES (
     @NomeCliente, @EnderecoEntrega, @TelefoneCliente, {dataPedido}, @Status,
     @Items, @Value, @Bairro, @Latitude, @Longitude, {horarioPedido}, {previsao},
     @Rua, @Numero, @Bairro, @Cidade, @Estado, @Cep,
-    @TipoPagamento, @Troco, @Observacoes, 'Pendente', @CodigoEntrega, @EstabelecimentoId{extraValues})
+    @TipoPagamento, @Troco, @Observacoes, COALESCE(@StatusPagamento, 'Pendente'), @CodigoEntrega, @EstabelecimentoId{extraValues})
 RETURNING id;",
                 InsertParameters(estabelecimentoId, order, status), transaction);
 
@@ -203,6 +203,7 @@ UPDATE pedido
             order.Estado,
             order.Cep,
             order.TipoPagamento,
+            order.StatusPagamento,
             order.Troco,
             order.Observacoes,
             order.CodigoEntrega,

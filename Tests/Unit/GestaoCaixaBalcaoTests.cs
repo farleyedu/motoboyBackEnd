@@ -75,6 +75,21 @@ public class GestaoCaixaBalcaoTests
         await service.CreateBalcaoAsync(Loja, 7, Venda(null) with { TipoPagamento = null, Concluir = false });
         var pedido = (ManualOrder)queue.Invocations.Last(i => i.Method.Name == nameof(IPedidoQueueRepository.CreatePedidoAsync)).Arguments[2];
         Assert.Equal(((string?)null, (decimal?)null), (pedido.TipoPagamento, pedido.Troco));
+        Assert.Null(pedido.StatusPagamento); // nasce pendente: nada foi recebido
+    }
+
+    [Fact]
+    public async Task Gestao6C5_balcao_com_forma_nasce_pago_e_sem_forma_nasce_pendente()
+    {
+        var (service, queue) = Criar();
+        ManualOrder Ultimo() => (ManualOrder)queue.Invocations.Last(i => i.Method.Name == nameof(IPedidoQueueRepository.CreatePedidoAsync)).Arguments[2];
+
+        // Pago agora (e segue o fluxo da loja): o pedido já diz que foi pago, para ninguém cobrar de novo na entrega.
+        await service.CreateBalcaoAsync(Loja, 7, Venda() with { Concluir = false });
+        Assert.Equal("Pago", Ultimo().StatusPagamento);
+        // Pagamento na retirada: a forma não vira recebimento.
+        await service.CreateBalcaoAsync(Loja, 7, Venda(null) with { TipoPagamento = null, Concluir = false });
+        Assert.Null(Ultimo().StatusPagamento);
     }
 
     [Fact]

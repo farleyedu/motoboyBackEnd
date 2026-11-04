@@ -103,7 +103,10 @@ namespace APIBack.Service
                 EnderecoEntrega = "Balcão", Rua = "Balcão", Numero = "s/n", Bairro = restaurant.Bairro ?? "Balcão", Cidade = restaurant.Cidade ?? "",
                 Latitude = latitude, Longitude = longitude,
                 Items = LegacyItemsJson(priced.Lines), Lines = priced.Lines, Value = total, Subtotal = total, TaxaEntrega = 0m,
-                TipoPagamento = balcao.TipoPagamento, Troco = balcao.ValorRecebido, Observacoes = balcao.Observacoes, PrevisaoMinutos = 1,
+                // Forma informada no balcão = o cliente pagou agora: o pedido já nasce pago (quem lê não cobra de novo). Sem forma, nasce
+                // pendente e a venda fica a receber até o Caixa receber.
+                TipoPagamento = balcao.TipoPagamento, StatusPagamento = balcao.TipoPagamento is null ? null : "Pago",
+                Troco = balcao.ValorRecebido, Observacoes = balcao.Observacoes, PrevisaoMinutos = 1,
                 Origem = PedidoOrigem.Atendente, OrigemRef = CleanRef($"caixa:{balcao.Chave}"),
                 ClienteId = await _clientes.ResolverOuCriarAsync(estabelecimentoId, balcao.TelefoneCliente, nome),
             };

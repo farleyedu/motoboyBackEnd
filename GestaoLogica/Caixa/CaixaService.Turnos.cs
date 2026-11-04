@@ -27,6 +27,7 @@ public sealed partial class CaixaService
         await using (var c = await dataSource.OpenConnectionAsync(ct))
         {
             var row = await Fechado(c, loja, hoje);
+            await ExigirLojaAberta(loja, ct);
             await SemPendencia(c, loja);
             var contas = await ContasDoCaixa(c, loja, null, ct);
             var gaveta = await Saldo(loja, contas.Gaveta, ct);
@@ -68,6 +69,7 @@ UPDATE gestao_caixa_dias SET fundo = @Fundo, aberto_por = @usuario, aberto_em = 
         await using (var c = await dataSource.OpenConnectionAsync(ct))
         {
             var row = await Fechado(c, loja, hoje);
+            await ExigirLojaAberta(loja, ct);
             await SemPendencia(c, loja, row.Dia);
             var comDiferenca = row.Contado != row.Esperado || (await AjustesDoCiclo(c, loja, row)).Count > 0;
             if (acesso.Papel != GestaoPapeis.Gerente && (comDiferenca || row.AprovadoPor is not null))

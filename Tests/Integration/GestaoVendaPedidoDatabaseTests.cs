@@ -125,7 +125,28 @@ ALTER TABLE delivery_route_stops ADD COLUMN canceled_at_utc timestamptz, ADD COL
         var (_, dados, linhas) = await Venda(db, 30);
         Assert.Equal(("retirada", "cre"), (dados.GetProperty("modalidade").GetString(), dados.GetProperty("forma").GetString()));
         Assert.False(dados.GetProperty("pagamentos")[0].GetProperty("formaConfirmada").GetBoolean());
-        Assert.Equal(new[] { new Linha("receita", 40.50m, "a_receber", "recebivel", "maquininha") }, linhas);
+        // Forma combinada não prova recebimento: fica a receber, sem conta, até o Caixa receber de verdade.
+        Assert.Equal(new[] { new Linha("receita", 40.50m, "a_receber", null, null) }, linhas);
+        Assert.Equal("pagamento_nao_confirmado", dados.GetProperty("pendencias")[0].GetString());
+    }
+
+    [DeliveryDatabaseFact]
+    public async Task Venda_de_pedido_pago_ou_pago_online_entra_como_recebida_ao_concluir_sem_motoboy()
+    {
+        await using var db = await VendaDatabase();
+        await db.Execute("INSERT INTO pedido(id,id_estabelecimento,status_pedido,nome_cliente,value,tipo_pagamento,status_pagamento) VALUES (32,@s,0,'Balcão','30','Pix','Pago'), (33,@s,0,'Web','25','Pago online - Pix','Pendente')",
+            new { s = db.StoreId });
+        var repo = new PedidoQueueRepository(db.Source);
+        await repo.MarcarEntregueManualAsync(db.StoreId, 7, 32);
+        await repo.MarcarEntregueManualAsync(db.StoreId, 7, 33);
+
+        foreach (var pedido in new[] { 32, 33 })
+        {
+            var (_, dados, linhas) = await Venda(db, pedido);
+            Assert.False(dados.TryGetProperty("pendencias", out _));
+            Assert.Single(linhas);
+            Assert.Equal("recebido", linhas[0].Status);
+        }
     }
 
     [DeliveryDatabaseFact]

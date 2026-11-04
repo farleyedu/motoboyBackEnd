@@ -28,21 +28,29 @@ public static class PedidosEmAbertoQuery
         public string? NumeroIfood { get; set; }
         public string? TipoIfood { get; set; }
         public decimal? TotalIfood { get; set; }
+        public decimal? PendenteIfood { get; set; }
+        public string? StatusPagamento { get; set; }
+        public string? TipoPagamento { get; set; }
+        public int? MotoboyResponsavel { get; set; }
     }
 
     public static async Task<IReadOnlyList<PedidoEmAberto>> Carregar(NpgsqlConnection c, Guid loja, CancellationToken ct)
     {
         var colunas = (await c.QueryAsync<string>(new CommandDefinition(@"
 SELECT column_name::text FROM information_schema.columns
- WHERE table_schema = current_schema() AND table_name = 'pedido' AND column_name IN ('origem', 'canal')", cancellationToken: ct))).ToHashSet();
+ WHERE table_schema = current_schema() AND table_name = 'pedido'
+   AND column_name IN ('origem', 'canal', 'status_pagamento', 'tipo_pagamento', 'motoboy_responsavel')", cancellationToken: ct))).ToHashSet();
         var temIfood = await c.ExecuteScalarAsync<bool>(new CommandDefinition(
             "SELECT to_regclass('ifood_order_links') IS NOT NULL AND to_regclass('ifood_order_snapshots') IS NOT NULL", cancellationToken: ct));
 
         var origem = colunas.Contains("origem") ? "p.origem::text" : "NULL::text";
         var canal = colunas.Contains("canal") ? "p.canal::text" : "NULL::text";
+        var statusPagamento = colunas.Contains("status_pagamento") ? "p.status_pagamento::text" : "NULL::text";
+        var tipoPagamento = colunas.Contains("tipo_pagamento") ? "p.tipo_pagamento::text" : "NULL::text";
+        var motoboy = colunas.Contains("motoboy_responsavel") ? "p.motoboy_responsavel" : "NULL::integer";
         var ifood = temIfood
-            ? @"l.display_number::text AS NumeroIfood, s.order_type::text AS TipoIfood, s.order_amount AS TotalIfood"
-            : "NULL::text AS NumeroIfood, NULL::text AS TipoIfood, NULL::numeric AS TotalIfood";
+            ? @"l.display_number::text AS NumeroIfood, s.order_type::text AS TipoIfood, s.order_amount AS TotalIfood, s.pending_amount AS PendenteIfood"
+            : "NULL::text AS NumeroIfood, NULL::text AS TipoIfood, NULL::numeric AS TotalIfood, NULL::numeric AS PendenteIfood";
         var juncoes = temIfood
             ? @"LEFT JOIN ifood_order_links l ON l.pedido_id = p.id AND l.estabelecimento_id = p.id_estabelecimento
   LEFT JOIN ifood_order_snapshots s ON s.merchant_id = l.merchant_id AND s.external_order_id = l.external_order_id
@@ -51,7 +59,8 @@ SELECT column_name::text FROM information_schema.columns
 
         var linhas = await c.QueryAsync<Linha>(new CommandDefinition($@"
 SELECT p.id AS Id, p.status_pedido AS Status, p.value::text AS Valor, p.data_pedido::text AS DataPedido,
-       {origem} AS Origem, {canal} AS Canal, {ifood}
+       {origem} AS Origem, {canal} AS Canal, {statusPagamento} AS StatusPagamento, {tipoPagamento} AS TipoPagamento,
+       {motoboy} AS MotoboyResponsavel, {ifood}
   FROM pedido p
   {juncoes}
  WHERE p.id_estabelecimento = @loja AND COALESCE(p.status_pedido, 1) = ANY(@status)
@@ -66,7 +75,10 @@ SELECT p.id AS Id, p.status_pedido AS Status, p.value::text AS Valor, p.data_ped
         var numero = !string.IsNullOrWhiteSpace(l.NumeroIfood) ? $"#{l.NumeroIfood!.Trim()}" : $"#{l.Id}";
         // iFood: total oficial atual do pedido (não o saldo a receber). Demais: valor gravado no pedido.
         var valor = ifood && l.TotalIfood is { } oficial ? oficial : Dinheiro(l.Valor);
-        return new PedidoEmAberto(numero, Onde(l, ifood), CaixaRegras.R2(valor), StatusPedidoExtensions.ToApiKey(l.Status), DiaOriginal(l.DataPedido));
+        var (pagamento, forma, responsavel) = CaixaRegras.SituacaoDoPagamento(l.StatusPagamento, l.TipoPagamento, ifood, l.PendenteIfood,
+            l.MotoboyResponsavel.HasValue);
+        return new PedidoEmAberto(numero, Onde(l, ifood), CaixaRegras.R2(valor), StatusPedidoExtensions.ToApiKey(l.Status), DiaOriginal(l.DataPedido),
+            l.Id, pagamento, forma, responsavel);
     }
 
     internal static string Onde(Linha l, bool ifood)

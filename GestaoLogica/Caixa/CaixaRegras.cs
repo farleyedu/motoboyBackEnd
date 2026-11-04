@@ -2,9 +2,36 @@ using APIBack.Acontecimentos;
 
 namespace APIBack.GestaoLogica.Caixa;
 
+/// <summary>
+/// Eixo financeiro do pedido ainda em operação (independente de estar na cozinha, em rota ou na retirada). <c>pago</c>: o pedido diz que
+/// foi pago (online, balcão pago na hora…); <c>a_receber</c>: falta cobrar; <c>recebivel_externo</c>: o iFood cobrou e repassa à loja.
+/// </summary>
+public static class PagamentoDoPedido
+{
+    public const string Pago = "pago", AReceber = "a_receber", RecebivelExterno = "recebivel_externo";
+    public const string ResponsavelCaixa = "caixa", ResponsavelMotoboy = "motoboy", ResponsavelIfood = "ifood";
+}
+
 /// <summary>Regras puras do caixa (as mesmas do caixaModelo.ts do Painel): contagem, diferença, troco que fica e movimentos.</summary>
 public static class CaixaRegras
 {
+    /// <summary>
+    /// Situação financeira de um pedido que ainda não foi concluído (não existe venda no livro): só o que o pedido afirma. A forma
+    /// combinada nunca prova recebimento; ausência de informação vira "a receber", nunca "pago". iFood: o que o app cobrou é recebível
+    /// externo; sobra a cobrar na entrega (<paramref name="ifoodPendente"/> &gt; 0) quando o cliente paga parte à loja.
+    /// </summary>
+    public static (string Pagamento, string? FormaPrevista, string? Responsavel) SituacaoDoPagamento(string? statusPagamento,
+        string? tipoPagamento, bool ifood, decimal? ifoodPendente, bool comMotoboy)
+    {
+        var forma = APIBack.GestaoLogica.Vendas.VendaRegras.Forma(tipoPagamento).Forma;
+        if (ifood)
+            return ifoodPendente is > 0
+                ? (PagamentoDoPedido.AReceber, forma, comMotoboy ? PagamentoDoPedido.ResponsavelMotoboy : PagamentoDoPedido.ResponsavelCaixa)
+                : (PagamentoDoPedido.RecebivelExterno, null, PagamentoDoPedido.ResponsavelIfood);
+        if (APIBack.Service.DeliveryCompletionRules.IsPaid(statusPagamento)) return (PagamentoDoPedido.Pago, forma, null);
+        return (PagamentoDoPedido.AReceber, forma, comMotoboy ? PagamentoDoPedido.ResponsavelMotoboy : PagamentoDoPedido.ResponsavelCaixa);
+    }
+
     public static readonly int[] Notas = { 200, 100, 50, 20, 10, 5, 2 };
 
     public static decimal TotalContado(ContagemCaixa c)
@@ -12,6 +39,32 @@ public static class CaixaRegras
         if (c.Moedas < 0 || (c.Notas ?? new Dictionary<int, int>()).Any(n => n.Value < 0)) throw Invalido("Contagem não pode ser negativa.");
         if ((c.Notas ?? new Dictionary<int, int>()).Keys.Any(k => !Notas.Contains(k))) throw Invalido("Cédula desconhecida.");
         return R2(Notas.Sum(v => v * (c.Notas?.GetValueOrDefault(v) ?? 0)) + c.Moedas);
+    }
+
+    /// <summary>
+    /// Por que o caixa não abre com a loja fechada e o que fazer (o estado oficial da loja vem de <c>HorarioOperacaoRepository</c>:
+    /// <c>SEM_HORARIO</c>, <c>FORA_HORARIO</c> ou <c>PAUSADA</c>). O texto orienta a abrir a loja primeiro.
+    /// </summary>
+    public static string MensagemLojaFechada(string? motivo, string? proximaAbertura) => motivo switch
+    {
+        "PAUSADA" => "A loja está pausada (não aceita pedidos). Reative a loja em Configurações antes de abrir o caixa.",
+        "SEM_HORARIO" => "A loja ainda não tem horário de funcionamento. Cadastre o horário ou abra a loja em Configurações antes de abrir o caixa.",
+        _ => string.IsNullOrWhiteSpace(proximaAbertura)
+            ? "A loja está fechada. Abra a loja antes de abrir o caixa."
+            : $"A loja está fechada (abre {proximaAbertura}). Abra a loja agora, em Configurações, para abrir o caixa antes disso.",
+    };
+
+    /// <summary>
+    /// A forma de UMA linha da fita vem da conta onde o dinheiro entrou, não da forma principal da venda: venda dividida (R$ 66 em
+    /// dinheiro e R$ 20 em Pix) tem uma linha na gaveta e outra na maquininha, e só a primeira é dinheiro físico.
+    /// </summary>
+    public static string FormaDaLinha(string destino, string? principal, IReadOnlyList<(string? Forma, decimal Valor)> partes, decimal valor)
+    {
+        if (destino == FormaDestino.Gaveta) return FormaCaixa.Dinheiro;
+        if (destino == FormaDestino.Ifood) return FormaCaixa.Ifood;
+        var daParte = partes.FirstOrDefault(x => x.Forma is not null && FormaCaixa.Maquininha.Contains(x.Forma) && x.Valor == valor).Forma;
+        if (daParte is not null) return daParte;
+        return principal is not null && FormaCaixa.Maquininha.Contains(principal) ? principal : FormaCaixa.Pix;
     }
 
     /// <summary>Contado − esperado: negativo = faltou, positivo = sobrou.</summary>

@@ -16,8 +16,11 @@ public static class ModalidadeVenda
     public const string Salao = "salao", Retirada = "retirada", Delivery = "delivery";
 }
 
-/// <summary>Parte do pagamento. <c>Forma</c> null = forma desconhecida (fica a receber, sem conta).</summary>
-public sealed record ParcelaVenda(string? Forma, decimal Valor, bool FormaConfirmada);
+/// <summary>
+/// Parte do pagamento. <c>Forma</c> null = forma desconhecida (fica a receber, sem conta). <c>Recebida</c> = alguém afirma que o dinheiro
+/// entrou (pagamento conferido no app, pedido pago ou pago online); false = só a forma combinada, que não prova recebimento.
+/// </summary>
+public sealed record ParcelaVenda(string? Forma, decimal Valor, bool FormaConfirmada, bool Recebida = true);
 
 /// <summary>Regras puras da venda: forma de pagamento e composicao.</summary>
 public static class VendaRegras
@@ -44,12 +47,17 @@ public static class VendaRegras
         };
     }
 
+    /// <summary>O texto do pedido diz que o cliente pagou antes, online ("Pago online - Pix", "pix_online", "cartão online"…).</summary>
+    public static bool PagoOnline(string? texto) => Chave(texto).Contains("online");
+
     /// <summary>
     /// Partes da venda. iFood: o pre-pago e recebivel iFood e o cobrado na entrega segue a forma conferida. Pagamentos conferidos
-    /// (app do motoboy) valem sobre o texto do pedido. Mesma forma soma; nada se perde nem duplica.
+    /// (app do motoboy) valem sobre o texto do pedido. Mesma forma soma; nada se perde nem duplica. Sem pagamento conferido, a forma
+    /// do pedido só vale como recebida se o pedido está pago (<paramref name="pedidoPago"/>) ou foi pago online; fora isso é só a
+    /// forma combinada e a parte fica <c>Recebida</c> = false (a receber no Caixa).
     /// </summary>
     public static IReadOnlyList<ParcelaVenda> Composicao(decimal total, string? tipoPagamento,
-        IReadOnlyList<DeliveryPaymentPart>? conferidos, decimal? prepagoIfood)
+        IReadOnlyList<DeliveryPaymentPart>? conferidos, decimal? prepagoIfood, bool pedidoPago = true)
     {
         var partes = new List<ParcelaVenda>();
         if (prepagoIfood is > 0) partes.Add(new ParcelaVenda(Ifood, prepagoIfood.Value, true));
@@ -65,11 +73,11 @@ public static class VendaRegras
             if (resto > 0)
             {
                 var (forma, ok) = prepagoIfood.HasValue ? ((string?)null, false) : Forma(tipoPagamento);
-                partes.Add(new ParcelaVenda(forma, resto, ok));
+                partes.Add(new ParcelaVenda(forma, resto, ok, pedidoPago || PagoOnline(tipoPagamento)));
             }
         }
-        return partes.GroupBy(p => (p.Forma, p.FormaConfirmada))
-            .Select(g => new ParcelaVenda(g.Key.Forma, g.Sum(p => p.Valor), g.Key.FormaConfirmada)).ToList();
+        return partes.GroupBy(p => (p.Forma, p.FormaConfirmada, p.Recebida))
+            .Select(g => new ParcelaVenda(g.Key.Forma, g.Sum(p => p.Valor), g.Key.FormaConfirmada, g.Key.Recebida)).ToList();
     }
 
     private static string Chave(string? texto)
@@ -102,7 +110,7 @@ public static class VendaDoPedido
 SELECT p.id AS Id,
        CASE WHEN replace(btrim(p.value::text), ',', '.') ~ '^[0-9]+(\.[0-9]+)?$' THEN replace(btrim(p.value::text), ',', '.')::numeric END AS Total,
        p.tipo_pagamento::text AS TipoPagamento,
-       to_jsonb(p)->>'origem' AS Origem, (now() AT TIME ZONE 'UTC') AS Agora
+       to_jsonb(p)->>'origem' AS Origem, to_jsonb(p)->>'status_pagamento' AS StatusPagamento, (now() AT TIME ZONE 'UTC') AS Agora
   FROM pedido p WHERE p.id = @pedidoId AND p.id_estabelecimento = @loja;", new { pedidoId, loja }, tx)
             ?? throw new DeliveryDomainException(404, "PEDIDO_NOT_FOUND", "Pedido nao encontrado neste estabelecimento.");
         if (pedido.Origem == APIBack.Model.Delivery.PedidoOrigem.Simulador) return null;
@@ -117,7 +125,8 @@ SELECT s.order_amount AS Total, s.prepaid_amount AS Prepago, s.order_type AS Tip
   FROM ifood_order_links l JOIN ifood_order_snapshots s USING (merchant_id, external_order_id, estabelecimento_id)
  WHERE l.estabelecimento_id = @loja AND l.pedido_id = @pedidoId;", new { loja, pedidoId }, tx) : null;
         var total = ifood?.Total ?? pedido.Total ?? conferidos?.Sum(p => p.Amount) ?? 0m;
-        var partes = VendaRegras.Composicao(total, pedido.TipoPagamento, conferidos, ifood == null ? null : ifood.Prepago ?? 0m);
+        var partes = VendaRegras.Composicao(total, pedido.TipoPagamento, conferidos, ifood == null ? null : ifood.Prepago ?? 0m,
+            DeliveryCompletionRules.IsPaid(pedido.StatusPagamento));
 
         var agora = new DateTimeOffset(DateTime.SpecifyKind(pedido.Agora, DateTimeKind.Utc));
         var fuso = HorarioRegras.ResolverFuso(await AcontecimentoSql.Fuso(c, tx, loja));
@@ -129,7 +138,10 @@ SELECT s.order_amount AS Total, s.prepaid_amount AS Prepago, s.order_type AS Tip
         var pagamentos = new List<object>();
         foreach (var p in partes)
         {
-            var (conta, recebido, pendencia) = p.Forma switch
+            // Só a forma combinada (ninguém confirmou o recebimento) e sem motoboy: não entra na gaveta nem na maquininha como recebido.
+            // Fica a receber, sem conta, e o Caixa recebe de verdade (CaixaService.Receber). Com motoboy vale o acerto dele.
+            var semConfirmacao = !p.Recebida && !motoboyId.HasValue && p.Forma is not (null or VendaRegras.Ifood);
+            var (conta, recebido, pendencia) = semConfirmacao ? ((Guid?)null, false, "pagamento_nao_confirmado") : p.Forma switch
             {
                 // O dinheiro esta com o motoboy, nao na gaveta: entra no acerto (CaixaService.Acertar liquida para a gaveta).
                 VendaRegras.Din when motoboyId.HasValue && contas.Motoboys is { } mb => (mb, false, (string?)null),
@@ -246,6 +258,7 @@ SELECT a.id AS Id, EXISTS (SELECT 1 FROM gestao_acontecimentos e WHERE e.estabel
         public decimal? Total { get; set; }
         public string? TipoPagamento { get; set; }
         public string? Origem { get; set; }
+        public string? StatusPagamento { get; set; }
         public DateTime Agora { get; set; }
     }
 

@@ -21,6 +21,11 @@ namespace APIBack.Service
         public string? Items { get; init; }
         public decimal Value { get; init; }
         public string? TipoPagamento { get; init; }
+        /// <summary>
+        /// Só o que a loja já recebeu: "Pago" quando o dinheiro/Pix/cartão entrou antes do pedido existir (balcão pago na hora).
+        /// Nulo = nasce "Pendente" (como sempre). A forma em <see cref="TipoPagamento"/> é só a combinada e nunca prova recebimento.
+        /// </summary>
+        public string? StatusPagamento { get; init; }
         public decimal? Troco { get; init; }
         public string? Observacoes { get; init; }
         public int PrevisaoMinutos { get; init; }

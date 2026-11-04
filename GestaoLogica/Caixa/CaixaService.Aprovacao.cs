@@ -81,7 +81,10 @@ ON CONFLICT (estabelecimento_id) DO UPDATE SET tolerancia_fechamento = EXCLUDED.
         var row = await Dia(c, loja, dia);
         var situacao = row is null ? "sem_caixa" : row.FechadoEm is not null ? "fechado" : row.EnvioEm is not null ? "aguardando" : "aberto";
         var config = await LerConfig(c, loja);
-        return new OperacaoDoCaixa(dia, await HojeDoCalendario(loja, ct), config.ViradaDoDia, situacao, row?.Turno ?? 1, await Pendentes(c, loja));
+        var estado = await EstadoDaLoja(loja, ct);
+        var aberta = estado is null || estado.AbertoAgora;
+        return new OperacaoDoCaixa(dia, await HojeDoCalendario(loja, ct), config.ViradaDoDia, situacao, row?.Turno ?? 1, await Pendentes(c, loja),
+            aberta, aberta ? null : estado!.MotivoFechada, aberta ? null : CaixaRegras.MensagemLojaFechada(estado!.MotivoFechada, estado.ProximaAbertura));
     }
 
     public async Task<CaixaDoDia> DecidirFechamento(Guid loja, int usuario, GestaoPapeis.Acesso acesso, DateOnly dia, DecisaoDoFechamentoRequest req,

@@ -1,6 +1,8 @@
 using System.Text.Json;
 using APIBack.Acontecimentos;
+using APIBack.DTOs.Configuracoes;
 using APIBack.GestaoLogica.Equipe;
+using APIBack.Repository.Interface;
 using APIBack.Security;
 using Dapper;
 using Npgsql;
@@ -51,8 +53,28 @@ public interface ICaixaService
 }
 
 public sealed partial class CaixaService(NpgsqlDataSource dataSource, IAcontecimentosService livro, TimeProvider? relogio = null,
-    IEquipeService? equipe = null, IChegadaService? chegadas = null) : ICaixaService
+    IEquipeService? equipe = null, IChegadaService? chegadas = null, IHorarioOperacaoRepository? horarios = null) : ICaixaService
 {
+    public const string LojaFechada = "LOJA_FECHADA";
+
+    /// <summary>
+    /// Estado operacional oficial da loja (o mesmo de Configurações > Operação: horário, abertura manual e pausa). Sem o repositório
+    /// (testes que não tratam disso) não há o que consultar e a regra não se aplica.
+    /// </summary>
+    private async Task<StoreOperationDto?> EstadoDaLoja(Guid loja, CancellationToken ct) =>
+        horarios is null ? null : await horarios.ObterEstadoAsync(loja, ct);
+
+    /// <summary>
+    /// Caixa nenhum abre (primeira abertura, novo turno ou reabertura) com a loja fechada operacionalmente. Vale no servidor: a tela só
+    /// orienta. Consulta e procedimentos administrativos (fechar, aprovar, corrigir) não passam por aqui.
+    /// </summary>
+    private async Task ExigirLojaAberta(Guid loja, CancellationToken ct)
+    {
+        var estado = await EstadoDaLoja(loja, ct);
+        if (estado is null || estado.AbertoAgora) return;
+        throw new GestaoException(LojaFechada, CaixaRegras.MensagemLojaFechada(estado.MotivoFechada, estado.ProximaAbertura), 409);
+    }
+
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
     private readonly TimeProvider _relogio = relogio ?? TimeProvider.System;
 
@@ -164,6 +186,7 @@ public sealed partial class CaixaService(NpgsqlDataSource dataSource, IAcontecim
         await using (var c = await dataSource.OpenConnectionAsync(ct))
         {
             if (await Dia(c, loja, hoje) is not null) return (await CarregarDia(loja, hoje, ct))!;
+            await ExigirLojaAberta(loja, ct);
             // Nenhum caixa abre com fechamento esperando o gerente (enviado ou fechado pelo operador sem aprovação).
             await SemPendencia(c, loja);
             var contas = await ContasDoCaixa(c, loja, usuario, ct);
@@ -489,8 +512,18 @@ VALUES (@ajusteId, @loja, @dia, @usuario, @agora, @atual, @ContadoNovo, @motivo,
         var fuso = await livro.Fuso(loja, ct);
         // O dia e a madrugada seguinte: o caixa que passa da meia-noite continua sendo do dia em que abriu.
         var acontecimentos = await livro.LinhaDoTempo(loja, new PeriodoFiltro { Dia = dia, Ate = dia.AddDays(1), Limite = 1000 }, ct);
-        var motoboys = (await livro.Contas(loja, ct)).Where(k => k.Tipo == TipoConta.Recebivel && k.Subtipo == APIBack.GestaoLogica.Vendas.VendaDoPedido.SubtipoMotoboys)
+        var contasDoLivro = await livro.Contas(loja, ct);
+        var motoboys = contasDoLivro.Where(k => k.Tipo == TipoConta.Recebivel && k.Subtipo == APIBack.GestaoLogica.Vendas.VendaDoPedido.SubtipoMotoboys)
             .Select(k => k.Id).ToHashSet();
+        // Para onde foi o dinheiro de cada linha (gaveta física, maquininha, repasse do iFood…) e de que pedido ele veio: o pedido vem do
+        // vínculo do livro (origem da venda; para recebimentos, a venda que a liquidação quitou), nunca do texto da descrição.
+        string DestinoDe(Guid? conta) => conta is not { } k ? "outro" : k == gaveta ? FormaDestino.Gaveta : motoboys.Contains(k) ? FormaDestino.Motoboy
+            : contasDoLivro.FirstOrDefault(x => x.Id == k)?.Subtipo switch { "maquininha" => FormaDestino.Maquininha, "ifood" => FormaDestino.Ifood, _ => "outro" };
+        static int? PedidoDaOrigem(AcontecimentoDto a) =>
+            a.Origem is { Tipo: "pedido" } o && int.TryParse(o.Id, out var id) ? id : null;
+        var pedidoDaVenda = acontecimentos.Where(a => a.Tipo == "venda").Select(a => (a.Id, Pedido: PedidoDaOrigem(a)))
+            .Where(x => x.Pedido.HasValue).ToDictionary(x => x.Id, x => x.Pedido!.Value);
+        var pedidoDoLancamento = await PedidosDosLancamentos(loja, acontecimentos.SelectMany(a => a.Liquidacoes).Select(q => q.LancamentoId).Distinct().ToArray());
         // Fechamento, recolhimento e ajuste não entram na fita; o estorno deles (caixa reaberto) também não.
         var doFechamento = acontecimentos.Where(a => a.Tipo is TipoFechamento or TipoRecolhimento or TipoAjusteFechamento).Select(a => a.Id).ToHashSet();
         var fita = new List<LinhaFita>();
@@ -509,10 +542,14 @@ VALUES (@ajusteId, @loja, @dia, @usuario, @agora, @atual, @ContadoNovo, @motivo,
             if (a.Tipo == "venda")
             {
                 var forma = a.Dados.TryGetProperty("forma", out var fx) && fx.ValueKind == JsonValueKind.String ? fx.GetString()! : null;
+                var partes = a.Dados.TryGetProperty("pagamentos", out var pg) && pg.ValueKind == JsonValueKind.Array
+                    ? pg.EnumerateArray().Select(x => (Forma: x.TryGetProperty("forma", out var f) && f.ValueKind == JsonValueKind.String ? f.GetString() : null,
+                        Valor: x.TryGetProperty("valor", out var v) && v.TryGetDecimal(out var d) ? d : 0m)).ToList()
+                    : new List<(string? Forma, decimal Valor)>();
                 // Dinheiro com o motoboy (6C5) ou sem conta ainda não passou pelo caixa: entra na fita quando for recebido (liquidação).
                 foreach (var l in a.Lancamentos.Where(l => l.Natureza == Natureza.Receita && l.ContaId is { } k && !motoboys.Contains(k)))
                     fita.Add(new LinhaFita($"{a.Id}:{l.Linha}", hora, "venda", a.Descricao,
-                        forma ?? (l.ContaId == gaveta ? FormaCaixa.Dinheiro : FormaCaixa.Pix), l.Valor));
+                        CaixaRegras.FormaDaLinha(DestinoDe(l.ContaId), forma, partes, l.Valor), l.Valor, PedidoId: PedidoDaOrigem(a), Destino: DestinoDe(l.ContaId)));
                 continue;
             }
             // Recebimento no caixa (6C5) em Pix ou cartão: vai para a maquininha; a forma está no fim da descrição.
@@ -521,7 +558,8 @@ VALUES (@ajusteId, @loja, @dia, @usuario, @agora, @atual, @ContadoNovo, @motivo,
                 var formaRecebida = a.Descricao[(a.Descricao.LastIndexOf('·') + 1)..].Trim();
                 if (FormaCaixa.Maquininha.Contains(formaRecebida))
                     foreach (var q in a.Liquidacoes.Where(q => q.CorrigeLiquidacaoId is null))
-                        fita.Add(new LinhaFita($"{a.Id}:q:{q.Id}", hora, "venda", a.Descricao, formaRecebida, q.Valor));
+                        fita.Add(new LinhaFita($"{a.Id}:q:{q.Id}", hora, "venda", a.Descricao, formaRecebida, q.Valor,
+                            PedidoId: pedidoDoLancamento.TryGetValue(q.LancamentoId, out var pm) ? pm : null, Destino: DestinoDe(q.ContaId)));
                 continue;
             }
             var tipo = a.Tipo switch
@@ -535,7 +573,10 @@ VALUES (@ajusteId, @loja, @dia, @usuario, @agora, @atual, @ContadoNovo, @motivo,
             };
             foreach (var l in a.Lancamentos.Where(l => l.ContaId == gaveta))
                 fita.Add(Marca(new LinhaFita($"{a.Id}:{l.Linha}", hora, tipo, a.Descricao, FormaCaixa.Dinheiro,
-                    l.Sentido == Sentido.Entrada ? l.Valor : -l.Valor), a));
+                    l.Sentido == Sentido.Entrada ? l.Valor : -l.Valor,
+                    // Estorno de venda: o pedido é o da venda estornada. Os demais movimentos de gaveta não são de pedido.
+                    PedidoId: a.Correcao == Correcao.Estorno && a.CorrigeId is { } orig && pedidoDaVenda.TryGetValue(orig, out var pe) ? pe : null,
+                    Destino: FormaDestino.Gaveta), a));
             // Algo que estava a pagar (diária, compra) quitado com dinheiro da gaveta: o esperado já conta, a fita mostra.
             var naGaveta = a.Liquidacoes.Where(q => q.ContaId == gaveta).ToList();
             var sentidos = naGaveta.Count == 0 ? null : await SentidosLiquidados(loja, naGaveta);
@@ -545,10 +586,23 @@ VALUES (@ajusteId, @loja, @dia, @usuario, @agora, @atual, @ContadoNovo, @motivo,
                 var valor = entra ? q.Valor : -q.Valor;
                 // Receita recebida em dinheiro (acerto do motoboy, venda que estava a receber) é venda na fita, não suprimento.
                 fita.Add(Marca(new LinhaFita($"{a.Id}:q:{q.Id}", hora, q.CorrigeLiquidacaoId is null ? (entra ? "venda" : "pag") : "canc", a.Descricao,
-                    FormaCaixa.Dinheiro, valor), a));
+                    FormaCaixa.Dinheiro, valor, PedidoId: pedidoDoLancamento.TryGetValue(q.LancamentoId, out var pq) ? pq : null,
+                    Destino: FormaDestino.Gaveta), a));
             }
         }
         return fita;
+    }
+
+    /// <summary>Lançamento liquidado → pedido da venda a que ele pertence (origem da venda no livro). Só vendas de pedido.</summary>
+    private async Task<Dictionary<Guid, int>> PedidosDosLancamentos(Guid loja, Guid[] lancamentos)
+    {
+        if (lancamentos.Length == 0) return new();
+        await using var c = await dataSource.OpenConnectionAsync();
+        return (await c.QueryAsync<(Guid Id, string Pedido)>(@"
+SELECT l.id, a.origem_id::text FROM gestao_lancamentos l
+  JOIN gestao_acontecimentos a ON a.estabelecimento_id = l.estabelecimento_id AND a.id = l.acontecimento_id
+ WHERE l.estabelecimento_id = @loja AND l.id = ANY(@ids) AND a.tipo = 'venda' AND a.origem_tipo = 'pedido' AND a.origem_id ~ '^[0-9]+$'",
+            new { loja, ids = lancamentos })).ToDictionary(x => x.Id, x => int.Parse(x.Pedido));
     }
 
     private async Task<Dictionary<Guid, string>> SentidosLiquidados(Guid loja, IReadOnlyList<LiquidacaoDto> liquidacoes)
