@@ -149,8 +149,8 @@ public class LiquidarRequest
 }
 
 /// <summary>
-/// Recebimento de uma parte do lançamento (venda paga em mais de uma forma). Só módulos do servidor criam este tipo, dentro da
-/// transação que cobre o lançamento inteiro; o corpo HTTP vira sempre <see cref="LiquidarRequest"/> e quita por inteiro.
+/// Recebimento de uma parte do lançamento (venda em mais de uma forma ou recebimento parcial no Caixa). Só módulos do servidor criam
+/// este tipo; o corpo HTTP vira sempre <see cref="LiquidarRequest"/> e quita por inteiro.
 /// </summary>
 public sealed class LiquidarParcialRequest : LiquidarRequest
 {

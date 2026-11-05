@@ -352,6 +352,8 @@ SELECT m.id
             await connection.ExecuteAsync(
                 "UPDATE pedido SET status_pedido = @Cancelado WHERE id = @PedidoId;",
                 new { Cancelado = (int)StatusPedido.Cancelado, PedidoId = pedidoId }, transaction);
+            // Pago antes da entrega: cancelar devolve o adiantamento na mesma transação.
+            await VendaDoPedido.DevolverAdiantamentoAsync(_livro, connection, transaction, estabelecimentoId, pedidoId, actorUserId, motivo);
             await CancelPendingTransfersForPedidoAsync(connection, transaction, estabelecimentoId, pedidoId, "Pedido cancelado.");
 
             if (stop == null || motoboyId <= 0)

@@ -197,4 +197,68 @@ public partial class DeliverySyncDatabaseTests
         Assert.Empty(await caixa.AReceberNoCaixa(db.StoreId, default));
         Assert.Equal(antes + 64m, Gaveta(await livro.Contas(db.StoreId, default)));
     }
+
+    private static decimal Adiantamentos(IReadOnlyList<ContaDto> contas) => contas.Single(k => k.Nome == "Adiantamentos de clientes").Saldo;
+
+    [DeliveryDatabaseFact]
+    public async Task Adiantamento_entra_no_ato_sem_faturar_e_a_venda_nao_conta_o_dinheiro_de_novo()
+    {
+        await using var db = await VendaDatabase();
+        var livro = Livro(db.Source);
+        var caixa = new CaixaService(db.Source, livro);
+        var operador = GestaoPapeis.Resolver((m, _) => m is "Caixa", false);
+        var hoje = await caixa.Hoje(db.StoreId, default);
+        await db.Execute("UPDATE pedido SET status_pedido = @s, status_pagamento = 'Pendente' WHERE id = 24", new { s = (int)APIBack.Model.Enum.StatusPedido.Pendente });
+        var antes = Gaveta(await livro.Contas(db.StoreId, default));
+
+        // Recebeu antes de entregar: entrou na gaveta, deve ao cliente e ainda não é venda. Reenvio não lança de novo.
+        var dia = await caixa.ReceberAntecipado(db.StoreId, 7, operador, new RecebimentoAntecipadoRequest("a1", hoje, 24, FormaCaixa.Dinheiro, 100m), default);
+        await caixa.ReceberAntecipado(db.StoreId, 7, operador, new RecebimentoAntecipadoRequest("a1", hoje, 24, FormaCaixa.Dinheiro, 100m), default);
+        var contas = await livro.Contas(db.StoreId, default);
+        Assert.Equal(antes + 64m, Gaveta(contas));
+        Assert.Equal(-64m, Adiantamentos(contas));
+        Assert.Equal(0, await Vendas(db));
+        Assert.Contains(dia.Fita, l => l.Tipo == "adiant" && l.Valor == 64m && l.PedidoId == 24 && l.Destino == FormaDestino.Gaveta);
+
+        // A conclusão fatura e zera o adiantamento; a gaveta não muda.
+        await using (var c = await db.Source.OpenConnectionAsync())
+        {
+            await using var tx = await c.BeginTransactionAsync();
+            await VendaDoPedido.PublicarAsync(livro, c, tx, db.StoreId, 24, 7, ModalidadeVenda.Delivery);
+            await tx.CommitAsync();
+        }
+        contas = await livro.Contas(db.StoreId, default);
+        Assert.Equal(antes + 64m, Gaveta(contas));
+        Assert.Equal(0m, Adiantamentos(contas));
+        Assert.Equal(1, await Vendas(db));
+        Assert.Empty(await caixa.AReceberNoCaixa(db.StoreId, default));
+    }
+
+    [DeliveryDatabaseFact]
+    public async Task Cancelar_pedido_pago_antes_devolve_o_adiantamento()
+    {
+        await using var db = await VendaDatabase();
+        var livro = Livro(db.Source);
+        var caixa = new CaixaService(db.Source, livro);
+        var operador = GestaoPapeis.Resolver((m, _) => m is "Caixa", false);
+        var hoje = await caixa.Hoje(db.StoreId, default);
+        await db.Execute("UPDATE pedido SET status_pedido = @s, status_pagamento = 'Pendente' WHERE id = 24", new { s = (int)APIBack.Model.Enum.StatusPedido.Pendente });
+        var antes = Gaveta(await livro.Contas(db.StoreId, default));
+        await caixa.ReceberAntecipado(db.StoreId, 7, operador, new RecebimentoAntecipadoRequest("a2", hoje, 24, FormaCaixa.Dinheiro, 64m), default);
+
+        await using (var c = await db.Source.OpenConnectionAsync())
+        {
+            await using var tx = await c.BeginTransactionAsync();
+            Assert.NotNull(await VendaDoPedido.DevolverAdiantamentoAsync(livro, c, tx, db.StoreId, 24, 7, "cliente desistiu"));
+            // Cancelar de novo não devolve duas vezes.
+            Assert.Null(await VendaDoPedido.DevolverAdiantamentoAsync(livro, c, tx, db.StoreId, 24, 7, "cliente desistiu"));
+            await tx.CommitAsync();
+        }
+        var contas = await livro.Contas(db.StoreId, default);
+        Assert.Equal(antes, Gaveta(contas));
+        Assert.Equal(0m, Adiantamentos(contas));
+        Assert.Equal(0, await Vendas(db));
+        var d = (await caixa.CarregarDia(db.StoreId, hoje, default))!;
+        Assert.Contains(d.Fita, l => l.Tipo == "canc" && l.Valor == -64m && l.PedidoId == 24);
+    }
 }

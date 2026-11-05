@@ -62,6 +62,55 @@ public class GestaoCaixaPendenciasIndependentesTests
     public void SoPedidoAindaNaLoja(int status) => Assert.Equal("PEDIDO_NAO_ABERTO", Barreira(status)!.Codigo);
 
     [Fact]
+    public void AdiantamentoViraVendaSemNovaEntrada()
+    {
+        var p = Assert.Single(VendaRegras.ComAdiantamento(50m, "din", 50m));
+        Assert.True(p.Adiantada);
+        Assert.True(p.Recebida);
+        Assert.Equal(50m, p.Valor);
+    }
+
+    [Fact]
+    public void PedidoQueCresceuDepoisDoAdiantamentoDeixaADiferencaAReceber()
+    {
+        var partes = VendaRegras.ComAdiantamento(60m, "pix", 50m);
+        Assert.Equal(2, partes.Count);
+        Assert.Equal(50m, partes[0].Valor);
+        Assert.True(partes[0].Adiantada);
+        Assert.Equal(10m, partes[1].Valor);
+        Assert.False(partes[1].Recebida);
+        Assert.False(partes[1].Adiantada);
+    }
+
+    [Fact]
+    public void PedidoQueDiminuiuNaoFaturaMaisQueOTotal() =>
+        Assert.Equal(40m, Assert.Single(VendaRegras.ComAdiantamento(40m, "din", 50m)).Valor);
+
+    [Fact]
+    public void MaquininhaContaOAdiantamentoUmaVezSo()
+    {
+        // Recebeu 50 em Pix antes, concluiu no mesmo turno: a maquininha só viu 50.
+        var fita = new[]
+        {
+            new LinhaFita("a", "10:00", "adiant", "Pago antes", "pix", 50m, Destino: FormaDestino.Maquininha),
+            new LinhaFita("v", "11:00", "venda", "Pedido", "pix", 50m, Destino: FormaDestino.Adiantamento),
+            new LinhaFita("o", "11:30", "venda", "Outro", "pix", 30m, Destino: FormaDestino.Maquininha),
+        };
+        Assert.Equal(80m, CaixaRegras.MaquininhaEsperada(fita, "pix"));
+    }
+
+    [Fact]
+    public void AdiantamentoDevolvidoSaiDaMaquininha()
+    {
+        var fita = new[]
+        {
+            new LinhaFita("a", "10:00", "adiant", "Pago antes", "deb", 50m, Destino: FormaDestino.Maquininha),
+            new LinhaFita("c", "10:30", "canc", "Cancelado", "deb", -50m, Destino: FormaDestino.Maquininha),
+        };
+        Assert.Equal(0m, CaixaRegras.MaquininhaEsperada(fita, "deb"));
+    }
+
+    [Fact]
     public void PagoAntesNaoFicaComOMotoboy() => Assert.True(VendaRegras.PagoAntesDaEntrega("Pago", null, ifood: false));
 
     [Fact]

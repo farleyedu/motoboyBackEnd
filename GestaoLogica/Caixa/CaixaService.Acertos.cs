@@ -29,6 +29,8 @@ public sealed partial class CaixaService
         public string? Forma { get; set; }
         public Guid LancamentoId { get; set; }
         public decimal Liquido { get; set; }
+        /// <summary>O que já entrou por esta linha (e pelas correções dela). Recebimento parcial deixa o resto como saldo.</summary>
+        public decimal JaLiquidado { get; set; }
         public string Status { get; set; } = "";
         public string? ContaTipo { get; set; }
         public string? ContaSubtipo { get; set; }
@@ -336,12 +338,23 @@ VALUES (@id, @loja, @pedido, @venda, @dinheiro, @integracao, @cartao, @ifood, @c
             if (forma == FormaCaixa.Dinheiro && (partes[0].ValorRecebido ?? req.ValorRecebido) < total)
                 throw Invalido($"Valor menor que o que falta receber (R$ {total:N2}).");
             foreach (var l in linhas)
-                await livro.Liquidar(c, tx, loja, usuario, new LiquidarRequest
-                {
-                    ChaveIdempotencia = $"recebimento:{chave}:{l.LancamentoId}", LancamentoId = l.LancamentoId, ContaId = DestinoDe(forma), DataPagamento = hoje,
-                    // A forma vai no fim da descrição: a fita e a conferência da maquininha leem dali (a liquidação não tem dados próprios).
-                    Descricao = $"Pedido #{pedido} recebido no caixa · {forma}",
-                }, ct);
+            {
+                // A forma vai no fim da descrição: a fita e a conferência da maquininha leem dali (a liquidação não tem dados próprios).
+                var descricao = $"Pedido #{pedido} recebido no caixa · {forma}";
+                var chaveDaLinha = $"recebimento:{chave}:{l.LancamentoId}";
+                // Linha que já recebeu uma parte: quita só o saldo. A quitação inteira recusaria (ou cobraria de novo o que já entrou).
+                await livro.Liquidar(c, tx, loja, usuario, l.JaLiquidado != 0
+                    ? new LiquidarParcialRequest
+                    {
+                        ChaveIdempotencia = chaveDaLinha, LancamentoId = l.LancamentoId, ContaId = DestinoDe(forma), DataPagamento = hoje,
+                        Descricao = descricao, Valor = l.Liquido,
+                    }
+                    : new LiquidarRequest
+                    {
+                        ChaveIdempotencia = chaveDaLinha, LancamentoId = l.LancamentoId, ContaId = DestinoDe(forma), DataPagamento = hoje,
+                        Descricao = descricao,
+                    }, ct);
+            }
             await tx.CommitAsync(ct);
             return (await CarregarDia(loja, hoje, ct))!;
         }
@@ -409,13 +422,18 @@ VALUES (@id, @loja, @pedido, @venda, @dinheiro, @integracao, @cartao, @ifood, @c
         }).ToList();
     }
 
-    /// <summary>Linhas a receber de venda de pedido sem motoboy, sem conta ou na gaveta (forma desconhecida, caixa fechado na hora).</summary>
+    /// <summary>
+    /// Linhas a receber de venda de pedido sem motoboy, sem conta ou na gaveta (forma desconhecida, caixa fechado na hora). <c>Liquido</c>
+    /// volta como o saldo da linha. Filtra pelo status gravado, não pelo da view: a view chama de "recebido" a linha com qualquer liquidação,
+    /// e o que define se ainda falta é o saldo. Dinheiro já quitado por inteiro sai pelo saldo zero.
+    /// </summary>
     private async Task<List<LinhaVenda>> LinhasAReceber(NpgsqlConnection c, NpgsqlTransaction? tx, Guid loja, Guid? gaveta, string? pedido) =>
         (await c.QueryAsync<LinhaVenda>(SqlVendas + @"
-   AND a.dados->>'motoboyId' IS NULL AND s.status = 'a_receber' AND (s.conta_id IS NULL OR s.conta_id = @gaveta)
+   AND a.dados->>'motoboyId' IS NULL AND s.status_registro = 'a_receber' AND (s.conta_id IS NULL OR s.conta_id = @gaveta)
    AND NOT coalesce(a.dados->'pendencias' @> '[""pago_antes_sem_caixa""]'::jsonb, false)
    AND (CAST(@pedido AS text) IS NULL OR a.origem_id = @pedido)
  ORDER BY a.data_fato, s.linha", new { loja, desde = _relogio.GetUtcNow().AddDays(-DiasDePendencia), gaveta, pedido }, tx))
+            .Select(l => { l.Liquido = CaixaRegras.SaldoDaLinha(l.Liquido, l.JaLiquidado); return l; })
             .Where(l => l.Liquido > 0).ToList();
 
     /// <summary>Linhas de receita das vendas de pedido não estornadas dos últimos dias, com a conta do livro.</summary>
@@ -425,6 +443,9 @@ SELECT a.id AS VendaId, a.origem_id AS PedidoTexto, a.data_fato AS Em, a.descric
        s.id AS LancamentoId,
        s.valor + coalesce((SELECT sum(k.valor) FROM gestao_lancamentos k WHERE k.estabelecimento_id = s.estabelecimento_id
                            AND k.corrige_lancamento_id = s.id), 0) AS Liquido,
+       coalesce((SELECT sum(q.valor) FROM gestao_liquidacoes q WHERE q.estabelecimento_id = s.estabelecimento_id
+                  AND (q.lancamento_id = s.id OR q.lancamento_id IN (SELECT k.id FROM gestao_lancamentos k
+                       WHERE k.estabelecimento_id = s.estabelecimento_id AND k.corrige_lancamento_id = s.id))), 0) AS JaLiquidado,
        s.status AS Status, g.tipo AS ContaTipo, g.subtipo AS ContaSubtipo
   FROM gestao_acontecimentos a
   JOIN gestao_lancamentos_situacao s ON s.estabelecimento_id = a.estabelecimento_id AND s.acontecimento_id = a.id

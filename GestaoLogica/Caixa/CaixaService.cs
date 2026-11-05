@@ -43,6 +43,8 @@ public interface ICaixaService
     Task<CaixaDoDia> Receber(Guid loja, int usuario, GestaoPapeis.Acesso acesso, RecebimentoRequest req, CancellationToken ct);
     /// <summary>Paga no Caixa um pedido ainda em operação, sem concluí-lo (CaixaService.Antecipado.cs).</summary>
     Task<CaixaDoDia> ReceberAntecipado(Guid loja, int usuario, GestaoPapeis.Acesso acesso, RecebimentoAntecipadoRequest req, CancellationToken ct);
+    /// <summary>Venda de balcão que segue o fluxo já paga: o dinheiro entra no livro no ato, como adiantamento.</summary>
+    Task RegistrarAdiantamentoDoBalcao(Guid loja, int usuario, int pedidoId, string forma, decimal total, DateOnly hoje, CancellationToken ct);
     // Aprovação do fechamento pelo gerente (CaixaService.Aprovacao.cs).
     Task<ConfigDoCaixa> Config(Guid loja, CancellationToken ct);
     Task<ConfigDoCaixa> SalvarConfig(Guid loja, int usuario, SalvarConfigDoCaixaRequest req, CancellationToken ct);
@@ -368,7 +370,7 @@ SELECT s.id, a.id, coalesce(s.descricao, a.descricao),
         var (fica, cofre) = CaixaRegras.Repartir(contado, req.Fica);
         var janela = await JanelaDoCaixa(c, loja, (await Dia(c, loja, hoje))!, ct);
         var fita = await Fita(loja, hoje, contas.Gaveta, ct, inicio: janela.Inicio, fim: janela.Fim);
-        var maqEsperado = FormaCaixa.Maquininha.ToDictionary(f => f, f => CaixaRegras.R2(fita.Where(l => l.Tipo == "venda" && l.Forma == f).Sum(l => l.Valor)));
+        var maqEsperado = FormaCaixa.Maquininha.ToDictionary(f => f, f => CaixaRegras.MaquininhaEsperada(fita, f));
         var maquininha = FormaCaixa.Maquininha.ToDictionary(f => f, f => CaixaRegras.R2(req.Maquininha?.GetValueOrDefault(f) ?? 0));
         var justificativa = diferenca == 0 ? null : Cortar(req.Justificativa!.Trim(), 300);
         if (acesso.Papel != GestaoPapeis.Gerente && Math.Abs(diferenca) > (await LerConfig(c, loja)).ToleranciaFechamento)
@@ -519,12 +521,18 @@ VALUES (@ajusteId, @loja, @dia, @usuario, @agora, @atual, @ContadoNovo, @motivo,
             .Select(k => k.Id).ToHashSet();
         // Para onde foi o dinheiro de cada linha (gaveta física, maquininha, repasse do iFood…) e de que pedido ele veio: o pedido vem do
         // vínculo do livro (origem da venda; para recebimentos, a venda que a liquidação quitou), nunca do texto da descrição.
+        var adiantamentos = contasDoLivro.Where(k => k.Tipo == TipoConta.Recebivel && k.Subtipo == APIBack.GestaoLogica.Vendas.VendaDoPedido.SubtipoAdiantamentos)
+            .Select(k => k.Id).ToHashSet();
         string DestinoDe(Guid? conta) => conta is not { } k ? "outro" : k == gaveta ? FormaDestino.Gaveta : motoboys.Contains(k) ? FormaDestino.Motoboy
+            : adiantamentos.Contains(k) ? FormaDestino.Adiantamento
             : contasDoLivro.FirstOrDefault(x => x.Id == k)?.Subtipo switch { "maquininha" => FormaDestino.Maquininha, "ifood" => FormaDestino.Ifood, _ => "outro" };
         static int? PedidoDaOrigem(AcontecimentoDto a) =>
             a.Origem is { Tipo: "pedido" } o && int.TryParse(o.Id, out var id) ? id : null;
         var pedidoDaVenda = acontecimentos.Where(a => a.Tipo == "venda").Select(a => (a.Id, Pedido: PedidoDaOrigem(a)))
             .Where(x => x.Pedido.HasValue).ToDictionary(x => x.Id, x => x.Pedido!.Value);
+        // Adiantamento do dia: o estorno dele (pedido cancelado) precisa saber de que pedido e de que forma veio.
+        var doAdiantamento = acontecimentos.Where(a => a.Tipo == APIBack.GestaoLogica.Vendas.VendaDoPedido.TipoAdiantamento)
+            .ToDictionary(a => a.Id, a => (Pedido: PedidoDaOrigem(a), Forma: a.Dados.TryGetProperty("forma", out var f) ? f.GetString() ?? FormaCaixa.Dinheiro : FormaCaixa.Dinheiro));
         var pedidoDoLancamento = await PedidosDosLancamentos(loja, acontecimentos.SelectMany(a => a.Liquidacoes).Select(q => q.LancamentoId).Distinct().ToArray());
         // Fechamento, recolhimento e ajuste não entram na fita; o estorno deles (caixa reaberto) também não.
         var doFechamento = acontecimentos.Where(a => a.Tipo is TipoFechamento or TipoRecolhimento or TipoAjusteFechamento).Select(a => a.Id).ToHashSet();
@@ -552,6 +560,21 @@ VALUES (@ajusteId, @loja, @dia, @usuario, @agora, @atual, @ContadoNovo, @motivo,
                 foreach (var l in a.Lancamentos.Where(l => l.Natureza == Natureza.Receita && l.ContaId is { } k && !motoboys.Contains(k)))
                     fita.Add(new LinhaFita($"{a.Id}:{l.Linha}", hora, "venda", a.Descricao,
                         CaixaRegras.FormaDaLinha(DestinoDe(l.ContaId), forma, partes, l.Valor), l.Valor, PedidoId: PedidoDaOrigem(a), Destino: DestinoDe(l.ContaId)));
+                continue;
+            }
+            // Pago antes da entrega: o dinheiro entrou, mas não é venda. A venda aparece na conclusão, com o destino "adiantamento".
+            if (a.Tipo == APIBack.GestaoLogica.Vendas.VendaDoPedido.TipoAdiantamento)
+            {
+                foreach (var l in a.Lancamentos.Where(l => l.Sentido == Sentido.Entrada))
+                    fita.Add(Marca(new LinhaFita($"{a.Id}:{l.Linha}", hora, "adiant", a.Descricao, doAdiantamento[a.Id].Forma, l.Valor,
+                        PedidoId: doAdiantamento[a.Id].Pedido, Destino: DestinoDe(l.ContaId)), a));
+                continue;
+            }
+            if (a.Correcao == Correcao.Estorno && a.CorrigeId is { } adiantado && doAdiantamento.TryGetValue(adiantado, out var origem))
+            {
+                foreach (var l in a.Lancamentos.Where(l => l.Sentido == Sentido.Entrada))
+                    fita.Add(Marca(new LinhaFita($"{a.Id}:{l.Linha}", hora, "canc", a.Descricao, origem.Forma, l.Valor,
+                        PedidoId: origem.Pedido, Destino: DestinoDe(l.ContaId)), a));
                 continue;
             }
             // Recebimento no caixa (6C5) em Pix ou cartão: vai para a maquininha; a forma está no fim da descrição.

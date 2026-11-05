@@ -20,7 +20,7 @@ public static class ModalidadeVenda
 /// Parte do pagamento. <c>Forma</c> null = forma desconhecida (fica a receber, sem conta). <c>Recebida</c> = alguém afirma que o dinheiro
 /// entrou (pagamento conferido no app, pedido pago ou pago online); false = só a forma combinada, que não prova recebimento.
 /// </summary>
-public sealed record ParcelaVenda(string? Forma, decimal Valor, bool FormaConfirmada, bool Recebida = true);
+public sealed record ParcelaVenda(string? Forma, decimal Valor, bool FormaConfirmada, bool Recebida = true, bool Adiantada = false);
 
 /// <summary>Regras puras da venda: forma de pagamento e composicao.</summary>
 public static class VendaRegras
@@ -55,6 +55,18 @@ public static class VendaRegras
     /// então a linha não pode voltar a "A receber" (seria cobrar de novo). Fica fora da cobrança até alguém reconciliar.
     /// </summary>
     public const string PagoAntesSemCaixa = "pago_antes_sem_caixa";
+
+    /// <summary>
+    /// Venda de pedido pago antes da entrega: o que foi adiantado já entrou na gaveta ou na maquininha, então a parcela só tira o valor de
+    /// "Adiantamentos de clientes" e vira faturamento. Se o pedido cresceu depois, a diferença fica a receber; se diminuiu, a venda vale o
+    /// total do pedido e a sobra continua devida ao cliente na conta de adiantamentos.
+    /// </summary>
+    public static IReadOnlyList<ParcelaVenda> ComAdiantamento(decimal total, string? forma, decimal adiantado)
+    {
+        var partes = new List<ParcelaVenda> { new(forma, Math.Min(total, adiantado), true, true, true) };
+        if (total > adiantado) partes.Add(new ParcelaVenda(forma, total - adiantado, true, false));
+        return partes;
+    }
 
     /// <summary>
     /// O pedido chegou à conclusão já pago e ninguém recebeu nada na entrega: quem entrega não está com esse dinheiro, nem presta contas
@@ -138,8 +150,11 @@ SELECT s.order_amount AS Total, s.prepaid_amount AS Prepago, s.order_type AS Tip
   FROM ifood_order_links l JOIN ifood_order_snapshots s USING (merchant_id, external_order_id, estabelecimento_id)
  WHERE l.estabelecimento_id = @loja AND l.pedido_id = @pedidoId;", new { loja, pedidoId }, tx) : null;
         var total = ifood?.Total ?? pedido.Total ?? conferidos?.Sum(p => p.Amount) ?? 0m;
-        var partes = VendaRegras.Composicao(total, pedido.TipoPagamento, conferidos, ifood == null ? null : ifood.Prepago ?? 0m,
-            DeliveryCompletionRules.IsPaid(pedido.StatusPagamento));
+        var adiantamento = ifood == null ? await AdiantamentoAtual(c, tx, loja, pedidoId) : null;
+        var partes = adiantamento != null
+            ? VendaRegras.ComAdiantamento(total, adiantamento.Forma, adiantamento.Valor)
+            : VendaRegras.Composicao(total, pedido.TipoPagamento, conferidos, ifood == null ? null : ifood.Prepago ?? 0m,
+                DeliveryCompletionRules.IsPaid(pedido.StatusPagamento));
 
         var pagoAntes = VendaRegras.PagoAntesDaEntrega(pedido.StatusPagamento, conferidos, ifood != null);
         // Dinheiro já recebido antes não está com o motoboy: não entra na conta dele nem no acerto.
@@ -150,6 +165,7 @@ SELECT s.order_amount AS Total, s.prepaid_amount AS Prepago, s.order_type AS Tip
         var contas = await Contas(c, tx, loja, hoje);
         var pendencias = new List<string>();
         if (total <= 0) pendencias.Add("valor_desconhecido");
+        if (adiantamento != null && adiantamento.Valor > total) pendencias.Add("adiantamento_a_mais");
         var lancamentos = new List<LancamentoRequest>();
         var pagamentos = new List<object>();
         foreach (var p in partes)
@@ -157,7 +173,8 @@ SELECT s.order_amount AS Total, s.prepaid_amount AS Prepago, s.order_type AS Tip
             // Só a forma combinada (ninguém confirmou o recebimento) e sem motoboy: não entra na gaveta nem na maquininha como recebido.
             // Fica a receber, sem conta, e o Caixa recebe de verdade (CaixaService.Receber). Com motoboy vale o acerto dele.
             var semConfirmacao = !p.Recebida && !motoboyId.HasValue && p.Forma is not (null or VendaRegras.Ifood);
-            var (conta, recebido, pendencia) = semConfirmacao ? ((Guid?)null, false, "pagamento_nao_confirmado") : p.Forma switch
+            var (conta, recebido, pendencia) = semConfirmacao ? ((Guid?)null, false, "pagamento_nao_confirmado")
+                : p.Adiantada ? (contas.Adiantamentos, contas.Adiantamentos.HasValue, contas.Adiantamentos == null ? "sem_conta_adiantamentos" : null) : p.Forma switch
             {
                 // O dinheiro esta com o motoboy, nao na gaveta: entra no acerto (CaixaService.Acertar liquida para a gaveta).
                 VendaRegras.Din when dinheiroComMotoboy && contas.Motoboys is { } mb => (mb, false, (string?)null),
@@ -230,6 +247,48 @@ SELECT s.order_amount AS Total, s.prepaid_amount AS Prepago, s.order_type AS Tip
         }
     }
 
+    /// <summary>
+    /// Pedido pago antes da entrega foi cancelado: o adiantamento volta (estorno no livro), e a gaveta ou a maquininha deixam de esperar esse
+    /// valor. Sem adiantamento, ou já estornado: não faz nada.
+    /// </summary>
+    public static async Task<Guid?> DevolverAdiantamentoAsync(IAcontecimentosService livro, NpgsqlConnection c, NpgsqlTransaction tx, Guid loja,
+        int pedidoId, int responsavelId, string? motivo, CancellationToken ct = default)
+    {
+        if (!await Existe(c, tx, "gestao_acontecimentos")) return null;
+        await AcontecimentoSql.TravarChave(c, tx, loja, ChaveAdiantamento(pedidoId));
+        if (await AdiantamentoAtual(c, tx, loja, pedidoId) is not { } adiantamento) return null;
+        try
+        {
+            var r = await livro.Estornar(c, tx, loja, responsavelId, adiantamento.Id, new EstornoRequest
+            {
+                ChaveIdempotencia = $"estorno:{ChaveAdiantamento(pedidoId)}", ConfirmacaoHumana = true,
+                Motivo = string.IsNullOrWhiteSpace(motivo) ? "Pedido cancelado" : motivo.Trim(),
+            }, ct);
+            return r.Id;
+        }
+        catch (GestaoException ex)
+        {
+            throw new DeliveryDomainException(ex.Status, "DEVOLUCAO_NAO_REGISTRADA", "A devolucao do adiantamento nao foi registrada: " + ex.Message);
+        }
+    }
+
+    /// <summary>O adiantamento do pedido ainda de pé (não estornado), ou nulo.</summary>
+    private static Task<AdiantamentoRow?> AdiantamentoAtual(NpgsqlConnection c, NpgsqlTransaction tx, Guid loja, int pedidoId) =>
+        c.QuerySingleOrDefaultAsync<AdiantamentoRow?>(@"
+SELECT a.id AS Id, a.dados->>'forma' AS Forma, (a.dados->>'valor')::numeric AS Valor
+  FROM gestao_acontecimentos a
+ WHERE a.estabelecimento_id = @loja AND a.tipo = @tipo AND a.origem_tipo = 'pedido' AND a.origem_id = @id AND a.corrige_id IS NULL
+   AND NOT EXISTS (SELECT 1 FROM gestao_acontecimentos e WHERE e.estabelecimento_id = a.estabelecimento_id
+                   AND e.corrige_id = a.id AND e.correcao = 'estorno');",
+            new { loja, tipo = TipoAdiantamento, id = pedidoId.ToString() }, tx);
+
+    private sealed class AdiantamentoRow
+    {
+        public Guid Id { get; set; }
+        public string? Forma { get; set; }
+        public decimal Valor { get; set; }
+    }
+
     private static Task<VendaRow?> VendaAtual(NpgsqlConnection c, NpgsqlTransaction tx, Guid loja, int pedidoId) =>
         c.QuerySingleOrDefaultAsync<VendaRow?>(@"
 SELECT a.id AS Id, EXISTS (SELECT 1 FROM gestao_acontecimentos e WHERE e.estabelecimento_id = a.estabelecimento_id
@@ -241,7 +300,15 @@ SELECT a.id AS Id, EXISTS (SELECT 1 FROM gestao_acontecimentos e WHERE e.estabel
     /// <summary>Subtipo da conta recebivel onde fica o dinheiro das entregas ate o acerto do motoboy (criada na abertura do caixa).</summary>
     public const string SubtipoMotoboys = "motoboys";
 
-    private static async Task<(Guid? Gaveta, bool CaixaAberto, Guid? Maquininha, Guid? Ifood, Guid? Motoboys)> Contas(NpgsqlConnection c,
+    /// <summary>
+    /// Conta do que o cliente pagou antes da entrega. Fica negativa enquanto o pedido não conclui: é dinheiro que já entrou, mas ainda é devido
+    /// ao cliente. Não é faturamento; vira venda na conclusão e volta ao cliente no cancelamento.
+    /// </summary>
+    public const string SubtipoAdiantamentos = "adiantamentos", TipoAdiantamento = "adiantamento_cliente";
+
+    public static string ChaveAdiantamento(int pedidoId) => $"adiantamento:{pedidoId}";
+
+    private static async Task<(Guid? Gaveta, bool CaixaAberto, Guid? Maquininha, Guid? Ifood, Guid? Motoboys, Guid? Adiantamentos)> Contas(NpgsqlConnection c,
         NpgsqlTransaction tx, Guid loja, DateOnly hoje)
     {
         Guid? gaveta = null;
@@ -258,7 +325,7 @@ SELECT a.id AS Id, EXISTS (SELECT 1 FROM gestao_acontecimentos e WHERE e.estabel
         async Task<Guid?> Recebivel(string subtipo) => await c.ExecuteScalarAsync<Guid?>(@"SELECT id FROM gestao_contas
  WHERE estabelecimento_id = @loja AND tipo = 'recebivel' AND subtipo = @subtipo AND ativo ORDER BY criado_em, id LIMIT 1;",
             new { loja, subtipo }, tx);
-        return (gaveta, aberto, await Recebivel("maquininha"), await Recebivel("ifood"), await Recebivel(SubtipoMotoboys));
+        return (gaveta, aberto, await Recebivel("maquininha"), await Recebivel("ifood"), await Recebivel(SubtipoMotoboys), await Recebivel(SubtipoAdiantamentos));
     }
 
     private static Task<bool> Existe(NpgsqlConnection c, NpgsqlTransaction tx, string tabela) =>

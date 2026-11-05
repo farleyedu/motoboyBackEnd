@@ -64,10 +64,20 @@ public static class CaixaRegras
     {
         if (destino == FormaDestino.Gaveta) return FormaCaixa.Dinheiro;
         if (destino == FormaDestino.Ifood) return FormaCaixa.Ifood;
+        if (destino == FormaDestino.Adiantamento) return principal ?? FormaCaixa.Dinheiro;
         var daParte = partes.FirstOrDefault(x => x.Forma is not null && FormaCaixa.Maquininha.Contains(x.Forma) && x.Valor == valor).Forma;
         if (daParte is not null) return daParte;
         return principal is not null && FormaCaixa.Maquininha.Contains(principal) ? principal : FormaCaixa.Pix;
     }
+
+    /// <summary>
+    /// O que a maquininha deve mostrar nesta forma: vendas e adiantamentos do turno, menos o adiantamento devolvido. A venda que veio de um
+    /// adiantamento não conta: o dinheiro já tinha entrado.
+    /// </summary>
+    public static decimal MaquininhaEsperada(IEnumerable<LinhaFita> fita, string forma) => R2(fita.Where(l => l.Forma == forma && (
+        (l.Tipo == "venda" && l.Destino != FormaDestino.Adiantamento)
+        || l.Tipo == "adiant"
+        || (l.Tipo == "canc" && l.Destino == FormaDestino.Maquininha))).Sum(l => l.Valor));
 
     /// <summary>Contado − esperado: negativo = faltou, positivo = sobrou.</summary>
     public static decimal Diferenca(decimal esperado, decimal contado) => R2(contado - esperado);
@@ -105,6 +115,9 @@ public static class CaixaRegras
     public static bool MaquininhaConfere(decimal digitado, decimal esperado) => Math.Abs(digitado - esperado) < 0.01m;
 
     public static decimal R2(decimal v) => Math.Round(v, 2, MidpointRounding.AwayFromZero);
+
+    /// <summary>O que ainda falta numa linha de venda: o valor líquido menos o que já entrou. Nunca negativo.</summary>
+    public static decimal SaldoDaLinha(decimal liquido, decimal jaLiquidado) => Math.Max(0m, R2(liquido - jaLiquidado));
 
     private static GestaoException Invalido(string m) => new("CAMPO_INVALIDO", m, 422);
 }

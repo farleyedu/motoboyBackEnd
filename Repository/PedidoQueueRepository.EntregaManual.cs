@@ -91,6 +91,7 @@ UPDATE pedido
         await connection.ExecuteAsync("UPDATE pedido SET status_pedido = @Cancelado WHERE id = @PedidoId;",
             new { Cancelado = (int)StatusPedido.Cancelado, PedidoId = pedidoId }, transaction);
         await VendaDoPedido.EstornarAsync(_livro, connection, transaction, estabelecimentoId, pedidoId, actorUserId, motivo.Trim());
+        await VendaDoPedido.DevolverAdiantamentoAsync(_livro, connection, transaction, estabelecimentoId, pedidoId, actorUserId, motivo);
         await PublishOrderEventAsync(connection, transaction, estabelecimentoId, actorUserId, pedidoId,
             "canceled_after_completion", "operador", motivo.Trim());
         await transaction.CommitAsync();

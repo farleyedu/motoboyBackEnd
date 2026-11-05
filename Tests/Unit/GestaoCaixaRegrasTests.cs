@@ -7,6 +7,14 @@ namespace APIBack.Tests.Unit;
 /// <summary>Contagem por cédula, diferença, troco que fica, movimentos de gaveta e justificativa.</summary>
 public class GestaoCaixaRegrasTests
 {
+    [Theory]
+    [InlineData(64, 0, 64)] // nada recebido
+    [InlineData(64, 20, 44)] // recebeu uma parte: o resto continua a receber
+    [InlineData(64, 64, 0)] // quitada: sai da lista
+    [InlineData(64, 70, 0)] // nunca fica negativo
+    public void Saldo_da_linha_desconta_o_que_ja_entrou(decimal liquido, decimal ja, decimal saldo) =>
+        Assert.Equal(saldo, CaixaRegras.SaldoDaLinha(liquido, ja));
+
     [Fact]
     public void Conta_cedulas_e_moedas_e_recusa_contagem_invalida()
     {

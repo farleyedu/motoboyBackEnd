@@ -414,7 +414,7 @@ public static class AcontecimentoRegras
         if (original.Estornado) throw new GestaoException("JA_ESTORNADO", "Acontecimento estornado não se paga.", 409);
         if (contaDoAlvo?.Tipo == TipoConta.CartaoEmpresa)
             throw Invalido("Compra no cartão da empresa se paga pela fatura inteira.");
-        var data = DataPagamento(r.DataPagamento, conta, fuso, agora);
+        var data = DataPagamento(r.DataPagamento, conta, fuso, agora, alvo.Sentido == Sentido.Entrada);
         var liqs = Quitar(alvo, correcoesDoAlvo, conta, data, original).ToList();
         var verbo = alvo.Sentido == Sentido.Entrada ? "Recebido" : "Pago";
         var hash = Hash(new { tipo = "pagamento", alvo = alvo.Id, conta = conta.Id, data, responsavelId });
@@ -427,7 +427,8 @@ public static class AcontecimentoRegras
     /// <summary>
     /// Recebe (ou paga) uma PARTE do lançamento, para a venda dividida em formas. Cada parte vira o seu acontecimento de pagamento
     /// (a forma vai na descrição). Só vale para lançamento sem correção; a soma das partes não passa do que falta. Quem chama (o
-    /// Caixa) cobre o lançamento inteiro na mesma transação: sobra pela metade não existe, porque a view já mostra "recebido".
+    /// Caixa) pode deixar saldo: a view já mostra "recebido" com qualquer liquidação, então quem precisa do saldo soma as liquidações
+    /// (<c>CaixaService.LinhasAReceber</c>), nunca confia só no status da view.
     /// </summary>
     public static AcontecimentoPlano PlanejarLiquidacaoParcial(LancamentoAtual alvo, IReadOnlyList<LancamentoAtual> correcoesDoAlvo,
         ContaInfo conta, ContaInfo? contaDoAlvo, AcontecimentoAtual original, LiquidarParcialRequest r, int? responsavelId,
@@ -443,7 +444,7 @@ public static class AcontecimentoRegras
         if (r.Valor <= 0 || decimal.Round(r.Valor, 2) != r.Valor) throw Invalido("Valor da parte: maior que zero, até 2 casas.");
         var falta = alvo.Valor - alvo.Liquidado;
         if (r.Valor > falta) throw Invalido($"Esta parte (R$ {r.Valor:N2}) passa do que falta receber (R$ {falta:N2}).");
-        var data = DataPagamento(r.DataPagamento, conta, fuso, agora);
+        var data = DataPagamento(r.DataPagamento, conta, fuso, agora, alvo.Sentido == Sentido.Entrada);
         var verbo = alvo.Sentido == Sentido.Entrada ? "Recebido" : "Pago";
         var hash = Hash(new { tipo = "pagamento_parcial", alvo = alvo.Id, conta = conta.Id, valor = r.Valor, data, responsavelId });
         var liq = new LiquidacaoPlano(alvo.Id, conta.Id, r.Valor, data, null);
@@ -476,10 +477,11 @@ public static class AcontecimentoRegras
             Array.Empty<LancamentoPlano>(), Array.Empty<MovimentoPlano>(), liqs);
     }
 
-    private static DateOnly DataPagamento(DateOnly? informada, ContaInfo conta, TimeZoneInfo fuso, DateTimeOffset agora)
+    /// <param name="entrada">Recebimento: pode entrar num recebível (Pix e cartão entram na maquininha). Pagamento só sai de banco ou caixa.</param>
+    private static DateOnly DataPagamento(DateOnly? informada, ContaInfo conta, TimeZoneInfo fuso, DateTimeOffset agora, bool entrada = false)
     {
         if (!conta.Ativo) throw Invalido("Conta inativa.");
-        if (conta.Tipo is not (TipoConta.Banco or TipoConta.Caixa))
+        if (conta.Tipo is not (TipoConta.Banco or TipoConta.Caixa) && !(entrada && conta.Tipo == TipoConta.Recebivel))
             throw Invalido("Pagamento sai ou entra no banco ou no caixa.");
         var hoje = DiaLocal(agora, fuso);
         var data = informada ?? hoje;
