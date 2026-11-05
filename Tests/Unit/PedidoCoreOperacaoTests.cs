@@ -18,7 +18,7 @@ namespace APIBack.Tests.Unit
         private static readonly Guid P1 = Guid.NewGuid();
 
         private static (PedidoCoreService Service, Mock<IPedidoQueueRepository> Queue) Create(
-            RestaurantSettingsDto restaurant, AberturaLoja? abertura = null, bool bloquearForaHorarioNoDelivery = false)
+            RestaurantSettingsDto restaurant, AberturaLoja? abertura = null, bool bloquearForaHorarioNoDelivery = false, int zonasAtivas = 0)
         {
             var queue = new Mock<IPedidoQueueRepository>();
             queue.Setup(q => q.GetSettingsAsync(It.IsAny<Guid>())).ReturnsAsync(new DeliverySettingsDto
@@ -35,7 +35,8 @@ namespace APIBack.Tests.Unit
             menu.Setup(m => m.ListarProdutosPublicosPorIdsAsync(It.IsAny<Guid>(), It.IsAny<IReadOnlyCollection<Guid>>(), It.IsAny<bool>()))
                 .ReturnsAsync(new[] { CoreFixtures.Product(P1, 30m) });
             var zonas = new Mock<IDeliveryZonaRepository>();
-            zonas.Setup(z => z.ListAtivasOrdenadasAsync(It.IsAny<Guid>())).ReturnsAsync(Array.Empty<DeliveryZonaDto>());
+            zonas.Setup(z => z.ListAtivasOrdenadasAsync(It.IsAny<Guid>())).ReturnsAsync(
+                Enumerable.Range(1, zonasAtivas).Select(i => new DeliveryZonaDto { Nome = $"Zona {i}", RaioAteKm = 3m * i, Taxa = 5m, Ativo = true }).ToArray());
             var horarios = new Mock<IHorarioOperacaoRepository>();
             horarios.Setup(h => h.AvaliarAberturaAsync(It.IsAny<Guid>(), It.IsAny<DateTimeOffset>(), It.IsAny<string?>()))
                 .ReturnsAsync(abertura ?? new AberturaLoja(true, null, null, "America/Sao_Paulo"));
@@ -108,6 +109,38 @@ namespace APIBack.Tests.Unit
             await service.CreateAsync(CoreFixtures.Est, 1, Estruturado(), null, autoAtribuir: false);
 
             Assert.Contains("fora do horário", Assert.Single(Salvo(queue).Avisos));
+        }
+
+        [Fact]
+        public async Task Pedido_manual_de_entrega_so_com_zona_ativa_e_aceito_mesmo_sem_raio()
+        {
+            var (service, queue) = Create(CoreFixtures.Restaurant(radiusKm: null), zonasAtivas: 2);
+
+            await service.CreateAsync(CoreFixtures.Est, 1, Estruturado(), null, autoAtribuir: false);
+
+            Assert.Equal("delivery", Salvo(queue).Modalidade);
+        }
+
+        [Fact]
+        public async Task Pedido_manual_fora_da_area_nao_e_barrado_vira_aviso_para_o_atendente()
+        {
+            var (service, queue) = Create(CoreFixtures.Restaurant(radiusKm: 0.01m));
+
+            await service.CreateAsync(CoreFixtures.Est, 1, Estruturado(), null, autoAtribuir: false);
+
+            Assert.Contains(Salvo(queue).Avisos, a => a.Contains("fora do raio"));
+        }
+
+        [Fact]
+        public async Task Pedido_manual_de_retirada_nao_exige_raio_nem_zona()
+        {
+            var (service, queue) = Create(CoreFixtures.Restaurant(radiusKm: null));
+            var request = Estruturado();
+            request.Modalidade = "retirada";
+
+            await service.CreateAsync(CoreFixtures.Est, 1, request, null, autoAtribuir: false);
+
+            Assert.Equal("retirada", Salvo(queue).Modalidade);
         }
 
         [Theory]

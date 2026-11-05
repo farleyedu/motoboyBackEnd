@@ -240,8 +240,9 @@ public sealed record VendaAReceber(int PedidoId, string Numero, string Descricao
 /// <c>ValorRecebido</c> em dinheiro pode ser maior (troco não entra no livro).</summary>
 /// <param name="Pagamentos">Pedido pago em mais de uma forma: cada parte com a forma e o valor (as partes somam o que falta). Em dinheiro,
 /// <c>ValorRecebido</c> da parte pode ser maior (o troco só vale nela). Sem a lista, vale <c>Forma</c> e <c>ValorRecebido</c> como sempre.</param>
+/// <param name="Parcial">Recebe só uma parte do saldo (as partes somam menos que o que falta, exige <c>Pagamentos</c>); o resto continua a receber.</param>
 public sealed record RecebimentoRequest(string? ChaveIdempotencia, DateOnly Dia, int PedidoId, string? Forma, decimal ValorRecebido,
-    IReadOnlyList<ParteDoRecebimento>? Pagamentos = null);
+    IReadOnlyList<ParteDoRecebimento>? Pagamentos = null, bool Parcial = false);
 
 /// <summary>
 /// Recebimento antecipado: o cliente paga no Caixa um pedido ainda em operação (sem entregá-lo nem concluí-lo). Uma forma só; dinheiro

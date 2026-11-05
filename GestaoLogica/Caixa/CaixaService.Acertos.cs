@@ -293,7 +293,9 @@ VALUES (@id, @loja, @pedido, @venda, @dinheiro, @integracao, @cartao, @ifood, @c
         var partes = (req.Pagamentos is { Count: > 0 } lista
             ? lista.Select(p => (Forma: p.Forma?.Trim() ?? "", p.Valor, p.ValorRecebido))
             : new[] { (Forma: req.Forma?.Trim() ?? "", Valor: 0m, ValorRecebido: (decimal?)req.ValorRecebido) }).ToList();
-        var dividido = req.Pagamentos is { Count: > 1 };
+        // Parcial usa o mesmo caminho das partes (liquidação parcial do livro), mesmo com uma forma só.
+        var dividido = req.Pagamentos is { Count: > 1 } || (req.Parcial && req.Pagamentos is { Count: 1 });
+        if (req.Parcial && req.Pagamentos is not { Count: > 0 }) throw Invalido("Recebimento parcial: informe a forma e o valor recebido agora.");
         foreach (var p in partes)
             if (p.Forma is not (FormaCaixa.Dinheiro or FormaCaixa.Pix or FormaCaixa.Debito or FormaCaixa.Credito))
                 throw Invalido("Forma: din, pix, deb ou cre. iFood é recebido pelo repasse.");
@@ -347,7 +349,10 @@ VALUES (@id, @loja, @pedido, @venda, @dinheiro, @integracao, @cartao, @ifood, @c
         // Dividido: as partes têm de cobrir o pedido inteiro (a sobra pela metade não existe) e cada uma vira o seu recebimento,
         // com a forma na descrição. As partes enchem as linhas do pedido em ordem; o dinheiro com troco só vale na sua parte.
         var soma = CaixaRegras.R2(partes.Sum(p => p.Valor));
-        if (soma != total) throw Invalido($"As partes somam R$ {soma:N2}, mas o pedido tem R$ {total:N2} a receber.");
+        if (req.Parcial ? soma > total : soma != total)
+            throw Invalido(req.Parcial
+                ? $"O valor recebido (R$ {soma:N2}) é maior que o saldo de R$ {total:N2}."
+                : $"As partes somam R$ {soma:N2}, mas o pedido tem R$ {total:N2} a receber.");
         foreach (var p in partes.Where(p => p.Forma == FormaCaixa.Dinheiro))
             if ((p.ValorRecebido ?? p.Valor) < p.Valor) throw Invalido($"Dinheiro: recebeu menos que a parte de R$ {p.Valor:N2}.");
         var falta = linhas.Select(l => (Linha: l, Resta: CaixaRegras.R2(l.Liquido))).ToList();

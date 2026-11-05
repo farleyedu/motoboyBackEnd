@@ -89,7 +89,7 @@ public static class AntecipadoRegras
         if (!Recebiveis.Contains(s))
             return new("PEDIDO_NAO_ABERTO", s == (int)StatusPedido.Concluido
                 ? "O pedido já foi entregue: receba em A receber." : "Só se recebe antes de entregar um pedido ainda em operação.");
-        if (APIBack.Service.DeliveryCompletionRules.IsPaid(statusPagamento))
+        if (APIBack.Service.DeliveryCompletionRules.IsPaid(statusPagamento) || APIBack.GestaoLogica.Vendas.VendaRegras.PagoOnline(tipoPagamento))
             return string.Equals(tipoPagamento?.Trim(), tipoPedido, StringComparison.OrdinalIgnoreCase)
                 ? new("JA_PAGO", "Este pedido já está pago.", Replay: true)
                 : new("JA_PAGO", "Este pedido já está pago: não cobre de novo.");

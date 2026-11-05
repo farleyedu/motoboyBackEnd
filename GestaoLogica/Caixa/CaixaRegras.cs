@@ -28,7 +28,9 @@ public static class CaixaRegras
             return ifoodPendente is > 0
                 ? (PagamentoDoPedido.AReceber, forma, comMotoboy ? PagamentoDoPedido.ResponsavelMotoboy : PagamentoDoPedido.ResponsavelCaixa)
                 : (PagamentoDoPedido.RecebivelExterno, null, PagamentoDoPedido.ResponsavelIfood);
-        if (APIBack.Service.DeliveryCompletionRules.IsPaid(statusPagamento)) return (PagamentoDoPedido.Pago, forma, null);
+        // "Pago online" no texto da forma vale como pago, igual à venda (VendaRegras.Composicao): o cliente já pagou, não se cobra de novo.
+        if (APIBack.Service.DeliveryCompletionRules.IsPaid(statusPagamento) || APIBack.GestaoLogica.Vendas.VendaRegras.PagoOnline(tipoPagamento))
+            return (PagamentoDoPedido.Pago, forma, null);
         return (PagamentoDoPedido.AReceber, forma, comMotoboy ? PagamentoDoPedido.ResponsavelMotoboy : PagamentoDoPedido.ResponsavelCaixa);
     }
 

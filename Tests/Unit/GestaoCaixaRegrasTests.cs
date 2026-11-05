@@ -28,6 +28,9 @@ public class GestaoCaixaRegrasTests
     // pago de verdade (online, balcão pago na hora): não cobra, mesmo com a forma combinada
     [InlineData("Pago", "Pix", false, null, false, "pago", "pix", null)]
     [InlineData("pago_online", "cartao_online", false, null, false, "pago", "cre", null)]
+    // criado pelo Delivery/chat com "Pago online": o status nasce Pendente, mas o texto diz que o cliente já pagou
+    [InlineData("Pendente", "Pago online - Pix", false, null, false, "pago", "pix", null)]
+    [InlineData("Pendente", "Pago online - Pix", false, null, true, "pago", "pix", null)]
     // forma combinada NÃO prova recebimento: cobra no caixa, ou do motoboy quando ele está com o pedido
     [InlineData("Pendente", "Dinheiro", false, null, false, "a_receber", "din", "caixa")]
     [InlineData("Pendente", "Dinheiro", false, null, true, "a_receber", "din", "motoboy")]
@@ -100,5 +103,13 @@ public class GestaoCaixaRegrasTests
         CaixaRegras.ValidarMovimento(MovimentoCaixa.Suprimento, 200, 0);
         Assert.Throws<GestaoException>(() => CaixaRegras.ValidarMovimento(MovimentoCaixa.Pagamento, 0, 10));
         Assert.Throws<GestaoException>(() => CaixaRegras.ValidarMovimento("troco", 1, 10));
+    }
+
+    [Fact]
+    public void Recebimento_antecipado_nao_cobra_pedido_pago_online_mesmo_com_status_pendente()
+    {
+        var erro = AntecipadoRegras.Barreira((int)APIBack.Model.Enum.StatusPedido.Pendente, "Pendente", "Pago online - Pix", "Dinheiro", false, false);
+        Assert.Equal("JA_PAGO", erro!.Codigo);
+        Assert.False(erro.Replay);
     }
 }

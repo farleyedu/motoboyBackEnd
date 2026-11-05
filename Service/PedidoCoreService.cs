@@ -223,9 +223,12 @@ namespace APIBack.Service
 
             // Pedido manual (atendente) nao e barrado pelo horario (so pela situacao comercial): vira aviso para o atendente.
             string? avisoHorario = null;
+            var zonas = await _zonas.ListAtivasOrdenadasAsync(estabelecimentoId);
             if (origin == PedidoOrigem.Atendente)
             {
-                ExigirRaioECoordenada(restaurant);
+                // Só entrega precisa de área: retirada/balcão não tem distância nem taxa. Zona ativa vale como área (igual à Prontidão).
+                if (PedidoModalidade.Normalize(request.Modalidade) != PedidoModalidade.Retirada)
+                    ExigirRaioECoordenada(restaurant, zonas.Count);
                 if (abertura is { Dentro: false })
                     avisoHorario = abertura.Motivo == HorarioRegras.SemHorario
                         ? "A loja está sem horário de funcionamento cadastrado: pedidos de clientes ficam recusados até cadastrar o horário ou abrir a loja."
@@ -237,7 +240,6 @@ namespace APIBack.Service
             // (acha pelo telefone ou cria um novo); nunca mais nome/telefone soltos no pedido.
             var clienteId = await _clientes.ResolverOuCriarAsync(estabelecimentoId, manual.TelefoneCliente, manual.NomeCliente);
             var hasItems = request.Itens is { Count: > 0 };
-            var zonas = await _zonas.ListAtivasOrdenadasAsync(estabelecimentoId);
 
             if (!hasItems)
             {
@@ -330,9 +332,9 @@ namespace APIBack.Service
         /// Pedido manual de entrega: sem raio de entrega nem posicao da loja nao ha como calcular distancia, taxa e rota.
         /// Retirada nao exige. Pedidos do iFood nao passam por aqui.
         /// </summary>
-        internal static void ExigirRaioECoordenada(RestaurantSettingsDto restaurant)
+        internal static void ExigirRaioECoordenada(RestaurantSettingsDto restaurant, int zonasAtivas = 0)
         {
-            if (restaurant.RaioEntregaKm is not > 0)
+            if (restaurant.RaioEntregaKm is not > 0 && zonasAtivas <= 0)
                 throw ErrosOperacionais.Excecao(ErrosOperacionais.RaioEntregaNaoConfigurado);
             if (!ProntidaoRegras.CoordenadaValida(restaurant.Latitude, restaurant.Longitude))
                 throw ErrosOperacionais.Excecao(ErrosOperacionais.LojaSemCoordenada);

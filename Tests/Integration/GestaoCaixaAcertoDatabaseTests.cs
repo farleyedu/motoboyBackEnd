@@ -158,4 +158,43 @@ public partial class DeliverySyncDatabaseTests
         await caixa.Receber(db.StoreId, 7, operador, new RecebimentoRequest("d1", hoje, 24, null, 0, partes), default);
         Assert.Equal(antes + 40m, Gaveta(await livro.Contas(db.StoreId, default)));
     }
+
+    [DeliveryDatabaseFact]
+    public async Task Recebimento_parcial_deixa_o_saldo_a_receber_e_o_resto_quita_sem_cobrar_de_novo()
+    {
+        await using var db = await VendaDatabase();
+        var livro = Livro(db.Source);
+        var caixa = new CaixaService(db.Source, livro);
+        var operador = GestaoPapeis.Resolver((m, _) => m is "Caixa", false);
+        var hoje = await caixa.Hoje(db.StoreId, default);
+        await using (var c = await db.Source.OpenConnectionAsync())
+        {
+            await using var tx = await c.BeginTransactionAsync();
+            await VendaDoPedido.PublicarAsync(livro, c, tx, db.StoreId, 24, 7, ModalidadeVenda.Salao);
+            await tx.CommitAsync();
+        }
+        var antes = Gaveta(await livro.Contas(db.StoreId, default));
+
+        // Sem forma/valor, ou acima do saldo: recusa e nada muda.
+        Assert.Equal("CAMPO_INVALIDO", (await Assert.ThrowsAsync<GestaoException>(() => caixa.Receber(db.StoreId, 7, operador,
+            new RecebimentoRequest("p0", hoje, 24, FormaCaixa.Dinheiro, 20m, null, true), default))).Codigo);
+        Assert.Equal("CAMPO_INVALIDO", (await Assert.ThrowsAsync<GestaoException>(() => caixa.Receber(db.StoreId, 7, operador,
+            new RecebimentoRequest("p0", hoje, 24, null, 0, new[] { new ParteDoRecebimento(FormaCaixa.Dinheiro, 99m) }, true), default))).Codigo);
+        Assert.Equal(64m, Assert.Single(await caixa.AReceberNoCaixa(db.StoreId, default)).AReceber);
+
+        // R$ 20 agora: sobram R$ 44, e a gaveta só ganha o que entrou.
+        await caixa.Receber(db.StoreId, 7, operador, new RecebimentoRequest("p1", hoje, 24, null, 0, new[] { new ParteDoRecebimento(FormaCaixa.Dinheiro, 20m) }, true), default);
+        Assert.Equal(44m, Assert.Single(await caixa.AReceberNoCaixa(db.StoreId, default)).AReceber);
+        Assert.Equal(antes + 20m, Gaveta(await livro.Contas(db.StoreId, default)));
+
+        // Reenvio da mesma chave não cobra de novo.
+        await caixa.Receber(db.StoreId, 7, operador, new RecebimentoRequest("p1", hoje, 24, null, 0, new[] { new ParteDoRecebimento(FormaCaixa.Dinheiro, 20m) }, true), default);
+        Assert.Equal(44m, Assert.Single(await caixa.AReceberNoCaixa(db.StoreId, default)).AReceber);
+        Assert.Equal(antes + 20m, Gaveta(await livro.Contas(db.StoreId, default)));
+
+        // O resto quita.
+        await caixa.Receber(db.StoreId, 7, operador, new RecebimentoRequest("p2", hoje, 24, FormaCaixa.Dinheiro, 44m), default);
+        Assert.Empty(await caixa.AReceberNoCaixa(db.StoreId, default));
+        Assert.Equal(antes + 64m, Gaveta(await livro.Contas(db.StoreId, default)));
+    }
 }
