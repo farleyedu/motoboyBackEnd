@@ -90,8 +90,8 @@ namespace APIBack.Payments.Controllers
 
         [HttpGet("transacoes")]
         public Task<IActionResult> Transacoes([FromQuery] string? conta, [FromQuery] Guid? estabelecimentoId, [FromQuery] string? origem, [FromQuery] string? status,
-            [FromQuery] DateTime? de, [FromQuery] DateTime? ate, [FromQuery] int pagina = 1) =>
-            Executar(() => _gestao.TransacoesAsync(conta, estabelecimentoId, origem, status, de, ate, pagina, HttpContext.RequestAborted), _logger);
+            [FromQuery] DateTime? de, [FromQuery] DateTime? ate, [FromQuery] int pagina = 1, [FromQuery] string? provedor = null) =>
+            Executar(() => _gestao.TransacoesAsync(conta, estabelecimentoId, origem, status, de, ate, pagina, provedor, HttpContext.RequestAborted), _logger);
 
         [HttpGet("assinaturas")]
         public Task<IActionResult> Assinaturas([FromQuery] string? status, [FromQuery] int pagina = 1) =>

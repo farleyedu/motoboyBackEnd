@@ -224,7 +224,11 @@ SELECT i.id, i.provedor, i.origem, i.status, i.versao, i.valor, i.valor_pago, i.
         }
 
         [HttpGet("cardapio/{estabelecimentoId:guid}/pagamentos/config")]
-        public Task<IActionResult> Configuracao(Guid estabelecimentoId) => Executar(() => _cartao.ConfiguracaoAsync(estabelecimentoId, HttpContext.RequestAborted), _logger);
+        public Task<IActionResult> Configuracao(Guid estabelecimentoId, [FromServices] APIBack.Payments.InfinitePay.Cardapio.ICardapioCheckoutHospedadoService? hospedado) => Executar(async () =>
+        {
+            var config = await _cartao.ConfiguracaoAsync(estabelecimentoId, HttpContext.RequestAborted);
+            return hospedado == null ? config : await hospedado.AjustarConfiguracaoAsync(estabelecimentoId, config, HttpContext.RequestAborted);
+        }, _logger);
 
         // Cardapio web: as regras do pedido (so pedido online, status que aceita pagamento, Pix novo depois de vencido, cancelar o Pix
         // antes do cartao, vinculo com o pre-pedido) ficam em ICardapioPagamentoService (sessao 3). O valor e sempre o do pre-pedido.

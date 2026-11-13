@@ -144,6 +144,7 @@ namespace APIBack.Payments.Gestao
         public Guid Id { get; set; }
         public Guid EstabelecimentoId { get; set; }
         public string? LojaNome { get; set; }
+        public string Provedor { get; set; } = "mercadopago";
         public string Origem { get; set; } = string.Empty;
         public string ContaTipo { get; set; } = string.Empty;
         public string Status { get; set; } = string.Empty;
@@ -166,6 +167,8 @@ namespace APIBack.Payments.Gestao
         public int Total { get; set; }
         public decimal SomaPaga { get; set; }
         public decimal SomaEstornada { get; set; }
+        /// <summary>Somas separadas: com o painel em teste, a InfinitePay (sem sandbox) e dinheiro real e nao se soma ao de teste do Mercado Pago.</summary>
+        public List<APIBack.Payments.Recebimentos.SomaProvedorDto> SomasPorProvedor { get; set; } = new();
     }
 
     public sealed class ReembolsoGestaoDto

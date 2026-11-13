@@ -96,8 +96,12 @@ namespace APIBack.Payments.Chat
 
         [HttpPut("cobrancas/config")]
         [RequirePermission("Financeiro", "configurar")]
-        public Task<IActionResult> SalvarConfig([FromBody] CobrancaChatConfigRequest? body) =>
-            Executar(() => _service.SalvarConfigAsync(Loja(), Ator(), body, HttpContext.RequestAborted), _logger);
+        public Task<IActionResult> SalvarConfig([FromBody] CobrancaChatConfigRequest? body) => Executar(() =>
+        {
+            if (body?.LinkPagamentoHabilitado != null && !ConexaoMercadoPagoAcesso.PodeGerenciar(HttpContext))
+                throw PagamentoException.SemPermissao("So o proprietario ou o gerente libera o Link de pagamento (Pix ou cartao) no chat.");
+            return _service.SalvarConfigAsync(Loja(), Ator(), body, HttpContext.RequestAborted);
+        }, _logger);
 
         private Guid Loja() => HttpContext.GetEstabelecimentoId() ?? throw PagamentoException.SemPermissao("Selecione uma loja.");
 

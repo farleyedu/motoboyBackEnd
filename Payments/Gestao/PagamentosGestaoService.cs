@@ -31,7 +31,7 @@ namespace APIBack.Payments.Gestao
         Task<ConfiguracaoDto> DefinirAmbienteAtivoAsync(string? ambiente, int usuario, CancellationToken ct = default);
         Task<ResumoGestaoDto> ResumoAsync(DateOnly? mes = null, CancellationToken ct = default);
         Task<Pagina<ConexaoLojaGestaoDto>> ConexoesAsync(string? busca, string? estado, int pagina, CancellationToken ct = default);
-        Task<TransacoesGestaoDto> TransacoesAsync(string? conta, Guid? loja, string? origem, string? status, DateTime? de, DateTime? ate, int pagina, CancellationToken ct = default);
+        Task<TransacoesGestaoDto> TransacoesAsync(string? conta, Guid? loja, string? origem, string? status, DateTime? de, DateTime? ate, int pagina, string? provedor = null, CancellationToken ct = default);
         Task<TransacoesGestaoDto> AssinaturasAsync(string? status, int pagina, CancellationToken ct = default);
         Task<Pagina<ReembolsoGestaoDto>> ReembolsosAsync(string? status, string? conta, int pagina, CancellationToken ct = default);
         Task<WebhooksGestaoDto> WebhooksAsync(string? status, string? topico, int pagina, CancellationToken ct = default);
@@ -528,12 +528,12 @@ SELECT e.id AS estabelecimento_id, COALESCE(e.nome_fantasia, 'Loja') AS nome, CO
         }
 
         private const string SqlTransacao = @"
-SELECT i.id, i.id_estabelecimento AS estabelecimento_id, e.nome_fantasia AS loja_nome, i.origem, i.conta_tipo, i.status, i.valor, i.valor_pago,
+SELECT i.id, i.id_estabelecimento AS estabelecimento_id, e.nome_fantasia AS loja_nome, i.provedor, i.origem, i.conta_tipo, i.status, i.valor, i.valor_pago,
        i.valor_estornado, i.descricao, p.metodo, p.status AS status_pagamento, p.mp_status_detail AS status_detalhe, p.mp_payment_id,
        i.pago_em, i.created_at AS criado_em";
 
         public async Task<TransacoesGestaoDto> TransacoesAsync(string? conta, Guid? loja, string? origem, string? status, DateTime? de, DateTime? ate, int pagina,
-            CancellationToken ct = default)
+            string? provedor = null, CancellationToken ct = default)
         {
             // Nunca mistura: a lista e as somas sao SEMPRE de uma conta so (dinheiro da Zippy ou das lojas).
             var tipo = string.IsNullOrWhiteSpace(conta) ? "loja" : conta.Trim();
@@ -542,32 +542,38 @@ SELECT i.id, i.id_estabelecimento AS estabelecimento_id, e.nome_fantasia AS loja
             var org = Limpo(origem);
             if (org != null && !new[] { OrigensPagamento.Cardapio, OrigensPagamento.Chat, OrigensPagamento.Assinatura, OrigensPagamento.CompraExtra }.Contains(org))
                 throw PagamentoException.Invalida("Origem desconhecida.", "origem");
-            return await ListarTransacoesAsync(tipo, loja, org == null ? null : new[] { org }, Limpo(status), de, ate, pagina, ct);
+            var prov = Limpo(provedor);
+            if (prov != null && !APIBack.Payments.Provedores.ProvedoresPagamento.Valido(prov)) throw PagamentoException.Invalida("Provedor desconhecido.", "provedor");
+            return await ListarTransacoesAsync(tipo, loja, org == null ? null : new[] { org }, Limpo(status), de, ate, pagina, ct, prov);
         }
 
         public Task<TransacoesGestaoDto> AssinaturasAsync(string? status, int pagina, CancellationToken ct = default) =>
             ListarTransacoesAsync("zippy", null, new[] { OrigensPagamento.Assinatura, OrigensPagamento.CompraExtra }, Limpo(status), null, null, pagina, ct);
 
         private async Task<TransacoesGestaoDto> ListarTransacoesAsync(string conta, Guid? loja, string[]? origens, string? status, DateTime? de, DateTime? ate, int pagina,
-            CancellationToken ct)
+            CancellationToken ct, string? provedor = null)
         {
             await using var cx = await _db.OpenConnectionAsync(ct);
             const string Filtro = @"
   FROM pagamento_intent i
   LEFT JOIN estabelecimentos e ON e.id = i.id_estabelecimento
   LEFT JOIN LATERAL (SELECT * FROM pagamento x WHERE x.id_intent = i.id ORDER BY x.created_at DESC LIMIT 1) p ON TRUE
- WHERE i.ambiente = @Amb AND i.conta_tipo = @Conta
+ WHERE (i.ambiente = @Amb OR i.provedor = 'infinitepay') AND i.conta_tipo = @Conta
+   AND (@Provedor::text IS NULL OR i.provedor = @Provedor)
    AND (@Loja::uuid IS NULL OR i.id_estabelecimento = @Loja)
    AND (@Origens::text[] IS NULL OR i.origem = ANY(@Origens))
    AND (@Status::text IS NULL OR i.status = @Status)
    AND (@De::timestamptz IS NULL OR i.created_at >= @De)
    AND (@Ate::timestamptz IS NULL OR i.created_at < @Ate)";
-            var args = new { Amb = _credenciais.AmbienteAtivo, Conta = conta, Loja = loja, Origens = origens, Status = status, De = de, Ate = ate?.AddDays(1), Offset = Offset(pagina), Limite = TamanhoPagina };
-            var somas = await cx.QueryFirstAsync<(int Total, decimal Paga, decimal Estornada)>(new CommandDefinition(
-                "SELECT count(*)::int, COALESCE(sum(i.valor_pago), 0), COALESCE(sum(i.valor_estornado), 0)" + Filtro, args, cancellationToken: ct));
+            // A InfinitePay nao tem sandbox: as cobrancas dela nascem em producao e nao somem quando o painel usa o ambiente de teste do Mercado Pago.
+            var args = new { Amb = _credenciais.AmbienteAtivo, Conta = conta, Provedor = provedor, Loja = loja, Origens = origens, Status = status, De = de, Ate = ate?.AddDays(1), Offset = Offset(pagina), Limite = TamanhoPagina };
+            var porProvedor = (await cx.QueryAsync<APIBack.Payments.Recebimentos.SomaProvedorDto>(new CommandDefinition(
+                "SELECT i.provedor, count(*)::int AS quantidade, COALESCE(sum(i.valor_pago), 0) AS pago, COALESCE(sum(i.valor_estornado), 0) AS estornado" + Filtro + " GROUP BY i.provedor ORDER BY i.provedor",
+                args, cancellationToken: ct))).ToList();
             return new TransacoesGestaoDto
             {
-                Conta = conta, Total = somas.Total, SomaPaga = somas.Paga, SomaEstornada = somas.Estornada,
+                Conta = conta, Total = porProvedor.Sum(x => x.Quantidade), SomaPaga = porProvedor.Sum(x => x.Pago), SomaEstornada = porProvedor.Sum(x => x.Estornado),
+                SomasPorProvedor = porProvedor,
                 Itens = (await cx.QueryAsync<TransacaoGestaoDto>(new CommandDefinition(SqlTransacao + Filtro + " ORDER BY i.created_at DESC LIMIT @Limite OFFSET @Offset",
                     args, cancellationToken: ct))).ToList()
             };

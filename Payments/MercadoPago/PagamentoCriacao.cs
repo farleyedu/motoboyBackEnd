@@ -117,6 +117,10 @@ namespace APIBack.Payments.MercadoPago
         public string? PublicKey { get; set; }
         public int ParcelasMax { get; set; } = 1;
         public bool ContaConectada { get; set; }
+        /// <summary>Link hospedado da InfinitePay disponivel (checkout online da loja = InfinitePay, conta pronta). Pix ou cartao se escolhe na pagina deles.</summary>
+        public bool CheckoutHospedado { get; set; }
+        /// <summary>Provedor do checkout online da loja (mercadopago|infinitepay); null = desabilitado de proposito.</summary>
+        public string? ProvedorCheckout { get; set; }
     }
 
     /// <summary>Base do cartao (Payment Brick). Proibido para origem chat: a cobranca do atendente e so Pix.</summary>

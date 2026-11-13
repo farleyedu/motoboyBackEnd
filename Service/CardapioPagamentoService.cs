@@ -6,6 +6,8 @@ using System.Threading.Tasks;
 using APIBack.DTOs.Cardapio;
 using APIBack.Model.Cardapio;
 using APIBack.Payments.Controllers;
+using APIBack.Payments.InfinitePay.Cardapio;
+using APIBack.Payments.Provedores;
 using APIBack.Payments.MercadoPago;
 using APIBack.Repository.Interface;
 using APIBack.Service.Interface;
@@ -31,10 +33,12 @@ namespace APIBack.Service
         private readonly ICardPaymentService _cartao;
         private readonly IPagamentoEstornoService _estornos;
         private readonly ILogger<CardapioPagamentoService> _logger;
+        private readonly ICardapioCheckoutHospedadoService? _hospedado;
 
         public CardapioPagamentoService(ICardapioPedidoWebRepository repository, IPixChargeService pix, ICardPaymentService cartao,
-            IPagamentoEstornoService estornos, ILogger<CardapioPagamentoService> logger)
+            IPagamentoEstornoService estornos, ILogger<CardapioPagamentoService> logger, ICardapioCheckoutHospedadoService? hospedado = null)
         {
+            _hospedado = hospedado;
             _repository = repository;
             _pix = pix;
             _cartao = cartao;
@@ -55,12 +59,16 @@ namespace APIBack.Service
             if (intents.Any(i => CardapioPagamentoRules.EhChaveCartao(i.IdempotencyKey) && i.Status == StatusIntent.Processando))
                 throw PagamentoException.Estado("O pagamento com cartao deste pedido esta em analise. Aguarde a resposta.", StatusIntent.Processando);
 
-            var pixes = intents.Where(i => !CardapioPagamentoRules.EhChaveCartao(i.IdempotencyKey)).ToList();
+            ExigirSemLinkAberto(intents);
+            var pixes = intents.Where(i => !CardapioPagamentoRules.EhChaveCartao(i.IdempotencyKey) && !CardapioPagamentoRules.EhChaveInfinitePay(i.IdempotencyKey)).ToList();
             var ultimo = pixes.LastOrDefault();
             // Pix em aberto (ou recusado na geracao) e reaproveitado; vencido/cancelado = Pix novo com outra chave.
             var chave = ultimo != null && ultimo.Status is not (StatusIntent.Expirado or StatusIntent.Cancelado)
                 ? ultimo.IdempotencyKey
                 : CardapioPagamentoRules.ChavePix(prePedidoId, pixes.Count + 1);
+            // Pix NOVO so se a preferencia da loja ainda o permite; o Pix ja aberto continua no provedor em que nasceu.
+            if (ultimo == null || ultimo.Status is StatusIntent.Expirado or StatusIntent.Cancelado)
+                await ExigirMercadoPagoPermitidoAsync(pedido.IdEstabelecimento, CardapioPagamentoRules.MetodoPix, ct);
 
             var r = await _pix.CriarAsync(new PixChargeRequest
             {
@@ -80,14 +88,17 @@ namespace APIBack.Service
             if (intents.Any(i => StatusIntent.FamiliaPaga(i.Status)))
                 throw new PagamentoException(PagamentoCodigos.JaPago, 409, "Este pedido ja foi pago.");
 
+            ExigirSemLinkAberto(intents);
             // Trocou de Pix para cartao: o Pix aberto e cancelado antes (se foi pago nesse instante, o pedido ja esta pago).
-            foreach (var pix in intents.Where(i => !CardapioPagamentoRules.EhChaveCartao(i.IdempotencyKey) && StatusIntent.Aberto(i.Status)))
+            foreach (var pix in intents.Where(i => !CardapioPagamentoRules.EhChaveCartao(i.IdempotencyKey) && !CardapioPagamentoRules.EhChaveInfinitePay(i.IdempotencyKey) && StatusIntent.Aberto(i.Status)))
             {
                 await _pix.CancelarAsync(pix.Id, pedido.IdEstabelecimento, "cliente", null, ct);
             }
 
             var cartoes = intents.Where(i => CardapioPagamentoRules.EhChaveCartao(i.IdempotencyKey)).ToList();
             var ultimo = cartoes.LastOrDefault();
+            if (ultimo == null || ultimo.Status is StatusIntent.Expirado or StatusIntent.Cancelado)
+                await ExigirMercadoPagoPermitidoAsync(pedido.IdEstabelecimento, CardapioPagamentoRules.MetodoCartao, ct);
             // Cartao recusado tenta de novo na mesma intencao (outro token); encerrada = intencao nova.
             var chave = ultimo != null && ultimo.Status is not (StatusIntent.Expirado or StatusIntent.Cancelado)
                 ? ultimo.IdempotencyKey
@@ -115,7 +126,64 @@ namespace APIBack.Service
             var pedido = await DoClienteAsync(prePedidoId, codigo);
             var intent = pedido.IdIntentPago ?? pedido.IdIntentAtual;
             if (intent == null) return new { status = "sem_pagamento", statusPagamentoPedido = pedido.StatusPagamento, versao = 0 };
+            if (_hospedado != null)
+            {
+                var chave = (await _repository.ListarIntentsAsync(prePedidoId)).FirstOrDefault(i => i.Id == intent.Value)?.IdempotencyKey;
+                if (CardapioPagamentoRules.EhChaveInfinitePay(chave))
+                {
+                    try { return await _hospedado.ObterAsync(intent.Value, pedido.IdEstabelecimento, ct); }
+                    catch (PagamentoException ex) when (ex.Http == 404)
+                    {
+                        // Link ainda nao criado (rede da InfinitePay caiu): o cliente pode pedir de novo; a intencao e a mesma.
+                        return new { status = "sem_pagamento", statusPagamentoPedido = pedido.StatusPagamento, versao = 0 };
+                    }
+                }
+            }
             return Publico(await _pix.ObterAsync(intent.Value, pedido.IdEstabelecimento, ct));
+        }
+
+        public async Task<PublicCheckoutHospedadoDto> CriarCheckoutHospedadoAsync(Guid prePedidoId, string? codigo, CancellationToken ct = default)
+        {
+            if (_hospedado == null) throw PagamentoException.Regra(ProvedorPagamentoCodigos.NaoSuportado, "Pagamento por link nao esta disponivel.");
+            var pedido = await PagavelAsync(prePedidoId, codigo);
+            var intents = await _repository.ListarIntentsAsync(prePedidoId);
+            if (intents.Any(i => StatusIntent.FamiliaPaga(i.Status)))
+                throw new PagamentoException(PagamentoCodigos.JaPago, 409, "Este pedido ja foi pago.");
+            // Nunca dois meios pagaveis ao mesmo tempo: Pix/cartao do Mercado Pago em andamento continua la ate acabar.
+            if (intents.Any(i => !CardapioPagamentoRules.EhChaveInfinitePay(i.IdempotencyKey) && StatusIntent.Aberto(i.Status)))
+                throw PagamentoException.Estado("Este pedido tem um pagamento em andamento no Mercado Pago. Termine ou espere vencer antes de pagar por link.", StatusIntent.AguardandoPagamento);
+
+            var links = intents.Where(i => CardapioPagamentoRules.EhChaveInfinitePay(i.IdempotencyKey)).ToList();
+            var ultimo = links.LastOrDefault();
+            var reaproveita = ultimo != null && ultimo.Status is not (StatusIntent.Expirado or StatusIntent.Cancelado);
+            if (!reaproveita) await _hospedado.ExigirParaNovoLinkAsync(pedido.IdEstabelecimento, ct);
+
+            var chave = reaproveita ? ultimo!.IdempotencyKey : CardapioPagamentoRules.ChaveInfinitePay(prePedidoId, links.Count + 1);
+            var r = await _hospedado.CriarAsync(pedido, chave, ct);
+            if (reaproveita && r.ExpiraEm is { } vence && vence <= DateTime.UtcNow)
+            {
+                // Link vencido do lado da InfinitePay: encerra a intencao antiga e abre outra (outra chave, outro order_nsu).
+                await _hospedado.ExpirarAsync(ultimo!.Id, pedido.IdEstabelecimento, ct);
+                await _hospedado.ExigirParaNovoLinkAsync(pedido.IdEstabelecimento, ct);
+                r = await _hospedado.CriarAsync(pedido, CardapioPagamentoRules.ChaveInfinitePay(prePedidoId, links.Count + 1), ct);
+            }
+            var atual = (await _repository.ListarIntentsAsync(prePedidoId)).LastOrDefault(i => CardapioPagamentoRules.EhChaveInfinitePay(i.IdempotencyKey));
+            if (atual != null) await _repository.VincularIntentAsync(prePedidoId, atual.Id);
+            _logger.LogInformation("[cardapio.pag] ev=link pre={Pre} intent={Intent}", prePedidoId, atual?.Id);
+            return r;
+        }
+
+        private static void ExigirSemLinkAberto(IReadOnlyList<CardapioIntentResumo> intents)
+        {
+            if (intents.Any(i => CardapioPagamentoRules.EhChaveInfinitePay(i.IdempotencyKey) && StatusIntent.Aberto(i.Status)))
+                throw PagamentoException.Estado("Este pedido tem um link de pagamento aberto. Termine por ele ou espere vencer antes de pagar de outro jeito.", StatusIntent.AguardandoPagamento);
+        }
+
+        private async Task ExigirMercadoPagoPermitidoAsync(Guid loja, string metodo, CancellationToken ct)
+        {
+            if (_hospedado == null || await _hospedado.PermiteNovoMercadoPagoAsync(loja, metodo, ct)) return;
+            throw PagamentoException.Regra(metodo == CardapioPagamentoRules.MetodoPix ? PagamentoCodigos.PixDesativado : PagamentoCodigos.CartaoDesativado,
+                "A loja nao esta aceitando este meio de pagamento online agora. Escolha outra forma de pagamento.");
         }
 
         public async Task<CardapioPagamentoPublicoDto?> ResumoAsync(CardapioPedidoPublico pedido)

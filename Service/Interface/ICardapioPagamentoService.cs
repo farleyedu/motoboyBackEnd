@@ -23,6 +23,9 @@ namespace APIBack.Service.Interface
         /// <summary>Cartao pelo Payment Brick. Pix em aberto e cancelado antes; recusado = 422 PAG_CARTAO_RECUSADO.</summary>
         Task<CardPaymentResult> PagarComCartaoAsync(Guid prePedidoId, PublicCartaoPedidoRequest request, CancellationToken ct = default);
 
+        /// <summary>Link hospedado da InfinitePay (Pix ou cartao na pagina deles). O mesmo link enquanto valer; outro depois de vencido. Valor sempre do pedido no servidor.</summary>
+        Task<APIBack.Payments.InfinitePay.Cardapio.PublicCheckoutHospedadoDto> CriarCheckoutHospedadoAsync(Guid prePedidoId, string? codigo, CancellationToken ct = default);
+
         /// <summary>Pix atual (QR enquanto pendente) ou { status: sem_pagamento }.</summary>
         Task<object> ObterPagamentoPublicoAsync(Guid prePedidoId, string? codigo, CancellationToken ct = default);
 

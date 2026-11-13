@@ -69,6 +69,8 @@ namespace APIBack.Payments.MercadoPago
             {
                 intent = await PagamentoIntentSql.ObterAsync(cx, tx, r.IntentId, true, ct) ?? throw PagamentoException.NaoEncontrado();
                 if (intent.IdEstabelecimento != r.IdEstabelecimento) throw PagamentoException.NaoEncontrado();
+                if (intent.Provedor != "mercadopago")
+                    throw PagamentoException.Regra("PAG_RECURSO_NAO_SUPORTADO", "A InfinitePay nao tem estorno por API. Devolva o valor pelo app da InfinitePay.");
 
                 var existente = await cx.QueryFirstOrDefaultAsync<(Guid Id, string Status, decimal Valor, Guid IdPagamento)?>(new CommandDefinition(
                     "SELECT id, status, valor, id_pagamento FROM pagamento_estorno WHERE idempotency_key = @K AND id_estabelecimento = @Loja",

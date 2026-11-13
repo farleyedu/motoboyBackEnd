@@ -139,6 +139,25 @@ namespace APIBack.Payments.Chat
             return lista;
         }
 
+        public static string ModalidadeDe(string? modalidade) => (modalidade ?? ModalidadesCobranca.Pix).Trim().ToLowerInvariant() switch
+        {
+            "" or ModalidadesCobranca.Pix => ModalidadesCobranca.Pix,
+            ModalidadesCobranca.Link => ModalidadesCobranca.Link,
+            _ => throw PagamentoException.Invalida("modalidade deve ser pix ou link.", "modalidade")
+        };
+
+        public static string RotuloModalidade(string modalidade) => modalidade == ModalidadesCobranca.Link ? ModalidadesCobranca.RotuloLink : ModalidadesCobranca.RotuloPix;
+
+        /// <summary>
+        /// Texto ao cliente da modalidade link. Nunca diz "Pix" como unico meio: a pagina da InfinitePay tambem aceita cartao.
+        /// </summary>
+        public static string TextoLink(string descricao, decimal valor, DateTime? expiraEm, string link)
+        {
+            if (string.IsNullOrEmpty(link)) throw PagamentoException.Estado("Link de pagamento indisponivel.");
+            var validade = expiraEm.HasValue ? $"\nValido ate {Hora(expiraEm)}." : string.Empty;
+            return $"*{descricao}*\nValor: {Moeda(valor)}\nPague pelo link (Pix ou cartao): {link}{validade}";
+        }
+
         public static string TextoConfirmacao(string descricao, decimal valor) =>
             $"Pagamento de {Moeda(valor)} recebido. Obrigado! ({descricao})";
 
