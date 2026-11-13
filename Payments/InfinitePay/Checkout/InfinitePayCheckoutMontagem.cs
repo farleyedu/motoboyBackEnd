@@ -11,10 +11,15 @@ namespace APIBack.Payments.InfinitePay.Checkout
     /// <summary>Monta e valida o corpo de POST /links sem tocar em banco ou rede (testavel).</summary>
     public static class InfinitePayCheckoutMontagem
     {
+        /// <summary>Mensalidade e compra extra: quem recebe e a conta InfinitePay da ZIPPY, nunca a da loja.</summary>
+        public static bool EhOrigemZippy(string origem) => origem is OrigensPagamento.Assinatura or OrigensPagamento.CompraExtra;
+
         public static void ValidarPedido(InfinitePayCheckoutRequest r)
         {
             if (r.IdEstabelecimento == Guid.Empty) throw PagamentoException.Invalida("Loja obrigatoria.", "estabelecimentoId");
-            if (r.Origem is not (OrigensPagamento.Cardapio or OrigensPagamento.Chat)) throw PagamentoException.Invalida("Origem invalida para InfinitePay.", "origem");
+            if (r.Origem is not (OrigensPagamento.Cardapio or OrigensPagamento.Chat or OrigensPagamento.Assinatura or OrigensPagamento.CompraExtra))
+                throw PagamentoException.Invalida("Origem invalida para InfinitePay.", "origem");
+            if (EhOrigemZippy(r.Origem) && r.OrigemRefId is null) throw PagamentoException.Invalida("Cobranca obrigatoria.", "origemRefId");
             if (r.Origem == OrigensPagamento.Cardapio && r.PrePedidoId == Guid.Empty) throw PagamentoException.Invalida("Pedido do cardapio obrigatorio.", "prePedidoId");
             if (r.Origem == OrigensPagamento.Chat && r.ConversaId is null) throw PagamentoException.Invalida("Conversa obrigatoria.", "conversaId");
             if (r.Valor <= 0 || r.Valor > 999_999.99m)

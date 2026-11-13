@@ -49,10 +49,13 @@ namespace APIBack.Payments.Assinaturas
         private readonly IMemoryCache _cache;
         private readonly IConfiguration _config;
         private readonly ILogger<AssinaturaService> _logger;
+        private readonly APIBack.Payments.InfinitePay.Checkout.IInfinitePayCheckoutService? _link;
 
         public AssinaturaService(NpgsqlDataSource db, IPixChargeService pix, ICardPaymentService cartao, IMercadoPagoCredencialResolver credenciais,
-            IMercadoPagoPreapprovalClient preapproval, IMemoryCache cache, IConfiguration config, ILogger<AssinaturaService> logger)
+            IMercadoPagoPreapprovalClient preapproval, IMemoryCache cache, IConfiguration config, ILogger<AssinaturaService> logger,
+            APIBack.Payments.InfinitePay.Checkout.IInfinitePayCheckoutService? link = null)
         {
+            _link = link;
             _db = db;
             _pix = pix;
             _cartao = cartao;
@@ -86,6 +89,11 @@ SELECT id, tipo, mensagem, criado_em, lido_em IS NOT NULL AS lido FROM comercial
                 new { Loja = loja }, cancellationToken: ct))).ToList();
             var publicKey = await cx.ExecuteScalarAsync<string?>(new CommandDefinition(
                 "SELECT public_key FROM mp_conta_zippy WHERE ambiente = @Amb AND estado = 'ativa'", new { Amb = _credenciais.AmbienteAtivo }, cancellationToken: ct));
+            // Guarda para nao quebrar o painel (Mercado Pago) se a migration da InfinitePay da Zippy ainda nao foi aplicada.
+            var linkDisponivel = false;
+            if (_link != null && await cx.ExecuteScalarAsync<bool>(new CommandDefinition("SELECT to_regclass('infinitepay_conta_zippy') IS NOT NULL", cancellationToken: ct)))
+                linkDisponivel = await cx.ExecuteScalarAsync<bool>(new CommandDefinition(@"
+SELECT EXISTS (SELECT 1 FROM infinitepay_conta_zippy c JOIN infinitepay_conta_zippy_versao v ON v.id_conta = c.id AND v.ativa WHERE c.habilitada)", cancellationToken: ct));
             var dias = situ.Situacao == "teste" ? ProntidaoRegras.DiasRestantes(situ.Fim, DateTimeOffset.UtcNow) : null;
 
             return new PainelAssinaturaDto(
@@ -94,7 +102,7 @@ SELECT id, tipo, mensagem, criado_em, lido_em IS NOT NULL AS lido FROM comercial
                 planos.Where(p => !p.Arquivado || p.Chave == a?.PlanoChave).Select(p => new PlanoDto(p.Chave, p.Nome, p.Preco, p.PrecoAnual, p.Cor, p.Icone, p.Frase,
                     p.ModulosAtivos, p.MotoboysBase, p.Chave == a?.PlanoChave && a.Status != StatusAssinatura.Encerrada)).ToList(),
                 extras, compras, solicitacoes, avisos,
-                new CheckoutDto(publicKey, true, !string.IsNullOrEmpty(publicKey), _credenciais.AmbienteAtivo),
+                new CheckoutDto(publicKey, true, !string.IsNullOrEmpty(publicKey), _credenciais.AmbienteAtivo, linkDisponivel),
                 podeGerenciar, politica.ToleranciaDias);
         }
 
@@ -514,7 +522,7 @@ UPDATE assinatura SET cancelamento_solicitado_em = NULL, cancelamento_por = NULL
         public async Task<CheckoutCobrancaDto> PagarAsync(Guid loja, Guid cobrancaId, PagarCobrancaRequest r, int? usuarioId, CancellationToken ct = default)
         {
             var metodo = (r.Metodo ?? string.Empty).Trim().ToLowerInvariant();
-            if (metodo is not (MetodosPagamento.Pix or MetodosPagamento.Cartao)) throw PagamentoException.Invalida("Escolha Pix ou cartao.", "metodo");
+            if (metodo is not (MetodosPagamento.Pix or MetodosPagamento.Cartao or MetodosPagamento.Link)) throw PagamentoException.Invalida("Escolha Pix, cartao ou link.", "metodo");
             await using var cx = await _db.OpenConnectionAsync(ct);
             var c = await AssinaturaSql.CobrancaAsync(cx, null, cobrancaId, false, ct);
             if (c == null || c.IdEstabelecimento != loja) throw PagamentoException.NaoEncontrado("Cobranca nao encontrada.");
@@ -527,6 +535,7 @@ UPDATE assinatura SET cancelamento_solicitado_em = NULL, cancelamento_por = NULL
             var origem = c.Tipo == TiposCobranca.CompraExtra ? OrigensPagamento.CompraExtra : OrigensPagamento.Assinatura;
             var prefixo = $"{origem}:{c.Id:N}";
             if (metodo == MetodosPagamento.Pix) return await PagarPixAsync(cx, c, origem, prefixo, usuarioId, ct);
+            if (metodo == MetodosPagamento.Link) return await PagarLinkAsync(cx, c, origem, prefixo, usuarioId, ct);
             if (r.RenovacaoAutomatica) return await AssinarCartaoAsync(cx, c, r, usuarioId, ct);
             return await PagarCartaoAsync(cx, c, origem, prefixo, r, usuarioId, ct);
         }
@@ -579,6 +588,35 @@ UPDATE comercial_cobranca SET id_intent_atual = @I, meio = 'pix', versao = versa
             var atual = await AssinaturaSql.CobrancaAsync(cx, null, c.Id, false, ct);
             return new CheckoutCobrancaDto(c.Id, MetodosPagamento.Pix, atual?.Status ?? c.Status, c.Valor,
                 new PixCheckoutDto(pix.IntentId, pix.Status, pix.CopiaECola, pix.QrCodeBase64, pix.TicketUrl, pix.ExpiraEm, pix.Reaproveitado), null, null);
+        }
+
+        /// <summary>
+        /// Link hospedado da InfinitePay na conta da ZIPPY. Sem debito automatico: a InfinitePay nao tem recorrencia, entao cada ciclo e uma
+        /// cobranca nova com link novo. O acesso so muda quando o webhook confirma (webhook + /payment_check), nunca pela volta do cliente.
+        /// </summary>
+        private async Task<CheckoutCobrancaDto> PagarLinkAsync(NpgsqlConnection cx, CobrancaRow c, string origem, string prefixo, int? usuarioId, CancellationToken ct)
+        {
+            if (_link == null) throw PagamentoException.Regra(APIBack.Payments.Provedores.ProvedorPagamentoCodigos.ProvedorNaoConfigurado, "Pagamento por link indisponivel.");
+            var emAnalise = await cx.ExecuteScalarAsync<bool>(new CommandDefinition(
+                "SELECT EXISTS (SELECT 1 FROM pagamento_intent WHERE origem_ref_id = @C AND status = 'processando')", new { C = c.Id }, cancellationToken: ct));
+            if (emAnalise) throw PagamentoException.Estado("Ha um pagamento em analise para esta cobranca.", "processando");
+
+            var chave = await ChaveEmissaoAsync(cx, c, prefixo + ":link", ct);
+            var res = await _link.CriarAsync(new APIBack.Payments.InfinitePay.Checkout.InfinitePayCheckoutRequest
+            {
+                IdEstabelecimento = c.IdEstabelecimento, Origem = origem, OrigemRefId = c.Id, Valor = c.Valor, Descricao = c.Descricao, IdempotencyKey = chave,
+                CriadoPor = usuarioId,
+                Itens = new System.Collections.Generic.List<APIBack.Payments.InfinitePay.Cliente.InfinitePayItem>
+                {
+                    new() { Description = c.Descricao, Price = APIBack.Payments.InfinitePay.Cliente.InfinitePayRegras.Centavos(c.Valor), Quantity = 1 }
+                }
+            }, ct);
+            await cx.ExecuteAsync(new CommandDefinition(@"
+UPDATE comercial_cobranca SET id_intent_atual = @I, meio = 'link', versao = versao + 1, updated_at = NOW() WHERE id = @Id AND status IN ('aberta', 'processando')",
+                new { I = res.IntentId, c.Id }, cancellationToken: ct));
+            var atual = await AssinaturaSql.CobrancaAsync(cx, null, c.Id, false, ct);
+            return new CheckoutCobrancaDto(c.Id, MetodosPagamento.Link, atual?.Status ?? c.Status, c.Valor, null, null, null,
+                new LinkCheckoutDto(res.IntentId, res.Status, res.UrlCheckout, res.MetodosEfetivos, res.ExpiraEm, res.Reaproveitado));
         }
 
         private async Task CancelarPixPendenteAsync(NpgsqlConnection cx, CobrancaRow c, int? usuarioId, CancellationToken ct)

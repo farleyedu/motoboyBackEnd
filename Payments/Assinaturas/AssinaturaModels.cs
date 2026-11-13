@@ -58,7 +58,7 @@ namespace APIBack.Payments.Assinaturas
     public sealed record SituacaoResumoDto(string Situacao, DateTimeOffset? TesteTerminaEm, int? DiasTesteRestantes);
 
     /// <summary>Public key da conta recebedora da ZIPPY (o Card Brick tokeniza o cartao com ela). Nunca e da loja.</summary>
-    public sealed record CheckoutDto(string? PublicKey, bool PixDisponivel, bool CartaoDisponivel, string Ambiente);
+    public sealed record CheckoutDto(string? PublicKey, bool PixDisponivel, bool CartaoDisponivel, string Ambiente, bool LinkDisponivel = false);
 
     public sealed record PainelAssinaturaDto(AssinaturaDto? Assinatura, SituacaoResumoDto Situacao, IReadOnlyList<PlanoDto> Planos, IReadOnlyList<ExtraDto> Extras,
         IReadOnlyList<CompraDto> Compras, IReadOnlyList<SolicitacaoDto> Solicitacoes, IReadOnlyList<AvisoDto> Avisos, CheckoutDto Checkout,
@@ -97,7 +97,7 @@ namespace APIBack.Payments.Assinaturas
 
     public sealed class PagarCobrancaRequest
     {
-        /// <summary>pix | cartao</summary>
+        /// <summary>pix | cartao | link (link hospedado da InfinitePay, Pix ou cartao)</summary>
         public string? Metodo { get; set; }
         public CartaoCheckoutRequest? Cartao { get; set; }
         /// <summary>Cartao com renovacao automatica (preapproval do MP). Exige AutorizoRenovacao = true.</summary>
@@ -111,8 +111,11 @@ namespace APIBack.Payments.Assinaturas
 
     public sealed record RecorrenteCheckoutDto(string? PreapprovalStatus, DateTimeOffset? PrimeiraCobrancaEm, string? CartaoFinal);
 
+    /// <summary>Link hospedado da InfinitePay (Pix ou cartao na pagina deles). Pago so depois que o servidor confirma; voltar do link nao prova nada.</summary>
+    public sealed record LinkCheckoutDto(Guid IntentId, string Status, string Url, string[] MetodosEfetivos, DateTime? ExpiraEm, bool Reaproveitado);
+
     public sealed record CheckoutCobrancaDto(Guid CobrancaId, string Metodo, string StatusCobranca, decimal Valor, PixCheckoutDto? Pix,
-        CartaoCheckoutDto? Cartao, RecorrenteCheckoutDto? Recorrente);
+        CartaoCheckoutDto? Cartao, RecorrenteCheckoutDto? Recorrente, LinkCheckoutDto? Link = null);
 
     public sealed class CompraRequest
     {

@@ -28,6 +28,7 @@ namespace APIBack.Payments.MercadoPago
         public static string LojaRefreshToken(Guid id) => $"mp_conta_loja:refresh_token:{id:N}";
         public static string OAuthCodeVerifier(Guid id) => $"mp_oauth_tentativa:code_verifier:{id:N}";
         public static string InfinitePayApiKey(Guid idVersao) => $"infinitepay_conta_versao:api_key:{idVersao:N}";
+        public static string InfinitePayZippyApiKey(Guid idVersao) => $"infinitepay_conta_zippy_versao:api_key:{idVersao:N}";
     }
 
     public sealed class PagamentoSegredoProtector : IPagamentoSegredoProtector

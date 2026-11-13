@@ -77,7 +77,7 @@ RETURNING id", new { M = ReservaMinutos, L = Math.Clamp(lote, 1, 100) }, cancell
             if (ev == null || ev.Status is StatusWebhookEvento.Processado or StatusWebhookEvento.Descartado or StatusWebhookEvento.Pendencia) return;
 
             var ck = await cx.QueryFirstOrDefaultAsync<CheckoutRow>(new CommandDefinition(@"
-SELECT c.id, c.id_intent, c.id_estabelecimento, c.id_conta_versao, c.order_nsu, c.handle_snapshot, c.valor_centavos, c.confirmado_em, c.transaction_nsu
+SELECT c.id, c.id_intent, c.id_estabelecimento, c.id_conta_versao, c.id_conta_zippy_versao, c.order_nsu, c.handle_snapshot, c.valor_centavos, c.confirmado_em, c.transaction_nsu
   FROM infinitepay_checkout c WHERE c.order_nsu = @N", new { N = ev.OrderNsu }, cancellationToken: ct));
             // Correlacao interna: aviso, checkout, intencao e loja precisam ser a mesma cadeia.
             if (ck == null || ck.IdIntent != ev.IdIntent || ck.IdEstabelecimento != ev.IdEstabelecimento)
@@ -108,9 +108,15 @@ SELECT c.id, c.id_intent, c.id_estabelecimento, c.id_conta_versao, c.order_nsu, 
 
         private async Task VerificarEConfirmarAsync(NpgsqlConnection cx, EventoRow ev, CheckoutRow ck, CancellationToken ct)
         {
-            var conta = await cx.QueryFirstOrDefaultAsync<ContaRow>(new CommandDefinition(@"
+            // Cobranca da Zippy (mensalidade/extra) confirma contra a conta InfinitePay da Zippy; a da loja, contra a conta da propria loja.
+            var zippy = ck.IdContaZippyVersao.HasValue;
+            var conta = zippy
+                ? await cx.QueryFirstOrDefaultAsync<ContaRow>(new CommandDefinition(@"
+SELECT id, infinite_tag_snapshot, api_key_cifrada FROM infinitepay_conta_zippy_versao WHERE id = @V",
+                    new { V = ck.IdContaZippyVersao }, cancellationToken: ct))
+                : await cx.QueryFirstOrDefaultAsync<ContaRow>(new CommandDefinition(@"
 SELECT id, infinite_tag_snapshot, api_key_cifrada FROM infinitepay_conta_versao WHERE id = @V AND id_estabelecimento = @Loja",
-                new { V = ck.IdContaVersao, Loja = ck.IdEstabelecimento }, cancellationToken: ct));
+                    new { V = ck.IdContaVersao, Loja = ck.IdEstabelecimento }, cancellationToken: ct));
             if (conta == null)
             {
                 await AbrirPendenciaEFinalizarAsync(cx, ev, TiposPendenciaInfinitePay.VerificacaoFalhou, new { motivo = "conta_nao_encontrada" }, ct);
@@ -120,7 +126,9 @@ SELECT id, infinite_tag_snapshot, api_key_cifrada FROM infinitepay_conta_versao 
             string? chave = null;
             if (!string.IsNullOrEmpty(conta.ApiKeyCifrada))
             {
-                chave = _segredos.Configurado ? _segredos.Revelar(conta.ApiKeyCifrada, SegredoContexto.InfinitePayApiKey(conta.Id)) : null;
+                chave = _segredos.Configurado
+                    ? _segredos.Revelar(conta.ApiKeyCifrada, zippy ? SegredoContexto.InfinitePayZippyApiKey(conta.Id) : SegredoContexto.InfinitePayApiKey(conta.Id))
+                    : null;
                 if (chave == null)
                 {
                     await ReagendarOuPendenciaAsync(cx, ev, "chave_indisponivel", ct);
@@ -167,10 +175,11 @@ SELECT id, infinite_tag_snapshot, api_key_cifrada FROM infinitepay_conta_versao 
             var intent = await PagamentoIntentSql.ObterAsync(cx, tx, ck.IdIntent, true, ct)
                          ?? throw new InvalidOperationException("Intencao nao encontrada.");
             var atual = await cx.QueryFirstAsync<CheckoutRow>(new CommandDefinition(@"
-SELECT id, id_intent, id_estabelecimento, id_conta_versao, order_nsu, handle_snapshot, valor_centavos, confirmado_em, transaction_nsu
+SELECT id, id_intent, id_estabelecimento, id_conta_versao, id_conta_zippy_versao, order_nsu, handle_snapshot, valor_centavos, confirmado_em, transaction_nsu
   FROM infinitepay_checkout WHERE id = @Id FOR UPDATE", new { ck.Id }, tx, cancellationToken: ct));
 
-            if (intent.IdEstabelecimento != ck.IdEstabelecimento || intent.Provedor != ProvedoresPagamento.InfinitePay)
+            if (intent.IdEstabelecimento != ck.IdEstabelecimento || intent.Provedor != ProvedoresPagamento.InfinitePay ||
+                ck.IdContaZippyVersao.HasValue != APIBack.Payments.InfinitePay.Checkout.InfinitePayCheckoutMontagem.EhOrigemZippy(intent.Origem))
             {
                 await FinalizarAsync(cx, tx, ev.Id, StatusWebhookEvento.Descartado, "correlacao_inconsistente", ct);
                 await tx.CommitAsync(ct);
@@ -325,7 +334,8 @@ UPDATE infinitepay_webhook_evento SET status = @S, resultado = @R, processado_em
             public Guid Id { get; set; }
             public Guid IdIntent { get; set; }
             public Guid IdEstabelecimento { get; set; }
-            public Guid IdContaVersao { get; set; }
+            public Guid? IdContaVersao { get; set; }
+            public Guid? IdContaZippyVersao { get; set; }
             public string OrderNsu { get; set; } = string.Empty;
             public string HandleSnapshot { get; set; } = string.Empty;
             public long ValorCentavos { get; set; }

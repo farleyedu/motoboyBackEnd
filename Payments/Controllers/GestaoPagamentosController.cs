@@ -42,12 +42,23 @@ namespace APIBack.Payments.Controllers
     {
         private readonly IPagamentosGestaoService _gestao;
         private readonly ILogger<GestaoPagamentosController> _logger;
+        private readonly APIBack.Payments.Conexao.IInfinitePayConexaoZippyService _infinitePayZippy;
 
-        public GestaoPagamentosController(IPagamentosGestaoService gestao, ILogger<GestaoPagamentosController> logger)
+        public GestaoPagamentosController(IPagamentosGestaoService gestao, ILogger<GestaoPagamentosController> logger,
+            APIBack.Payments.Conexao.IInfinitePayConexaoZippyService infinitePayZippy)
         {
             _gestao = gestao;
             _logger = logger;
+            _infinitePayZippy = infinitePayZippy;
         }
+
+        /// <summary>Conta InfinitePay da Zippy (mensalidades e extras). Nunca devolve a chave, so se existe.</summary>
+        [HttpGet("infinitepay")]
+        public Task<IActionResult> InfinitePayZippy() => Executar(() => _infinitePayZippy.EstadoAsync(HttpContext.RequestAborted), _logger);
+
+        [HttpPut("infinitepay")]
+        public Task<IActionResult> SalvarInfinitePayZippy([FromBody] APIBack.Payments.Conexao.InfinitePayConfiguracaoRequest body) =>
+            Executar(() => _infinitePayZippy.ConfigurarAsync(Usuario, body, HttpContext.RequestAborted), _logger);
 
         private int Usuario => HttpContext.GetUserId() ?? 0;
 

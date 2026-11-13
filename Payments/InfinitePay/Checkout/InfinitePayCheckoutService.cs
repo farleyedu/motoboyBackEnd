@@ -67,14 +67,25 @@ namespace APIBack.Payments.InfinitePay.Checkout
                 {
                     ConferirRepeticao(existente, r);
                     intent = existente;
-                    versao = await VersaoDaIntentAsync(cx, tx, intent, ct);
+                    versao = InfinitePayCheckoutMontagem.EhOrigemZippy(intent.Origem)
+                        ? await VersaoZippyDaIntentAsync(cx, tx, intent, ct)
+                        : await VersaoDaIntentAsync(cx, tx, intent, ct);
                     checkout = await CheckoutDaIntentAsync(cx, tx, intent.Id, ct)
                                ?? throw PagamentoException.Estado("Intencao InfinitePay sem checkout.", intent.Status);
                 }
                 else
                 {
-                    if (r.PrePedidoId != Guid.Empty) await ExigirPrePedidoDaLojaAsync(cx, tx, r, ct);
-                    versao = await VersaoAtivaAsync(cx, tx, r.IdEstabelecimento, ct);
+                    var zippy = InfinitePayCheckoutMontagem.EhOrigemZippy(r.Origem);
+                    if (zippy)
+                    {
+                        await ExigirCobrancaDaLojaAsync(cx, tx, r, ct);
+                        versao = await VersaoZippyAtivaAsync(cx, tx, ct);
+                    }
+                    else
+                    {
+                        if (r.PrePedidoId != Guid.Empty) await ExigirPrePedidoDaLojaAsync(cx, tx, r, ct);
+                        versao = await VersaoAtivaAsync(cx, tx, r.IdEstabelecimento, ct);
+                    }
                     var apiKey = AbrirApiKey(versao);
                     var id = Guid.NewGuid();
                     var orderNsu = PagamentoIntentSql.ExternalReference(Ambientes.Producao, r.Origem, id);
@@ -82,24 +93,35 @@ namespace APIBack.Payments.InfinitePay.Checkout
                     var (corpo, expira) = InfinitePayCheckoutMontagem.Montar(r, versao.InfiniteTagSnapshot, orderNsu, apiKey != null, _options, agora);
                     var json = InfinitePayClient.Serializar(corpo);
 
-                    await cx.ExecuteAsync(new CommandDefinition(@"
+                    if (zippy)
+                        await cx.ExecuteAsync(new CommandDefinition(@"
+INSERT INTO pagamento_intent (id, id_estabelecimento, ambiente, provedor, origem, conta_tipo, id_infinitepay_zippy_versao, origem_ref_id,
+                              valor, descricao, external_reference, idempotency_key, expira_em, criado_por)
+VALUES (@Id, @Loja, 'producao', 'infinitepay', @Origem, 'zippy', @Versao, @RefId, @Valor, @Descricao, @Ref, @Chave, @Expira, @CriadoPor)", new
+                        {
+                            Id = id, Loja = r.IdEstabelecimento, r.Origem, Versao = versao.Id, RefId = r.OrigemRefId, r.Valor, r.Descricao,
+                            Ref = orderNsu, Chave = r.IdempotencyKey, Expira = expira, r.CriadoPor
+                        }, tx, cancellationToken: ct));
+                    else
+                        await cx.ExecuteAsync(new CommandDefinition(@"
 INSERT INTO pagamento_intent (id, id_estabelecimento, ambiente, provedor, origem, conta_tipo, id_infinitepay_conta_versao, pedido_id, pre_pedido_id,
                               conversa_id, cliente_id, valor, descricao, external_reference, idempotency_key, expira_em, criado_por)
 VALUES (@Id, @Loja, 'producao', 'infinitepay', @Origem, 'loja', @Versao, @PedidoId, @PrePedidoId, @ConversaId, @ClienteId, @Valor, @Descricao,
         @Ref, @Chave, @Expira, @CriadoPor)", new
-                    {
-                        Id = id, Loja = r.IdEstabelecimento, r.Origem, Versao = versao.Id, r.PedidoId, PrePedidoId = r.PrePedidoId == Guid.Empty ? (Guid?)null : r.PrePedidoId,
-                        r.ConversaId, r.ClienteId, r.Valor, r.Descricao,
-                        Ref = orderNsu, Chave = r.IdempotencyKey, Expira = expira, r.CriadoPor
-                    }, tx, cancellationToken: ct));
+                        {
+                            Id = id, Loja = r.IdEstabelecimento, r.Origem, Versao = versao.Id, r.PedidoId, PrePedidoId = r.PrePedidoId == Guid.Empty ? (Guid?)null : r.PrePedidoId,
+                            r.ConversaId, r.ClienteId, r.Valor, r.Descricao,
+                            Ref = orderNsu, Chave = r.IdempotencyKey, Expira = expira, r.CriadoPor
+                        }, tx, cancellationToken: ct));
                     intent = await PagamentoIntentSql.ObterAsync(cx, tx, id, true, ct) ?? throw new InvalidOperationException("Intencao nao encontrada apos criar.");
 
                     await cx.ExecuteAsync(new CommandDefinition(@"
-INSERT INTO infinitepay_checkout (id, id_intent, id_estabelecimento, id_conta_versao, order_nsu, handle_snapshot, valor_centavos, usa_api_key,
+INSERT INTO infinitepay_checkout (id, id_intent, id_estabelecimento, id_conta_versao, id_conta_zippy_versao, order_nsu, handle_snapshot, valor_centavos, usa_api_key,
                                   payload_json, payload_hash, expira_em)
-VALUES (@Id, @Intent, @Loja, @Versao, @Nsu, @Handle, @Centavos, @UsaKey, @Json, @Hash, @Expira)", new
+VALUES (@Id, @Intent, @Loja, @VersaoLoja, @VersaoZippy, @Nsu, @Handle, @Centavos, @UsaKey, @Json, @Hash, @Expira)", new
                     {
-                        Id = Guid.NewGuid(), Intent = id, Loja = r.IdEstabelecimento, Versao = versao.Id, Nsu = orderNsu, Handle = versao.InfiniteTagSnapshot,
+                        Id = Guid.NewGuid(), Intent = id, Loja = r.IdEstabelecimento, VersaoLoja = zippy ? (Guid?)null : versao.Id, VersaoZippy = zippy ? versao.Id : (Guid?)null,
+                        Nsu = orderNsu, Handle = versao.InfiniteTagSnapshot,
                         Centavos = InfinitePayRegras.Centavos(r.Valor), UsaKey = apiKey != null, Json = json, Hash = Hash(json), Expira = expira
                     }, tx, cancellationToken: ct));
                     await PagamentoAuditoria.RegistrarAsync(cx, tx, r.IdEstabelecimento, "pagamento_intent", id.ToString(), "criada", r.CriadoPor.HasValue ? "usuario" : "sistema",
@@ -187,7 +209,7 @@ UPDATE infinitepay_checkout SET status = @S, claim_ate = NULL, erro_codigo = @C,
         {
             var pre = r.PrePedidoId == Guid.Empty ? (Guid?)null : r.PrePedidoId;
             if (i.Provedor != ProvedoresPagamento.InfinitePay || i.Valor != r.Valor || i.PrePedidoId != pre || i.PedidoId != r.PedidoId ||
-                i.Origem != r.Origem)
+                i.Origem != r.Origem || (InfinitePayCheckoutMontagem.EhOrigemZippy(r.Origem) && i.OrigemRefId != r.OrigemRefId))
                 throw new PagamentoException(PagamentoCodigos.IdempotenciaConflito, 409, "Esta chave de idempotencia ja foi usada com outros dados.");
         }
 
@@ -198,6 +220,37 @@ UPDATE infinitepay_checkout SET status = @S, claim_ate = NULL, erro_codigo = @C,
                 new { P = r.PrePedidoId, Loja = r.IdEstabelecimento }, tx, cancellationToken: ct));
             if (!ok) throw PagamentoException.NaoEncontrado("Pedido nao encontrado nesta loja.");
         }
+
+        /// <summary>A cobranca comercial precisa ser DESTA loja, estar em aberto, ter o mesmo valor e ser do tipo da origem (nunca confia no chamador).</summary>
+        private static async Task ExigirCobrancaDaLojaAsync(NpgsqlConnection cx, NpgsqlTransaction tx, InfinitePayCheckoutRequest r, CancellationToken ct)
+        {
+            var c = await cx.QueryFirstOrDefaultAsync<(decimal Valor, string Status, string Tipo)?>(new CommandDefinition(
+                "SELECT valor, status, tipo FROM comercial_cobranca WHERE id = @C AND id_estabelecimento = @Loja",
+                new { C = r.OrigemRefId, Loja = r.IdEstabelecimento }, tx, cancellationToken: ct));
+            if (c == null) throw PagamentoException.NaoEncontrado("Cobranca nao encontrada nesta loja.");
+            if (c.Value.Status is not ("aberta" or "processando")) throw PagamentoException.Estado("Esta cobranca nao esta em aberto.", c.Value.Status);
+            if (c.Value.Valor != r.Valor) throw PagamentoException.Regra(PagamentoCodigos.ValorInvalido, "O valor nao confere com a cobranca.");
+            var ehCompra = c.Value.Tipo == "compra_extra";
+            if (ehCompra != (r.Origem == OrigensPagamento.CompraExtra)) throw PagamentoException.Invalida("Origem nao confere com a cobranca.", "origem");
+        }
+
+        private static async Task<VersaoRow> VersaoZippyAtivaAsync(NpgsqlConnection cx, NpgsqlTransaction tx, CancellationToken ct)
+        {
+            var v = await cx.QueryFirstOrDefaultAsync<VersaoRow>(new CommandDefinition(@"
+SELECT v.id, NULL::uuid AS id_estabelecimento, v.infinite_tag_snapshot, v.api_key_cifrada, c.habilitada, TRUE AS zippy
+  FROM infinitepay_conta_zippy c JOIN infinitepay_conta_zippy_versao v ON v.id_conta = c.id AND v.ativa", transaction: tx, cancellationToken: ct));
+            if (v == null || !v.Habilitada)
+                throw PagamentoException.Regra(ProvedorPagamentoCodigos.ProvedorNaoConfigurado, "A InfinitePay da Zippy nao esta configurada e habilitada.");
+            return v;
+        }
+
+        /// <summary>Repeticao usa a versao gravada no checkout, nunca a ativa de hoje.</summary>
+        private static async Task<VersaoRow> VersaoZippyDaIntentAsync(NpgsqlConnection cx, NpgsqlTransaction tx, PagamentoIntent intent, CancellationToken ct) =>
+            await cx.QueryFirstOrDefaultAsync<VersaoRow>(new CommandDefinition(@"
+SELECT v.id, NULL::uuid AS id_estabelecimento, v.infinite_tag_snapshot, v.api_key_cifrada, TRUE AS habilitada, TRUE AS zippy
+  FROM infinitepay_checkout c JOIN infinitepay_conta_zippy_versao v ON v.id = c.id_conta_zippy_versao
+ WHERE c.id_intent = @I AND c.id_estabelecimento = @Loja", new { I = intent.Id, Loja = intent.IdEstabelecimento }, tx, cancellationToken: ct))
+            ?? throw new PagamentoException(ProvedorPagamentoCodigos.ContaDeOutraLoja, 422, "A conta recebedora nao confere com a cobranca.");
 
         private static async Task<VersaoRow> VersaoAtivaAsync(NpgsqlConnection cx, NpgsqlTransaction tx, Guid loja, CancellationToken ct)
         {
@@ -222,7 +275,7 @@ SELECT id, id_estabelecimento, infinite_tag_snapshot, api_key_cifrada, TRUE AS h
         {
             if (string.IsNullOrEmpty(v.ApiKeyCifrada)) return null;
             if (!_segredos.Configurado) throw PagamentoException.NaoConfigurado("Chave mestra de pagamentos nao configurada.");
-            return _segredos.Revelar(v.ApiKeyCifrada, SegredoContexto.InfinitePayApiKey(v.Id))
+            return _segredos.Revelar(v.ApiKeyCifrada, v.Zippy ? SegredoContexto.InfinitePayZippyApiKey(v.Id) : SegredoContexto.InfinitePayApiKey(v.Id))
                    ?? throw PagamentoException.NaoConfigurado("Nao foi possivel abrir a API Key InfinitePay.");
         }
 
@@ -251,10 +304,12 @@ SELECT id, id_intent, order_nsu, status, tentativas, checkout_url, payload_json,
         private sealed class VersaoRow
         {
             public Guid Id { get; set; }
-            public Guid IdEstabelecimento { get; set; }
+            public Guid? IdEstabelecimento { get; set; }
             public string InfiniteTagSnapshot { get; set; } = string.Empty;
             public string? ApiKeyCifrada { get; set; }
             public bool Habilitada { get; set; }
+            /// <summary>Conta InfinitePay da Zippy (mensalidade/extra): muda o contexto de cifra da chave.</summary>
+            public bool Zippy { get; set; }
         }
 
         private sealed class CheckoutRow

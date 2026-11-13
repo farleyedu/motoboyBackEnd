@@ -34,6 +34,8 @@ namespace APIBack.Payments.InfinitePay.Checkout
         public int? PedidoId { get; set; }
         public Guid? ConversaId { get; set; }
         public Guid? ClienteId { get; set; }
+        /// <summary>assinatura/compra_extra (conta da Zippy): id da cobranca comercial. Obrigatorio nessas origens.</summary>
+        public Guid? OrigemRefId { get; set; }
         public decimal Valor { get; set; }
         public string Descricao { get; set; } = string.Empty;
         public List<InfinitePayItem> Itens { get; set; } = new();

@@ -31,6 +31,7 @@ namespace APIBack.Payments.InfinitePay
             });
             services.AddScoped<IInfinitePayClient, InfinitePayClient>();
             services.AddScoped<IInfinitePayCheckoutService, InfinitePayCheckoutService>();
+            services.AddScoped<APIBack.Payments.Conexao.IInfinitePayConexaoZippyService, APIBack.Payments.Conexao.InfinitePayConexaoZippyService>();
             services.AddScoped<APIBack.Payments.InfinitePay.Cardapio.ICardapioCheckoutHospedadoService, APIBack.Payments.InfinitePay.Cardapio.CardapioCheckoutHospedadoService>();
 
             // Webhook sem assinatura (prompt 04). O worker precisa de IPagamentoEfeitoHandler (registrados em PagamentosRegistro).
