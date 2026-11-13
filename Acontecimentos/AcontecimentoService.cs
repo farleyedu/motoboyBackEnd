@@ -350,7 +350,7 @@ public static class ContaRegras
         if (tipo == TipoConta.Recebivel)
         {
             // motoboys (6C5): dinheiro das entregas que espera o acerto no Caixa.
-            if (subtipo is not ("ifood" or "maquininha" or "motoboys" or "outro")) throw Erro("Recebível: ifood, maquininha, motoboys ou outro.");
+            if (subtipo is not ("ifood" or "maquininha" or "motoboys" or "adiantamentos" or "outro")) throw Erro("Recebível: ifood, maquininha, motoboys ou outro.");
         }
         else if (subtipo != null) throw Erro("Só recebível tem subtipo.");
         if (tipo == TipoConta.CartaoEmpresa)

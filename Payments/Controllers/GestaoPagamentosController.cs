@@ -42,12 +42,23 @@ namespace APIBack.Payments.Controllers
     {
         private readonly IPagamentosGestaoService _gestao;
         private readonly ILogger<GestaoPagamentosController> _logger;
+        private readonly APIBack.Payments.Conexao.IInfinitePayConexaoZippyService _infinitePayZippy;
 
-        public GestaoPagamentosController(IPagamentosGestaoService gestao, ILogger<GestaoPagamentosController> logger)
+        public GestaoPagamentosController(IPagamentosGestaoService gestao, ILogger<GestaoPagamentosController> logger,
+            APIBack.Payments.Conexao.IInfinitePayConexaoZippyService infinitePayZippy)
         {
             _gestao = gestao;
             _logger = logger;
+            _infinitePayZippy = infinitePayZippy;
         }
+
+        /// <summary>Conta InfinitePay da Zippy (mensalidades e extras). Nunca devolve a chave, so se existe.</summary>
+        [HttpGet("infinitepay")]
+        public Task<IActionResult> InfinitePayZippy() => Executar(() => _infinitePayZippy.EstadoAsync(HttpContext.RequestAborted), _logger);
+
+        [HttpPut("infinitepay")]
+        public Task<IActionResult> SalvarInfinitePayZippy([FromBody] APIBack.Payments.Conexao.InfinitePayConfiguracaoRequest body) =>
+            Executar(() => _infinitePayZippy.ConfigurarAsync(Usuario, body, HttpContext.RequestAborted), _logger);
 
         private int Usuario => HttpContext.GetUserId() ?? 0;
 
@@ -90,8 +101,8 @@ namespace APIBack.Payments.Controllers
 
         [HttpGet("transacoes")]
         public Task<IActionResult> Transacoes([FromQuery] string? conta, [FromQuery] Guid? estabelecimentoId, [FromQuery] string? origem, [FromQuery] string? status,
-            [FromQuery] DateTime? de, [FromQuery] DateTime? ate, [FromQuery] int pagina = 1) =>
-            Executar(() => _gestao.TransacoesAsync(conta, estabelecimentoId, origem, status, de, ate, pagina, HttpContext.RequestAborted), _logger);
+            [FromQuery] DateTime? de, [FromQuery] DateTime? ate, [FromQuery] int pagina = 1, [FromQuery] string? provedor = null) =>
+            Executar(() => _gestao.TransacoesAsync(conta, estabelecimentoId, origem, status, de, ate, pagina, provedor, HttpContext.RequestAborted), _logger);
 
         [HttpGet("assinaturas")]
         public Task<IActionResult> Assinaturas([FromQuery] string? status, [FromQuery] int pagina = 1) =>

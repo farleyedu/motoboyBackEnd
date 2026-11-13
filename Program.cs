@@ -412,6 +412,8 @@ builder.Services.AddHostedService<APIBack.Atendimento.WaEventoWorker>();
 // Mercado Pago (Pix/cartao, webhook, conciliador, outbox). O Asaas saiu do caminho ativo; tabelas checkout_* ficam como historico.
 // Contrato para as demais sessoes: docs/pagamentos/CONTRATOS.md.
 builder.Services.AddPagamentosMercadoPago(builder.Configuration);
+// InfinitePay: checkout hospedado + webhook sem assinatura (confirma por /payment_check). Depende das migrations 20261129_*; sem elas o worker so registra aviso.
+APIBack.Payments.InfinitePay.InfinitePayRegistro.AddPagamentosInfinitePay(builder.Services, builder.Configuration);
 APIBack.Payments.Assinaturas.AssinaturasRegistro.AddAssinaturasZippy(builder.Services);
 // Cobranca Pix do atendente no chat (sessao 5, CONTRATOS.md §8.5). Depois do nucleo: o efeito do chat roda apos o ChatCobrancaEfeito.
 APIBack.Payments.Chat.CobrancaChatDependencias.AddCobrancaChat(builder.Services);

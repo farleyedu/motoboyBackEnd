@@ -14,6 +14,8 @@ namespace APIBack.Payments.MercadoPago
     {
         public const string Pix = "pix";
         public const string Cartao = "cartao";
+        /// <summary>Link hospedado (InfinitePay): o cliente escolhe Pix ou cartao na pagina do provedor.</summary>
+        public const string Link = "link";
     }
 
     /// <summary>Estados de pagamento_intent (ver maquina em CONTRATOS.md).</summary>

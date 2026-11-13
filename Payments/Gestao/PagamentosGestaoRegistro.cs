@@ -11,6 +11,7 @@ namespace APIBack.Payments.Gestao
         {
             services.AddScoped<IMercadoPagoConexaoLojaService, MercadoPagoConexaoLojaService>();
             services.AddScoped<IPagamentosGestaoService, PagamentosGestaoService>();
+            services.AddScoped<APIBack.Payments.Recebimentos.IRecebimentosOnlineService, APIBack.Payments.Recebimentos.RecebimentosOnlineService>();
             services.AddScoped<IMercadoPagoTopicoHandler, MpConnectTopicoHandler>();
             services.AddHostedService<MercadoPagoContasLojaWorker>();
             return services;

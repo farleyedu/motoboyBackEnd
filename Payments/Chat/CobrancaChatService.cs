@@ -3,7 +3,10 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using APIBack.Payments.InfinitePay.Checkout;
+using APIBack.Payments.InfinitePay.Cliente;
 using APIBack.Payments.MercadoPago;
+using APIBack.Payments.Provedores;
 using Dapper;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -28,11 +31,13 @@ namespace APIBack.Payments.Chat
         private readonly ICobrancaChatMensageiro _mensageiro;
         private readonly IConfiguration _config;
         private readonly ILogger<CobrancaChatService> _logger;
+        private readonly IInfinitePayCheckoutService? _link;
 
         public CobrancaChatService(NpgsqlDataSource db, IPixChargeService pix, IPagamentoEstornoService estornos, IPagamentoSincronizador sync,
             IMercadoPagoCredencialResolver credenciais, IPagamentoSegredoProtector segredos, ICobrancaChatMensageiro mensageiro, IConfiguration config,
-            ILogger<CobrancaChatService> logger)
+            ILogger<CobrancaChatService> logger, IInfinitePayCheckoutService? link = null)
         {
+            _link = link;
             _db = db;
             _pix = pix;
             _estornos = estornos;
@@ -55,7 +60,10 @@ namespace APIBack.Payments.Chat
             var c = await CobrancaChatRepositorio.ConfigAsync(cx, loja, ct);
             c.PodeAprovar = ator.PodeAprovar;
             c.PodeReembolsar = ator.PodeReembolsar;
-            c.PixDisponivel = await CobrancaChatRepositorio.PixDisponivelAsync(cx, loja, _credenciais.AmbienteAtivo, ct);
+            c.PixIndisponivelMotivo = await CobrancaChatRepositorio.MotivoPixIndisponivelPorProvedorAsync(cx, loja, ct);
+            c.PixDisponivel = c.PixIndisponivelMotivo == null && await CobrancaChatRepositorio.PixDisponivelAsync(cx, loja, _credenciais.AmbienteAtivo, ct);
+            c.LinkIndisponivelMotivo = await MotivoLinkIndisponivelAsync(cx, loja, c, ct);
+            c.LinkPagamentoDisponivel = c.LinkIndisponivelMotivo == null;
             return c;
         }
 
@@ -76,9 +84,15 @@ namespace APIBack.Payments.Chat
             if (r.TemplateNome != null) c.TemplateNome = string.IsNullOrWhiteSpace(r.TemplateNome) ? null : r.TemplateNome.Trim();
             if (!string.IsNullOrWhiteSpace(r.TemplateIdioma)) c.TemplateIdioma = r.TemplateIdioma.Trim();
             if (r.ConfirmarPagamentoCliente.HasValue) c.ConfirmarPagamentoCliente = r.ConfirmarPagamentoCliente.Value;
+            if (r.LinkPagamentoHabilitado.HasValue)
+            {
+                if (r.LinkPagamentoHabilitado.Value && !await InfinitePayProntaAsync(cx, loja, ct))
+                    throw PagamentoException.Regra(ProvedorPagamentoCodigos.ProvedorNaoConfigurado, "Configure e habilite a InfinitePay em Integracoes antes de liberar o link de pagamento.");
+                c.LinkPagamentoHabilitado = r.LinkPagamentoHabilitado.Value;
+            }
             await CobrancaChatRepositorio.SalvarConfigAsync(cx, loja, c, ator.UsuarioId, ct);
             await PagamentoAuditoria.RegistrarAsync(cx, null, loja, "cobranca_chat_config", loja.ToString(), "alterada", "usuario", ator.UsuarioId,
-                new { c.Habilitada, c.PermitirAvulsa, c.LimiteSemAprovacao, c.TemplateNome, c.ConfirmarPagamentoCliente }, ct);
+                new { c.Habilitada, c.PermitirAvulsa, c.LimiteSemAprovacao, c.TemplateNome, c.ConfirmarPagamentoCliente, c.LinkPagamentoHabilitado }, ct);
             return await ConfigAsync(loja, ator, ct);
         }
 
@@ -122,9 +136,10 @@ namespace APIBack.Payments.Chat
             var conversasDoCliente = await CobrancaChatRepositorio.ConversasDoClienteAsync(cx, null, conversa, ct);
 
             var tipo = CobrancaChatRegras.Tipo(r.Tipo, r.PedidoId, r.PrePedidoId);
+            var modalidade = CobrancaChatRegras.ModalidadeDe(r.Modalidade);
             // Clique duplo / repeticao: mesma chave devolve a mesma cobranca (e retoma o Pix se ele ficou sem resposta).
             var existente = await CobrancaChatRepositorio.PorChaveAsync(cx, null, loja, chave, ct);
-            if (existente != null) return await RepetidaAsync(cx, existente, conversasDoCliente, tipo, r.PedidoId, r.PrePedidoId, r.Valor, ator, ct);
+            if (existente != null) return await RepetidaAsync(cx, existente, conversasDoCliente, tipo, modalidade, r.PedidoId, r.PrePedidoId, r.Valor, ator, ct);
 
             decimal valor;
             string descricao;
@@ -143,29 +158,29 @@ namespace APIBack.Payments.Chat
             }
 
             var validade = await ValidadeAsync(cx, loja, r.ValidadeMinutos, ct);
-            await ExigirPixDisponivelAsync(cx, loja, ct);
+            await ExigirModalidadeDisponivelAsync(cx, loja, modalidade, config, ct);
             var exige = CobrancaChatRegras.ExigeAprovacao(valor, config.LimiteSemAprovacao, ator.PodeAprovar);
             var nova = new CobrancaChatLinha
             {
                 Id = Guid.NewGuid(), IdEstabelecimento = loja, ConversaId = conversa.Id, AutorUsuarioId = ator.UsuarioId, Descricao = descricao, Valor = valor,
                 Tipo = tipo, PedidoId = r.PedidoId, PrePedidoId = r.PrePedidoId, ClienteId = conversa.IdCliente, ValidadeMinutos = validade,
-                Status = exige ? StatusCobranca.AguardandoAprovacao : StatusCobranca.Criando, IdempotencyKey = chave
+                Status = exige ? StatusCobranca.AguardandoAprovacao : StatusCobranca.Criando, IdempotencyKey = chave, Modalidade = modalidade
             };
             return await GravarEEmitirAsync(cx, nova, conversa, ator, ct)
-                   ?? await RepetidaAsync(cx, (await CobrancaChatRepositorio.PorChaveAsync(cx, null, loja, chave, ct))!, conversasDoCliente, tipo, r.PedidoId,
+                   ?? await RepetidaAsync(cx, (await CobrancaChatRepositorio.PorChaveAsync(cx, null, loja, chave, ct))!, conversasDoCliente, tipo, modalidade, r.PedidoId,
                        r.PrePedidoId, r.Valor, ator, ct);
         }
 
-        private async Task<CobrancaChatDto> RepetidaAsync(NpgsqlConnection cx, CobrancaChatLinha e, Guid[] conversasDoCliente, string tipo, int? pedidoId, Guid? prePedidoId,
+        private async Task<CobrancaChatDto> RepetidaAsync(NpgsqlConnection cx, CobrancaChatLinha e, Guid[] conversasDoCliente, string tipo, string modalidade, int? pedidoId, Guid? prePedidoId,
             decimal? valor, AtorCobranca ator, CancellationToken ct)
         {
-            if (!conversasDoCliente.Contains(e.ConversaId) || e.Tipo != tipo || e.PedidoId != pedidoId || e.PrePedidoId != prePedidoId ||
+            if (!conversasDoCliente.Contains(e.ConversaId) || e.Tipo != tipo || e.Modalidade != modalidade || e.PedidoId != pedidoId || e.PrePedidoId != prePedidoId ||
                 (tipo == TiposCobranca.Avulsa && valor != e.Valor))
                 throw new PagamentoException(PagamentoCodigos.IdempotenciaConflito, 409, "Esta chave de idempotencia ja foi usada com outros dados.");
             string? token = null;
             if (e.Status == StatusCobranca.Criando)
             {
-                token = await GerarPixAsync(e, ator, ct);
+                token = await GerarAsync(e, ator, ct);
                 e = (await CobrancaChatRepositorio.ObterAsync(cx, null, e.Id, e.IdEstabelecimento, false, ct))!;
             }
             return await DtoAsync(cx, e, ator, token ?? AbrirToken(e), comPix: true, ct);
@@ -204,9 +219,46 @@ namespace APIBack.Payments.Chat
                 nova.Id, nova.IdEstabelecimento, ator.UsuarioId, nova.PedidoId, nova.Status);
 
             string? token = null;
-            if (nova.Status == StatusCobranca.Criando) token = await GerarPixAsync(nova, ator, ct);
+            if (nova.Status == StatusCobranca.Criando) token = await GerarAsync(nova, ator, ct);
             var linha = (await CobrancaChatRepositorio.ObterAsync(cx, null, nova.Id, nova.IdEstabelecimento, false, ct))!;
             return await DtoAsync(cx, linha, ator, token, comPix: true, ct);
+        }
+
+        /// <summary>Gera a cobranca 'criando' pela modalidade dela: Pix (Mercado Pago) ou Link de pagamento (InfinitePay). Nunca troca uma pela outra.</summary>
+        public Task<string?> GerarAsync(CobrancaChatLinha c, AtorCobranca? ator, CancellationToken ct) =>
+            c.Modalidade == ModalidadesCobranca.Link ? GerarLinkAsync(c, ator, ct) : GerarPixAsync(c, ator, ct);
+
+        /// <summary>
+        /// Link de pagamento (Pix ou cartao) na InfinitePay da PROPRIA loja. Mesma chave chat:{id} => repetir devolve o mesmo link. A URL fica cifrada
+        /// em link_token_cifrado (privacidade). 422 definitivo recusa a cobranca; falha de rede/limite deixa em 'criando' para o recuperador tentar de novo.
+        /// </summary>
+        public async Task<string?> GerarLinkAsync(CobrancaChatLinha c, AtorCobranca? ator, CancellationToken ct)
+        {
+            if (_link == null) throw PagamentoException.Regra(ProvedorPagamentoCodigos.NaoSuportado, "Link de pagamento nao esta disponivel neste servidor.");
+            InfinitePayCheckoutResultado r;
+            try
+            {
+                var pedido = new InfinitePayCheckoutRequest
+                {
+                    IdEstabelecimento = c.IdEstabelecimento, Origem = OrigensPagamento.Chat, PrePedidoId = c.PrePedidoId ?? Guid.Empty, PedidoId = c.PedidoId,
+                    ConversaId = c.ConversaId, ClienteId = c.ClienteId, Valor = c.Valor, Descricao = c.Descricao.Length > 140 ? c.Descricao[..140] : c.Descricao,
+                    IdempotencyKey = $"chat:{c.Id:N}", CriadoPor = c.AutorUsuarioId
+                };
+                pedido.Itens.Add(new InfinitePayItem { Description = c.Descricao.Length > 100 ? c.Descricao[..100] : c.Descricao, Price = InfinitePayRegras.Centavos(c.Valor), Quantity = 1 });
+                r = await _link.CriarAsync(pedido, ct);
+            }
+            catch (PagamentoException ex) when (ex.Http == 422)
+            {
+                await RecusarAsync(c, ex.Codigo, ator, ct);
+                throw;
+            }
+            catch (PagamentoException ex)
+            {
+                await RegistrarErroAsync(c.Id, ex.Codigo, ct);
+                throw new PagamentoException(ex.Codigo, ex.Http, ex.Message, new Dictionary<string, object?> { ["cobrancaId"] = c.Id }, ex);
+            }
+            await VincularAsync(c.Id, c.IdEstabelecimento, r.IntentId, r.UrlCheckout, ator, ct);
+            return r.UrlCheckout;
         }
 
         /// <summary>
@@ -313,24 +365,41 @@ UPDATE cobranca_chat SET id_intent = @Intent, expira_em = COALESCE(@Expira, expi
                 ExigirAberta(c);
                 if (c.Status == StatusCobranca.Enviado && c.EnviadoEm > DateTime.UtcNow - CobrancaChatRegras.JanelaReenvioDuplicado)
                     return await DtoAsync(cx, c, ator, AbrirToken(c), comPix: true, ct);
+                var ehLink = c.Modalidade == ModalidadesCobranca.Link;
                 if (c.ExpiraEm.HasValue && c.ExpiraEm.Value <= DateTime.UtcNow.AddMinutes(1))
-                    throw PagamentoException.Estado("O Pix desta cobranca venceu. Reemita a cobranca.", c.Status);
-                if (!await CobrancaChatRepositorio.ContaDaIntentVivaAsync(cx, c.IdIntent!.Value, ct))
-                    throw PagamentoException.Regra(PagamentoCodigos.ContaLojaNaoConectada, "A conta Mercado Pago da loja foi desconectada. Cancele e conecte de novo.");
+                    throw PagamentoException.Estado(ehLink ? "O link desta cobranca venceu. Reemita a cobranca." : "O Pix desta cobranca venceu. Reemita a cobranca.", c.Status);
+                string intentStatus;
+                string? copiaECola = null;
+                if (ehLink)
+                {
+                    intentStatus = (await PagamentoIntentSql.ObterAsync(cx, null, c.IdIntent!.Value, false, ct))?.Status ?? throw NaoEncontrada();
+                }
+                else
+                {
+                    if (!await CobrancaChatRepositorio.ContaDaIntentVivaAsync(cx, c.IdIntent!.Value, ct))
+                        throw PagamentoException.Regra(PagamentoCodigos.ContaLojaNaoConectada, "A conta Mercado Pago da loja foi desconectada. Cancele e conecte de novo.");
+                    var pix = await _pix.ObterAsync(c.IdIntent.Value, loja, ct);
+                    intentStatus = pix.Status;
+                    copiaECola = pix.CopiaECola;
+                }
+                if (StatusIntent.FamiliaPaga(intentStatus)) throw new PagamentoException(PagamentoCodigos.JaPago, 409, "Esta cobranca ja foi paga.");
+                if (!StatusIntent.Aberto(intentStatus)) throw PagamentoException.Estado("Esta cobranca nao esta mais aberta.", c.Status);
 
-                var pix = await _pix.ObterAsync(c.IdIntent.Value, loja, ct);
-                if (StatusIntent.FamiliaPaga(pix.Status)) throw new PagamentoException(PagamentoCodigos.JaPago, 409, "Esta cobranca ja foi paga.");
-                if (!StatusIntent.Aberto(pix.Status)) throw PagamentoException.Estado("Esta cobranca nao esta mais aberta.", c.Status);
-
-                var token = AbrirToken(c) ?? await NovoTokenAsync(cx, c, ct);
-                var link = Link(token);
+                var token = AbrirToken(c) ?? (ehLink ? throw PagamentoException.Estado("O link desta cobranca nao esta disponivel. Reemita a cobranca.", c.Status) : await NovoTokenAsync(cx, c, ct));
+                var link = LinkDe(c, token);
                 var conversa = await CobrancaChatRepositorio.ConversaAsync(cx, null, c.ConversaId, loja, ct) ?? throw PagamentoException.NaoEncontrado("Conversa nao encontrada.");
                 var criadaPor = string.IsNullOrWhiteSpace(ator.Nome) ? "atendente" : ator.Nome!;
                 Guid mensagemId;
                 string via;
+                if (ehLink && !CobrancaChatRegras.JanelaAberta(conversa.Janela24hFim, conversa.Estado, DateTime.UtcNow))
+                    // O modelo de cobranca da Meta cadastrado e de Pix: nao serve para o link (Pix ou cartao). Sem janela, nao envia.
+                    throw PagamentoException.Regra(CobrancaChatCodigos.JanelaFechada,
+                        "A janela de 24 horas do WhatsApp esta fechada. O link de pagamento (Pix ou cartao) so sai dentro da janela, pois o modelo de cobranca Pix nao vale para ele. Peca para o cliente mandar uma mensagem.");
                 if (CobrancaChatRegras.JanelaAberta(conversa.Janela24hFim, conversa.Estado, DateTime.UtcNow))
                 {
-                    var textos = CobrancaChatRegras.Textos(formato, c.Descricao, c.Valor, c.ExpiraEm, link, pix.CopiaECola);
+                    var textos = ehLink
+                        ? new[] { CobrancaChatRegras.TextoLink(c.Descricao, c.Valor, c.ExpiraEm, link) }
+                        : CobrancaChatRegras.Textos(formato, c.Descricao, c.Valor, c.ExpiraEm, link, copiaECola);
                     mensagemId = await _mensageiro.EnviarTextoAsync(conversa.Id, loja, textos[0], criadaPor, ct);
                     foreach (var t in textos.Skip(1)) await _mensageiro.EnviarTextoAsync(conversa.Id, loja, t, criadaPor, ct);
                     via = "texto";
@@ -391,6 +460,9 @@ UPDATE cobranca_chat SET id_intent = @Intent, expira_em = COALESCE(@Expira, expi
         private string? AbrirToken(CobrancaChatLinha c) =>
             string.IsNullOrEmpty(c.LinkTokenCifrado) ? null : _segredos.Revelar(c.LinkTokenCifrado, ContextoLink(c.Id));
 
+        /// <summary>Pix: pagina publica /pix/{token}. Link de pagamento: o token cifrado e a propria URL da InfinitePay.</summary>
+        private string LinkDe(CobrancaChatLinha c, string token) => c.Modalidade == ModalidadesCobranca.Link ? token : Link(token);
+
         public string Link(string token)
         {
             var baseUrl = (_config["Payments:MercadoPago:LinkPixBaseUrl"] ?? _config["Payments:MercadoPago:PainelUrl"] ?? _config["Rastreio:PublicBaseUrl"])?.Trim().TrimEnd('/');
@@ -445,7 +517,8 @@ UPDATE cobranca_chat SET id_intent = @Intent, expira_em = COALESCE(@Expira, expi
 
             try
             {
-                await _pix.CancelarAsync(c.IdIntent!.Value, loja, AtorNucleo(ator), ator?.UsuarioId, ct);
+                if (c.Modalidade == ModalidadesCobranca.Link) await CancelarLinkLocalAsync(c, loja, ator, ct);
+                else await _pix.CancelarAsync(c.IdIntent!.Value, loja, AtorNucleo(ator), ator?.UsuarioId, ct);
             }
             catch (PagamentoException ex) when (ex.Codigo is PagamentoCodigos.ContaLojaNaoConectada or PagamentoCodigos.ContaLojaReautorizar or PagamentoCodigos.NaoConfigurado)
             {
@@ -464,6 +537,22 @@ UPDATE cobranca_chat SET id_intent = @Intent, expira_em = COALESCE(@Expira, expi
                 await tx.CommitAsync(ct);
                 if (atual.Status is StatusCobranca.Pago) throw new PagamentoException(PagamentoCodigos.JaPago, 409, "O cliente pagou antes do cancelamento.");
             }
+        }
+
+        /// <summary>
+        /// A InfinitePay nao cancela link por API. Cancelar aqui encerra a intencao do nosso lado; o link pode continuar abrindo na pagina deles ate vencer
+        /// (se alguem pagar depois, vira pendencia para a loja resolver, nunca baixa automatica).
+        /// </summary>
+        private async Task CancelarLinkLocalAsync(CobrancaChatLinha c, Guid loja, AtorCobranca? ator, CancellationToken ct)
+        {
+            await using var cx = await _db.OpenConnectionAsync(ct);
+            await using var tx = await cx.BeginTransactionAsync(ct);
+            var intent = await PagamentoIntentSql.ObterAsync(cx, tx, c.IdIntent!.Value, true, ct);
+            if (intent == null || intent.IdEstabelecimento != loja) throw NaoEncontrada();
+            if (StatusIntent.FamiliaPaga(intent.Status)) throw new PagamentoException(PagamentoCodigos.JaPago, 409, "Este pagamento ja foi feito; use o reembolso pelo app da InfinitePay.");
+            if (StatusIntent.Aberto(intent.Status) || intent.Status == StatusIntent.Recusado)
+                await _sync.MarcarIntentAsync(cx, tx, intent, StatusIntent.Cancelado, AtorNucleo(ator), ator?.UsuarioId, ct);
+            await tx.CommitAsync(ct);
         }
 
         private static async Task FinalizarCancelamentoAsync(NpgsqlConnection cx, NpgsqlTransaction tx, CobrancaChatLinha c, string? motivo, AtorCobranca? ator, CancellationToken ct)
@@ -487,7 +576,7 @@ UPDATE cobranca_chat SET motivo = COALESCE(@M, motivo), cancelado_por = COALESCE
             if (existente != null)
             {
                 if (existente.ReemitidaDe != id) throw new PagamentoException(PagamentoCodigos.IdempotenciaConflito, 409, "Esta chave de idempotencia ja foi usada.");
-                if (existente.Status == StatusCobranca.Criando) await GerarPixAsync(existente, ator, ct);
+                if (existente.Status == StatusCobranca.Criando) await GerarAsync(existente, ator, ct);
                 existente = (await CobrancaChatRepositorio.ObterAsync(cx, null, existente.Id, loja, false, ct))!;
                 return await DtoAsync(cx, existente, ator, AbrirToken(existente), comPix: true, ct);
             }
@@ -514,7 +603,7 @@ UPDATE cobranca_chat SET motivo = COALESCE(@M, motivo), cancelado_por = COALESCE
                 valor = CobrancaChatRegras.ValorVinculada(alvo, null);
             }
             var validade = await ValidadeAsync(cx, loja, r?.ValidadeMinutos ?? orig.ValidadeMinutos, ct);
-            await ExigirPixDisponivelAsync(cx, loja, ct);
+            await ExigirModalidadeDisponivelAsync(cx, loja, orig.Modalidade, config, ct);
             // Ja passou pela alcada (tinha Pix) e o valor nao subiu: nao pede aprovacao de novo.
             var jaAprovada = orig.IdIntent.HasValue && valor <= orig.Valor;
             var exige = !jaAprovada && CobrancaChatRegras.ExigeAprovacao(valor, config.LimiteSemAprovacao, ator.PodeAprovar);
@@ -522,7 +611,8 @@ UPDATE cobranca_chat SET motivo = COALESCE(@M, motivo), cancelado_por = COALESCE
             {
                 Id = Guid.NewGuid(), IdEstabelecimento = loja, ConversaId = conversa.Id, AutorUsuarioId = ator.UsuarioId, Descricao = orig.Descricao, Valor = valor,
                 Tipo = orig.Tipo, PedidoId = orig.PedidoId, PrePedidoId = orig.PrePedidoId, ClienteId = orig.ClienteId ?? conversa.IdCliente, ValidadeMinutos = validade,
-                Status = exige ? StatusCobranca.AguardandoAprovacao : StatusCobranca.Criando, IdempotencyKey = chave, ReemitidaDe = orig.Id
+                Status = exige ? StatusCobranca.AguardandoAprovacao : StatusCobranca.Criando, IdempotencyKey = chave, ReemitidaDe = orig.Id,
+                Modalidade = orig.Modalidade
             };
             var dto = await GravarEEmitirAsync(cx, nova, conversa, ator, ct);
             if (dto != null) return dto;
@@ -544,10 +634,19 @@ UPDATE cobranca_chat SET motivo = COALESCE(@M, motivo), cancelado_por = COALESCE
             return await DtoAsync(cx, c, ator, null, comPix: false, ct);
         }
 
+        /// <summary>A InfinitePay nao tem estorno por API: cobranca por link e devolvida pelo app da InfinitePay, nunca simulada aqui.</summary>
+        private static void ExigirReembolsavel(CobrancaChatLinha c)
+        {
+            if (c.Modalidade == ModalidadesCobranca.Link)
+                throw PagamentoException.Regra(ProvedorPagamentoCodigos.NaoSuportado,
+                    "Cobranca por link de pagamento (InfinitePay) nao tem reembolso por aqui. Devolva o valor pelo app da InfinitePay.");
+        }
+
         private async Task ReembolsarInternoAsync(CobrancaChatLinha c, decimal? valor, string? motivo, int usuario, string chave, CancellationToken ct)
         {
             if (c.IdIntent == null || c.Status is not (StatusCobranca.Pago or StatusCobranca.ReembolsoSolicitado))
                 throw PagamentoException.Estado("So cobranca paga pode ser reembolsada.", c.Status);
+            ExigirReembolsavel(c);
             await _estornos.EstornarAsync(new EstornoRequest
             {
                 IntentId = c.IdIntent.Value, IdEstabelecimento = c.IdEstabelecimento, Valor = valor, Motivo = motivo, UsuarioId = usuario, IdempotencyKey = chave
@@ -584,6 +683,7 @@ UPDATE cobranca_chat SET motivo = COALESCE(@M, motivo), cancelado_por = COALESCE
                     break;
                 case AcoesAprovacao.Reembolsar:
                     if (c.Status != StatusCobranca.Pago) throw PagamentoException.Estado("So cobranca paga pode ser reembolsada.", c.Status);
+                    ExigirReembolsavel(c);
                     var restante = c.Valor - c.ValorEstornado;
                     if (r.Valor.HasValue) CobrancaChatRegras.ExigirValor(r.Valor);
                     if (r.Valor > restante) throw PagamentoException.Regra(PagamentoCodigos.EstornoAcimaDoPago, "O reembolso passa do valor pago.");
@@ -655,7 +755,7 @@ UPDATE cobranca_chat SET motivo = COALESCE(@M, motivo), cancelado_por = COALESCE
             // Efeitos com chamada externa so depois do commit da decisao.
             try
             {
-                if (a.Acao == AcoesAprovacao.Emitir) await GerarPixAsync(c, ator, ct);
+                if (a.Acao == AcoesAprovacao.Emitir) await GerarAsync(c, ator, ct);
                 else if (a.Acao == AcoesAprovacao.Reembolsar)
                 {
                     var atual = (await CobrancaChatRepositorio.ObterAsync(cx, null, c.Id, loja, false, ct))!;
@@ -765,8 +865,43 @@ UPDATE pagamento_intent SET pedido_id = @P, pre_pedido_id = @Pre, updated_at = N
             return validade;
         }
 
+        /// <summary>Pix segue as regras de antes. Link exige liberacao do proprietario e InfinitePay pronta (sem cair para outro meio).</summary>
+        private async Task ExigirModalidadeDisponivelAsync(NpgsqlConnection cx, Guid loja, string modalidade, CobrancaChatConfigDto config, CancellationToken ct)
+        {
+            if (modalidade != ModalidadesCobranca.Link)
+            {
+                await ExigirPixDisponivelAsync(cx, loja, ct);
+                return;
+            }
+            var motivo = await MotivoLinkIndisponivelAsync(cx, loja, config, ct);
+            if (motivo != null) throw PagamentoException.Regra(CobrancaChatCodigos.LinkIndisponivel, motivo);
+        }
+
+        private async Task<string?> MotivoLinkIndisponivelAsync(NpgsqlConnection cx, Guid loja, CobrancaChatConfigDto config, CancellationToken ct)
+        {
+            if (_link == null) return "O link de pagamento nao esta disponivel neste servidor.";
+            if (!config.LinkPagamentoHabilitado) return "O proprietario ainda nao liberou o Link de pagamento (Pix ou cartao) para o chat. Ele liga em Configuracoes > Integracoes.";
+            return await InfinitePayProntaAsync(cx, loja, ct) ? null : "A InfinitePay da loja nao esta configurada e habilitada em Integracoes.";
+        }
+
+        private static async Task<bool> InfinitePayProntaAsync(NpgsqlConnection cx, Guid loja, CancellationToken ct)
+        {
+            try
+            {
+                return await cx.ExecuteScalarAsync<bool>(new CommandDefinition(@"
+SELECT EXISTS (SELECT 1 FROM infinitepay_conta_loja c JOIN infinitepay_conta_versao v ON v.id_conta = c.id AND v.ativa
+                WHERE c.id_estabelecimento = @Loja AND c.habilitada AND c.status IN ('configurado', 'recebimento_validado'))", new { Loja = loja }, cancellationToken: ct));
+            }
+            catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.UndefinedTable or PostgresErrorCodes.UndefinedColumn)
+            {
+                return false;
+            }
+        }
+
         private async Task ExigirPixDisponivelAsync(NpgsqlConnection cx, Guid loja, CancellationToken ct)
         {
+            var motivo = await CobrancaChatRepositorio.MotivoPixIndisponivelPorProvedorAsync(cx, loja, ct);
+            if (motivo != null) throw PagamentoException.Regra(APIBack.Payments.Provedores.ProvedorPagamentoCodigos.NaoSuportado, motivo);
             if (!(await PreferenciasPagamento.LerAsync(cx, loja, ct)).PixAtivo)
                 throw PagamentoException.Regra(PagamentoCodigos.PixDesativado, "A loja nao aceita Pix online.");
             if (!await CobrancaChatRepositorio.PixDisponivelAsync(cx, loja, _credenciais.AmbienteAtivo, ct))
@@ -792,6 +927,8 @@ UPDATE pagamento_intent SET pedido_id = @P, pre_pedido_id = @Pre, updated_at = N
                 CanceladoPor = c.CanceladoPor.HasValue ? new UsuarioResumoDto { Id = c.CanceladoPor.Value, Nome = c.CanceladoPorNome } : null,
                 Motivo = c.Motivo, ReemitidaDe = c.ReemitidaDe, ReemitidaPor = c.ReemitidaPor,
                 Autor = new UsuarioResumoDto { Id = c.AutorUsuarioId, Nome = c.AutorNome }, ValorEstornado = c.ValorEstornado,
+                Modalidade = c.Modalidade, ModalidadeRotulo = CobrancaChatRegras.RotuloModalidade(c.Modalidade),
+                AvisoAtendente = c.Modalidade == ModalidadesCobranca.Link ? ModalidadesCobranca.AvisoLink : null,
                 CriadoEm = Utc(c.CreatedAt)!.Value, AtualizadoEm = Utc(c.UpdatedAt)!.Value
             };
             if (c.Tipo == TiposCobranca.Vinculada)
@@ -807,7 +944,11 @@ UPDATE pagamento_intent SET pedido_id = @P, pre_pedido_id = @Pre, updated_at = N
                 var pendente = await CobrancaChatRepositorio.AprovacaoPendenteAsync(cx, null, c.Id, ct);
                 if (pendente != null) d.AprovacaoPendente = Aprovacao(pendente);
             }
-            if (c.Status is StatusCobranca.Aguardando or StatusCobranca.Enviado && c.IdIntent.HasValue)
+            if (c.Status is StatusCobranca.Aguardando or StatusCobranca.Enviado && c.IdIntent.HasValue && c.Modalidade == ModalidadesCobranca.Link)
+            {
+                d.Link = new CobrancaLinkDto { Url = token };
+            }
+            else if (c.Status is StatusCobranca.Aguardando or StatusCobranca.Enviado && c.IdIntent.HasValue)
             {
                 d.Pix = new CobrancaPixDto { LinkPublico = token == null ? null : Link(token) };
                 if (comPix)
@@ -818,6 +959,7 @@ UPDATE pagamento_intent SET pedido_id = @P, pre_pedido_id = @Pre, updated_at = N
                 }
             }
             CobrancaChatRegras.PreencherAcoes(d, ator.PodeAprovar, ator.PodeReembolsar, c.ReemitidaPor.HasValue);
+            if (c.Modalidade == ModalidadesCobranca.Link) d.PodeReembolsar = false; // sem estorno por API na InfinitePay
             return d;
         }
 

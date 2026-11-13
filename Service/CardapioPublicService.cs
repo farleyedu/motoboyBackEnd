@@ -34,6 +34,7 @@ namespace APIBack.Service
         private readonly IPedidoQueueRepository? _delivery;
         private readonly ICardPaymentService? _meiosDePagamento;
         private readonly ICardapioPedidoWebRepository? _pedidosWeb;
+        private readonly APIBack.Payments.InfinitePay.Cardapio.ICardapioCheckoutHospedadoService? _hospedado;
 
         public CardapioPublicService(
             ICardapioRepository repository,
@@ -49,8 +50,10 @@ namespace APIBack.Service
             IPedidoQueueRepository? delivery = null,
             ISituacaoComercialService? situacoes = null,
             ICardPaymentService? meiosDePagamento = null,
-            ICardapioPedidoWebRepository? pedidosWeb = null)
+            ICardapioPedidoWebRepository? pedidosWeb = null,
+            APIBack.Payments.InfinitePay.Cardapio.ICardapioCheckoutHospedadoService? hospedado = null)
         {
+            _hospedado = hospedado;
             _situacoes = situacoes;
             _repository = repository;
             _localizacao = localizacao;
@@ -539,6 +542,7 @@ namespace APIBack.Service
                 try
                 {
                     config = await _meiosDePagamento.ConfiguracaoAsync(estabelecimentoId);
+                    if (_hospedado != null) config = await _hospedado.AjustarConfiguracaoAsync(estabelecimentoId, config);
                 }
                 catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.UndefinedTable or PostgresErrorCodes.UndefinedColumn)
                 {
@@ -554,7 +558,12 @@ namespace APIBack.Service
                 return;
             }
 
-            var ligado = metodoOnline == CardapioPagamentoRules.MetodoPix ? config?.PixAtivo == true : config?.CartaoAtivo == true;
+            var ligado = metodoOnline switch
+            {
+                CardapioPagamentoRules.MetodoPix => config?.PixAtivo == true,
+                CardapioPagamentoRules.MetodoLink => config?.CheckoutHospedado == true,
+                _ => config?.CartaoAtivo == true
+            };
             if (!ligado)
                 throw new DeliveryDomainException(422, "PAGAMENTO_ONLINE_INDISPONIVEL",
                     "Esse meio de pagamento online não está disponível agora. Escolha outra forma de pagamento.");

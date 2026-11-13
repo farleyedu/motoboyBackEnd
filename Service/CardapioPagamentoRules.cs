@@ -63,6 +63,8 @@ namespace APIBack.Service
     {
         public const string MetodoPix = "pix";
         public const string MetodoCartao = "cartao";
+        /// <summary>Link hospedado (InfinitePay): o cliente escolhe Pix ou cartao la. O meio real so se conhece depois da verificacao do servidor.</summary>
+        public const string MetodoLink = "online";
 
         /// <summary>Depois do aceite, quanto tempo a cozinha ainda nao comecou (o nucleo do delivery nao tem status de preparo).</summary>
         public static readonly TimeSpan JanelaAntesDoPreparo = TimeSpan.FromMinutes(5);
@@ -81,13 +83,14 @@ namespace APIBack.Service
             {
                 "pix_online" or "pix_pelo_app" => MetodoPix,
                 "cartao_online" or "credito_online" => MetodoCartao,
+                "pagar_online__pix_ou_cartao" or "pagar_online_pix_ou_cartao" or "link_online" => MetodoLink,
                 _ => null
             };
         }
 
         /// <summary>Texto que o restaurante e o motoboy veem no pedido real: deixa claro que nao ha nada a cobrar na entrega.</summary>
         public static string FormaPagamentoDoPedido(string? metodo) =>
-            metodo == MetodoCartao ? "Pago online - cartao" : "Pago online - Pix";
+            metodo == MetodoCartao ? "Pago online - cartao" : metodo == MetodoLink ? "Pago online - Pix ou cartao" : "Pago online - Pix";
 
         /// <summary>Numero confirmado: presencial ou online ja pago vai ao restaurante; online sem pagamento espera o dinheiro.</summary>
         public static string StatusAposConfirmar(bool pagamentoOnline, bool pago) =>
@@ -132,6 +135,12 @@ namespace APIBack.Service
             numero <= 1 ? $"cardapio:{prePedidoId:N}:cartao" : $"cardapio:{prePedidoId:N}:cartao:{numero}";
 
         public static bool EhChaveCartao(string? chave) => chave != null && chave.Contains(":cartao", StringComparison.Ordinal);
+
+        /// <summary>Link hospedado: cardapio:{id}:infinitepay (e :infinitepay:{n} depois de um vencido/cancelado). Nunca se mistura com as chaves do Mercado Pago.</summary>
+        public static string ChaveInfinitePay(Guid prePedidoId, int numero) =>
+            numero <= 1 ? $"cardapio:{prePedidoId:N}:infinitepay" : $"cardapio:{prePedidoId:N}:infinitepay:{numero}";
+
+        public static bool EhChaveInfinitePay(string? chave) => chave != null && chave.Contains(":infinitepay", StringComparison.Ordinal);
 
         /// <summary>Uma decisao, um reembolso: a mesma recusa/cancelamento/webhook repetido cai na mesma linha.</summary>
         public static string ChaveReembolso(Guid prePedidoId, Guid intentId, string motivo) =>

@@ -21,7 +21,7 @@ public static class MovimentoCaixa
 /// <summary>Para onde foi o dinheiro de uma linha da fita. Só <c>gaveta</c> mexe no dinheiro físico do caixa.</summary>
 public static class FormaDestino
 {
-    public const string Gaveta = "gaveta", Maquininha = "maquininha", Ifood = "ifood", Motoboy = "motoboy";
+    public const string Gaveta = "gaveta", Maquininha = "maquininha", Ifood = "ifood", Motoboy = "motoboy", Adiantamento = "adiantamento";
 }
 
 /// <summary>

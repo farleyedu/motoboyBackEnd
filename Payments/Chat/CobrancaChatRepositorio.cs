@@ -18,7 +18,7 @@ SELECT c.id, c.id_estabelecimento, c.conversa_id, c.id_intent, c.autor_usuario_i
        c.pedido_id, c.pre_pedido_id, c.cliente_id, c.status, c.versao, c.validade_minutos, c.expira_em, c.enviado_em, c.id_mensagem, c.pago_em,
        c.cancelado_em, c.cancelado_por, uc.nome AS cancelado_por_nome, c.motivo, c.reemitida_de,
        (SELECT r.id FROM cobranca_chat r WHERE r.reemitida_de = c.id ORDER BY r.created_at DESC LIMIT 1) AS reemitida_por,
-       c.idempotency_key, c.link_token_cifrado, COALESCE(i.valor_estornado, 0) AS valor_estornado, i.status AS status_intent,
+       c.idempotency_key, c.modalidade, c.link_token_cifrado, COALESCE(i.valor_estornado, 0) AS valor_estornado, i.status AS status_intent,
        c.created_at, c.updated_at
   FROM cobranca_chat c
   LEFT JOIN pagamento_intent i ON i.id = c.id_intent
@@ -40,18 +40,18 @@ SELECT a.id, a.id_estabelecimento, a.id_cobranca, c.conversa_id, a.acao, a.statu
 
         public static async Task<CobrancaChatConfigDto> ConfigAsync(NpgsqlConnection cx, Guid loja, CancellationToken ct) =>
             await cx.QueryFirstOrDefaultAsync<CobrancaChatConfigDto>(new CommandDefinition(@"
-SELECT habilitada, permitir_avulsa, limite_sem_aprovacao, template_nome, template_idioma, confirmar_pagamento_cliente
+SELECT habilitada, permitir_avulsa, limite_sem_aprovacao, template_nome, template_idioma, confirmar_pagamento_cliente, link_pagamento_habilitado
   FROM cobranca_chat_config WHERE id_estabelecimento = @Loja", new { Loja = loja }, cancellationToken: ct)) ?? new CobrancaChatConfigDto();
 
         public static Task SalvarConfigAsync(NpgsqlConnection cx, Guid loja, CobrancaChatConfigDto c, int usuario, CancellationToken ct) =>
             cx.ExecuteAsync(new CommandDefinition(@"
 INSERT INTO cobranca_chat_config (id_estabelecimento, habilitada, permitir_avulsa, limite_sem_aprovacao, template_nome, template_idioma,
-                                  confirmar_pagamento_cliente, atualizado_por)
-VALUES (@Loja, @Habilitada, @PermitirAvulsa, @LimiteSemAprovacao, @TemplateNome, @TemplateIdioma, @ConfirmarPagamentoCliente, @U)
+                                  confirmar_pagamento_cliente, link_pagamento_habilitado, atualizado_por)
+VALUES (@Loja, @Habilitada, @PermitirAvulsa, @LimiteSemAprovacao, @TemplateNome, @TemplateIdioma, @ConfirmarPagamentoCliente, @LinkPagamentoHabilitado, @U)
 ON CONFLICT (id_estabelecimento) DO UPDATE SET habilitada = EXCLUDED.habilitada, permitir_avulsa = EXCLUDED.permitir_avulsa,
        limite_sem_aprovacao = EXCLUDED.limite_sem_aprovacao, template_nome = EXCLUDED.template_nome, template_idioma = EXCLUDED.template_idioma,
-       confirmar_pagamento_cliente = EXCLUDED.confirmar_pagamento_cliente, atualizado_por = EXCLUDED.atualizado_por, updated_at = NOW()",
-                new { Loja = loja, c.Habilitada, c.PermitirAvulsa, c.LimiteSemAprovacao, c.TemplateNome, c.TemplateIdioma, c.ConfirmarPagamentoCliente, U = usuario },
+       confirmar_pagamento_cliente = EXCLUDED.confirmar_pagamento_cliente, link_pagamento_habilitado = EXCLUDED.link_pagamento_habilitado, atualizado_por = EXCLUDED.atualizado_por, updated_at = NOW()",
+                new { Loja = loja, c.Habilitada, c.PermitirAvulsa, c.LimiteSemAprovacao, c.TemplateNome, c.TemplateIdioma, c.ConfirmarPagamentoCliente, c.LinkPagamentoHabilitado, U = usuario },
                 cancellationToken: ct));
 
         /// <summary>Pix ligado na loja e conta MP viva no ambiente ativo (pre-checagem antes de gravar a cobranca).</summary>
@@ -60,6 +60,28 @@ ON CONFLICT (id_estabelecimento) DO UPDATE SET habilitada = EXCLUDED.habilitada,
 SELECT COALESCE((SELECT pix_ativo FROM pagamento_preferencia_loja WHERE id_estabelecimento = @Loja), FALSE)
    AND EXISTS (SELECT 1 FROM mp_conta_loja WHERE id_estabelecimento = @Loja AND ambiente = @Amb AND estado IN ('ativa', 'expirada'))",
                 new { Loja = loja, Amb = ambiente }, cancellationToken: ct));
+
+        public const string MotivoPixSemMercadoPago =
+            "A cobranca por Pix do chat so existe no Mercado Pago, porque a InfinitePay sempre mostra cartao tambem. Ative o Pix exclusivo pelo Mercado Pago em Integracoes para cobrar por aqui.";
+
+        /// <summary>
+        /// "Cobrar Pix" promete Pix exclusivo: so vale se o fluxo pix_exclusivo da loja e o Mercado Pago. Sem linha de preferencia vale o legado (Mercado Pago);
+        /// linha desabilitada ou de outro provedor bloqueia, sem fallback e sem trocar por link multi-metodo.
+        /// </summary>
+        public static async Task<string?> MotivoPixIndisponivelPorProvedorAsync(NpgsqlConnection cx, Guid loja, CancellationToken ct)
+        {
+            try
+            {
+                var p = await cx.QueryFirstOrDefaultAsync<(bool Habilitado, string? Provedor)?>(new CommandDefinition(
+                    "SELECT habilitado, provedor FROM pagamento_preferencia_provedor WHERE id_estabelecimento = @Loja AND fluxo = 'pix_exclusivo'",
+                    new { Loja = loja }, cancellationToken: ct));
+                return p == null || (p.Value.Habilitado && p.Value.Provedor == "mercadopago") ? null : MotivoPixSemMercadoPago;
+            }
+            catch (PostgresException ex) when (ex.SqlState is PostgresErrorCodes.UndefinedTable or PostgresErrorCodes.UndefinedColumn)
+            {
+                return null; // migration das preferencias ainda nao aplicada: so existe Mercado Pago
+            }
+        }
 
         /// <summary>Conta que recebe a intencao ainda tem token (nao foi desconectada/revogada).</summary>
         public static Task<bool> ContaDaIntentVivaAsync(NpgsqlConnection cx, Guid intentId, CancellationToken ct) =>
@@ -153,9 +175,9 @@ SELECT id FROM cobranca_chat
         {
             var inserido = await cx.ExecuteScalarAsync<Guid?>(new CommandDefinition(@"
 INSERT INTO cobranca_chat (id, id_estabelecimento, conversa_id, autor_usuario_id, descricao, valor, moeda, tipo, pedido_id, pre_pedido_id, cliente_id,
-                           status, versao, validade_minutos, reemitida_de, idempotency_key)
+                           status, versao, validade_minutos, reemitida_de, idempotency_key, modalidade)
 VALUES (@Id, @IdEstabelecimento, @ConversaId, @AutorUsuarioId, @Descricao, @Valor, @Moeda, @Tipo, @PedidoId, @PrePedidoId, @ClienteId,
-        @Status, 1, @ValidadeMinutos, @ReemitidaDe, @IdempotencyKey)
+        @Status, 1, @ValidadeMinutos, @ReemitidaDe, @IdempotencyKey, @Modalidade)
 ON CONFLICT (id_estabelecimento, idempotency_key) DO NOTHING
 RETURNING id", c, tx, cancellationToken: ct));
             if (!inserido.HasValue) return false;
@@ -169,7 +191,7 @@ INSERT INTO conversa_eventos (id, id_conversa, id_conversa_grupo, tipo, origem, 
 VALUES (@Id, @Conversa, @Grupo, 'cobranca_pix', 'api', @U, @Nome, CAST(@Dados AS jsonb), NOW())", new
             {
                 Id = Guid.NewGuid(), Conversa = conversa.Id, Grupo = conversa.IdGrupo, U = c.AutorUsuarioId, Nome = atorNome,
-                Dados = JsonSerializer.Serialize(new { cobrancaId = c.Id, valor = c.Valor, descricao = c.Descricao, tipo = c.Tipo, pedidoId = c.PedidoId, prePedidoId = c.PrePedidoId, reemitidaDe = c.ReemitidaDe })
+                Dados = JsonSerializer.Serialize(new { cobrancaId = c.Id, valor = c.Valor, descricao = c.Descricao, tipo = c.Tipo, pedidoId = c.PedidoId, prePedidoId = c.PrePedidoId, reemitidaDe = c.ReemitidaDe, modalidade = c.Modalidade })
             }, tx, cancellationToken: ct));
             return true;
         }

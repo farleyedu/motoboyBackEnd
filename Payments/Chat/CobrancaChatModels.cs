@@ -8,6 +8,7 @@ namespace APIBack.Payments.Chat
     /// <summary>Codigos proprios da cobranca do chat (alem de PagamentoCodigos). Tabela em docs/pagamentos/CONTRATOS.md §8.5.</summary>
     public static class CobrancaChatCodigos
     {
+        public const string LinkIndisponivel = "PAG_LINK_PAGAMENTO_INDISPONIVEL";     // 422 proprietario nao liberou ou InfinitePay nao esta pronta
         public const string Desativada = "PAG_COBRANCA_CHAT_DESATIVADA";            // 422 loja desligou a cobranca pelo chat
         public const string AvulsaDesativada = "PAG_COBRANCA_AVULSA_DESATIVADA";     // 422 loja so aceita cobranca de pedido
         public const string ValorDivergente = "PAG_VALOR_DIVERGENTE";                // 422 valor digitado != saldo do pedido (details.saldo)
@@ -63,8 +64,23 @@ namespace APIBack.Payments.Chat
 
     // ---- entrada -------------------------------------------------------------------------------------------------------------
 
+    /// <summary>
+    /// Como a cobranca e paga. "pix" = Pix exclusivo (Mercado Pago). "link" = Link de pagamento (Pix ou cartao) da InfinitePay:
+    /// o cliente tambem pode pagar com cartao, entao NUNCA e apresentado como Pix.
+    /// </summary>
+    public static class ModalidadesCobranca
+    {
+        public const string Pix = "pix";
+        public const string Link = "link";
+        public const string RotuloPix = "Pix";
+        public const string RotuloLink = "Link de pagamento (Pix ou cartão)";
+        public const string AvisoLink = "Link de pagamento (Pix ou cartão): o cliente escolhe Pix ou cartão na página da InfinitePay. Não é Pix exclusivo e o reembolso é feito pelo app da InfinitePay.";
+    }
+
     public sealed class CriarCobrancaChatRequest
     {
+        /// <summary>"pix" (padrao) ou "link". Escolha explicita do atendente.</summary>
+        public string? Modalidade { get; set; }
         public string? Descricao { get; set; }
         /// <summary>Avulsa: obrigatorio. Vinculada: opcional e, se vier, tem de ser igual ao saldo calculado no servidor.</summary>
         public decimal? Valor { get; set; }
@@ -128,6 +144,8 @@ namespace APIBack.Payments.Chat
         public string? TemplateNome { get; set; }
         public string? TemplateIdioma { get; set; }
         public bool? ConfirmarPagamentoCliente { get; set; }
+        /// <summary>Liga/desliga o Link de pagamento (Pix ou cartao). Exige dono ou gerente.</summary>
+        public bool? LinkPagamentoHabilitado { get; set; }
     }
 
     /// <summary>Quem esta agindo (vem do token). <see cref="PodeAprovar"/> = WhatsApp:aprovar_cobranca ou super admin.</summary>
@@ -139,6 +157,12 @@ namespace APIBack.Payments.Chat
     {
         public int Id { get; set; }
         public string? Nome { get; set; }
+    }
+
+    /// <summary>Link da InfinitePay (modalidade link). Mesma exposicao do LinkPublico do Pix: so nas respostas de criar, reemitir, enviar e obter.</summary>
+    public sealed class CobrancaLinkDto
+    {
+        public string? Url { get; set; }
     }
 
     public sealed class CobrancaPixDto
@@ -200,6 +224,13 @@ namespace APIBack.Payments.Chat
         public UsuarioResumoDto Autor { get; set; } = new();
         /// <summary>So enquanto aguardando|enviado.</summary>
         public CobrancaPixDto? Pix { get; set; }
+        /// <summary>pix | link. O front mostra <see cref="ModalidadeRotulo"/> em toda cobranca.</summary>
+        public string Modalidade { get; set; } = ModalidadesCobranca.Pix;
+        public string ModalidadeRotulo { get; set; } = ModalidadesCobranca.RotuloPix;
+        /// <summary>Texto fixo para o atendente quando a modalidade e link (nao e Pix exclusivo).</summary>
+        public string? AvisoAtendente { get; set; }
+        /// <summary>So modalidade link, enquanto aguardando|enviado.</summary>
+        public CobrancaLinkDto? Link { get; set; }
         public decimal ValorEstornado { get; set; }
         /// <summary>Aprovacao pendente desta cobranca (emitir/reembolsar/trocar_vinculo), se houver.</summary>
         public CobrancaAprovacaoDto? AprovacaoPendente { get; set; }
@@ -256,6 +287,13 @@ namespace APIBack.Payments.Chat
         public bool PodeReembolsar { get; set; }
         /// <summary>Pix ligado e conta MP conectada na loja (sem isso o POST devolve 422).</summary>
         public bool PixDisponivel { get; set; }
+        /// <summary>Preenchido quando a preferencia da loja tira o Pix do Mercado Pago (ex.: InfinitePay no checkout e sem Pix exclusivo). A cobranca do chat so promete Pix exclusivo.</summary>
+        public string? PixIndisponivelMotivo { get; set; }
+        /// <summary>O proprietario liberou a modalidade "Link de pagamento (Pix ou cartao)" nesta loja.</summary>
+        public bool LinkPagamentoHabilitado { get; set; }
+        /// <summary>Habilitada pelo proprietario E conta InfinitePay pronta. So assim o atendente a ve.</summary>
+        public bool LinkPagamentoDisponivel { get; set; }
+        public string? LinkIndisponivelMotivo { get; set; }
     }
 
     // ---- linhas do banco -----------------------------------------------------------------------------------------------------
@@ -289,6 +327,7 @@ namespace APIBack.Payments.Chat
         public Guid? ReemitidaDe { get; set; }
         public Guid? ReemitidaPor { get; set; }
         public string IdempotencyKey { get; set; } = string.Empty;
+        public string Modalidade { get; set; } = ModalidadesCobranca.Pix;
         public string? LinkTokenCifrado { get; set; }
         public decimal ValorEstornado { get; set; }
         public string? StatusIntent { get; set; }

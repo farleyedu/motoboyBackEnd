@@ -168,7 +168,7 @@ SELECT id, id_estabelecimento, created_at FROM cobranca_chat
                 if (c is not { Status: StatusCobranca.Criando, IdIntent: null }) continue;
                 try
                 {
-                    await _service.GerarPixAsync(c, null, ct);
+                    await _service.GerarAsync(c, null, ct);
                     _logger.LogInformation("[cobranca.chat] ev=pix_retomado cobranca={Id}", id);
                 }
                 catch (PagamentoException ex)

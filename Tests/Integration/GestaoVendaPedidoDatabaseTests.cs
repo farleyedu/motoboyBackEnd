@@ -20,7 +20,7 @@ namespace APIBack.Tests.Integration;
 /// </summary>
 public partial class DeliverySyncDatabaseTests
 {
-    private const string MigracoesGestao = "20261105_01_gestao_fundacao.sql|20261106_01_gestao_documentos.sql|20261107_01_gestao_vinculos.sql|20261110_01_gestao_caixa.sql|20261118_01_gestao_caixa_correcoes.sql|20261121_01_gestao_caixa_acertos.sql|20261122_01_gestao_caixa_chegadas.sql|20261123_01_gestao_caixa_aprovacao.sql";
+    private const string MigracoesGestao = "20261105_01_gestao_fundacao.sql|20261106_01_gestao_documentos.sql|20261107_01_gestao_vinculos.sql|20261110_01_gestao_caixa.sql|20261118_01_gestao_caixa_correcoes.sql|20261121_01_gestao_caixa_acertos.sql|20261122_01_gestao_caixa_chegadas.sql|20261123_01_gestao_caixa_aprovacao.sql|20261130_01_gestao_adiantamentos.sql";
 
     internal static async Task PrepararGestao(Func<string, object?, Task> executar, Guid loja)
     {

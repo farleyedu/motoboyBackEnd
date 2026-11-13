@@ -30,7 +30,7 @@ namespace APIBack.Payments.Assinaturas
             if (intent.OrigemRefId is not { } cobrancaId) return null;
             if (StatusIntent.FamiliaPaga(intent.Status) && !StatusIntent.FamiliaPaga(statusAnterior))
             {
-                var r = await AssinaturaSql.ConfirmarPagamentoAsync(cx, tx, cobrancaId, intent.ValorPago > 0 ? intent.ValorPago : intent.Valor, "mercadopago",
+                var r = await AssinaturaSql.ConfirmarPagamentoAsync(cx, tx, cobrancaId, intent.ValorPago > 0 ? intent.ValorPago : intent.Valor, intent.Provedor == APIBack.Payments.Provedores.ProvedoresPagamento.InfinitePay ? "infinitepay" : "mercadopago",
                     intent.Id, null, ator, null, ct);
                 if (r.Aplicado) _cache.Remove(SituacaoComercialService.CacheKey(intent.IdEstabelecimento));
             }

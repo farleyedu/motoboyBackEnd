@@ -196,6 +196,8 @@ public sealed class GestaoCaixaController(ICaixaService service, IPedidoCoreServ
         }
         catch (DeliveryDomainException ex) { throw new GestaoException(ex.Code, ex.Message, ex.StatusCode); }
         var total = pedido.Total ?? 0m;
+        // Pago agora e entregue depois: o dinheiro já entrou, então entra no livro agora. A venda nasce na conclusão.
+        if (!concluir && tipoPagamento != null) await service.RegistrarAdiantamentoDoBalcao(loja, usuario, pedido.Id, r.Forma!.Trim(), total, hoje, ct);
         return new VendaBalcaoResposta(pedido.Id, total, recebido is { } v ? CaixaRegras.R2(v - total) : 0m, pedido.JaExistia,
             (await service.CarregarDia(loja, hoje, ct))!, pedido.Status);
     });
