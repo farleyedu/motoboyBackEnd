@@ -1,0 +1,301 @@
+[
+  {
+    "id": "cardapio.pausar-produto",
+    "nome": "Pausar um produto",
+    "area": "Cardápio",
+    "oQueFaz": "Marca o produto como 'Acabou': some da venda por um tempo, sem apagar.",
+    "comoAsPessoasPedem": [
+      "pausa o x-bacon",
+      "acabou o pão",
+      "acabou a calabresa",
+      "sem estoque de coca",
+      "tira da venda hoje",
+      "esgotou o açaí",
+      "não tenho mais frango",
+      "marca como acabou"
+    ],
+    "modo": "ia_faz",
+    "acao": "produto.pausar",
+    "rota": "/apps/cardapio",
+    "passos": [
+      "Abra Cardápio",
+      "Ache o produto",
+      "Toque em 'Disponível' para virar 'Acabou'"
+    ],
+    "permissao": "Cardapio:editar",
+    "desfazer": "cardapio.voltar-produto"
+  },
+  {
+    "id": "cardapio.voltar-produto",
+    "nome": "Voltar um produto que tinha acabado",
+    "area": "Cardápio",
+    "oQueFaz": "Coloca de volta à venda um produto marcado como acabou.",
+    "comoAsPessoasPedem": [
+      "volta o x-bacon",
+      "chegou o pão, libera",
+      "já tem calabresa de novo",
+      "pode vender a coca de novo",
+      "tira o acabou do açaí",
+      "repôs o estoque",
+      "libera o produto"
+    ],
+    "modo": "ia_faz",
+    "acao": "produto.voltar",
+    "rota": "/apps/cardapio",
+    "passos": [
+      "Abra Cardápio",
+      "Ache o produto",
+      "Toque em 'Acabou' para voltar a 'Disponível'"
+    ],
+    "permissao": "Cardapio:editar",
+    "desfazer": "cardapio.pausar-produto"
+  },
+  {
+    "id": "cardapio.tirar-produto",
+    "nome": "Tirar um produto do cardápio (sem apagar)",
+    "area": "Cardápio",
+    "oQueFaz": "Desativa o produto: ele sai do cardápio, mas continua cadastrado e dá para ativar de novo.",
+    "comoAsPessoasPedem": [
+      "tira a coca do cardápio",
+      "desativa o combo família",
+      "não vou mais vender a feijoada",
+      "esconde o produto",
+      "tira esse item do cardápio",
+      "desativar produto",
+      "sai da lista a pizza de atum"
+    ],
+    "modo": "ia_faz",
+    "acao": "produto.desativar",
+    "rota": "/apps/cardapio",
+    "passos": [
+      "Abra Cardápio",
+      "Ache o produto e abra",
+      "Desligue 'Produto ativo'",
+      "Aperte 'Salvar produto'"
+    ],
+    "permissao": "Cardapio:editar",
+    "desfazer": "cardapio.recolocar-produto"
+  },
+  {
+    "id": "cardapio.recolocar-produto",
+    "nome": "Recolocar um produto no cardápio",
+    "area": "Cardápio",
+    "oQueFaz": "Ativa de novo um produto que estava desativado.",
+    "comoAsPessoasPedem": [
+      "volta a coca pro cardápio",
+      "reativa o combo família",
+      "vou vender a feijoada de novo",
+      "ativa o produto",
+      "mostra de novo a pizza de atum",
+      "recoloca esse item"
+    ],
+    "modo": "ia_faz",
+    "acao": "produto.ativar",
+    "rota": "/apps/cardapio",
+    "passos": [
+      "Abra Cardápio",
+      "Filtre pelos 'Desativados'",
+      "Abra o produto e ligue 'Produto ativo'",
+      "Aperte 'Salvar produto'"
+    ],
+    "permissao": "Cardapio:editar",
+    "desfazer": "cardapio.tirar-produto"
+  },
+  {
+    "id": "cardapio.mudar-preco",
+    "nome": "Mudar o preço de um produto",
+    "area": "Cardápio",
+    "oQueFaz": "Troca o preço do produto na tela do produto. Vai pela tela porque o formulário salva o produto inteiro.",
+    "comoAsPessoasPedem": [
+      "muda o preço da calabresa para 52",
+      "aumentei o x-burger",
+      "o suco agora é 9,90",
+      "atualizar preço",
+      "reajuste do cardápio",
+      "baixa o preço da pizza",
+      "trocar o valor do produto",
+      "coloca promoção no combo"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/cardapio",
+    "passos": [
+      "Abra Cardápio",
+      "Ache o produto e abra",
+      "Mude o campo 'Preço'",
+      "Aperte 'Salvar produto'"
+    ],
+    "permissao": "Cardapio:editar",
+    "desfazer": null
+  },
+  {
+    "id": "cardapio.novo-produto",
+    "nome": "Cadastrar um produto novo",
+    "area": "Cardápio",
+    "oQueFaz": "Cria um produto com nome, foto, preço, categoria e adicionais.",
+    "comoAsPessoasPedem": [
+      "cadastrar um produto",
+      "adicionar item no cardápio",
+      "novo lanche",
+      "incluir uma pizza nova",
+      "colocar bebida nova",
+      "criar prato",
+      "quero vender uma coisa nova"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/cardapio",
+    "passos": [
+      "Abra Cardápio",
+      "Toque em 'Novo produto'",
+      "Preencha nome, categoria, preço e foto",
+      "Aperte 'Salvar produto'"
+    ],
+    "permissao": "Cardapio:criar",
+    "desfazer": null
+  },
+  {
+    "id": "cardapio.foto-e-detalhes",
+    "nome": "Foto, descrição e adicionais de um produto",
+    "area": "Cardápio",
+    "oQueFaz": "Troca a foto e o texto do produto, e escolhe os adicionais que ele aceita.",
+    "comoAsPessoasPedem": [
+      "trocar a foto do produto",
+      "colocar foto no lanche",
+      "mudar a descrição",
+      "adicionar borda recheada",
+      "colocar adicional no hambúrguer",
+      "montar opções de escolha",
+      "produto sem foto"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/cardapio",
+    "passos": [
+      "Abra Cardápio",
+      "Abra o produto",
+      "Mude foto, descrição ou adicionais",
+      "Aperte 'Salvar produto'"
+    ],
+    "permissao": "Cardapio:editar",
+    "desfazer": null
+  },
+  {
+    "id": "cardapio.categorias",
+    "nome": "Categorias do cardápio",
+    "area": "Cardápio",
+    "oQueFaz": "Cria, renomeia, pausa ou reordena as categorias (Lanches, Bebidas...).",
+    "comoAsPessoasPedem": [
+      "criar categoria",
+      "nova categoria de sobremesa",
+      "mudar a ordem das categorias",
+      "renomear categoria",
+      "pausar a categoria de bebidas",
+      "organizar o cardápio"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/cardapio",
+    "passos": [
+      "Abra Cardápio",
+      "Escolha a parte 'Categorias'",
+      "Toque em 'Nova categoria' ou abra uma existente",
+      "Aperte 'Salvar categoria'"
+    ],
+    "permissao": "Cardapio:editar",
+    "desfazer": null
+  },
+  {
+    "id": "cardapio.adicionais",
+    "nome": "Adicionais e complementos",
+    "area": "Cardápio",
+    "oQueFaz": "Cadastra os extras que o cliente pode escolher (bacon, queijo extra, molhos).",
+    "comoAsPessoasPedem": [
+      "criar adicional",
+      "novo adicional de bacon",
+      "cadastrar complemento",
+      "mudar o preço do queijo extra",
+      "pausar adicional",
+      "grupo de molhos"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/cardapio",
+    "passos": [
+      "Abra Cardápio",
+      "Escolha a parte de adicionais",
+      "Toque em 'Novo adicional'",
+      "Aperte 'Salvar adicional'"
+    ],
+    "permissao": "Cardapio:editar",
+    "desfazer": null
+  },
+  {
+    "id": "cardapio.apagar",
+    "nome": "Apagar produto, categoria ou adicional",
+    "area": "Cardápio",
+    "oQueFaz": "Apaga de vez. Não dá para desfazer, então é feito pela tela.",
+    "comoAsPessoasPedem": [
+      "apagar o produto",
+      "excluir a categoria",
+      "deletar um item",
+      "remover de vez o adicional",
+      "quero excluir o combo"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/cardapio",
+    "passos": [
+      "Abra Cardápio",
+      "Ache o item",
+      "Toque na lixeira e confirme"
+    ],
+    "permissao": "Cardapio:excluir",
+    "desfazer": null
+  },
+  {
+    "id": "cardapio.cardapio-web",
+    "nome": "Cardápio web (link de pedidos)",
+    "area": "Cardápio",
+    "oQueFaz": "Publica o cardápio na internet e ajusta como o cliente vê o link.",
+    "comoAsPessoasPedem": [
+      "link do cardápio",
+      "publicar o cardápio",
+      "cardápio online",
+      "meu link de pedido",
+      "cardápio digital",
+      "tirar o cardápio do ar",
+      "qr code do cardápio"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/cardapioweb",
+    "passos": [
+      "Abra Cardápio web",
+      "Confira como o cliente vê",
+      "Publique ou copie o link"
+    ],
+    "permissao": "Cardapio:editar",
+    "desfazer": null
+  },
+  {
+    "id": "cardapio.ver-produto",
+    "nome": "Ver preço e situação de um produto",
+    "area": "Cardápio",
+    "oQueFaz": "Diz o preço do produto e se está disponível, pausado ou desativado.",
+    "comoAsPessoasPedem": [
+      "quanto tá o x-bacon",
+      "qual o preço da calabresa",
+      "o x-burger tá pausado?",
+      "esse produto tá ativo?",
+      "quais produtos acabaram",
+      "o que está pausado"
+    ],
+    "modo": "consulta",
+    "acao": null,
+    "rota": "/apps/cardapio",
+    "passos": [],
+    "permissao": "Cardapio:visualizar",
+    "desfazer": null
+  }
+]

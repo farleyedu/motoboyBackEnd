@@ -1,0 +1,155 @@
+# Mesas P07: abrir, sentar 3 pessoas, juntar, transferir, encerrar, liberar e ler a auditoria.
+# Antes: aplicar P01 (20261203_01, _03), P05 (20261205_05) e 20261206_01_mesas_sessao.sql; rodar 20261206_02_mesas_sessao_verify.sql (tudo ok = true).
+# Ter a planta publicada (mesas-p05.http) com pelo menos 3 mesas livres e o Mesas ligado (PUT /api/v2/mesas/config {"chave":"ativo","valor":true}).
+# Login de dono ou gerente do painel. Para testar como garçom: login do garçom e ponto aberto (ponto-p02.http, POST entrar).
+# Versões abaixo = mesas novas seguindo o roteiro na ordem (a resposta de cada comando traz data.versoes; use-a se diferir).
+# Cada comando leva uma "chave" nova ({{$guid}}). Reenviar com a MESMA chave devolve a mesma resposta, sem refazer.
+
+@host = http://localhost:5165
+@token = cole-aqui
+
+### 1. Ler o salão e copiar os ids das mesas (mesaId) e as versões (versao)
+GET {{host}}/api/v2/mesas/salao
+Authorization: Bearer {{token}}
+
+### Cole aqui os ids de três mesas livres
+@mesaA = cole-o-id-da-mesa-1
+@mesaB = cole-o-id-da-mesa-2
+@mesaC = cole-o-id-da-mesa-3
+
+### 2. Abrir a mesa A para 3 pessoas (versaoMesa = versao lida no passo 1, em geral 1). Guarda sessaoId.
+# @name abrir
+POST {{host}}/api/v2/mesas/sessoes/abrir-mesa
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "chave": "{{$guid}}", "mesaId": "{{mesaA}}", "versaoMesa": 1, "pessoas": 3 }
+
+### 3. Ler a mesa A: cadeiras vêm da planta ("<id da mesa na planta>:c1", ":c2"...). Troque "m-peq-1" abaixo pelo id da mesa na planta.
+GET {{host}}/api/v2/mesas/sessoes/mesa/{{mesaA}}
+Authorization: Bearer {{token}}
+
+@cadeira = m-peq-1
+
+### 4a. Sentar Lucas
+# @name lucas
+POST {{host}}/api/v2/mesas/sessoes/incluir-pessoa
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "chave": "{{$guid}}", "mesaId": "{{mesaA}}", "nome": "Lucas", "cadeiraId": "{{cadeira}}:c1" }
+
+### 4b. Sentar Júlia (com celular e alergia)
+POST {{host}}/api/v2/mesas/sessoes/incluir-pessoa
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "chave": "{{$guid}}", "mesaId": "{{mesaA}}", "nome": "Júlia", "celular": "(11) 98888-7777", "cadeiraId": "{{cadeira}}:c2", "alergia": "Camarão" }
+
+### 4c. Sentar Bia
+POST {{host}}/api/v2/mesas/sessoes/incluir-pessoa
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "chave": "{{$guid}}", "mesaId": "{{mesaA}}", "nome": "Bia", "cadeiraId": "{{cadeira}}:c3" }
+
+### 4d. Tentar pôr Lucas na cadeira da Júlia: JA_FEITO "Essa cadeira já é de Júlia."
+POST {{host}}/api/v2/mesas/sessoes/sentar
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "chave": "{{$guid}}", "pessoaId": "{{lucas.response.body.$.data.pessoaId}}", "cadeiraId": "{{cadeira}}:c2" }
+
+### 5. Juntar A + B. Releia o salão (passo 1) e ponha a versão atual de cada mesa em "versoes".
+# @name juntar
+POST {{host}}/api/v2/mesas/sessoes/juntar-mesas
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "chave": "{{$guid}}", "mesaIds": ["{{mesaA}}", "{{mesaB}}"], "versoes": { "{{mesaA}}": 5, "{{mesaB}}": 1 } }
+
+### 5b. Versão errada de propósito: 409 VERSAO_VELHA com versaoAtual, status e quem mexeu por último
+POST {{host}}/api/v2/mesas/sessoes/encerrar
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "chave": "{{$guid}}", "mesaId": "{{mesaA}}", "versaoMesa": 1 }
+
+### 6. Transferir a mesa B para a C (motivo obrigatório). A sessão segue com A + C; B vai para limpeza.
+# versaoMesa = versão da B na resposta do passo 5 (data.versoes).
+POST {{host}}/api/v2/mesas/sessoes/transferir-mesa
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "chave": "{{$guid}}", "mesaId": "{{mesaB}}", "versaoMesa": 2, "paraMesaId": "{{mesaC}}", "motivo": "Cliente pediu a janela" }
+
+### 7. Encerrar (versaoMesa = versão atual da A: leia no passo 3). A e C vão para limpeza.
+# @name encerrar
+POST {{host}}/api/v2/mesas/sessoes/encerrar
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "chave": "{{$guid}}", "mesaId": "{{mesaA}}", "versaoMesa": 7 }
+
+### 8. Liberar A, B e C (versão de cada uma: resposta do passo 7 e do passo 6). Repetir em mesa já liberada = JA_FEITO com quem e quando.
+POST {{host}}/api/v2/mesas/sessoes/liberar-limpeza
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "chave": "{{$guid}}", "mesaId": "{{mesaA}}", "versaoMesa": 8 }
+
+###
+POST {{host}}/api/v2/mesas/sessoes/liberar-limpeza
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "chave": "{{$guid}}", "mesaId": "{{mesaB}}", "versaoMesa": 3 }
+
+###
+POST {{host}}/api/v2/mesas/sessoes/liberar-limpeza
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "chave": "{{$guid}}", "mesaId": "{{mesaC}}", "versaoMesa": 3 }
+
+### 9. Auditoria (só dono e gerente): cada passo, do mais novo para o mais velho, com quem fez (ator.nome) e o texto pronto.
+GET {{host}}/api/v2/mesas/auditoria?limite=50
+Authorization: Bearer {{token}}
+
+### 9b. Filtros: por ação, por mesa (inclui a mesa como alvo), só ocorrências, por quem (id do usuário ou parte do nome), por período
+GET {{host}}/api/v2/mesas/auditoria?acao=abrirMesa,juntarMesas,transferirMesa,encerrar,liberarLimpeza&mesaId={{mesaB}}
+Authorization: Bearer {{token}}
+
+###
+GET {{host}}/api/v2/mesas/auditoria?quem=Ana&de=2026-11-17T00:00:00-03:00
+Authorization: Bearer {{token}}
+
+### 9c. Página seguinte: copie "cursor" da resposta anterior
+GET {{host}}/api/v2/mesas/auditoria?limite=3&cursor=cole-o-cursor
+Authorization: Bearer {{token}}
+
+### 9d. Três cartões do topo
+GET {{host}}/api/v2/mesas/auditoria/resumo
+Authorization: Bearer {{token}}
+
+### 10. Extras: chamar o garçom, ir até a mesa e atender (numa mesa aberta)
+# @name chamado
+POST {{host}}/api/v2/mesas/sessoes/chamar-garcom
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "chave": "{{$guid}}", "mesaId": "{{mesaA}}", "motivo": "Mais gelo" }
+
+###
+POST {{host}}/api/v2/mesas/sessoes/atender-chamado
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "chave": "{{$guid}}", "chamadoId": "{{chamado.response.body.$.data.chamadoId}}" }
+
+### 11. Reabrir (só dono e gerente, motivo obrigatório). Só funciona ANTES de liberar: rode no lugar do passo 8, com a versão da A após o passo 7 (8).
+POST {{host}}/api/v2/mesas/sessoes/reabrir
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "chave": "{{$guid}}", "mesaId": "{{mesaA}}", "versaoMesa": 8, "motivo": "Esqueceram a sobremesa" }

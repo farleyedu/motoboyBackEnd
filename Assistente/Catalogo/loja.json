@@ -1,0 +1,243 @@
+[
+  {
+    "id": "loja.abrir-hoje",
+    "nome": "Abrir a loja hoje",
+    "area": "Loja",
+    "oQueFaz": "Abre a loja agora, só por hoje, até o horário escolhido. A programação da semana não muda.",
+    "comoAsPessoasPedem": [
+      "abre a loja hoje até as 23h",
+      "quero abrir agora",
+      "abre aí até meia noite",
+      "hoje a gente vai abrir mais tarde",
+      "estende o horário hoje",
+      "abre a loja que tá fechada",
+      "liga a loja hoje",
+      "vou ficar aberto até 22h"
+    ],
+    "modo": "ia_faz",
+    "acao": "loja.abrir-hoje",
+    "rota": "/apps/configuracoes/negocio",
+    "passos": [
+      "Abra Configurações > Loja",
+      "Toque em 'Abrir a loja' e escolha até que horas",
+      "Aperte 'Abrir'"
+    ],
+    "permissao": "Configuracoes:editar",
+    "desfazer": "loja.fechar-agora"
+  },
+  {
+    "id": "loja.fechar-agora",
+    "nome": "Fechar a loja agora",
+    "area": "Loja",
+    "oQueFaz": "Fecha a loja agora. Os pedidos já recebidos continuam. No próximo horário ela volta ao normal.",
+    "comoAsPessoasPedem": [
+      "fecha a loja",
+      "para de receber pedido",
+      "fecha agora que acabou tudo",
+      "vou fechar mais cedo hoje",
+      "pausa a loja",
+      "não quero mais pedido hoje",
+      "encerra o dia",
+      "tá cheio, fecha aí"
+    ],
+    "modo": "ia_faz",
+    "acao": "loja.fechar-agora",
+    "rota": "/apps/configuracoes/negocio",
+    "passos": [
+      "Abra Configurações > Loja",
+      "Toque em 'Fechar agora'",
+      "Confirme"
+    ],
+    "permissao": "Configuracoes:editar",
+    "desfazer": "loja.abrir-hoje"
+  },
+  {
+    "id": "loja.criar-horario-especial",
+    "nome": "Fechar ou mudar o horário num dia específico",
+    "area": "Loja",
+    "oQueFaz": "Cria uma exceção para um dia: fecha a loja (feriado, folga) ou usa outro horário só naquele dia.",
+    "comoAsPessoasPedem": [
+      "fecha no feriado de sexta",
+      "dia 25 a gente não abre",
+      "folga na segunda dia 10",
+      "natal vou fechar",
+      "amanhã abro só das 18 às 22",
+      "cadastra um feriado",
+      "quero fechar dia 1º",
+      "vou tirar um dia de folga"
+    ],
+    "modo": "ia_faz",
+    "acao": "horario-especial.criar",
+    "rota": "/apps/configuracoes/negocio",
+    "passos": [
+      "Abra Configurações > Loja > Funcionamento",
+      "Em 'Feriados e exceções' toque em 'Nova exceção'",
+      "Escolha o dia e se fecha ou muda o horário",
+      "Aperte 'Salvar exceção'"
+    ],
+    "permissao": "Delivery:configurar",
+    "desfazer": "loja.remover-horario-especial"
+  },
+  {
+    "id": "loja.remover-horario-especial",
+    "nome": "Tirar um feriado ou exceção",
+    "area": "Loja",
+    "oQueFaz": "Remove a exceção de um dia. Nesse dia vale de novo a programação normal da semana.",
+    "comoAsPessoasPedem": [
+      "tira esse feriado",
+      "cancela a folga de sexta",
+      "vou abrir no feriado, tira a exceção",
+      "remove o fechamento do dia 25",
+      "desmarca o feriado",
+      "não vou mais fechar"
+    ],
+    "modo": "ia_faz",
+    "acao": "horario-especial.remover",
+    "rota": "/apps/configuracoes/negocio",
+    "passos": [
+      "Abra Configurações > Loja > Funcionamento",
+      "Em 'Feriados e exceções' ache o dia",
+      "Toque na lixeira ao lado do dia"
+    ],
+    "permissao": "Delivery:configurar",
+    "desfazer": "loja.criar-horario-especial"
+  },
+  {
+    "id": "loja.mudar-horario-dia",
+    "nome": "Mudar o horário de um dia da semana",
+    "area": "Loja",
+    "oQueFaz": "Troca a hora de abrir e fechar de um dia da semana (ou marca o dia como fechado). Os outros dias ficam iguais.",
+    "comoAsPessoasPedem": [
+      "muda o horário de domingo para 18h às 23h",
+      "domingo agora abro mais cedo",
+      "segunda a gente não abre mais",
+      "quero fechar às 22h na sexta",
+      "muda o horário de sábado",
+      "abrir às 11 na quarta",
+      "tira a folga de terça",
+      "altera o horário de funcionamento"
+    ],
+    "modo": "ia_faz",
+    "acao": "horario-semana.mudar-dia",
+    "rota": "/apps/configuracoes/negocio",
+    "passos": [
+      "Abra Configurações > Loja > Funcionamento",
+      "Ache o dia da semana",
+      "Mude a hora de abrir e de fechar",
+      "Aperte 'Salvar'"
+    ],
+    "permissao": "Configuracoes:editar",
+    "desfazer": null
+  },
+  {
+    "id": "loja.dados-da-loja",
+    "nome": "Nome, contato, endereço e marca da loja",
+    "area": "Loja",
+    "oQueFaz": "Muda o nome, telefone, e-mail, endereço, pino no mapa, logo e cores que o cliente vê.",
+    "comoAsPessoasPedem": [
+      "mudar o telefone da loja",
+      "trocar o endereço",
+      "trocar a logo",
+      "mudar o nome da loja",
+      "atualizar o instagram",
+      "mudei de endereço",
+      "mudar a cor do cardápio",
+      "colocar meu cnpj"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/configuracoes/negocio",
+    "passos": [
+      "Abra Configurações > Loja",
+      "Escolha a aba: 'Endereço', 'Identidade e contato' ou 'Marca'",
+      "Mude o que precisa e salve"
+    ],
+    "permissao": "Configuracoes:editar",
+    "desfazer": null
+  },
+  {
+    "id": "loja.esta-aberta",
+    "nome": "A loja está aberta?",
+    "area": "Loja",
+    "oQueFaz": "Diz se a loja está aberta agora e, se não estiver, por quê e como resolver.",
+    "comoAsPessoasPedem": [
+      "a loja tá aberta?",
+      "por que a loja está fechada",
+      "não está entrando pedido",
+      "por que não abre",
+      "a loja fechou sozinha",
+      "meu cardápio diz que estamos fechados",
+      "o que falta pra abrir",
+      "tá recebendo pedido?"
+    ],
+    "modo": "consulta",
+    "acao": null,
+    "rota": "/apps/configuracoes/operar",
+    "passos": [],
+    "permissao": "Configuracoes:visualizar",
+    "desfazer": null
+  },
+  {
+    "id": "loja.horarios-da-semana",
+    "nome": "Horário de funcionamento",
+    "area": "Loja",
+    "oQueFaz": "Mostra o horário da semana e do dia de hoje.",
+    "comoAsPessoasPedem": [
+      "qual meu horário de funcionamento",
+      "que horas eu abro domingo",
+      "que horas fecha hoje",
+      "meu horário tá certo?",
+      "que dias eu abro"
+    ],
+    "modo": "consulta",
+    "acao": null,
+    "rota": "/apps/configuracoes/negocio",
+    "passos": [],
+    "permissao": "Configuracoes:visualizar",
+    "desfazer": null
+  },
+  {
+    "id": "loja.feriados-cadastrados",
+    "nome": "Feriados e folgas cadastrados",
+    "area": "Loja",
+    "oQueFaz": "Lista os dias com horário diferente ou fechados que a loja já cadastrou.",
+    "comoAsPessoasPedem": [
+      "quais feriados eu cadastrei",
+      "tenho folga marcada?",
+      "já avisei que fecho no natal?",
+      "quais dias vou fechar",
+      "tem alguma exceção de horário"
+    ],
+    "modo": "consulta",
+    "acao": null,
+    "rota": "/apps/configuracoes/negocio",
+    "passos": [],
+    "permissao": "Delivery:visualizar",
+    "desfazer": null
+  },
+  {
+    "id": "loja.para-operar",
+    "nome": "O que falta para operar",
+    "area": "Loja",
+    "oQueFaz": "Mostra o que falta e o que é recomendado para a loja começar a vender, com o caminho de cada correção.",
+    "comoAsPessoasPedem": [
+      "o que falta pra eu começar",
+      "como começo a vender",
+      "minha loja não libera",
+      "o que preciso configurar primeiro",
+      "começar a operar",
+      "checklist da loja"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/configuracoes/operar",
+    "passos": [
+      "Abra Configurações > Para operar",
+      "Veja a lista 'O que falta'",
+      "Toque em 'Resolver' no primeiro item",
+      "Quando tudo estiver certo, toque em 'Começar a operar'"
+    ],
+    "permissao": "Configuracoes:visualizar",
+    "desfazer": null
+  }
+]

@@ -1,0 +1,195 @@
+[
+  {
+    "id": "delivery.mudar-taxa-zona",
+    "nome": "Mudar a taxa de uma zona de entrega",
+    "area": "Delivery",
+    "oQueFaz": "Troca só o valor da taxa de uma zona que já existe. O tamanho e o nome da zona ficam iguais.",
+    "comoAsPessoasPedem": [
+      "a taxa do centro passa a ser 7",
+      "aumenta o frete da zona 2",
+      "muda a taxa de entrega",
+      "frete do bairro agora é 5",
+      "zona 1 vai custar 4,50",
+      "baixa a taxa de entrega",
+      "ajustar o valor da entrega"
+    ],
+    "modo": "ia_faz",
+    "acao": "zona.mudar-taxa",
+    "rota": "/apps/configuracoes/delivery",
+    "passos": [
+      "Abra Configurações > Delivery",
+      "Toque na parada 'Endereço de entrega'",
+      "Ache a zona e mude a taxa",
+      "Salve"
+    ],
+    "permissao": "Delivery:configurar",
+    "desfazer": null
+  },
+  {
+    "id": "delivery.zonas-entrega",
+    "nome": "Zonas de entrega (criar, desenhar, apagar)",
+    "area": "Delivery",
+    "oQueFaz": "Cria ou muda as faixas de entrega no mapa, com o raio e a taxa de cada uma.",
+    "comoAsPessoasPedem": [
+      "criar uma zona de entrega",
+      "entregar em bairro novo",
+      "aumentar o raio de entrega",
+      "desenhar área de entrega",
+      "apagar zona",
+      "não entrego mais lá",
+      "até onde eu entrego"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/configuracoes/delivery",
+    "passos": [
+      "Abra Configurações > Delivery",
+      "Toque em 'Endereço de entrega'",
+      "Veja as zonas no mapa",
+      "Crie, mude ou apague e salve"
+    ],
+    "permissao": "Delivery:configurar",
+    "desfazer": null
+  },
+  {
+    "id": "delivery.regras-do-pedido",
+    "nome": "Pedido mínimo, aceite automático e preparo",
+    "area": "Delivery",
+    "oQueFaz": "Ajusta pedido mínimo, frete grátis, aceite automático, tempo de preparo e retirada no balcão.",
+    "comoAsPessoasPedem": [
+      "pedido mínimo",
+      "frete grátis acima de",
+      "aceitar pedido sozinho",
+      "confirmar pedido automático",
+      "tempo de preparo",
+      "retirada no balcão",
+      "aceitar pedido com a loja fechada",
+      "prazo de entrega"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/configuracoes/delivery",
+    "passos": [
+      "Abra Configurações > Delivery",
+      "Toque na parada do pedido (por exemplo 'Quando o pedido entra na loja')",
+      "Mude a regra e salve"
+    ],
+    "permissao": "Delivery:configurar",
+    "desfazer": null
+  },
+  {
+    "id": "delivery.motoboy-regras",
+    "nome": "Regras de motoboy na entrega",
+    "area": "Delivery",
+    "oQueFaz": "Define como escolher, avisar e reordenar motoboys, se pode recusar e a volta à loja.",
+    "comoAsPessoasPedem": [
+      "motoboy pode recusar",
+      "como escolho o motoboy",
+      "transferir entre motoboys",
+      "motoboy volta pra loja",
+      "regra de aceite de rota",
+      "reordenar entregas"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/configuracoes/delivery",
+    "passos": [
+      "Abra Configurações > Delivery",
+      "Toque em 'Na porta do cliente' ou na parada do motoboy",
+      "Mude a regra e salve"
+    ],
+    "permissao": "Delivery:configurar",
+    "desfazer": null
+  },
+  {
+    "id": "delivery.avisos-ao-cliente",
+    "nome": "Avisos e código de entrega para o cliente",
+    "area": "Delivery",
+    "oQueFaz": "Escolhe quais avisos o cliente recebe e o texto de cada um.",
+    "comoAsPessoasPedem": [
+      "aviso pro cliente",
+      "mensagem de saiu pra entrega",
+      "código de entrega",
+      "editar texto do aviso",
+      "avisar quando chegar",
+      "desligar aviso"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/configuracoes/delivery",
+    "passos": [
+      "Abra Configurações > Delivery",
+      "Toque em 'Na porta do cliente'",
+      "Use 'Editar texto do aviso' ou 'Desligar'",
+      "Salve"
+    ],
+    "permissao": "Delivery:configurar",
+    "desfazer": null
+  },
+  {
+    "id": "delivery.simular-pedido",
+    "nome": "Simular um pedido",
+    "area": "Delivery",
+    "oQueFaz": "Mostra como ficaria a taxa e o prazo de um pedido em certo endereço.",
+    "comoAsPessoasPedem": [
+      "simular entrega",
+      "quanto fica o frete pra esse endereço",
+      "testar a taxa",
+      "quanto demora pra chegar lá",
+      "simulação de pedido"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/configuracoes/delivery",
+    "passos": [
+      "Abra Configurações > Delivery",
+      "Toque em 'Simular'",
+      "Coloque o endereço"
+    ],
+    "permissao": "Delivery:visualizar",
+    "desfazer": null
+  },
+  {
+    "id": "delivery.ver-taxa-zona",
+    "nome": "Ver a taxa de uma zona",
+    "area": "Delivery",
+    "oQueFaz": "Diz a taxa e o alcance de cada zona de entrega.",
+    "comoAsPessoasPedem": [
+      "quanto é a taxa do centro",
+      "qual o frete da zona 2",
+      "quais são minhas zonas",
+      "até quantos km eu entrego",
+      "quanto cobro de entrega"
+    ],
+    "modo": "consulta",
+    "acao": null,
+    "rota": "/apps/configuracoes/delivery",
+    "passos": [],
+    "permissao": "Delivery:visualizar",
+    "desfazer": null
+  },
+  {
+    "id": "delivery.remuneracao-motoboy",
+    "nome": "Como pagar os motoboys",
+    "area": "Delivery",
+    "oQueFaz": "Define o valor por entrega, km, hora ou diária e faz os acertos.",
+    "comoAsPessoasPedem": [
+      "quanto pago pro motoboy",
+      "mudar o valor da entrega do motoboy",
+      "pagar por km",
+      "diária do motoboy",
+      "acerto do motoboy",
+      "valor padrão do motoboy"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/configuracoes/remuneracao",
+    "passos": [
+      "Abra Configurações > Remuneração",
+      "Escolha como você paga",
+      "Ajuste os valores e salve"
+    ],
+    "permissao": "Configuracoes:editar",
+    "desfazer": null
+  }
+]

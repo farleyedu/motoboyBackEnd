@@ -72,7 +72,13 @@ public class ModulosPorRotaTests
         "api/v2/integracoes/mercadopago", "api/integracoes/mercadopago", "api/v2/integracoes/infinitepay",
         "api/v2/integracoes/pagamentos", "api/v2/chamados",
         // acompanhamento das lojas = area da equipe Zippy (super admin), fora dos modulos da loja
-        "api/acompanhamento"
+        "api/acompanhamento",
+        // conta da pessoa (funcoes por loja do app da equipe, Mesas P01): vale antes de escolher a loja
+        "api/me",
+        // ponto da equipe (Mesas P02): vale para garcom, cozinha, caixa e motoboy, com ou sem o modulo Mesas
+        "api/v2/equipe/ponto",
+        // assistente da Zippy: qualquer loja logada conversa; cada acao confere a permissao e o modulo dela no confirmar
+        "api/v2/assistente"
     };
 
     [Fact]

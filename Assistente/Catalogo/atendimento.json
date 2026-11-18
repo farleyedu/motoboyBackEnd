@@ -1,0 +1,242 @@
+[
+  {
+    "id": "atendimento.criar-resposta-rapida",
+    "nome": "Criar uma resposta rápida",
+    "area": "Atendimento",
+    "oQueFaz": "Cadastra um texto pronto com atalho para usar no chat com o cliente.",
+    "comoAsPessoasPedem": [
+      "cria uma resposta rápida",
+      "quero um atalho pra mandar o pix",
+      "texto pronto de boa noite",
+      "resposta pronta do endereço",
+      "salvar mensagem padrão",
+      "nova resposta rápida",
+      "atalho pro horário de funcionamento"
+    ],
+    "modo": "ia_faz",
+    "acao": "resposta-rapida.criar",
+    "rota": "/apps/configuracoes/atendimento",
+    "passos": [
+      "Abra Configurações > Atendimento",
+      "Ache 'Respostas rápidas'",
+      "Toque em 'Nova resposta'",
+      "Escreva o atalho e o texto e salve"
+    ],
+    "permissao": "Delivery:configurar",
+    "desfazer": null
+  },
+  {
+    "id": "atendimento.editar-resposta-rapida",
+    "nome": "Mudar uma resposta rápida",
+    "area": "Atendimento",
+    "oQueFaz": "Troca o atalho ou o texto de uma resposta rápida que já existe.",
+    "comoAsPessoasPedem": [
+      "muda a resposta do pix",
+      "arruma o texto do boa noite",
+      "trocar o atalho",
+      "atualizar a mensagem pronta",
+      "editar resposta rápida",
+      "a chave pix mudou, atualiza"
+    ],
+    "modo": "ia_faz",
+    "acao": "resposta-rapida.editar",
+    "rota": "/apps/configuracoes/atendimento",
+    "passos": [
+      "Abra Configurações > Atendimento",
+      "Ache 'Respostas rápidas'",
+      "Abra a resposta",
+      "Mude e salve"
+    ],
+    "permissao": "Delivery:configurar",
+    "desfazer": null
+  },
+  {
+    "id": "atendimento.desligar-faq",
+    "nome": "Desligar uma pergunta do FAQ",
+    "area": "Atendimento",
+    "oQueFaz": "Faz o robô parar de usar uma pergunta frequente, sem apagar.",
+    "comoAsPessoasPedem": [
+      "desliga essa pergunta do robô",
+      "robô não deve mais falar disso",
+      "pausa a pergunta do FAQ",
+      "tira a resposta sobre promoção",
+      "desativar pergunta"
+    ],
+    "modo": "ia_faz",
+    "acao": "faq.desativar",
+    "rota": "/apps/configuracoes/faq",
+    "passos": [
+      "Abra Configurações > FAQ",
+      "Ache a pergunta",
+      "Desligue a pergunta"
+    ],
+    "permissao": "Configuracoes:editar",
+    "desfazer": "atendimento.ligar-faq"
+  },
+  {
+    "id": "atendimento.ligar-faq",
+    "nome": "Ligar uma pergunta do FAQ",
+    "area": "Atendimento",
+    "oQueFaz": "Volta a usar no robô uma pergunta frequente que estava desligada.",
+    "comoAsPessoasPedem": [
+      "liga a pergunta de novo",
+      "ativa a resposta sobre entrega",
+      "o robô pode falar disso de novo",
+      "reativar pergunta do FAQ",
+      "volta a resposta do robô"
+    ],
+    "modo": "ia_faz",
+    "acao": "faq.ativar",
+    "rota": "/apps/configuracoes/faq",
+    "passos": [
+      "Abra Configurações > FAQ",
+      "Filtre por 'Inativas'",
+      "Ligue a pergunta"
+    ],
+    "permissao": "Configuracoes:editar",
+    "desfazer": "atendimento.desligar-faq"
+  },
+  {
+    "id": "atendimento.desligar-servico",
+    "nome": "Desligar um serviço",
+    "area": "Atendimento",
+    "oQueFaz": "Tira um serviço do atendimento do robô, sem apagar.",
+    "comoAsPessoasPedem": [
+      "desliga o serviço de revisão",
+      "pausar serviço",
+      "não faço mais esse serviço",
+      "tira o serviço do robô",
+      "desativar serviço"
+    ],
+    "modo": "ia_faz",
+    "acao": "servico.desativar",
+    "rota": "/apps/configuracoes/servicos",
+    "passos": [
+      "Abra Configurações > Serviços",
+      "Ache o serviço",
+      "Desligue o serviço"
+    ],
+    "permissao": "Configuracoes:editar",
+    "desfazer": "atendimento.ligar-servico"
+  },
+  {
+    "id": "atendimento.ligar-servico",
+    "nome": "Ligar um serviço",
+    "area": "Atendimento",
+    "oQueFaz": "Volta a oferecer no robô um serviço que estava desligado.",
+    "comoAsPessoasPedem": [
+      "liga o serviço de novo",
+      "ativa o serviço de revisão",
+      "voltei a fazer esse serviço",
+      "reativar serviço",
+      "volto a oferecer esse serviço"
+    ],
+    "modo": "ia_faz",
+    "acao": "servico.ativar",
+    "rota": "/apps/configuracoes/servicos",
+    "passos": [
+      "Abra Configurações > Serviços",
+      "Filtre por 'Inativos'",
+      "Ligue o serviço"
+    ],
+    "permissao": "Configuracoes:editar",
+    "desfazer": "atendimento.desligar-servico"
+  },
+  {
+    "id": "atendimento.robo-e-numeros",
+    "nome": "Robô, saudação e números de WhatsApp",
+    "area": "Atendimento",
+    "oQueFaz": "Ajusta a saudação, o menu do robô e quem atende em cada número.",
+    "comoAsPessoasPedem": [
+      "mudar a saudação do robô",
+      "o robô responde errado",
+      "mudar o menu do robô",
+      "trocar mensagem de boas-vindas",
+      "quem atende no whatsapp",
+      "passar pra equipe",
+      "configurar o robô"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/configuracoes/atendimento",
+    "passos": [
+      "Abra Configurações > Atendimento",
+      "Escolha 'Fluxos' ou 'Mensagem em cada etapa'",
+      "Mude o texto e salve"
+    ],
+    "permissao": "Delivery:configurar",
+    "desfazer": null
+  },
+  {
+    "id": "atendimento.faq-novo",
+    "nome": "Criar ou editar perguntas do FAQ",
+    "area": "Atendimento",
+    "oQueFaz": "Escreve as respostas que o robô usa quando o cliente pergunta algo.",
+    "comoAsPessoasPedem": [
+      "nova pergunta pro robô",
+      "cadastrar pergunta frequente",
+      "ensinar o robô",
+      "o robô não sabe responder isso",
+      "editar resposta do FAQ",
+      "teste o robô"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/configuracoes/faq",
+    "passos": [
+      "Abra Configurações > FAQ",
+      "Toque em 'Nova pergunta'",
+      "Escreva a pergunta, a resposta e as palavras-chave",
+      "Toque em 'Salvar'"
+    ],
+    "permissao": "Configuracoes:editar",
+    "desfazer": null
+  },
+  {
+    "id": "atendimento.servicos",
+    "nome": "Cadastrar serviços",
+    "area": "Atendimento",
+    "oQueFaz": "Cria serviços com preço e duração para o robô oferecer.",
+    "comoAsPessoasPedem": [
+      "cadastrar serviço",
+      "novo serviço",
+      "preço do serviço",
+      "duração do serviço",
+      "serviço com agenda"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/configuracoes/servicos",
+    "passos": [
+      "Abra Configurações > Serviços",
+      "Toque em 'Novo serviço'",
+      "Preencha nome, preço e duração",
+      "Toque em 'Salvar'"
+    ],
+    "permissao": "Configuracoes:editar",
+    "desfazer": null
+  },
+  {
+    "id": "atendimento.agenda",
+    "nome": "Agenda e disponibilidade",
+    "area": "Atendimento",
+    "oQueFaz": "Define os horários em que a loja atende por agendamento.",
+    "comoAsPessoasPedem": [
+      "agenda de horários",
+      "disponibilidade",
+      "horários para agendar",
+      "dias de folga da agenda",
+      "bloquear horário"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/configuracoes/disponibilidade",
+    "passos": [
+      "Abra Configurações > Disponibilidade",
+      "Escolha o dia",
+      "Marque os horários e salve"
+    ],
+    "permissao": "Configuracoes:editar",
+    "desfazer": null
+  }
+]

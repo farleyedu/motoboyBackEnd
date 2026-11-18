@@ -1,0 +1,95 @@
+# Mesas P05: planta (rascunho, publicar, histórico), leitura do app e bloqueio de mesa.
+# Antes: aplicar 20261203_01, 20261203_03 (P01) e 20261205_05_mesas_planta.sql; rodar 20261205_06_mesas_planta_verify.sql (tudo ok = true).
+# Login de dono ou gerente do painel na loja (o Mesas pode estar desligado: dono e gerente montam a planta antes de ligar).
+# O módulo Mesas precisa estar contratado na loja (senão MODULO_INATIVO).
+
+@host = http://localhost:5165
+### 1. Cole o token de um login do painel na loja (dono ou gerente), como no mesas-p01.http
+@token = cole-aqui
+
+### 2. Salvar rascunho (primeira vez: sem versaoRascunho). Devolve versaoRascunho = 1.
+# Planta com erros de propósito: mesas 1 e 2 com o mesmo número e sem porta de entrada.
+# @name rascunho
+POST {{host}}/api/v2/mesas/planta/salvar-rascunho-planta
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "chave": "7f1c0a52-0000-4000-8000-000000000001",
+  "documento": {
+    "pisos": [{
+      "id": "p-peq", "nome": "Salão", "nivel": 0, "largura": 1200, "altura": 800, "paredeEsp": 20,
+      "contorno": [[0,0],[1200,0],[1200,800],[0,800]],
+      "setores": [{ "id": "s-peq-salao", "nome": "Salão", "cor": "#3b82f6" }],
+      "elementos": []
+    }],
+    "mesas": [
+      { "id": "m-peq-1", "numero": 1, "pisoId": "p-peq", "setorId": "s-peq-salao", "forma": "quadrada", "tipo": "Q4", "x": 160, "y": 330, "w": 85, "h": 85, "capacidade": 4 },
+      { "id": "m-peq-2", "numero": 1, "pisoId": "p-peq", "setorId": "s-peq-salao", "forma": "redonda", "tipo": "R4", "x": 600, "y": 330, "w": 100, "h": 100, "capacidade": 4 }
+    ]
+  }
+}
+
+### 3. Publicar com erro: 400 VALIDACAO, details.erros = [{item, id, codigo, mensagem}] (SEM_ENTRADA, NUMERO_REPETIDO). Nada muda.
+POST {{host}}/api/v2/mesas/planta/publicar-planta
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "chave": "7f1c0a52-0000-4000-8000-000000000002", "versaoRascunho": {{rascunho.response.body.$.data.versaoRascunho}} }
+
+### 4. Corrigir o rascunho (manda a versão que leu). Com versão velha: 409 VERSAO_VELHA com details.porQuem/quando.
+# @name corrigido
+POST {{host}}/api/v2/mesas/planta/salvar-rascunho-planta
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "chave": "7f1c0a52-0000-4000-8000-000000000003",
+  "versaoRascunho": {{rascunho.response.body.$.data.versaoRascunho}},
+  "documento": {
+    "pisos": [{
+      "id": "p-peq", "nome": "Salão", "nivel": 0, "largura": 1200, "altura": 800, "paredeEsp": 20,
+      "contorno": [[0,0],[1200,0],[1200,800],[0,800]],
+      "setores": [{ "id": "s-peq-salao", "nome": "Salão", "cor": "#3b82f6" }],
+      "elementos": [{ "id": "e1", "tipo": "porta", "x": 1060, "y": 800, "larg": 140, "rot": 0, "principal": true }]
+    }],
+    "mesas": [
+      { "id": "m-peq-1", "numero": 1, "pisoId": "p-peq", "setorId": "s-peq-salao", "forma": "quadrada", "tipo": "Q4", "x": 160, "y": 330, "w": 85, "h": 85, "capacidade": 4 },
+      { "id": "m-peq-2", "numero": 2, "pisoId": "p-peq", "setorId": "s-peq-salao", "forma": "redonda", "tipo": "R4", "x": 600, "y": 330, "w": 100, "h": 100, "capacidade": 4 }
+    ]
+  }
+}
+
+### 5. Publicar certo: { versaoPlanta, mesasCriadas: 2, mesasDesativadas: 0, mesasRenumeradas: 0 }. Emite mesas.salao.mudou.
+POST {{host}}/api/v2/mesas/planta/publicar-planta
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "chave": "7f1c0a52-0000-4000-8000-000000000004", "versaoRascunho": {{corrigido.response.body.$.data.versaoRascunho}} }
+
+### 6. Ler a publicada (padrão). ?estado=rascunho lê o rascunho (dono/gerente); ?versao=1 lê do histórico.
+GET {{host}}/api/v2/mesas/planta
+Authorization: Bearer {{token}}
+
+### 7. Histórico de versões (rascunho, publicada, arquivada, descartada)
+GET {{host}}/api/v2/mesas/planta/versoes
+Authorization: Bearer {{token}}
+
+### 8. Leitura do app: planta publicada sem foto de fundo + mesas ativas com status e versão
+# @name app
+GET {{host}}/api/v2/mesas/planta/app
+Authorization: Bearer {{token}}
+
+### 9. Tirar a primeira mesa de uso (motivo obrigatório; versaoMesa da leitura 8)
+POST {{host}}/api/v2/mesas/salao/bloquear-mesa
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "chave": "7f1c0a52-0000-4000-8000-000000000005", "mesaId": "{{app.response.body.$.data.mesas[0].mesaId}}", "versaoMesa": {{app.response.body.$.data.mesas[0].versao}}, "motivo": "Cadeira quebrada" }
+
+### 10. Descartar o rascunho (se houver um aberto)
+POST {{host}}/api/v2/mesas/planta/descartar-rascunho-planta
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{ "chave": "7f1c0a52-0000-4000-8000-000000000006" }

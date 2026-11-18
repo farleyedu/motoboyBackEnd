@@ -1,0 +1,83 @@
+# Mesas P02: ponto em tempo real da equipe.
+# Antes: aplicar 20261204_01_gestao_ponto.sql e rodar 20261204_02_gestao_ponto_verify.sql (todas as linhas ok = true).
+# Use o login de uma pessoa ligada na Equipe (gestao_pessoas.usuario_id). Pelo painel (dono/gerente) também serve,
+# passando "pessoaId" no corpo.
+
+@host = http://localhost:5165
+@email = garcom@exemplo.com
+@senha = trocar
+@loja = 00000000-0000-0000-0000-000000000000
+@pessoaId = 00000000-0000-0000-0000-000000000000
+
+### 1. Login do app da equipe
+# @name equipe
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{ "email": "{{email}}", "senha": "{{senha}}", "clientApp": "equipe" }
+
+### 2. Escolher a loja
+# @name loja
+POST {{host}}/api/auth/definir-estabelecimento
+Authorization: Bearer {{equipe.response.body.$.data.accessToken}}
+Content-Type: application/json
+
+{ "estabelecimentoId": "{{loja}}" }
+
+### 3. Bater o ponto (modo opcional: vem da função; garcom, motoboy, cozinha ou caixa). De novo = 409 JA_FEITO.
+POST {{host}}/api/v2/equipe/ponto/entrar
+Authorization: Bearer {{loja.response.body.$.data.accessToken}}
+Content-Type: application/json
+
+{ "modo": "garcom" }
+
+### 4. Pausar (sem ponto = 409 ESTADO_INVALIDO)
+POST {{host}}/api/v2/equipe/ponto/pausar
+Authorization: Bearer {{loja.response.body.$.data.accessToken}}
+Content-Type: application/json
+
+{ "motivo": "Almoço" }
+
+### 5. Voltar
+POST {{host}}/api/v2/equipe/ponto/voltar
+Authorization: Bearer {{loja.response.body.$.data.accessToken}}
+Content-Type: application/json
+
+{}
+
+### 6. Ponto de hoje (estado, entrada, pausas, minutos)
+GET {{host}}/api/v2/equipe/ponto/hoje
+Authorization: Bearer {{loja.response.body.$.data.accessToken}}
+
+### 7. Encerrar. Preenche o turno do dia em Equipe e remuneração (realizado, entrada e saída reais),
+# a menos que o gerente já tenha decidido o turno (turnoSituacao = "mantido").
+POST {{host}}/api/v2/equipe/ponto/sair
+Authorization: Bearer {{loja.response.body.$.data.accessToken}}
+Content-Type: application/json
+
+{}
+
+### --- Como gerente (token do painel na loja) ---
+@tokenGerente = cole-aqui
+
+### 8. Quem está com ponto agora
+GET {{host}}/api/v2/equipe/ponto/loja
+Authorization: Bearer {{tokenGerente}}
+
+### 9. Ponto de uma pessoa num dia (o que o painel mostra no detalhe do turno)
+GET {{host}}/api/v2/equipe/ponto/hoje?pessoaId={{pessoaId}}&data=2026-11-17
+Authorization: Bearer {{tokenGerente}}
+
+### 10. Bater o ponto por outra pessoa
+POST {{host}}/api/v2/equipe/ponto/entrar
+Authorization: Bearer {{tokenGerente}}
+Content-Type: application/json
+
+{ "pessoaId": "{{pessoaId}}", "modo": "cozinha" }
+
+### 11. Encerrar o ponto de outra pessoa (motivo obrigatório)
+POST {{host}}/api/v2/equipe/ponto/sair
+Authorization: Bearer {{tokenGerente}}
+Content-Type: application/json
+
+{ "pessoaId": "{{pessoaId}}", "motivo": "Esqueceu de bater a saída" }

@@ -31,12 +31,16 @@
     <PackageReference Include="Anthropic" Version="13.3.0" />
     <PackageReference Include="Lib.Net.Http.WebPush" Version="3.3.1" />
     <EmbeddedResource Include="Service\communication-emojis.json" LogicalName="APIBack.communication-emojis.json" />
+    <!-- Catálogo do Assistente: um arquivo por área, lido por CatalogoAssistente.CarregarEmbutido. -->
+    <EmbeddedResource Include="Assistente\Catalogo\*.json" LogicalName="APIBack.Assistente.Catalogo.%(Filename)%(Extension)" />
+    <Content Remove="Assistente\Catalogo\*.json" />
     <Content Include="Migrations\Delivery\*.sql" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Migrations\Delivery\rollback\*.sql" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Migrations\Negocio\*.sql" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Migrations\Financeiro\*.sql" CopyToOutputDirectory="PreserveNewest" />
     <!-- Lida no boot (AdditionalMigrationsPaths) e pelos testes de banco. -->
     <Content Include="Migrations\Inteligencia\*.sql" CopyToOutputDirectory="PreserveNewest" />
+    <PackageReference Include="OpenAI" Version="2.15.0" />
   </ItemGroup>
 
 </Project>

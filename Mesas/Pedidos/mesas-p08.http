@@ -1,0 +1,99 @@
+# Mesas P08: pedido do celular → aprovação → cozinha → pronto → Peguei → Entreguei; e cortesia que pede o gerente.
+# Antes: P01, P05, P07 aplicados e 20261207_01_mesas_pedidos.sql; rodar 20261207_02_mesas_pedidos_verify.sql (tudo ok = true).
+# Planta publicada, Mesas ligado e uma mesa aberta (mesas-p07.http, passo 2). Cardápio com pelo menos um produto ativo.
+# Para o pedido ir à cozinha/bar (e não à Produção geral), ligue a categoria à estação:
+#   PUT /api/v2/mesas/config { "chave": "rotas.categorias.<categoriaId>", "valor": "cozinha" }
+# Dois tokens: @gerente (painel, dono ou gerente) e @garcom (login clientApp "equipe" + definir-estabelecimento; ponto aberto em ponto-p02.http).
+# Cada comando leva uma "chave" nova ({{$guid}}); reenviar com a MESMA chave devolve a mesma resposta, sem refazer.
+
+@host = http://localhost:5165
+@gerente = cole-o-token-do-gerente
+@garcom = cole-o-token-do-garcom
+@mesa = cole-o-id-da-mesa-aberta
+@produto = cole-o-id-de-um-produto-do-cardapio
+
+### 1. Pedido "do celular": o gerente lança com origem cliente (o cardápio na mesa do P18 fará isso pelo QR).
+# Regra padrão r2: pedido do cliente passa pelo garçom → aguardandoAprovacao = 1.
+# @name lancar
+POST {{host}}/api/v2/mesas/pedidos/lancar-pedido
+Authorization: Bearer {{gerente}}
+Content-Type: application/json
+
+{ "chave": "{{$guid}}", "mesaId": "{{mesa}}", "origem": "cliente", "itens": [ { "produtoId": "{{produto}}", "qtd": 1, "obs": "sem cebola" } ] }
+
+### 2. O garçom vê o que tem para aprovar (aprovar[]), levar (paraLevar[]) e a caminho (aCaminho[]).
+GET {{host}}/api/v2/mesas/pedidos/garcom
+Authorization: Bearer {{garcom}}
+
+### 3. O garçom aprova → o item vai para a fila da estação.
+POST {{host}}/api/v2/mesas/pedidos/aprovar-pedido
+Authorization: Bearer {{garcom}}
+Content-Type: application/json
+
+{ "chave": "{{$guid}}", "pedidoId": "{{lancar.response.body.$.data.pedidoId}}" }
+
+### 4. Cozinha: cartões por pedido (novos · preparando · pronto). estacao = cozinha | bar | producao_geral | todas.
+GET {{host}}/api/v2/mesas/cozinha/pedidos?estacao=todas
+Authorization: Bearer {{gerente}}
+
+### 5. Total para fazer.
+GET {{host}}/api/v2/mesas/cozinha/total?estacao=todas
+Authorization: Bearer {{gerente}}
+
+### 6. Cozinha começa (em_fila → em_preparo).
+POST {{host}}/api/v2/mesas/cozinha/avancar-etapa
+Authorization: Bearer {{gerente}}
+Content-Type: application/json
+
+{ "chave": "{{$guid}}", "itemId": "{{lancar.response.body.$.data.itemIds[0]}}" }
+
+### 7. Cozinha marca pronto (última etapa → pronto; se o cliente busca → aguardando_retirada).
+POST {{host}}/api/v2/mesas/cozinha/marcar-item-pronto
+Authorization: Bearer {{gerente}}
+Content-Type: application/json
+
+{ "chave": "{{$guid}}", "itemId": "{{lancar.response.body.$.data.itemIds[0]}}" }
+
+### 8. Garçom: "Peguei" (outro garçom no mesmo prato recebe JA_FEITO "Rafa já pegou esse prato").
+POST {{host}}/api/v2/mesas/pedidos/pegar-prato
+Authorization: Bearer {{garcom}}
+Content-Type: application/json
+
+{ "chave": "{{$guid}}", "itemIds": ["{{lancar.response.body.$.data.itemIds[0]}}"] }
+
+### 9. Garçom: "Entreguei". Sem "pronto" também vale (marca entrega direta). Sem isso, fecha sozinho 20 min depois do Peguei.
+POST {{host}}/api/v2/mesas/pedidos/entregar
+Authorization: Bearer {{garcom}}
+Content-Type: application/json
+
+{ "chave": "{{$guid}}", "itemId": "{{lancar.response.body.$.data.itemIds[0]}}" }
+
+### 10. Cortesia pelo garçom: padrão "pede o gerente" → HTTP 202 AGUARDANDO_GERENTE com solicitacaoId; nada muda no item.
+# versaoMesa = data.versoes da última resposta (ou GET /api/v2/mesas/salao).
+POST {{host}}/api/v2/mesas/pedidos/cortesia
+Authorization: Bearer {{garcom}}
+Content-Type: application/json
+
+{ "chave": "{{$guid}}", "itemId": "{{lancar.response.body.$.data.itemIds[0]}}", "versaoMesa": 1, "motivo": "Cliente esperou demais" }
+
+### 11. O garçom segue trabalhando: lança outro pedido na mesma mesa normalmente (vai direto para a produção).
+POST {{host}}/api/v2/mesas/pedidos/lancar-pedido
+Authorization: Bearer {{garcom}}
+Content-Type: application/json
+
+{ "chave": "{{$guid}}", "mesaId": "{{mesa}}", "itens": [ { "produtoId": "{{produto}}", "qtd": 2 } ] }
+
+### 12. Cancelar antes da cozinha começar: sem motivo → 422 EXIGE_MOTIVO; com motivo → cancelado.
+POST {{host}}/api/v2/mesas/pedidos/cancelar-item
+Authorization: Bearer {{garcom}}
+Content-Type: application/json
+
+{ "chave": "{{$guid}}", "itemId": "cole-o-item-do-passo-11", "motivo": "Cliente desistiu" }
+
+### 13. Pedidos da mesa (aba Mesas em Pedidos) e avisos ao gestor (cortesia, perda).
+GET {{host}}/api/v2/mesas/pedidos?mesaId={{mesa}}
+Authorization: Bearer {{gerente}}
+
+###
+GET {{host}}/api/v2/mesas/pedidos/avisos?lidos=false
+Authorization: Bearer {{gerente}}

@@ -1,0 +1,120 @@
+[
+  {
+    "id": "mesas.configurar",
+    "nome": "Como as mesas funcionam na casa",
+    "area": "Mesas",
+    "oQueFaz": "Ajusta pedidos, taxa de serviço, rodízio, couvert e regras de reserva do salão.",
+    "comoAsPessoasPedem": [
+      "taxa de serviço",
+      "gorjeta",
+      "couvert",
+      "rodízio",
+      "regras de reserva",
+      "configurar mesas",
+      "dez por cento do garçom"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/configuracoes/mesas",
+    "passos": [
+      "Abra Configurações > Mesas",
+      "Escolha a regra",
+      "Mude e salve"
+    ],
+    "permissao": "Mesas:configurar",
+    "desfazer": null
+  },
+  {
+    "id": "mesas.salao",
+    "nome": "Salão, pedidos e cozinha das mesas",
+    "area": "Mesas",
+    "oQueFaz": "Mostra as mesas abertas, as pendências, os pedidos e a cozinha e o bar.",
+    "comoAsPessoasPedem": [
+      "ver as mesas",
+      "mesa 5 pediu a conta",
+      "pedidos do salão",
+      "pendências do salão",
+      "cozinha e bar",
+      "abrir mesa"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/mesas",
+    "passos": [
+      "Abra Mesas",
+      "Veja 'Salão', 'Pendências' ou 'Cozinha e bar'",
+      "Toque na mesa para atender"
+    ],
+    "permissao": "Mesas:visualizar",
+    "desfazer": null
+  },
+  {
+    "id": "mesas.planta",
+    "nome": "Montar o salão (planta)",
+    "area": "Mesas",
+    "oQueFaz": "Desenha as mesas e o layout do salão.",
+    "comoAsPessoasPedem": [
+      "montar o salão",
+      "desenhar as mesas",
+      "planta do salão",
+      "adicionar mesa",
+      "mudar o layout",
+      "mudar a quantidade de mesas"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/mesas/planta",
+    "passos": [
+      "Abra Mesas > Montar o salão",
+      "Arraste e crie as mesas",
+      "Salve"
+    ],
+    "permissao": "Mesas:configurar",
+    "desfazer": null
+  },
+  {
+    "id": "mesas.reservas",
+    "nome": "Reservas e avisos por WhatsApp",
+    "area": "Mesas",
+    "oQueFaz": "Cuida das reservas e dos avisos que o cliente recebe.",
+    "comoAsPessoasPedem": [
+      "reserva de mesa",
+      "marcar reserva",
+      "cancelar reserva",
+      "avisar o cliente da mesa",
+      "lista de espera"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/mesas/reservas",
+    "passos": [
+      "Abra Mesas > Reservas",
+      "Crie ou abra a reserva",
+      "Salve"
+    ],
+    "permissao": "Mesas:visualizar",
+    "desfazer": null
+  },
+  {
+    "id": "mesas.relatorios",
+    "nome": "Relatórios e auditoria das mesas",
+    "area": "Mesas",
+    "oQueFaz": "Mostra como foi o dia no salão e o histórico de mudanças.",
+    "comoAsPessoasPedem": [
+      "como foi o dia no salão",
+      "relatório das mesas",
+      "auditoria",
+      "quem cancelou item da mesa",
+      "faturamento do salão"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/mesas/relatorios",
+    "passos": [
+      "Abra Mesas > Relatórios",
+      "Escolha 'Como foi o dia' ou 'Auditoria'"
+    ],
+    "permissao": "Mesas:visualizar",
+    "desfazer": null
+  }
+]

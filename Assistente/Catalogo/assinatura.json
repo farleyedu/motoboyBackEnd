@@ -1,0 +1,115 @@
+[
+  {
+    "id": "assinatura.plano-atual",
+    "nome": "Meu plano e vencimento",
+    "area": "Assinatura",
+    "oQueFaz": "Diz qual é o plano da loja, o valor e quando vence a próxima cobrança.",
+    "comoAsPessoasPedem": [
+      "qual meu plano",
+      "quando vence minha assinatura",
+      "quanto pago por mês",
+      "minha mensalidade",
+      "tenho fatura em aberto?",
+      "meu plano inclui o quê"
+    ],
+    "modo": "consulta",
+    "acao": null,
+    "rota": "/apps/configuracoes/assinatura",
+    "passos": [],
+    "permissao": "Configuracoes:visualizar",
+    "desfazer": null
+  },
+  {
+    "id": "assinatura.trocar-plano",
+    "nome": "Trocar de plano",
+    "area": "Assinatura",
+    "oQueFaz": "Muda para outro plano. É contrato e pagamento, então é pela tela.",
+    "comoAsPessoasPedem": [
+      "trocar de plano",
+      "mudar pra um plano maior",
+      "quero o plano mais barato",
+      "upgrade",
+      "ver os planos",
+      "cancelar plano"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/configuracoes/assinatura",
+    "passos": [
+      "Abra Configurações > Assinatura",
+      "Toque em 'Trocar plano' ou 'Escolher plano'",
+      "Confirme"
+    ],
+    "permissao": "Configuracoes:editar",
+    "desfazer": null
+  },
+  {
+    "id": "assinatura.pagar",
+    "nome": "Pagar a mensalidade ou um extra",
+    "area": "Assinatura",
+    "oQueFaz": "Paga a cobrança da Zippy pelo link de pagamento.",
+    "comoAsPessoasPedem": [
+      "pagar a mensalidade",
+      "gerar o pix da assinatura",
+      "pagar fatura",
+      "segunda via",
+      "pagar a cobrança"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/configuracoes/assinatura",
+    "passos": [
+      "Abra Configurações > Assinatura",
+      "Ache 'Cobranças'",
+      "Toque em 'Pagar'"
+    ],
+    "permissao": "Configuracoes:editar",
+    "desfazer": null
+  },
+  {
+    "id": "assinatura.extras",
+    "nome": "Comprar extras",
+    "area": "Assinatura",
+    "oQueFaz": "Compra motoboys ou módulos além do plano.",
+    "comoAsPessoasPedem": [
+      "comprar módulo",
+      "mais um motoboy",
+      "extra do plano",
+      "contratar módulo de mesas",
+      "adicionar impressão"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/configuracoes/assinatura",
+    "passos": [
+      "Abra Configurações > Assinatura",
+      "Ache 'Extras'",
+      "Toque em 'Comprar extra' (ou 'Pedir extra')"
+    ],
+    "permissao": "Configuracoes:editar",
+    "desfazer": null
+  },
+  {
+    "id": "assinatura.cancelar",
+    "nome": "Cancelar ou retomar a assinatura",
+    "area": "Assinatura",
+    "oQueFaz": "Cancela ou retoma a assinatura. Só o dono ou o gerente faz.",
+    "comoAsPessoasPedem": [
+      "cancelar assinatura",
+      "quero sair do zippy",
+      "retomar assinatura",
+      "voltar a assinar",
+      "suspender"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/configuracoes/assinatura",
+    "passos": [
+      "Abra Configurações > Assinatura",
+      "Toque em 'Cancelar assinatura' ou 'Retomar assinatura'",
+      "Confirme"
+    ],
+    "permissao": "Configuracoes:editar",
+    "desfazer": null
+  }
+]

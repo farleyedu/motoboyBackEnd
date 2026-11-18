@@ -1,0 +1,119 @@
+[
+  {
+    "id": "conversas.devolver-ao-robo",
+    "nome": "Devolver a conversa ao robô",
+    "area": "Conversas",
+    "oQueFaz": "Tira a conversa do atendente e deixa o robô continuar.",
+    "comoAsPessoasPedem": [
+      "devolve pro robô",
+      "deixa o bot atender",
+      "passa de volta pro robô",
+      "não preciso mais atender esse cliente",
+      "volta pro bot"
+    ],
+    "modo": "ia_faz",
+    "acao": "conversa.devolver-ao-robo",
+    "rota": "/apps/chats",
+    "passos": [
+      "Abra Chats",
+      "Abra a conversa",
+      "Toque em 'Devolver ao bot'"
+    ],
+    "permissao": "WhatsApp:devolver_robo",
+    "desfazer": null
+  },
+  {
+    "id": "conversas.encerrar",
+    "nome": "Encerrar uma conversa",
+    "area": "Conversas",
+    "oQueFaz": "Encerra o atendimento da conversa, com o motivo.",
+    "comoAsPessoasPedem": [
+      "encerra essa conversa",
+      "fecha o atendimento",
+      "terminei com esse cliente",
+      "finalizar conversa",
+      "pode encerrar"
+    ],
+    "modo": "ia_faz",
+    "acao": "conversa.encerrar",
+    "rota": "/apps/chats",
+    "passos": [
+      "Abra Chats",
+      "Abra a conversa",
+      "Toque em 'Encerrar conversa'",
+      "Diga o motivo e confirme"
+    ],
+    "permissao": "WhatsApp:encerrar",
+    "desfazer": "conversas.reabrir"
+  },
+  {
+    "id": "conversas.reabrir",
+    "nome": "Reabrir uma conversa",
+    "area": "Conversas",
+    "oQueFaz": "Reabre uma conversa que tinha sido encerrada.",
+    "comoAsPessoasPedem": [
+      "reabre a conversa",
+      "volta esse atendimento",
+      "o cliente voltou a falar",
+      "encerrei sem querer",
+      "abrir de novo o chat"
+    ],
+    "modo": "ia_faz",
+    "acao": "conversa.reabrir",
+    "rota": "/apps/chats",
+    "passos": [
+      "Abra Chats",
+      "Ache a conversa encerrada",
+      "Toque em 'Reabrir conversa'"
+    ],
+    "permissao": "WhatsApp:reabrir",
+    "desfazer": "conversas.encerrar"
+  },
+  {
+    "id": "conversas.atender",
+    "nome": "Atender e responder clientes",
+    "area": "Conversas",
+    "oQueFaz": "Mostra as conversas do WhatsApp, assume o atendimento e responde.",
+    "comoAsPessoasPedem": [
+      "onde respondo o cliente",
+      "ver as mensagens",
+      "assumir conversa",
+      "responder no whatsapp",
+      "atender cliente",
+      "chat com cliente"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/chats",
+    "passos": [
+      "Abra Chats",
+      "Escolha a conversa",
+      "Assuma e escreva a resposta"
+    ],
+    "permissao": "WhatsApp:visualizar",
+    "desfazer": null
+  },
+  {
+    "id": "conversas.cobrar-no-chat",
+    "nome": "Cobrar o cliente pelo chat",
+    "area": "Conversas",
+    "oQueFaz": "Manda um link de pagamento ao cliente dentro da conversa.",
+    "comoAsPessoasPedem": [
+      "mandar link de pagamento",
+      "cobrar pelo whatsapp",
+      "gerar pix pro cliente",
+      "cobrança no chat",
+      "pedir pagamento"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/chats",
+    "passos": [
+      "Abra Chats",
+      "Abra a conversa",
+      "Use a cobrança do chat e envie"
+    ],
+    "permissao": "WhatsApp:enviar_mensagem",
+    "desfazer": null
+  }
+]

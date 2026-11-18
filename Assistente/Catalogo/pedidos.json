@@ -1,0 +1,188 @@
+[
+  {
+    "id": "pedidos.reabrir-encerrado",
+    "nome": "Reabrir um pedido encerrado",
+    "area": "Pedidos",
+    "oQueFaz": "Volta o pedido encerrado sozinho para pendente, sem motoboy e com prazo novo.",
+    "comoAsPessoasPedem": [
+      "reabre esse pedido",
+      "o pedido fechou sozinho, volta",
+      "pedido encerrado por engano",
+      "reabrir pedido",
+      "preciso entregar esse de novo",
+      "volta o pedido 123"
+    ],
+    "modo": "ia_faz",
+    "acao": "pedido.reabrir-encerrado",
+    "rota": "/apps/pedidos",
+    "passos": [
+      "Abra Pedidos",
+      "Ache o pedido e abra",
+      "Toque em 'Reabrir pedido'"
+    ],
+    "permissao": "Delivery:atribuir_motoboy",
+    "desfazer": null
+  },
+  {
+    "id": "pedidos.reenviar-aviso",
+    "nome": "Reenviar o aviso ao cliente",
+    "area": "Pedidos",
+    "oQueFaz": "Manda de novo um aviso do pedido (como o de saída para entrega) que falhou ou foi ignorado.",
+    "comoAsPessoasPedem": [
+      "reenvia o aviso pro cliente",
+      "o cliente não recebeu a mensagem",
+      "manda o aviso de novo",
+      "avisa o cliente de novo",
+      "o aviso de saída falhou",
+      "reenviar notificação"
+    ],
+    "modo": "ia_faz",
+    "acao": "aviso.reenviar",
+    "rota": "/apps/pedidos",
+    "passos": [
+      "Abra Pedidos",
+      "Abra o pedido",
+      "Na parte de avisos, toque em 'Reenviar'"
+    ],
+    "permissao": "Delivery:atribuir_motoboy",
+    "desfazer": null
+  },
+  {
+    "id": "pedidos.cancelar",
+    "nome": "Cancelar um pedido",
+    "area": "Pedidos",
+    "oQueFaz": "Cancela o pedido com um motivo. Fica pela tela porque envolve o cliente e o dinheiro.",
+    "comoAsPessoasPedem": [
+      "cancela o pedido",
+      "cliente desistiu",
+      "pedido errado, cancela",
+      "cancelar pedido 123",
+      "não consigo entregar esse"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/pedidos",
+    "passos": [
+      "Abra Pedidos",
+      "Abra o pedido",
+      "Toque em 'Cancelar pedido'",
+      "Escolha o motivo e confirme"
+    ],
+    "permissao": "Delivery:cancelar_pedido",
+    "desfazer": null
+  },
+  {
+    "id": "pedidos.atribuir-motoboy",
+    "nome": "Escolher ou trocar o motoboy do pedido",
+    "area": "Pedidos",
+    "oQueFaz": "Passa o pedido para um motoboy ou muda para outro.",
+    "comoAsPessoasPedem": [
+      "manda pro motoboy joão",
+      "trocar o motoboy",
+      "despachar o pedido",
+      "transferir pedido",
+      "quem vai entregar",
+      "atribuir entrega"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/pedidos",
+    "passos": [
+      "Abra Pedidos",
+      "Abra o pedido",
+      "Toque em 'Despachar para…' ou 'Transferir'",
+      "Escolha o motoboy"
+    ],
+    "permissao": "Delivery:atribuir_motoboy",
+    "desfazer": null
+  },
+  {
+    "id": "pedidos.rotas",
+    "nome": "Montar e acompanhar rotas",
+    "area": "Pedidos",
+    "oQueFaz": "Junta pedidos numa rota para um motoboy e acompanha no mapa.",
+    "comoAsPessoasPedem": [
+      "montar rota",
+      "juntar pedidos numa entrega só",
+      "onde está o motoboy",
+      "rota do motoboy",
+      "acompanhar a entrega no mapa"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/dashboards/dashboard2",
+    "passos": [
+      "Abra Modo Comando",
+      "Escolha os pedidos no mapa",
+      "Monte a rota e despache"
+    ],
+    "permissao": "Delivery:atribuir_motoboy",
+    "desfazer": null
+  },
+  {
+    "id": "pedidos.novo-pedido",
+    "nome": "Lançar um pedido pelo painel",
+    "area": "Pedidos",
+    "oQueFaz": "Cria um pedido de balcão ou telefone para o cliente.",
+    "comoAsPessoasPedem": [
+      "lançar pedido",
+      "cliente ligou pedindo",
+      "novo pedido manual",
+      "anotar pedido do telefone",
+      "pedido de balcão"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/pedidos",
+    "passos": [
+      "Abra Pedidos",
+      "Toque em novo pedido",
+      "Escolha o cliente, os itens e o pagamento"
+    ],
+    "permissao": "Delivery:criar_pedido",
+    "desfazer": null
+  },
+  {
+    "id": "pedidos.resumo-do-dia",
+    "nome": "Resumo dos pedidos de hoje",
+    "area": "Pedidos",
+    "oQueFaz": "Diz quantos pedidos entraram hoje, quantos estão atrasados e os motoboys online.",
+    "comoAsPessoasPedem": [
+      "quantos pedidos hoje",
+      "tem pedido atrasado?",
+      "quantos motoboys online",
+      "como está o movimento",
+      "pedidos em aberto",
+      "resumo do dia"
+    ],
+    "modo": "consulta",
+    "acao": null,
+    "rota": "/apps/pedidos",
+    "passos": [],
+    "permissao": "Delivery:visualizar",
+    "desfazer": null
+  },
+  {
+    "id": "pedidos.imprimir",
+    "nome": "Reimprimir um pedido",
+    "area": "Pedidos",
+    "oQueFaz": "Manda o cupom do pedido de novo para a impressora.",
+    "comoAsPessoasPedem": [
+      "imprime o pedido de novo",
+      "reimprimir comanda",
+      "a impressora não saiu",
+      "cupom do pedido",
+      "imprimir cupom"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/pedidos",
+    "passos": [
+      "Abra Pedidos",
+      "Abra o pedido",
+      "Toque em imprimir"
+    ],
+    "permissao": "Delivery:visualizar",
+    "desfazer": null
+  }
+]

@@ -1,0 +1,98 @@
+[
+  {
+    "id": "financeiro.caixa",
+    "nome": "Caixa: abrir, fechar e acertar",
+    "area": "Financeiro",
+    "oQueFaz": "Abre e fecha o caixa do dia e acerta com o motoboy. Mexe com dinheiro, então é pela tela.",
+    "comoAsPessoasPedem": [
+      "abrir o caixa",
+      "fechar o caixa",
+      "acerto do motoboy",
+      "sangria",
+      "conferir o caixa do dia",
+      "troco do caixa",
+      "quanto entrou hoje"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/caixa",
+    "passos": [
+      "Abra Caixa",
+      "Escolha o dia",
+      "Abra, feche ou acerte o caixa"
+    ],
+    "permissao": "Financeiro:visualizar",
+    "desfazer": null
+  },
+  {
+    "id": "financeiro.cobrancas-estorno",
+    "nome": "Cobranças, estorno e reembolso",
+    "area": "Financeiro",
+    "oQueFaz": "Devolve dinheiro ao cliente ou confere pagamentos online. Sempre pela tela.",
+    "comoAsPessoasPedem": [
+      "estornar um pagamento",
+      "devolver o dinheiro do cliente",
+      "reembolso",
+      "cobrança errada",
+      "cliente pagou duas vezes",
+      "pagamentos online"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/financeiro",
+    "passos": [
+      "Abra Financeiro",
+      "Ache o pagamento",
+      "Escolha a ação e confirme"
+    ],
+    "permissao": "Financeiro:visualizar",
+    "desfazer": null
+  },
+  {
+    "id": "financeiro.extrato",
+    "nome": "Saldo, receitas e contas",
+    "area": "Financeiro",
+    "oQueFaz": "Mostra o saldo, o que tem a receber e os lançamentos do período.",
+    "comoAsPessoasPedem": [
+      "saldo da loja",
+      "quanto tenho a receber",
+      "extrato",
+      "lançar uma receita",
+      "movimentações",
+      "financeiro"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/financeiro",
+    "passos": [
+      "Abra Financeiro",
+      "Escolha o período",
+      "Use 'Lançamento' para registrar algo novo"
+    ],
+    "permissao": "Financeiro:visualizar",
+    "desfazer": null
+  },
+  {
+    "id": "financeiro.configuracao",
+    "nome": "Configurar o financeiro",
+    "area": "Financeiro",
+    "oQueFaz": "Ajusta as formas de pagamento e as bases do financeiro da loja.",
+    "comoAsPessoasPedem": [
+      "formas de pagamento",
+      "configurar financeiro",
+      "taxas da maquininha",
+      "contas bancárias",
+      "plano de contas"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/configuracoes/financeiro",
+    "passos": [
+      "Abra Configurações > Financeiro",
+      "Ajuste o que precisa",
+      "Salve"
+    ],
+    "permissao": "Financeiro:editar",
+    "desfazer": null
+  }
+]

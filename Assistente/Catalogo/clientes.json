@@ -1,0 +1,97 @@
+[
+  {
+    "id": "clientes.adicionar-endereco",
+    "nome": "Adicionar um endereço ao cliente",
+    "area": "Clientes",
+    "oQueFaz": "Cadastra mais um endereço de entrega para um cliente que já existe. Não troca o principal.",
+    "comoAsPessoasPedem": [
+      "adiciona um endereço pra maria",
+      "cliente tem outro endereço",
+      "cadastrar endereço do trabalho",
+      "novo endereço do cliente",
+      "ela mudou de casa, adiciona",
+      "incluir endereço"
+    ],
+    "modo": "ia_faz",
+    "acao": "cliente.adicionar-endereco",
+    "rota": "/apps/clientes",
+    "passos": [
+      "Abra Clientes",
+      "Abra o cliente",
+      "Toque em 'Adicionar endereço'",
+      "Preencha rua, número, bairro e cidade e salve"
+    ],
+    "permissao": "Delivery:criar_pedido",
+    "desfazer": null
+  },
+  {
+    "id": "clientes.corrigir-endereco",
+    "nome": "Corrigir o endereço de um cliente",
+    "area": "Clientes",
+    "oQueFaz": "Muda um endereço já salvo. Vai pela tela para conferir o pino no mapa.",
+    "comoAsPessoasPedem": [
+      "corrige o endereço do cliente",
+      "o número tá errado",
+      "cliente mudou de rua",
+      "arrumar endereço",
+      "endereço de entrega errado",
+      "trocar endereço principal"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/clientes",
+    "passos": [
+      "Abra Clientes",
+      "Abra o cliente",
+      "Abra o endereço e corrija",
+      "Confira o pino no mapa e salve"
+    ],
+    "permissao": "Delivery:editar_pedido",
+    "desfazer": null
+  },
+  {
+    "id": "clientes.cadastrar",
+    "nome": "Cadastrar ou editar um cliente",
+    "area": "Clientes",
+    "oQueFaz": "Cria um cliente novo ou muda nome e telefone.",
+    "comoAsPessoasPedem": [
+      "cadastrar cliente",
+      "novo cliente",
+      "mudar o telefone do cliente",
+      "editar cliente",
+      "corrigir o nome do cliente"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/clientes",
+    "passos": [
+      "Abra Clientes",
+      "Toque em 'Novo cliente' ou abra um existente",
+      "Preencha e salve"
+    ],
+    "permissao": "Delivery:criar_pedido",
+    "desfazer": null
+  },
+  {
+    "id": "clientes.buscar",
+    "nome": "Achar um cliente",
+    "area": "Clientes",
+    "oQueFaz": "Procura um cliente pelo nome ou telefone.",
+    "comoAsPessoasPedem": [
+      "achar a maria",
+      "buscar cliente pelo telefone",
+      "cliente cadastrado?",
+      "procurar cliente",
+      "histórico do cliente"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/clientes",
+    "passos": [
+      "Abra Clientes",
+      "Escreva o nome ou telefone em 'Buscar cliente'"
+    ],
+    "permissao": "Delivery:visualizar",
+    "desfazer": null
+  }
+]
