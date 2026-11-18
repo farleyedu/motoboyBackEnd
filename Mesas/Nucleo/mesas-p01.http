@@ -1,0 +1,71 @@
+# Mesas P01: login neutro, funções da conta e configuração.
+# Antes: aplicar 20261203_01_modulo_mesas.sql e 20261203_03_mesas_nucleo.sql (e rodar os _verify).
+# Preencha e-mail/senha de uma pessoa ligada na Equipe (gestao_pessoas.usuario_id) com função 'garcom'.
+
+@host = http://localhost:5165
+@email = garcom@exemplo.com
+@senha = trocar
+@loja = 00000000-0000-0000-0000-000000000000
+
+### 1. Login do app da equipe (não abre sessão de motoboy)
+# @name equipe
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{ "email": "{{email}}", "senha": "{{senha}}", "clientApp": "equipe" }
+
+### 2. Funções da conta por loja (ex.: [{ estabelecimentoId, nome, funcoes:["garcom"], mesasContratado, mesasLigado }])
+GET {{host}}/api/me/funcoes
+Authorization: Bearer {{equipe.response.body.$.data.accessToken}}
+
+### 3. Escolher a loja (o token passa a ter a loja)
+# @name loja
+POST {{host}}/api/auth/definir-estabelecimento
+Authorization: Bearer {{equipe.response.body.$.data.accessToken}}
+Content-Type: application/json
+
+{ "estabelecimentoId": "{{loja}}" }
+
+### 4. Ler a configuração. Loja sem o módulo Mesas: 403 MODULO_INATIVO. Mesas desligado: garçom recebe 403 MESAS_DESLIGADO.
+GET {{host}}/api/v2/mesas/config
+Authorization: Bearer {{loja.response.body.$.data.accessToken}}
+
+### 5. Motoboy: igual a antes (abre sessão e devolve motoboyLoginSessionId)
+POST {{host}}/api/auth/login
+Content-Type: application/json
+
+{ "email": "{{email}}", "senha": "{{senha}}", "clientApp": "motoboy", "clientInstanceId": "teste-p01" }
+
+### --- Como dono (troque o token abaixo pelo de um login do painel na loja) ---
+@tokenDono = cole-aqui
+
+### 6. Ligar o Mesas na loja (só o dono)
+PUT {{host}}/api/v2/mesas/config
+Authorization: Bearer {{tokenDono}}
+Content-Type: application/json
+
+{ "chave": "ativo", "valor": true, "rotulo": "Ligou o Mesas" }
+
+### 7. Mudar um valor (dono ou gerente) e ver o histórico
+PUT {{host}}/api/v2/mesas/config
+Authorization: Bearer {{tokenDono}}
+Content-Type: application/json
+
+{ "chave": "gorjeta.sugestoes", "valor": [10, 12, 15], "rotulo": "Sugestões de gorjeta" }
+
+###
+GET {{host}}/api/v2/mesas/config/historico
+Authorization: Bearer {{tokenDono}}
+
+### 8. Equipe do salão e escolher a função de uma pessoa (garcom, gerente_salao, cozinha, bar, caixa ou null)
+GET {{host}}/api/v2/mesas/equipe
+Authorization: Bearer {{tokenDono}}
+
+###
+PUT {{host}}/api/v2/mesas/equipe/00000000-0000-0000-0000-000000000000/funcao
+Authorization: Bearer {{tokenDono}}
+Content-Type: application/json
+
+{ "funcaoCodigo": "garcom" }
+
+### Para ver o bloqueio do módulo: na Gestão, tire o módulo Mesas da loja e repita o passo 4 (403 MODULO_INATIVO).

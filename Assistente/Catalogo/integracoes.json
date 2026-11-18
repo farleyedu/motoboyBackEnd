@@ -1,0 +1,124 @@
+[
+  {
+    "id": "integracoes.situacao",
+    "nome": "Situação das conexões",
+    "area": "Integrações",
+    "oQueFaz": "Mostra se WhatsApp, iFood, impressora e pagamentos estão conectados e funcionando.",
+    "comoAsPessoasPedem": [
+      "minhas integrações",
+      "o whatsapp tá conectado?",
+      "impressora offline",
+      "o ifood caiu",
+      "o que está conectado",
+      "verificar conexões"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/configuracoes/integracoes",
+    "passos": [
+      "Abra Configurações > Integrações",
+      "Veja a situação de cada conexão",
+      "Toque em 'Verificar agora' se precisar"
+    ],
+    "permissao": "Configuracoes:visualizar",
+    "desfazer": null
+  },
+  {
+    "id": "integracoes.whatsapp",
+    "nome": "Conectar o WhatsApp",
+    "area": "Integrações",
+    "oQueFaz": "Liga o número de WhatsApp da loja pela Meta, em poucos passos.",
+    "comoAsPessoasPedem": [
+      "conectar whatsapp",
+      "ligar meu número",
+      "whatsapp desconectou",
+      "reconectar o whatsapp",
+      "trocar o número do robô",
+      "autorizar pela meta"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/configuracoes/atendimento",
+    "passos": [
+      "Abra Configurações > Atendimento",
+      "Toque em 'Conectar WhatsApp'",
+      "Autorize pela Meta",
+      "Volte e confira se aparece conectado"
+    ],
+    "permissao": "Delivery:configurar",
+    "desfazer": null
+  },
+  {
+    "id": "integracoes.mercado-pago",
+    "nome": "Conectar o Mercado Pago ou a InfinitePay",
+    "area": "Integrações",
+    "oQueFaz": "Liga a conta de pagamentos para receber Pix e cartão online.",
+    "comoAsPessoasPedem": [
+      "conectar mercado pago",
+      "receber pix pelo sistema",
+      "pagamento online",
+      "ligar a infinitepay",
+      "cartão no cardápio web",
+      "conta de recebimento"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/configuracoes/integracoes",
+    "passos": [
+      "Abra Configurações > Integrações",
+      "Ache o 'Mercado Pago' ou a InfinitePay",
+      "Toque em 'Conectar'",
+      "Siga os passos da tela"
+    ],
+    "permissao": "Configuracoes:editar",
+    "desfazer": null
+  },
+  {
+    "id": "integracoes.ifood",
+    "nome": "Conectar e ajustar o iFood",
+    "area": "Integrações",
+    "oQueFaz": "Liga a loja ao iFood, escolhe o aceite automático e vincula os itens.",
+    "comoAsPessoasPedem": [
+      "conectar o ifood",
+      "pedidos do ifood não chegam",
+      "aceite automático do ifood",
+      "vincular produto do ifood",
+      "ifood desconectou",
+      "integrar ifood"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/configuracoes/ifood",
+    "passos": [
+      "Abra Configurações > iFood",
+      "Faça a conexão pela tela",
+      "Confira o aceite automático e os vínculos"
+    ],
+    "permissao": "Configuracoes:editar",
+    "desfazer": null
+  },
+  {
+    "id": "integracoes.impressao",
+    "nome": "Impressoras e cupons",
+    "area": "Integrações",
+    "oQueFaz": "Cadastra as estações de impressão, os modelos de cupom e quando imprimir sozinho.",
+    "comoAsPessoasPedem": [
+      "configurar impressora",
+      "imprimir ao aceitar",
+      "instalar o agente",
+      "modelo de cupom",
+      "impressora da cozinha",
+      "não imprime"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/configuracoes/impressao",
+    "passos": [
+      "Abra Configurações > Impressão",
+      "Escolha 'Estações', 'Regras' ou 'Modelo'",
+      "Ajuste e salve"
+    ],
+    "permissao": "Delivery:configurar_impressao",
+    "desfazer": null
+  }
+]

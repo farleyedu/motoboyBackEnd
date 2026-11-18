@@ -1,0 +1,67 @@
+[
+  {
+    "id": "exemplo.pausar-produto",
+    "nome": "Pausar um produto",
+    "area": "Cardápio",
+    "oQueFaz": "Some do cardápio por um tempo, sem apagar. Volta quando a loja quiser.",
+    "comoAsPessoasPedem": ["pausar", "acabou", "sem estoque", "tirar hoje", "esgotou"],
+    "modo": "ia_faz",
+    "acao": "produto.pausar",
+    "rota": "/apps/cardapio",
+    "passos": ["Abra Cardápio", "Ache o produto", "Desligue 'Disponível'"],
+    "permissao": "Cardapio:editar",
+    "desfazer": "exemplo.voltar-produto"
+  },
+  {
+    "id": "exemplo.voltar-produto",
+    "nome": "Voltar um produto pausado",
+    "area": "Cardápio",
+    "oQueFaz": "Coloca de volta no cardápio um produto que estava pausado.",
+    "comoAsPessoasPedem": ["voltar", "chegou", "tem de novo", "liberar", "despausar"],
+    "modo": "ia_faz",
+    "acao": "produto.voltar",
+    "rota": "/apps/cardapio",
+    "passos": ["Abra Cardápio", "Ache o produto", "Ligue 'Disponível'"],
+    "permissao": "Cardapio:editar",
+    "desfazer": "exemplo.pausar-produto"
+  },
+  {
+    "id": "exemplo.zonas-entrega",
+    "nome": "Zonas de entrega",
+    "area": "Delivery",
+    "oQueFaz": "Desenha no mapa as áreas onde a loja entrega e a taxa de cada uma.",
+    "comoAsPessoasPedem": ["zona", "área de entrega", "bairro novo", "raio de entrega"],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/delivery",
+    "passos": ["Abra Delivery", "Toque em Zonas", "Desenhe a área no mapa e salve"],
+    "permissao": "Delivery:configurar",
+    "desfazer": null
+  },
+  {
+    "id": "exemplo.loja-aberta",
+    "nome": "A loja está aberta?",
+    "area": "Loja",
+    "oQueFaz": "Diz se a loja está aberta agora e, se não está, por quê e como resolver.",
+    "comoAsPessoasPedem": ["está aberta", "por que fechou", "não recebe pedido", "loja fechada"],
+    "modo": "consulta",
+    "acao": null,
+    "rota": "/apps/configuracoes",
+    "passos": [],
+    "permissao": "Configuracoes:visualizar",
+    "desfazer": null
+  },
+  {
+    "id": "exemplo.abrir-loja-hoje",
+    "nome": "Abrir a loja hoje",
+    "area": "Loja",
+    "oQueFaz": "Abre a loja agora, só por hoje, até o horário escolhido. A grade da semana não muda.",
+    "comoAsPessoasPedem": ["abre a loja", "abrir hoje", "abre até", "quero abrir agora"],
+    "modo": "ia_faz",
+    "acao": "loja.abrir-hoje",
+    "rota": "/apps/configuracoes",
+    "passos": ["Abra Configurações", "Toque em 'Abrir hoje'", "Escolha até que horas"],
+    "permissao": "Configuracoes:editar",
+    "desfazer": null
+  }
+]

@@ -100,6 +100,8 @@ public static class EstablishmentPermissions
         result["Financeiro"] = new[] { "visualizar", "criar", "editar", "cancelar", "exportar", "configurar", GestaoPapeis.AcaoFecharMes };
         result["Caixa"] = GestaoPapeis.AcoesCaixa;
         result["Estoque"] = GestaoPapeis.AcoesEstoque;
+        // Mesas: o papel de garçom/cozinha/caixa vem de gestao_pessoas.funcao_codigo (MesasPermissoes); daqui sai o de dono/gerente.
+        result[APIBack.Mesas.Nucleo.MesasPermissoes.Modulo] = APIBack.Mesas.Nucleo.MesasPermissoes.Acoes;
         // "configurar" do WhatsApp (conectar/desconectar o numero da loja) e checado no CanaisWhatsappService, sem atributo.
         result["WhatsApp"] = result.GetValueOrDefault("WhatsApp", Array.Empty<string>())
             .Append("configurar").Distinct().OrderBy(a => a).ToArray();

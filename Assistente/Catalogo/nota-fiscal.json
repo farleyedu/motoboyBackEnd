@@ -1,0 +1,123 @@
+[
+  {
+    "id": "nota-fiscal.conectar",
+    "nome": "Conectar a nota fiscal (NFC-e)",
+    "area": "Nota fiscal",
+    "oQueFaz": "Liga a loja ao provedor de nota fiscal, com a chave e os dados da empresa.",
+    "comoAsPessoasPedem": [
+      "configurar nota fiscal",
+      "emitir nfce",
+      "conectar o provedor",
+      "cupom fiscal",
+      "colocar certificado",
+      "ativar nota fiscal",
+      "preciso emitir nota"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/configuracoes/nota-fiscal",
+    "passos": [
+      "Abra Configurações > Nota fiscal",
+      "Na parte 'Conexão', escolha o provedor",
+      "Coloque a chave e os dados da empresa",
+      "Faça o teste"
+    ],
+    "permissao": "Configuracoes:editar",
+    "desfazer": null
+  },
+  {
+    "id": "nota-fiscal.quando-emitir",
+    "nome": "Quando a nota sai",
+    "area": "Nota fiscal",
+    "oQueFaz": "Escolhe se a nota sai sozinha ou na mão, para quais pedidos e quanto esperar depois de pago.",
+    "comoAsPessoasPedem": [
+      "nota automática",
+      "emitir nota sozinha",
+      "quando a nota é emitida",
+      "nota com cpf",
+      "esperar depois de pago",
+      "nota só pra pagamento no cartão"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/configuracoes/nota-fiscal",
+    "passos": [
+      "Abra Configurações > Nota fiscal",
+      "Ache 'Quando emitir'",
+      "Escolha as regras e salve"
+    ],
+    "permissao": "Configuracoes:editar",
+    "desfazer": null
+  },
+  {
+    "id": "nota-fiscal.ambiente",
+    "nome": "Passar a nota para valendo",
+    "area": "Nota fiscal",
+    "oQueFaz": "Troca do ambiente de teste para valendo, quando as notas passam a ter efeito fiscal.",
+    "comoAsPessoasPedem": [
+      "nota valendo",
+      "sair do teste da nota",
+      "passar pra produção",
+      "ambiente da nota fiscal",
+      "começar a emitir de verdade"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/configuracoes/nota-fiscal",
+    "passos": [
+      "Abra Configurações > Nota fiscal",
+      "Toque em 'Passar para Valendo'",
+      "Leia o aviso e confirme"
+    ],
+    "permissao": "Configuracoes:editar",
+    "desfazer": null
+  },
+  {
+    "id": "nota-fiscal.produtos-fiscais",
+    "nome": "Dados fiscais dos produtos",
+    "area": "Nota fiscal",
+    "oQueFaz": "Completa NCM, CFOP e CSOSN dos produtos que ainda não têm.",
+    "comoAsPessoasPedem": [
+      "produto sem ncm",
+      "dado fiscal do produto",
+      "cfop",
+      "csosn",
+      "produto pendente na nota",
+      "completar cadastro fiscal"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/configuracoes/nota-fiscal",
+    "passos": [
+      "Abra Configurações > Nota fiscal",
+      "Ache 'O que falta' e os produtos pendentes",
+      "Preencha os dados fiscais e salve"
+    ],
+    "permissao": "Configuracoes:editar",
+    "desfazer": null
+  },
+  {
+    "id": "nota-fiscal.notas-emitidas",
+    "nome": "Reenviar, reimprimir ou cancelar uma nota",
+    "area": "Nota fiscal",
+    "oQueFaz": "Reenvia a nota por WhatsApp, reimprime ou cancela. Ainda é pela tela.",
+    "comoAsPessoasPedem": [
+      "manda a nota pro cliente",
+      "reenviar nota fiscal",
+      "reimprimir nota",
+      "cancelar nota",
+      "cliente pediu a nota",
+      "segunda via da nota"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/configuracoes/nota-fiscal",
+    "passos": [
+      "Abra Configurações > Nota fiscal",
+      "Ache a nota emitida",
+      "Escolha reenviar, imprimir ou cancelar"
+    ],
+    "permissao": "Configuracoes:editar",
+    "desfazer": null
+  }
+]

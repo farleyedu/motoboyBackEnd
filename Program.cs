@@ -96,6 +96,7 @@ builder.Services.AddControllers(options =>
 builder.Services.AddSignalR();
 builder.Services.AddHttpClient();
 builder.Services.AddIfoodIntegration(builder.Configuration);
+APIBack.Integrations.NotaFiscal.Nucleo.NotaFiscalServiceCollectionExtensions.AddNotaFiscalNucleo(builder.Services);
 builder.Services.AddHttpClient("chat-media").ConfigurePrimaryHttpMessageHandler(()=>new HttpClientHandler{AllowAutoRedirect=false});
 builder.Services.AddHttpContextAccessor();
 builder.Services.AddMemoryCache();
@@ -166,6 +167,8 @@ builder.Services.AddSingleton<APIBack.Acontecimentos.IGestaoTempoRealPublisher, 
 builder.Services.AddSingleton<APIBack.Acontecimentos.IAcontecimentoAssinante, APIBack.Acontecimentos.GestaoTempoRealAssinante>();
 builder.Services.AddHostedService<APIBack.Acontecimentos.GestaoTempoRealOuvinte>();
 builder.Services.AddScoped<APIBack.GestaoLogica.Documentos.ILeitorCupomFoto, APIBack.GestaoLogica.Documentos.LeitorCupomClaude>();
+// Assistente da Zippy (chat do painel): catálogo validado no boot, ações com confirmação, limpeza de 30 dias.
+APIBack.Assistente.AssistenteRegistro.AddAssistente(builder.Services);
 builder.Services.AddScoped<APIBack.GestaoLogica.Documentos.IDocumentosService, APIBack.GestaoLogica.Documentos.DocumentosService>();
 builder.Services.AddScoped<APIBack.GestaoLogica.Vinculos.IVinculosService, APIBack.GestaoLogica.Vinculos.VinculosService>();
 builder.Services.AddScoped<APIBack.GestaoLogica.Vinculos.ICuradoriaService, APIBack.GestaoLogica.Vinculos.CuradoriaService>();
@@ -179,6 +182,32 @@ builder.Services.AddScoped<APIBack.GestaoLogica.Vendas.IVendasCatalogoService, A
 builder.Services.AddScoped<APIBack.GestaoLogica.Estoque.IEstoqueService, APIBack.GestaoLogica.Estoque.EstoqueService>();
 builder.Services.AddScoped<APIBack.GestaoLogica.Estoque.IEstoquePoliticasService, APIBack.GestaoLogica.Estoque.EstoquePoliticasService>();
 builder.Services.AddScoped<APIBack.GestaoLogica.Equipe.IEquipeService, APIBack.GestaoLogica.Equipe.EquipeService>();
+// Mesas P01: configuracao, funcoes da equipe e /api/me/funcoes.
+builder.Services.AddScoped<APIBack.Mesas.Nucleo.IMesasNucleoService, APIBack.Mesas.Nucleo.MesasNucleoService>();
+// Mesas P02: ponto em tempo real da equipe (/api/v2/equipe/ponto).
+builder.Services.AddScoped<APIBack.Equipe.Ponto.IPontoEquipe, APIBack.Equipe.Ponto.PontoEquipe>();
+builder.Services.AddSingleton<APIBack.Equipe.Ponto.IPontoTempoReal, APIBack.Equipe.Ponto.PontoTempoReal>();
+builder.Services.AddScoped<APIBack.Equipe.Ponto.IPontoService, APIBack.Equipe.Ponto.PontoService>();
+// Mesas P05: planta (rascunho, publicar, historico), cadastro de mesas e bloqueio (/api/v2/mesas/planta, /salao).
+builder.Services.AddSingleton<APIBack.Mesas.Planta.IPlantaTempoReal, APIBack.Mesas.Planta.PlantaTempoReal>();
+builder.Services.AddScoped<APIBack.Mesas.Planta.IPlantaService, APIBack.Mesas.Planta.PlantaService>();
+// Mesas P07: sessao da mesa, pessoas, chamados, leitura do salao e auditoria (/api/v2/mesas/sessoes, /salao, /auditoria).
+// Ganchos (IMesasSessaoGancho) e fontes de alerta (IMesasAlertaFonte) do P08/P14 entram com AddScoped da interface.
+builder.Services.AddSingleton<APIBack.Mesas.Sessao.IMesasTempoReal, APIBack.Mesas.Sessao.MesasTempoReal>();
+builder.Services.AddScoped<APIBack.Mesas.Sessao.MesasComandos>();
+builder.Services.AddScoped<APIBack.Mesas.Sessao.ISessaoService, APIBack.Mesas.Sessao.SessaoService>();
+builder.Services.AddScoped<APIBack.Mesas.Sessao.ISalaoService, APIBack.Mesas.Sessao.SalaoService>();
+builder.Services.AddScoped<APIBack.Mesas.Auditoria.IAuditoriaService, APIBack.Mesas.Auditoria.AuditoriaService>();
+builder.Services.AddHostedService<APIBack.Mesas.Sessao.MesaComandoLimpezaWorker>();
+// Mesas P08: pedidos, itens, cozinha e entrega (/api/v2/mesas/pedidos, /api/v2/mesas/cozinha); escalonamento, presumida e atraso a cada 30 s.
+builder.Services.AddSingleton<APIBack.Mesas.Pedidos.ICozinhaTempoReal, APIBack.Mesas.Pedidos.CozinhaTempoReal>();
+builder.Services.AddScoped<APIBack.Mesas.Pedidos.PedidosService>();
+builder.Services.AddScoped<APIBack.Mesas.Nucleo.IMesasAcaoExecutor>(sp => sp.GetRequiredService<APIBack.Mesas.Pedidos.PedidosService>());
+builder.Services.AddScoped<APIBack.Mesas.Pedidos.CozinhaService>();
+builder.Services.AddScoped<APIBack.Mesas.Pedidos.PedidosSistema>();
+builder.Services.AddScoped<APIBack.Mesas.Sessao.IMesasSessaoGancho, APIBack.Mesas.Pedidos.PedidosSessaoGancho>();
+builder.Services.AddScoped<APIBack.Mesas.Sessao.IMesasAlertaFonte, APIBack.Mesas.Pedidos.PedidosAlertaFonte>();
+builder.Services.AddHostedService<APIBack.Mesas.Pedidos.PedidosWorker>();
 builder.Services.AddScoped<APIBack.GestaoLogica.Caixa.ICaixaService, APIBack.GestaoLogica.Caixa.CaixaService>();
 // 6C6: presenca do motoboy no Caixa pela posicao que o rastreio ja recebe (so destaque; nunca confirma acerto).
 builder.Services.AddScoped<APIBack.GestaoLogica.Caixa.IChegadaService, APIBack.GestaoLogica.Caixa.ChegadaService>();

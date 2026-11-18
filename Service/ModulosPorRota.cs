@@ -35,7 +35,9 @@ public static class ModulosPorRota
         // curadoria Zippy (so super admin), rotas publicas/webhooks e a situacao comercial. Atendimento <-> motoboy (chat) e do Delivery, nao do Atendimento.
         if (Is(s, "api", "v2", "motoboys") || Is(s, "api", "motoboys") || Is(s, "api", "auth") || Is(s, "api", "me") ||
             Is(s, "api", "gestao") || Is(s, "api", "curadoria") || Is(s, "api", "admin") || Is(s, "api", "public") || Is(s, "api", "webhooks") ||
-            Is(s, "api", "v2", "comercial") || Is(s, "api", "v2", "atendimento", "chat")) return null;
+            Is(s, "api", "v2", "comercial") || Is(s, "api", "v2", "atendimento", "chat") || Is(s, "api", "v2", "equipe")) return null;
+
+        if (Is(s, "api", "v2", "mesas")) return "Mesas";
 
         if (Is(s, "api", "v2", "delivery", "ifood") || Is(s, "api", "v2", "ifood", "store")) return "iFood";
         if (Is(s, "api", "v2", "delivery", "impressao")) return "Impressao";

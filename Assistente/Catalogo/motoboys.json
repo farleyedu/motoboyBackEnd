@@ -1,0 +1,141 @@
+[
+  {
+    "id": "motoboys.convidar",
+    "nome": "Convidar um motoboy",
+    "area": "Motoboys",
+    "oQueFaz": "Convida um motoboy cadastrado no Zippy para trabalhar com a loja.",
+    "comoAsPessoasPedem": [
+      "convida o motoboy joão",
+      "quero chamar um motoboy pra minha loja",
+      "adicionar motoboy",
+      "convidar entregador",
+      "novo motoboy na equipe",
+      "vincular motoboy"
+    ],
+    "modo": "ia_faz",
+    "acao": "motoboy.convidar",
+    "rota": "/apps/chats",
+    "passos": [
+      "Abra Chats > aba Motoboys",
+      "Toque em 'Convidar'",
+      "Ache o motoboy e toque em 'Convidar'"
+    ],
+    "permissao": "Delivery:gestao_motoboy",
+    "desfazer": null
+  },
+  {
+    "id": "motoboys.aprovar-vinculo",
+    "nome": "Aceitar o pedido de um motoboy",
+    "area": "Motoboys",
+    "oQueFaz": "Aceita o motoboy que pediu para trabalhar com a loja.",
+    "comoAsPessoasPedem": [
+      "aceita o motoboy",
+      "aprova o pedido do motoboy",
+      "um motoboy quer trabalhar comigo",
+      "liberar entregador",
+      "aprovar vínculo"
+    ],
+    "modo": "ia_faz",
+    "acao": "motoboy.aprovar-vinculo",
+    "rota": "/apps/chats",
+    "passos": [
+      "Abra Chats > aba Motoboys",
+      "Veja os pedidos de vínculo",
+      "Toque em 'Aceitar'"
+    ],
+    "permissao": "Delivery:gestao_motoboy",
+    "desfazer": null
+  },
+  {
+    "id": "motoboys.recusar-vinculo",
+    "nome": "Recusar o pedido de um motoboy",
+    "area": "Motoboys",
+    "oQueFaz": "Recusa o motoboy que pediu para trabalhar com a loja.",
+    "comoAsPessoasPedem": [
+      "recusa o motoboy",
+      "não quero esse motoboy",
+      "nega o pedido do entregador",
+      "rejeitar vínculo",
+      "não aceita ele"
+    ],
+    "modo": "ia_faz",
+    "acao": "motoboy.recusar-vinculo",
+    "rota": "/apps/chats",
+    "passos": [
+      "Abra Chats > aba Motoboys",
+      "Veja os pedidos de vínculo",
+      "Toque em 'Recusar' e confirme"
+    ],
+    "permissao": "Delivery:gestao_motoboy",
+    "desfazer": null
+  },
+  {
+    "id": "motoboys.encerrar-vinculo",
+    "nome": "Tirar um motoboy da loja",
+    "area": "Motoboys",
+    "oQueFaz": "Encerra o vínculo do motoboy com a loja. Afeta uma pessoa, então fica pela tela.",
+    "comoAsPessoasPedem": [
+      "tira o motoboy da loja",
+      "demitir motoboy",
+      "não trabalha mais comigo",
+      "desvincular entregador",
+      "remover motoboy"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/chats",
+    "passos": [
+      "Abra Chats > aba Motoboys",
+      "Abra o motoboy",
+      "Escolha encerrar o vínculo e confirme"
+    ],
+    "permissao": "Delivery:gestao_motoboy",
+    "desfazer": null
+  },
+  {
+    "id": "motoboys.conversar",
+    "nome": "Falar com o motoboy",
+    "area": "Motoboys",
+    "oQueFaz": "Manda mensagem para um motoboy ou para o grupo de motoboys.",
+    "comoAsPessoasPedem": [
+      "mandar mensagem pro motoboy",
+      "avisar os motoboys",
+      "falar com o entregador",
+      "chamar o motoboy",
+      "grupo dos motoboys"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/chats",
+    "passos": [
+      "Abra Chats > aba Motoboys",
+      "Escolha o motoboy ou o 'Grupo'",
+      "Escreva e envie"
+    ],
+    "permissao": "WhatsApp:enviar_mensagem",
+    "desfazer": null
+  },
+  {
+    "id": "motoboys.vagas",
+    "nome": "Vagas e motoboys do plano",
+    "area": "Motoboys",
+    "oQueFaz": "Mostra quantos motoboys o plano permite e como comprar mais.",
+    "comoAsPessoasPedem": [
+      "quantos motoboys posso ter",
+      "limite de motoboys",
+      "preciso de mais motoboys",
+      "comprar vaga de motoboy",
+      "atingi o limite"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/configuracoes/assinatura",
+    "passos": [
+      "Abra Configurações > Assinatura",
+      "Ache 'Extras'",
+      "Escolha 'Comprar extra' para motoboys"
+    ],
+    "permissao": "Configuracoes:visualizar",
+    "desfazer": null
+  }
+]

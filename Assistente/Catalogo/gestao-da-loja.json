@@ -1,0 +1,169 @@
+[
+  {
+    "id": "equipe.pessoas-e-permissoes",
+    "nome": "Pessoas e permissões do app",
+    "area": "Gestão da loja",
+    "oQueFaz": "Convida pessoas para a equipe e escolhe o que cada uma enxerga no app.",
+    "comoAsPessoasPedem": [
+      "dar acesso pro gerente",
+      "convidar funcionário",
+      "o garçom não pode ver o caixa",
+      "permissão da equipe",
+      "tirar acesso",
+      "novo usuário",
+      "quem vê o quê"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/configuracoes/equipe",
+    "passos": [
+      "Abra Configurações > Equipe",
+      "Escolha a pessoa",
+      "Mude o que ela enxerga",
+      "Salve"
+    ],
+    "permissao": "Configuracoes:editar",
+    "desfazer": null
+  },
+  {
+    "id": "equipe.escala-e-pagamentos",
+    "nome": "Escala, ponto e pagamento da equipe",
+    "area": "Gestão da loja",
+    "oQueFaz": "Mostra a escala, o ponto e o que é devido a cada colaborador.",
+    "comoAsPessoasPedem": [
+      "escala da semana",
+      "bater ponto",
+      "quanto devo pro funcionário",
+      "novo colaborador",
+      "fechar o dia da equipe",
+      "diária avulsa"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/equipe",
+    "passos": [
+      "Abra Equipe",
+      "Escolha 'Pessoas', 'Escala' ou 'Pagamentos'",
+      "Faça o ajuste na tela"
+    ],
+    "permissao": null,
+    "desfazer": null
+  },
+  {
+    "id": "gestao.compras-estoque",
+    "nome": "Compras, estoque e despesas",
+    "area": "Gestão da loja",
+    "oQueFaz": "Registra compras, conta o estoque e lança as despesas da loja.",
+    "comoAsPessoasPedem": [
+      "lançar uma compra",
+      "contagem de estoque",
+      "cadastrar despesa",
+      "ficha técnica",
+      "dar entrada em mercadoria",
+      "conta de luz"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/compras",
+    "passos": [
+      "Abra Compras, Estoque ou Despesas no menu",
+      "Toque para lançar um novo item",
+      "Preencha e salve"
+    ],
+    "permissao": "Financeiro:visualizar",
+    "desfazer": null
+  },
+  {
+    "id": "gestao.inteligencia",
+    "nome": "Números e inteligência da loja",
+    "area": "Gestão da loja",
+    "oQueFaz": "Mostra vendas, custo dos ingredientes e o que cada produto deixa de lucro.",
+    "comoAsPessoasPedem": [
+      "quanto vendi",
+      "relatório de vendas",
+      "lucro por produto",
+      "custo dos ingredientes",
+      "produto mais vendido",
+      "resumo do mês"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/inteligencia",
+    "passos": [
+      "Abra Gestão e Inteligência",
+      "Escolha o relatório",
+      "Ajuste o período"
+    ],
+    "permissao": null,
+    "desfazer": null
+  },
+  {
+    "id": "painel.aparencia",
+    "nome": "Aparência, mapa e sons do painel",
+    "area": "Gestão da loja",
+    "oQueFaz": "Troca o tema, o estilo do mapa, os sons e a janela de pedidos no mapa deste navegador.",
+    "comoAsPessoasPedem": [
+      "tema escuro",
+      "mudar a cor do painel",
+      "tirar o som",
+      "som de novo pedido",
+      "mapa escuro",
+      "mudar o mapa",
+      "esconder o lêmure"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/configuracoes/painel",
+    "passos": [
+      "Abra Configurações > Seu painel",
+      "Escolha aparência, mapa ou sons",
+      "Mude o que quiser"
+    ],
+    "permissao": null,
+    "desfazer": null
+  },
+  {
+    "id": "ajuda.pedir-ajuda",
+    "nome": "Falar com a Zippy (abrir chamado)",
+    "area": "Gestão da loja",
+    "oQueFaz": "Abre um chamado para a equipe da Zippy e mostra a situação dos que já foram abertos.",
+    "comoAsPessoasPedem": [
+      "abrir chamado",
+      "preciso de suporte",
+      "falar com a zippy",
+      "deu erro no sistema",
+      "tenho uma sugestão",
+      "meu chamado foi respondido?",
+      "reportar problema"
+    ],
+    "modo": "tela",
+    "acao": null,
+    "rota": "/apps/ajuda",
+    "passos": [
+      "Abra Ajuda",
+      "Conte o que aconteceu",
+      "Envie o chamado"
+    ],
+    "permissao": null,
+    "desfazer": null
+  },
+  {
+    "id": "ajuda.meus-chamados",
+    "nome": "Meus chamados abertos",
+    "area": "Gestão da loja",
+    "oQueFaz": "Diz quais chamados estão abertos e como está cada um.",
+    "comoAsPessoasPedem": [
+      "tenho chamado aberto?",
+      "como está meu chamado",
+      "a zippy respondeu?",
+      "chamados pendentes",
+      "status do chamado"
+    ],
+    "modo": "consulta",
+    "acao": null,
+    "rota": "/apps/ajuda",
+    "passos": [],
+    "permissao": null,
+    "desfazer": null
+  }
+]

@@ -122,7 +122,10 @@ SELECT id,
             // O acesso à conta do app não depende de vínculo. A loja é selecionada
             // depois do login, somente entre os vínculos aprovados do motoboy.
             var isMotoboyApp = string.Equals(request.ClientApp, "motoboy", StringComparison.Ordinal);
-            var estabelecimentoId = isMotoboyApp ? null : await ResolverEstabelecimentoParaTokenAsync(connection, usuario);
+            // App da equipe (Mesas): login neutro, sem loja e sem sessão de motoboy. A loja e o modo vêm depois
+            // (GET /api/me/funcoes e POST /api/auth/definir-estabelecimento).
+            var isEquipeApp = string.Equals(request.ClientApp, "equipe", StringComparison.Ordinal);
+            var estabelecimentoId = isMotoboyApp || isEquipeApp ? null : await ResolverEstabelecimentoParaTokenAsync(connection, usuario);
             Guid? loginSessionId = null;
             if (isMotoboyApp)
                 loginSessionId = await MotoboyLoginSessions.BeginAsync(connection, usuario.Id, request,
