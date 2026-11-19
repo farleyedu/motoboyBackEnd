@@ -44,7 +44,7 @@ public sealed class PacotesComerciaisService(NpgsqlDataSource source) : IPacotes
     {
         "Pedidos", "Mapa", "Delivery", "iFood", "Impressao", "Remuneracao", "WhatsApp", "Clientes",
         "Cardapio", "CardapioWeb", "Inteligencia", "Financeiro", "Experience", "Simulador",
-        "Servicos", "FAQ", "Disponibilidade", "Mesas"
+        "Servicos", "FAQ", "Disponibilidade", "Mesas", "Social"
     };
 
     private sealed class Row

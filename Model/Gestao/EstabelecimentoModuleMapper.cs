@@ -63,6 +63,10 @@ namespace APIBack.Model.Gestao
                     case "mesa":
                         modules.Add("MESAS");
                         break;
+                    case "social":
+                    case "zippy social":
+                        modules.Add("SOCIAL");
+                        break;
                     // Leads, Estoque, Vitrine, Agendamentos e Relatorios foram removidos do produto (sem tela): ignorados.
                     case "estabelecimentos":
                     case "estabelecimento":
@@ -152,6 +156,9 @@ namespace APIBack.Model.Gestao
                         break;
                     case "mesas":
                         modules.Add("Mesas");
+                        break;
+                    case "social":
+                        modules.Add("Social");
                         break;
                     case "estabelecimento":
                         modules.Add("Estabelecimentos");
