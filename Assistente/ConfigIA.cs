@@ -156,8 +156,9 @@ public sealed record ConfigIA
             if (p.Tipo is not (TiposProvedor.OpenAICompativel or TiposProvedor.Anthropic)) return $"Tipo do provedor {p.Id} deve ser openai ou anthropic.";
             if (p.Tipo == TiposProvedor.OpenAICompativel && (!Uri.TryCreate(p.UrlBase, UriKind.Absolute, out var u) || u.Scheme != "https"))
                 return $"URL base do provedor {p.Id} precisa começar com https://.";
-            if (!VariavelPermitida(p.VariavelChave))
-                return $"Variável da chave do provedor {p.Id}: use uma das conhecidas ou ASSISTENTE_..._API_KEY.";
+            // Vazia = só a chave cadastrada na Gestão (banco). Preenchida = só as variáveis permitidas.
+            if (!string.IsNullOrWhiteSpace(p.VariavelChave) && !VariavelPermitida(p.VariavelChave))
+                return $"Variável da chave do provedor {p.Id}: deixe vazia (chave pela tela) ou use uma das conhecidas ou ASSISTENTE_..._API_KEY.";
             if (p.Cabecalhos is { Count: > 5 }) return $"No máximo 5 cabeçalhos extras no provedor {p.Id}.";
             foreach (var (nome, valor) in p.Cabecalhos ?? new Dictionary<string, string>())
                 if (ProblemaCabecalho(nome, valor) is string pc) return $"{p.Id}: {pc}";

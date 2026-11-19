@@ -119,32 +119,50 @@ public interface IProvedorIA
     bool TemChave { get; }
     Task<RespostaIA> Responder(PedidoIA pedido, ExecutarFerramenta executar, CancellationToken ct);
     Task<IReadOnlyList<string>> Modelos(CancellationToken ct);
+    /// <summary>Confere a chave: lista os modelos e, com <paramref name="modelo"/>, faz uma chamada mínima. Falhou = <see cref="FalhaProvedorException"/>.</summary>
+    Task TestarChave(string? modelo, CancellationToken ct) => Modelos(ct);
 }
 
-/// <summary>Cria o cliente de cada provedor da configuração e lê a chave da variável de ambiente indicada (só as permitidas).</summary>
+/// <summary>Cria o cliente de cada provedor da configuração com a chave que vale para ele (ambiente, depois banco).</summary>
 public interface IFabricaProvedores
 {
     IProvedorIA Criar(DefinicaoProvedor definicao);
     bool TemChave(DefinicaoProvedor definicao);
+    /// <summary>Tem chave, de onde vem (<see cref="OrigensChave"/>) e os 4 últimos caracteres. Nunca o valor.</summary>
+    (bool TemChave, string Origem, string? Final) Descrever(DefinicaoProvedor definicao) =>
+        TemChave(definicao) ? (true, OrigensChave.Banco, null) : (false, OrigensChave.Nenhuma, null);
 }
 
-public sealed class FabricaProvedores(IConfiguration config, ILoggerFactory logs) : IFabricaProvedores
+/// <summary>
+/// Cria os clientes. A chave vale nesta ordem (CONTRATO-API §11): variável de ambiente do provedor (só as permitidas: a Gestão não pode
+/// apontar para outro segredo do servidor), depois a chave cifrada do banco (<see cref="ChavesIA"/>, em memória por até 1 minuto).
+/// </summary>
+public sealed class FabricaProvedores(IConfiguration config, ChavesIA chaves, ILoggerFactory logs) : IFabricaProvedores, ITestadorChave
 {
-    public IProvedorIA Criar(DefinicaoProvedor d) => d.Tipo == TiposProvedor.Anthropic
-        ? new ProvedorAnthropic(d.Id, Chave(d), logs.CreateLogger<ProvedorAnthropic>())
-        : new ProvedorOpenAI(d, Chave(d), logs.CreateLogger<ProvedorOpenAI>());
+    public IProvedorIA Criar(DefinicaoProvedor d) => CriarCom(d, Chave(d).Valor);
 
-    public bool TemChave(DefinicaoProvedor d) => Chave(d) is not null;
+    private IProvedorIA CriarCom(DefinicaoProvedor d, string? chave) => d.Tipo == TiposProvedor.Anthropic
+        ? new ProvedorAnthropic(d.Id, chave, logs.CreateLogger<ProvedorAnthropic>())
+        : new ProvedorOpenAI(d, chave, logs.CreateLogger<ProvedorOpenAI>());
 
-    /// <summary>Lê a variável do provedor. Variável fora da lista permitida não é lida (a Gestão não pode apontar para outro segredo).</summary>
-    private string? Chave(DefinicaoProvedor d)
+    public bool TemChave(DefinicaoProvedor d) => Chave(d).Valor is not null;
+
+    public (bool TemChave, string Origem, string? Final) Descrever(DefinicaoProvedor d)
     {
-        if (!ConfigIA.VariavelPermitida(d.VariavelChave)) return null;
-        var valor = config[d.VariavelChave];
-        if (string.IsNullOrWhiteSpace(valor) && d.VariavelChave == "ANTHROPIC_API_KEY") valor = AssistenteService.ChaveAnthropic(config);
-        if (string.IsNullOrWhiteSpace(valor) && d.VariavelChave == "OPENAI_API_KEY") valor = AssistenteService.ChaveOpenAI(config);
-        return string.IsNullOrWhiteSpace(valor) ? null : valor;
+        var (valor, origem) = Chave(d);
+        return (valor is not null, origem, valor is null ? null : CifraChavesAssistente.Final(valor));
     }
+
+    public Task Testar(DefinicaoProvedor d, string chave, string? modelo, CancellationToken ct) => CriarCom(d, chave).TestarChave(modelo, ct);
+
+    private (string? Valor, string Origem) Chave(DefinicaoProvedor d) => LeituraChave.Resolver(d, Ambiente, chaves.DoBanco);
+
+    private string? Ambiente(string variavel) => variavel switch
+    {
+        "ANTHROPIC_API_KEY" => AssistenteService.ChaveAnthropic(config),
+        "OPENAI_API_KEY" => AssistenteService.ChaveOpenAI(config),
+        _ => config[variavel],
+    };
 }
 
 /// <summary>Lista de modelos de cada provedor, guardada por 1 hora. Falhou ou sem chave: lista vazia.</summary>
@@ -329,6 +347,13 @@ public sealed class ProvedorAnthropic(string id, string? chave, ILogger logger) 
     {
         var pagina = await Cliente().Models.List(cancellationToken: ct);
         return pagina.Items.Select(m => m.ID).Where(m => m.StartsWith("claude", StringComparison.Ordinal)).Distinct().ToList();
+    }
+
+    /// <summary>A lista de modelos da Anthropic exige chave: basta para conferir.</summary>
+    public async Task TestarChave(string? modelo, CancellationToken ct)
+    {
+        try { await LimitesChamada.ComTempo(id, c => Modelos(c), ct, TimeSpan.FromSeconds(15)); }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested) { throw Classificar(ex, id); }
     }
 }
 
@@ -552,6 +577,26 @@ public sealed class ProvedorOpenAI(DefinicaoProvedor definicao, string? chave, I
         var client = new OpenAIModelClient(new ApiKeyCredential(chave!), Opcoes());
         var lista = (await client.GetModelsAsync(ct)).Value;
         return FiltrarModelosChat(lista.Select(m => m.Id));
+    }
+
+    /// <summary>
+    /// Lista os modelos com a chave e, havendo modelo na cadeia, faz uma chamada mínima. Resposta cortada no limite de tokens conta
+    /// como sucesso: a chave passou. (No OpenRouter a lista é pública; só a chamada mínima prova a chave.)
+    /// </summary>
+    public async Task TestarChave(string? modelo, CancellationToken ct)
+    {
+        try
+        {
+            await LimitesChamada.ComTempo(Nome, c => Modelos(c), ct, TimeSpan.FromSeconds(15));
+            if (string.IsNullOrWhiteSpace(modelo)) return;
+            var client = new ChatClient(modelo, new ApiKeyCredential(chave!), Opcoes());
+            await LimitesChamada.ComTempo(Nome, c => client.CompleteChatAsync([new UserChatMessage("Responda só: ok")],
+                new ChatCompletionOptions { MaxOutputTokenCount = 64 }, c), ct, TimeSpan.FromSeconds(20));
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        {
+            throw Classificar(ex, Nome);
+        }
     }
 
     /// <summary>Só modelos de conversa (tira embedding, áudio, imagem…). Público para teste.</summary>

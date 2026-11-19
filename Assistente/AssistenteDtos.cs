@@ -53,8 +53,8 @@ public sealed record EstadoItemDto(string ItemId, bool Disponivel, string? Motiv
     long UsadasHoje, bool TemChave);
 
 /// <summary>Chaves e modelos vêm por id de provedor ({ "openai": true, "groq": false, ... }).</summary>
-public sealed record ConfigIADto(ConfigIA Config, bool Padrao, string? AtualizadoPor, DateTimeOffset? AtualizadoEm,
-    IReadOnlyDictionary<string, bool> Chaves, IReadOnlyDictionary<string, IReadOnlyList<string>> Modelos, IReadOnlyList<string> SemPreco,
+public sealed record ConfigIADto(ConfigIA Config, bool Padrao, string? AtualizadoPor, DateTimeOffset? AtualizadoEm, bool CifraDisponivel,
+    IReadOnlyDictionary<string, ChaveInfoDto> Chaves, IReadOnlyDictionary<string, IReadOnlyList<string>> Modelos, IReadOnlyList<string> SemPreco,
     IReadOnlyList<EstadoItemDto> Estado, IReadOnlyList<AlertaDto> Alertas, IReadOnlyDictionary<string, IReadOnlySet<string>> NaoSuporta);
 
 public sealed class TestarIARequest

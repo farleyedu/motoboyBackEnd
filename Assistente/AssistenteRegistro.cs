@@ -39,9 +39,16 @@ public static class AssistenteRegistro
         services.AddScoped<IAssistenteRepositorio, AssistenteRepositorio>();
         services.AddScoped<IAssistenteService, AssistenteService>();
         services.AddScoped<IAssistenteConfigRepositorio, AssistenteConfigRepositorio>();
-        services.AddSingleton<IFabricaProvedores, FabricaProvedores>();
+        services.AddSingleton<CifraChavesAssistente>();
+        services.AddSingleton<ChavesIA>();
+        services.AddSingleton<IChavesIARepositorio, ChavesIARepositorio>();
+        services.AddSingleton<FabricaProvedores>();
+        services.AddSingleton<IFabricaProvedores>(sp => sp.GetRequiredService<FabricaProvedores>());
+        services.AddSingleton<ITestadorChave>(sp => sp.GetRequiredService<FabricaProvedores>());
+        services.AddScoped<GestaoChavesIA>();
         services.AddScoped<IEstadoCadeiaRepositorio, EstadoCadeiaRepositorio>();
-        services.AddScoped<CadeiaIA>();
+        services.AddScoped(sp => new CadeiaIA(sp.GetRequiredService<IFabricaProvedores>(), sp.GetRequiredService<IEstadoCadeiaRepositorio>(),
+            sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<ILogger<CadeiaIA>>(), sp.GetRequiredService<ChavesIA>()));
         services.AddSingleton<CacheModelosIA>();
         services.AddScoped<IAssistenteUsoRepositorio, AssistenteUsoRepositorio>();
         services.AddHostedService<AssistenteLimpeza>();

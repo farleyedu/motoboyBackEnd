@@ -12,8 +12,16 @@ namespace APIBack.Controllers;
 [Route("api/gestao/assistente")]
 public sealed class GestaoAssistenteController(
     IAssistenteConfigRepositorio configuracao, IAssistenteService assistente, CadeiaIA cadeia, IEstadoCadeiaRepositorio estado,
-    CacheModelosIA modelos, IAssistenteUsoRepositorio uso, TimeProvider relogio) : GestaoControllerBase
+    CacheModelosIA modelos, IAssistenteUsoRepositorio uso, TimeProvider relogio, GestaoChavesIA chaves, ChavesIA cacheChaves) : GestaoControllerBase
 {
+    /// <summary>Cadastra ou troca a chave de um provedor (CONTRATO-API §11.2). Testa antes; só grava se der certo. Nunca devolve a chave.</summary>
+    [HttpPut("provedores/{id}/chave")]
+    public Task<IActionResult> SalvarChave(string id, [FromBody] SalvarChaveRequest? req) => Run(async (usuario, ct) =>
+        await chaves.Salvar((await configuracao.Obter(ct)).Config, id, req?.Chave, usuario, ct));
+
+    [HttpDelete("provedores/{id}/chave")]
+    public Task<IActionResult> ApagarChave(string id) => Run((usuario, ct) => chaves.Apagar(id, usuario, ct));
+
     [HttpGet("config")]
     public Task<IActionResult> Ler() => Run((_, ct) => Montar(ct));
 
@@ -65,8 +73,8 @@ public sealed class GestaoAssistenteController(
         var foto = await cadeia.Foto(ct);
         var agora = relogio.GetUtcNow();
         var esgotada = await uso.CadeiaEsgotada(AssistenteService.InicioDoDia(agora), ct);
-        return new ConfigIADto(cfg, salva.Padrao, salva.AtualizadoPor, salva.AtualizadoEm,
-            cfg.Definicoes.ToDictionary(d => d.Id, cadeia.TemChave),
+        return new ConfigIADto(cfg, salva.Padrao, salva.AtualizadoPor, salva.AtualizadoEm, cacheChaves.CifraDisponivel,
+            await chaves.Info(cfg, ct),
             listas.ToDictionary(l => l.Id, l => l.Lista),
             SemPreco(cfg, await uso.ModelosUsados(ct)),
             cfg.Cadeia.Select(i => RegrasCadeia.Disponibilidade(cfg, i, foto, cadeia.TemChave, agora))

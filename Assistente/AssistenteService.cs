@@ -54,6 +54,7 @@ public sealed class AssistenteService(
         if (texto.Length == 0 || texto.Length > MaxTexto)
             throw new AssistenteException(400, "TEXTO_INVALIDO", $"Escreva a pergunta (até {MaxTexto} caracteres).");
         var cfg = (await configuracao.Obter(ct)).Config;
+        await cadeia.PrepararChaves(ct);
         if (!cadeia.Disponivel(cfg))
             throw new AssistenteException(503, "ASSISTENTE_INDISPONIVEL", "O assistente não está disponível agora. Abra um chamado pelo formulário.");
 

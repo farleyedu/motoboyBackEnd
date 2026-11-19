@@ -137,12 +137,17 @@ public interface IEstadoCadeiaRepositorio
 /// Roda uma pergunta na cadeia: planeja, tenta item por item e, em falha, passa ao próximo na mesma pergunta, marcando
 /// "esgotado até" ou desligando o item no banco. Os pulos voltam na resposta (o serviço grava para o uso da Gestão).
 /// </summary>
-public sealed class CadeiaIA(IFabricaProvedores fabrica, IEstadoCadeiaRepositorio estado, TimeProvider relogio, ILogger<CadeiaIA> logger)
+public sealed class CadeiaIA(IFabricaProvedores fabrica, IEstadoCadeiaRepositorio estado, TimeProvider relogio, ILogger<CadeiaIA> logger,
+    ChavesIA? chaves = null)
 {
     public bool TemChave(DefinicaoProvedor d) => fabrica.TemChave(d);
 
+    /// <summary>Recarrega as chaves do banco se passou 1 minuto (antes de decidir se o assistente está disponível).</summary>
+    public Task PrepararChaves(CancellationToken ct) => chaves?.Garantir(ct) ?? Task.CompletedTask;
+
     public async Task<FotoCadeia> Foto(CancellationToken ct)
     {
+        if (chaves is not null) await chaves.Garantir(ct);
         try { return await estado.Foto(AssistenteService.InicioDoDia(relogio.GetUtcNow()), ct); }
         catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedTable || ex.SqlState == PostgresErrorCodes.UndefinedColumn)
         {
@@ -347,7 +352,9 @@ public static class AlertasCadeia
                 primeiraEsgotadaHoje, null));
 
         foreach (var x in itens.Where(x => x.D.Motivo == MotivosPulo.SemChave))
-            alertas.Add(new AlertaDto(SemChave, $"{Nome(x)} sem chave no servidor ({x.Def?.VariavelChave}).", null, x.Item.Id));
+            alertas.Add(new AlertaDto(SemChave, string.IsNullOrWhiteSpace(x.Def?.VariavelChave)
+                ? $"{Nome(x)} sem chave: cadastre na Gestão."
+                : $"{Nome(x)} sem chave: cadastre na Gestão ou em {x.Def!.VariavelChave}.", null, x.Item.Id));
         return alertas;
     }
 
