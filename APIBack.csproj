@@ -29,6 +29,7 @@
 
   <ItemGroup>
     <PackageReference Include="Anthropic" Version="13.3.0" />
+    <PackageReference Include="AWSSDK.S3" Version="3.7.416" />
     <PackageReference Include="Lib.Net.Http.WebPush" Version="3.3.1" />
     <EmbeddedResource Include="Service\communication-emojis.json" LogicalName="APIBack.communication-emojis.json" />
     <!-- Catálogo do Assistente: um arquivo por área, lido por CatalogoAssistente.CarregarEmbutido. -->

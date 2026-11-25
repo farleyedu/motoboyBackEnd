@@ -182,6 +182,25 @@ builder.Services.AddScoped<APIBack.GestaoLogica.Vendas.IVendasCatalogoService, A
 builder.Services.AddScoped<APIBack.GestaoLogica.Estoque.IEstoqueService, APIBack.GestaoLogica.Estoque.EstoqueService>();
 builder.Services.AddScoped<APIBack.GestaoLogica.Estoque.IEstoquePoliticasService, APIBack.GestaoLogica.Estoque.EstoquePoliticasService>();
 builder.Services.AddScoped<APIBack.GestaoLogica.Equipe.IEquipeService, APIBack.GestaoLogica.Equipe.EquipeService>();
+// Zippy Social R01: editor (cortes, receitas, arquivos) e armazenamento R2. Sem Social__R2__* as rotas de arquivo respondem 503.
+builder.Services.Configure<APIBack.Options.SocialR2Options>(builder.Configuration.GetSection(APIBack.Options.SocialR2Options.Secao));
+builder.Services.AddSingleton<APIBack.Social.Arquivos.IArmazenamento, APIBack.Social.Arquivos.R2Armazenamento>();
+builder.Services.AddScoped<APIBack.Social.Editor.ISocialEditorService, APIBack.Social.Editor.SocialEditorService>();
+builder.Services.AddScoped<APIBack.Social.Arquivos.ISocialArquivosService, APIBack.Social.Arquivos.SocialArquivosService>();
+builder.Services.AddHostedService<APIBack.Social.Arquivos.ArquivosLimpezaWorker>();
+// Zippy Social R10: camada de IA (créditos, cota da Zippy ou chave própria) e serviço de voz. Chaves em Social__Ia__Chaves__<provedor>.
+// Em desenvolvimento, sem chave, usa o provedor falso (áudio em silêncio) para o editor funcionar.
+builder.Services.Configure<APIBack.Options.SocialIaOptions>(builder.Configuration.GetSection(APIBack.Options.SocialIaOptions.Secao));
+if (builder.Environment.IsDevelopment())
+    builder.Services.PostConfigure<APIBack.Options.SocialIaOptions>(o => o.FalsoSemChave = builder.Configuration.GetValue<bool?>("Social:Ia:FalsoSemChave") ?? true);
+builder.Services.AddSingleton<APIBack.Social.Ia.LimiteIaZippy>();
+builder.Services.AddScoped<APIBack.Social.Ia.IContaIa, APIBack.Social.Ia.ContaIaPelaSituacao>();
+builder.Services.AddScoped<APIBack.Social.Ia.SocialIa>();
+builder.Services.AddSingleton<APIBack.Social.Ia.IFabricaTexto, APIBack.Social.Ia.FabricaTexto>();
+builder.Services.AddHttpClient(APIBack.Social.Voz.FabricaVoz.ClienteHttp, c => c.Timeout = TimeSpan.FromSeconds(90));
+builder.Services.AddSingleton<APIBack.Social.Voz.IFabricaVoz, APIBack.Social.Voz.FabricaVoz>();
+builder.Services.AddScoped<APIBack.Social.Voz.ISocialVozService, APIBack.Social.Voz.SocialVozService>();
+builder.Services.AddScoped<APIBack.Social.Voz.ISocialTextosService, APIBack.Social.Voz.SocialTextosService>();
 // Mesas P01: configuracao, funcoes da equipe e /api/me/funcoes.
 builder.Services.AddScoped<APIBack.Mesas.Nucleo.IMesasNucleoService, APIBack.Mesas.Nucleo.MesasNucleoService>();
 // Mesas P02: ponto em tempo real da equipe (/api/v2/equipe/ponto).

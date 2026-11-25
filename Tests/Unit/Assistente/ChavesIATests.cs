@@ -187,14 +187,32 @@ public sealed class ChavesIATests
 
     // ------------------------------------------------------------------ cadastrar pela Gestão
 
-    private sealed class Testador(FalhaProvedorException? falha = null) : ITestadorChave
+    /// <summary>Provedor falso: lista e chamada mínima respondem o que o teste mandar.</summary>
+    private sealed class ProvedorTeste(Criador criador, string id) : IProvedorIA
     {
-        public readonly List<(string Provedor, string Chave, string? Modelo)> Testes = [];
-        public Task Testar(DefinicaoProvedor definicao, string chave, string? modelo, CancellationToken ct)
+        public string Nome => id;
+        public bool TemChave => true;
+        public Task<RespostaIA> Responder(PedidoIA pedido, ExecutarFerramenta executar, CancellationToken ct) => throw new NotSupportedException();
+        public Task<IReadOnlyList<string>> Modelos(CancellationToken ct) => ModelosTodos(ct);
+        public Task<IReadOnlyList<string>> ModelosTodos(CancellationToken ct) =>
+            criador.FalhaLista is { } f ? Task.FromException<IReadOnlyList<string>>(f) : Task.FromResult(criador.Lista);
+        public Task<bool> ChamadaMinima(string modelo, int maxTokens, CancellationToken ct)
         {
-            Testes.Add((definicao.Id, chave, modelo));
-            return falha is null ? Task.CompletedTask : Task.FromException(falha);
+            criador.Chamadas.Add(modelo);
+            return criador.FalhaChamada is { } f ? Task.FromException<bool>(f) : Task.FromResult(false);
         }
+    }
+
+    /// <summary>Cria o provedor falso com a chave colada; a chave em uso vem da fábrica de verdade (ambiente, depois banco).</summary>
+    private sealed class Criador(FabricaProvedores fabrica) : ICriadorProvedores
+    {
+        public IReadOnlyList<string> Lista = ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "whisper-large-v3"];
+        public FalhaProvedorException? FalhaLista;
+        public FalhaProvedorException? FalhaChamada;
+        public readonly List<(string Provedor, string? Chave)> Criados = [];
+        public readonly List<string> Chamadas = [];
+        public IProvedorIA CriarCom(DefinicaoProvedor definicao, string? chave) { Criados.Add((definicao.Id, chave)); return new ProvedorTeste(this, definicao.Id); }
+        public (string? Valor, string Origem) ChaveEmUso(DefinicaoProvedor definicao) => fabrica.ChaveEmUso(definicao);
     }
 
     private sealed class EstadoFalso : IEstadoCadeiaRepositorio
@@ -208,27 +226,32 @@ public sealed class ChavesIATests
         public Task LimparNaoSuporta(IReadOnlyCollection<string> provedores, CancellationToken ct) => Task.CompletedTask;
     }
 
-    private static (GestaoChavesIA Gestao, RepoFalso Repo, Testador Testador, EstadoFalso Estado, LogGuardado Log, FabricaProvedores Fabrica) Gestao(
-        FalhaProvedorException? falha = null, Dictionary<string, string?>? ambiente = null, CifraChavesAssistente? cifra = null)
+    private static (GestaoChavesIA Gestao, RepoFalso Repo, Criador Criador, EstadoFalso Estado, LogGuardado Log, FabricaProvedores Fabrica) Gestao(
+        Dictionary<string, string?>? ambiente = null, CifraChavesAssistente? cifra = null)
     {
-        var (cache, repo, _, log) = Cache();
+        var (cache, repo, relogio, log) = Cache();
         var fabrica = new FabricaProvedores(Config(ambiente), cache, new LoggerFactory([log]));
-        var testador = new Testador(falha);
+        var criador = new Criador(fabrica);
         var estado = new EstadoFalso();
-        return (new GestaoChavesIA(repo, cifra ?? Cifra, cache, testador, fabrica, estado, new LoggerFactory([log]).CreateLogger<GestaoChavesIA>()),
-            repo, testador, estado, log, fabrica);
+        var diag = new DiagnosticoIA(criador, estado, relogio, new LoggerFactory([log]).CreateLogger<DiagnosticoIA>());
+        return (new GestaoChavesIA(repo, cifra ?? Cifra, cache, diag, fabrica, estado, new LoggerFactory([log]).CreateLogger<GestaoChavesIA>()),
+            repo, criador, estado, log, fabrica);
     }
 
     [Fact]
     public async Task TesteOkGravaCifradaEDevolveSoOFinal()
     {
-        var (g, repo, testador, estado, log, fabrica) = Gestao();
-        var r = await g.Salvar(ConfigIA.Padrao, "groq", "  " + ChaveGroq + " ", 7, default);
-        Assert.Equal(new ResultadoChaveDto("groq", true, true, "a3F9", OrigensChave.Banco, null), r);
+        var (g, repo, criador, estado, log, fabrica) = Gestao();
+        var r = await g.Salvar(ConfigIA.Padrao, "groq", "  \"Bearer " + ChaveGroq + "\" ", 7, default);
+        Assert.Equal((true, true, "a3F9", OrigensChave.Banco, (string?)null), (r.Ok, r.Gravada, r.Final, r.Origem, r.Erro));
+        Assert.Null(r.Falha);
+        Assert.Null(r.Aviso);
+        Assert.All(r.Etapas!, e => Assert.NotEqual(SituacoesEtapa.Falhou, e.Situacao));
         var salva = Assert.Single(repo.Salvas);
         Assert.DoesNotContain(ChaveGroq, salva.Cifrada);
-        Assert.Equal(ChaveGroq, Cifra.Revelar(salva.Cifrada, "groq"));
-        Assert.Equal(("groq", ChaveGroq, "llama-3.3-70b-versatile"), Assert.Single(testador.Testes));
+        Assert.Equal(ChaveGroq, Cifra.Revelar(salva.Cifrada, "groq")); // aspas e "Bearer " saíram
+        Assert.Equal(("groq", ChaveGroq), Assert.Single(criador.Criados));
+        Assert.Equal(["llama-3.3-70b-versatile"], criador.Chamadas);
         Assert.Equal(["groq"], estado.Religados);
         Assert.True(fabrica.TemChave(Groq));
         Assert.DoesNotContain(ChaveGroq, JsonSerializer.Serialize(r));
@@ -236,13 +259,37 @@ public sealed class ChavesIATests
     }
 
     [Fact]
-    public async Task TesteFalhoNaoGrava()
+    public async Task ChaveRecusadaNaListaNaoGrava()
     {
-        var (g, repo, _, _, log, _) = Gestao(new FalhaProvedorException("groq", MensagensFalha.ChaveRecusada, TipoFalha.Configuracao, status: 401));
+        var (g, repo, criador, _, log, _) = Gestao();
+        criador.FalhaLista = ProvedorOpenAI.PorStatus("groq", 401, """{"error":{"message":"Invalid API Key","type":"invalid_request_error","code":"invalid_api_key"}}""",
+            etapa: EtapasFalha.ListaModelos);
         var r = await g.Salvar(ConfigIA.Padrao, "groq", ChaveGroq, 7, default);
-        Assert.Equal(new ResultadoChaveDto("groq", false, false, null, OrigensChave.Nenhuma, "Chave recusada"), r);
+        Assert.Equal((false, false, OrigensChave.Nenhuma, "Chave recusada pelo provedor"), (r.Ok, r.Gravada, r.Origem, r.Erro));
+        Assert.Equal((CodigosFalha.ChaveRecusada, EtapasFalha.ListaModelos, 401), (r.Falha!.Codigo, r.Falha.Etapa, r.Falha.Status));
+        Assert.Contains(AcoesFalha.ColarChave, r.Falha.Acoes);
+        Assert.Empty(criador.Chamadas); // parou na lista
         Assert.Empty(repo.Salvas);
         Assert.DoesNotContain(log.Linhas, l => l.Contains(ChaveGroq));
+    }
+
+    [Fact]
+    public async Task ModeloSobrecarregadoGravaAChaveComAviso()
+    {
+        // O caso real do Gemini (25/11/2026): a chave lista os modelos, mas o modelo responde 503.
+        var (g, repo, criador, _, _, _) = Gestao();
+        criador.Lista = ["models/gemini-2.5-flash", "models/gemini-3.8-flash", "models/gemini-3.8-flash-tts"];
+        criador.FalhaChamada = ProvedorOpenAI.PorStatus("gemini", 503,
+            """[{"error":{"code":503,"message":"The model is overloaded. Please try again later.","status":"UNAVAILABLE"}}]""", etapa: EtapasFalha.ChamadaModelo);
+        var r = await g.Salvar(ConfigIA.Padrao with { Cadeia = [new ItemCadeia("gemini", "gemini", "gemini-3.8-flash")] }, "gemini", "AQ.Ab8RN6_chave_de_teste_bem_comprida", 7, default);
+        Assert.Equal((true, true, (string?)null), (r.Ok, r.Gravada, r.Erro));
+        Assert.Single(repo.Salvas);
+        var aviso = r.Aviso!;
+        Assert.Equal((CodigosFalha.ModeloSobrecarregado, EtapasFalha.ChamadaModelo, 503, "UNAVAILABLE", true),
+            (aviso.Codigo, aviso.Etapa, aviso.Status, aviso.CodigoProvedor, aviso.Temporaria));
+        Assert.Contains("A chave funcionou", aviso.Detalhe);
+        Assert.Equal(["gemini-2.5-flash"], aviso.ModelosSugeridos); // sem o que falhou e sem o de voz
+        Assert.Equal([AcoesFalha.TentarDeNovo, AcoesFalha.TrocarModelo], aviso.Acoes);
     }
 
     [Fact]
@@ -260,18 +307,19 @@ public sealed class ChavesIATests
     [InlineData("")]
     public async Task ChaveMalFormadaNemTesta(string chave)
     {
-        var (g, repo, testador, _, _, _) = Gestao();
-        Assert.Equal("CHAVE_INVALIDA", (await Assert.ThrowsAsync<AssistenteException>(() => g.Salvar(ConfigIA.Padrao, "groq", chave, 7, default))).Codigo);
-        Assert.Empty(testador.Testes);
+        var (g, repo, criador, _, _, _) = Gestao();
+        var r = await g.Salvar(ConfigIA.Padrao, "groq", chave, 7, default);
+        Assert.Equal((false, CodigosFalha.ChaveFormato, EtapasFalha.FormatoChave), (r.Gravada, r.Falha!.Codigo, r.Falha.Etapa));
+        Assert.Empty(criador.Criados);
         Assert.Empty(repo.Salvas);
     }
 
     [Fact]
     public async Task SemCifraNaoDeixaSalvar()
     {
-        var (g, _, testador, _, _, _) = Gestao(cifra: new CifraChavesAssistente(new ConfigurationBuilder().Build()));
+        var (g, _, criador, _, _, _) = Gestao(cifra: new CifraChavesAssistente(new ConfigurationBuilder().Build()));
         Assert.Equal("CIFRA_INDISPONIVEL", (await Assert.ThrowsAsync<AssistenteException>(() => g.Salvar(ConfigIA.Padrao, "groq", ChaveGroq, 7, default))).Codigo);
-        Assert.Empty(testador.Testes);
+        Assert.Empty(criador.Criados);
     }
 
     [Fact]

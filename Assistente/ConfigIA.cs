@@ -99,7 +99,8 @@ public sealed record ConfigIA
     public static readonly IReadOnlyList<ItemCadeia> CadeiaPadrao =
     [
         new(Provedores.Groq, Provedores.Groq, "llama-3.3-70b-versatile"),
-        new(Provedores.Gemini, Provedores.Gemini, "gemini-3.8-flash", Esforco: "low"),
+        // 25/11/2026: o gemini-3.8-flash deu 503 repetido na chave grátis; o 2.5 Flash respondeu.
+        new(Provedores.Gemini, Provedores.Gemini, "gemini-2.5-flash", Esforco: "low"),
         new(Provedores.OpenRouter, Provedores.OpenRouter, "", LimiteDia: 45, Ligado: false),
         new(Provedores.OpenAI, Provedores.OpenAI, "gpt-5.4-mini", Esforco: "low"),
     ];
@@ -202,7 +203,7 @@ public sealed record ConfigIA
         }
         return this with
         {
-            Cadeia = cadeia?.Where(i => i is not null).Select(i => i with { Id = (i.Id ?? "").Trim(), Provedor = (i.Provedor ?? "").Trim(), Modelo = (i.Modelo ?? "").Trim() }).ToList() ?? cadeia!,
+            Cadeia = cadeia?.Where(i => i is not null).Select(i => i with { Id = (i.Id ?? "").Trim(), Provedor = (i.Provedor ?? "").Trim(), Modelo = CatalogoModelos.Normalizar((i.Modelo ?? "").Trim()) }).ToList() ?? cadeia!,
             Definicoes = Definicoes?.Where(p => p is not null).Select(p => p with { Id = (p.Id ?? "").Trim(), Nome = (p.Nome ?? "").Trim(), UrlBase = p.UrlBase?.Trim(), VariavelChave = (p.VariavelChave ?? "").Trim() }).ToList() ?? Definicoes!,
             Precos = Precos?.Where(p => p is not null).Select(p => p with { Modelo = (p.Modelo ?? "").Trim() }).ToList() ?? Precos!,
             Provedor = null, Modelo = null, ReservaProvedor = null, ReservaModelo = null,

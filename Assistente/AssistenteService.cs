@@ -342,9 +342,9 @@ public sealed class AssistenteService(
         if (!ferramentas)
         {
             var texto = string.IsNullOrWhiteSpace(pergunta) ? "A loja está aberta?" : pergunta.Trim()[..Math.Min(pergunta.Trim().Length, MaxTexto)];
-            var (r, chamadas, erro, ms) = await TestarUma(cfg, item, texto, ct);
+            var (r, chamadas, erro, ms, falha) = await TestarUma(cfg, item, texto, ct);
             return r is null
-                ? new TesteIADto(false, null, item?.Id, item?.Provedor, item?.Modelo, false, ms, null, chamadas.Select(c => c.Nome).ToList(), erro, null)
+                ? new TesteIADto(false, null, item?.Id, falha?.Provedor ?? item?.Provedor, falha?.Modelo ?? item?.Modelo, false, ms, null, chamadas.Select(c => c.Nome).ToList(), erro, null, falha)
                 : new TesteIADto(true, TextoFinal(r.Resposta, []), r.ItemId, r.Provedor, r.Modelo, r.Trocou, ms,
                     new TokensDto(r.Resposta.Entrada, r.Resposta.Saida, r.Resposta.CacheLidos), chamadas.Select(c => c.Nome).ToList(), null, null);
         }
@@ -354,19 +354,19 @@ public sealed class AssistenteService(
         long total = 0, entrada = 0, saida = 0, cacheL = 0;
         foreach (var (ferramenta, texto) in Checagens)
         {
-            var (r, chamadas, erro, ms) = await TestarUma(cfg, item, texto, ct);
+            var (r, chamadas, erro, ms, falha) = await TestarUma(cfg, item, texto, ct);
             total += ms;
             if (r is not null)
             {
                 ultima = r;
                 (entrada, saida, cacheL) = (entrada + r.Resposta.Entrada, saida + r.Resposta.Saida, cacheL + r.Resposta.CacheLidos);
             }
-            checagem.Add(AvaliarChecagem(ferramenta, texto, chamadas, erro, ms));
+            checagem.Add(AvaliarChecagem(ferramenta, texto, chamadas, erro, ms) with { Falha = falha });
         }
         var ok = checagem.All(c => c.Ok);
         return new TesteIADto(ok, null, ultima?.ItemId ?? item?.Id, ultima?.Provedor ?? item?.Provedor, ultima?.Modelo ?? item?.Modelo, ultima?.Trocou ?? false, total,
             new TokensDto(entrada, saida, cacheL), checagem.SelectMany(c => c.Chamou).ToList(),
-            ok ? null : "Nem todas as ferramentas funcionaram.", checagem);
+            ok ? null : "Nem todas as ferramentas funcionaram.", checagem, checagem.FirstOrDefault(c => c.Falha is not null)?.Falha);
     }
 
     /// <summary>Uma chamada de ferramenta no teste: nome e, se os argumentos não passaram na leitura, o porquê.</summary>
@@ -385,7 +385,7 @@ public sealed class AssistenteService(
         return new ChecagemFerramentaDto(esperada, pergunta, nomes, erro is null, erro, ms);
     }
 
-    private async Task<(RespostaComProvedor? R, List<ChamadaTeste> Chamadas, string? Erro, long Ms)> TestarUma(ConfigIA cfg, ItemCadeia? item, string texto, CancellationToken ct)
+    private async Task<(RespostaComProvedor? R, List<ChamadaTeste> Chamadas, string? Erro, long Ms, FalhaDto? Falha)> TestarUma(ConfigIA cfg, ItemCadeia? item, string texto, CancellationToken ct)
     {
         var chamadas = new List<ChamadaTeste>();
         var podeFazer = FuncionalidadesComExecutor();
@@ -402,11 +402,15 @@ public sealed class AssistenteService(
             var r = item is null
                 ? await cadeia.Responder(cfg, i => Pedido(cfg, i, [], contexto, texto), executar, null, ct)
                 : await cadeia.ResponderCom(cfg, item, i => Pedido(cfg, i, [], contexto, texto), executar, ct);
-            return (r, chamadas, null, (long)_relogio.GetElapsedTime(inicio).TotalMilliseconds);
+            return (r, chamadas, null, (long)_relogio.GetElapsedTime(inicio).TotalMilliseconds, null);
         }
         catch (Exception ex) when (ex is FalhaProvedorException or FalhaCadeiaException)
         {
-            return (null, chamadas, ex.Message, (long)_relogio.GetElapsedTime(inicio).TotalMilliseconds);
+            var (falhou, modelo) = ex is FalhaProvedorException fp ? (fp, item?.Modelo)
+                : ((FalhaCadeiaException)ex).Ultima is { } u ? (u.Falha, u.Item.Modelo) : ((FalhaProvedorException?)null, item?.Modelo);
+            var falha = falhou is null ? null
+                : CatalogoFalhas.Dto(falhou, cfg.ProvedorDe(falhou.Provedor)?.Nome, modelo, _relogio.GetUtcNow(), null) with { Etapa = falhou.Etapa ?? EtapasFalha.ChamadaModelo };
+            return (null, chamadas, ex.Message, (long)_relogio.GetElapsedTime(inicio).TotalMilliseconds, falha);
         }
     }
 

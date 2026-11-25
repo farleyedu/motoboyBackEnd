@@ -44,7 +44,10 @@ public static class AssistenteRegistro
         services.AddSingleton<IChavesIARepositorio, ChavesIARepositorio>();
         services.AddSingleton<FabricaProvedores>();
         services.AddSingleton<IFabricaProvedores>(sp => sp.GetRequiredService<FabricaProvedores>());
-        services.AddSingleton<ITestadorChave>(sp => sp.GetRequiredService<FabricaProvedores>());
+        services.AddSingleton<ICriadorProvedores>(sp => sp.GetRequiredService<FabricaProvedores>());
+        services.AddScoped(sp => new DiagnosticoIA(sp.GetRequiredService<ICriadorProvedores>(), sp.GetRequiredService<IEstadoCadeiaRepositorio>(),
+            sp.GetRequiredService<TimeProvider>(), sp.GetRequiredService<ILogger<DiagnosticoIA>>(),
+            (cfg, itemId, ct) => sp.GetRequiredService<IAssistenteService>().Testar(cfg, itemId, true, null, ct)));
         services.AddScoped<GestaoChavesIA>();
         services.AddScoped<IEstadoCadeiaRepositorio, EstadoCadeiaRepositorio>();
         services.AddScoped(sp => new CadeiaIA(sp.GetRequiredService<IFabricaProvedores>(), sp.GetRequiredService<IEstadoCadeiaRepositorio>(),

@@ -50,9 +50,26 @@ public enum TipoFalha
 }
 
 public sealed class FalhaProvedorException(string provedor, string mensagem, TipoFalha tipo, Exception? inner = null,
-    TimeSpan? retryAfter = null, bool cotaDiaria = false, int? status = null) : Exception(mensagem, inner)
+    TimeSpan? retryAfter = null, bool cotaDiaria = false, int? status = null, string? codigo = null, string? codigoProvedor = null,
+    string? mensagemProvedor = null) : Exception(mensagem, inner)
 {
     public string Provedor { get; } = provedor;
+    /// <summary>Código do CONTRATO-API §12.2 (<see cref="CodigosFalha"/>). Sem código explícito, deduzido do tipo.</summary>
+    public string Codigo { get; } = codigo ?? tipo switch
+    {
+        TipoFalha.SemChave => CodigosFalha.SemChave,
+        TipoFalha.Limite => cotaDiaria ? CodigosFalha.CotaDia : CodigosFalha.LimiteMinuto,
+        TipoFalha.Servidor => CodigosFalha.ErroInternoProvedor,
+        TipoFalha.Configuracao => status is 401 or 403 ? CodigosFalha.ChaveRecusada : CodigosFalha.ModeloNaoExiste,
+        TipoFalha.Resposta => CodigosFalha.RespostaVazia,
+        _ => CodigosFalha.PedidoRecusado,
+    };
+    /// <summary>Código de erro do corpo da resposta do provedor (ex.: <c>UNAVAILABLE</c>, <c>insufficient_quota</c>).</summary>
+    public string? CodigoProvedor { get; } = codigoProvedor;
+    /// <summary>Mensagem do provedor já cortada e sem chave (<see cref="Redacao"/>). Para os detalhes técnicos e o log.</summary>
+    public string? MensagemProvedor { get; } = mensagemProvedor;
+    /// <summary>Em que etapa do teste falhou (<see cref="EtapasFalha"/>), quando se sabe.</summary>
+    public string? Etapa { get; set; }
     public TipoFalha Tipo { get; } = tipo;
     public TimeSpan? RetryAfter { get; } = retryAfter;
     public bool CotaDiaria { get; } = cotaDiaria;
@@ -101,14 +118,14 @@ public sealed class ControleFerramentas(string provedor, IEnumerable<JsonObject>
             ExecutouAlguma = true;
             return null;
         }
-        if (++_erros > 1) throw new FalhaProvedorException(provedor, MensagensFalha.FerramentaErrada, TipoFalha.Resposta);
+        if (++_erros > 1) throw CatalogoFalhas.Nova(provedor, CodigosFalha.FerramentaErrada);
         return erro;
     }
 
     /// <summary>Final do turno: texto vazio sem nenhuma ferramenta executada = resposta vazia.</summary>
     public void ExigirConteudo(string texto)
     {
-        if (string.IsNullOrWhiteSpace(texto) && !ExecutouAlguma) throw new FalhaProvedorException(provedor, MensagensFalha.RespostaVazia, TipoFalha.Resposta);
+        if (string.IsNullOrWhiteSpace(texto) && !ExecutouAlguma) throw CatalogoFalhas.Nova(provedor, CodigosFalha.RespostaVazia);
     }
 }
 
@@ -119,8 +136,18 @@ public interface IProvedorIA
     bool TemChave { get; }
     Task<RespostaIA> Responder(PedidoIA pedido, ExecutarFerramenta executar, CancellationToken ct);
     Task<IReadOnlyList<string>> Modelos(CancellationToken ct);
-    /// <summary>Confere a chave: lista os modelos e, com <paramref name="modelo"/>, faz uma chamada mínima. Falhou = <see cref="FalhaProvedorException"/>.</summary>
-    Task TestarChave(string? modelo, CancellationToken ct) => Modelos(ct);
+    /// <summary>Todos os modelos que a chave enxerga, sem filtrar (ids já sem <c>models/</c>). Para o seletor da Gestão (§12.4).</summary>
+    Task<IReadOnlyList<string>> ModelosTodos(CancellationToken ct) => Modelos(ct);
+    /// <summary>Uma chamada mínima ("Responda só: ok") ao modelo. Devolve se foi cortada no limite (conta como ok). Falhou = <see cref="FalhaProvedorException"/>.</summary>
+    Task<bool> ChamadaMinima(string modelo, int maxTokens, CancellationToken ct) => throw new NotSupportedException();
+}
+
+/// <summary>Cria um provedor com uma chave dada (a colada na tela) e diz qual chave está valendo (sem o valor sair daqui).</summary>
+public interface ICriadorProvedores
+{
+    IProvedorIA CriarCom(DefinicaoProvedor definicao, string? chave);
+    /// <summary>A chave em uso (ambiente, depois banco) e de onde vem. Só para o diagnóstico usar; nunca vai para a tela.</summary>
+    (string? Valor, string Origem) ChaveEmUso(DefinicaoProvedor definicao);
 }
 
 /// <summary>Cria o cliente de cada provedor da configuração com a chave que vale para ele (ambiente, depois banco).</summary>
@@ -137,11 +164,11 @@ public interface IFabricaProvedores
 /// Cria os clientes. A chave vale nesta ordem (CONTRATO-API §11): variável de ambiente do provedor (só as permitidas: a Gestão não pode
 /// apontar para outro segredo do servidor), depois a chave cifrada do banco (<see cref="ChavesIA"/>, em memória por até 1 minuto).
 /// </summary>
-public sealed class FabricaProvedores(IConfiguration config, ChavesIA chaves, ILoggerFactory logs) : IFabricaProvedores, ITestadorChave
+public sealed class FabricaProvedores(IConfiguration config, ChavesIA chaves, ILoggerFactory logs) : IFabricaProvedores, ICriadorProvedores
 {
     public IProvedorIA Criar(DefinicaoProvedor d) => CriarCom(d, Chave(d).Valor);
 
-    private IProvedorIA CriarCom(DefinicaoProvedor d, string? chave) => d.Tipo == TiposProvedor.Anthropic
+    public IProvedorIA CriarCom(DefinicaoProvedor d, string? chave) => d.Tipo == TiposProvedor.Anthropic
         ? new ProvedorAnthropic(d.Id, chave, logs.CreateLogger<ProvedorAnthropic>())
         : new ProvedorOpenAI(d, chave, logs.CreateLogger<ProvedorOpenAI>());
 
@@ -153,7 +180,7 @@ public sealed class FabricaProvedores(IConfiguration config, ChavesIA chaves, IL
         return (valor is not null, origem, valor is null ? null : CifraChavesAssistente.Final(valor));
     }
 
-    public Task Testar(DefinicaoProvedor d, string chave, string? modelo, CancellationToken ct) => CriarCom(d, chave).TestarChave(modelo, ct);
+    public (string? Valor, string Origem) ChaveEmUso(DefinicaoProvedor d) => Chave(d);
 
     private (string? Valor, string Origem) Chave(DefinicaoProvedor d) => LeituraChave.Resolver(d, Ambiente, chaves.DoBanco);
 
@@ -206,7 +233,7 @@ public static class LimitesChamada
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            throw new FalhaProvedorException(provedor, MensagensFalha.TempoEsgotado, TipoFalha.Servidor);
+            throw CatalogoFalhas.Nova(provedor, CodigosFalha.TempoEsgotado);
         }
     }
 }
@@ -231,7 +258,7 @@ public sealed class ProvedorAnthropic(string id, string? chave, ILogger logger) 
 
     private AnthropicClient Cliente() => new()
     {
-        ApiKey = chave ?? throw new FalhaProvedorException(id, "Chave não configurada", TipoFalha.SemChave),
+        ApiKey = chave ?? throw CatalogoFalhas.Nova(id, CodigosFalha.SemChave),
         MaxRetries = 0,
         Timeout = LimitesChamada.Tempo,
     };
@@ -283,9 +310,9 @@ public sealed class ProvedorAnthropic(string id, string? chave, ILogger logger) 
             if (r.StopReason == BetaStopReason.Refusal)
             {
                 logger.LogInformation("Assistente/{Provedor}: recusa ({Categoria})", id, r.StopDetails?.Category);
-                throw new FalhaProvedorException(id, MensagensFalha.Recusa, TipoFalha.Resposta);
+                throw CatalogoFalhas.Nova(id, CodigosFalha.ConteudoBloqueado);
             }
-            if (r.StopReason == BetaStopReason.MaxTokens) throw new FalhaProvedorException(id, MensagensFalha.RespostaCortada, TipoFalha.Resposta);
+            if (r.StopReason == BetaStopReason.MaxTokens) throw CatalogoFalhas.Nova(id, CodigosFalha.RespostaCortada);
             textos.AddRange(r.Content.Select(b => b.Value).OfType<BetaTextBlock>().Select(t => t.Text.Trim()).Where(t => t.Length > 0));
 
             var usos = r.Content.Select(b => b.Value).OfType<BetaToolUseBlock>().ToList();
@@ -306,22 +333,39 @@ public sealed class ProvedorAnthropic(string id, string? chave, ILogger logger) 
             }
             mensagens.Add(new BetaUserMessageParam { Content = resultados });
         }
-        throw new FalhaProvedorException(id, MensagensFalha.VoltasDemais, TipoFalha.Resposta);
+        throw CatalogoFalhas.Nova(id, CodigosFalha.VoltasDemais);
     }
 
     private static Effort EsforcoAnthropic(string e) => e switch { "medium" => Effort.Medium, "high" => Effort.High, _ => Effort.Low };
 
-    public static FalhaProvedorException Classificar(Exception ex, string id = Provedores.Anthropic) => ex switch
+    public static FalhaProvedorException Classificar(Exception ex, string id = Provedores.Anthropic, string? etapa = null)
     {
-        FalhaProvedorException f => f,
-        Anthropic5xxException => new(id, "Erro no servidor do provedor", TipoFalha.Servidor, ex),
-        AnthropicRateLimitException => new(id, "Limite de uso atingido", TipoFalha.Limite, ex, status: 429),
-        AnthropicIOException or HttpRequestException or TaskCanceledException => new(id, "Sem conexão", TipoFalha.Servidor, ex),
-        AnthropicNotFoundException => new(id, MensagensFalha.ModeloNaoExiste, TipoFalha.Configuracao, ex, status: 404),
-        AnthropicUnauthorizedException or AnthropicForbiddenException => new(id, MensagensFalha.ChaveRecusada, TipoFalha.Configuracao, ex, status: 401),
-        AnthropicBadRequestException => new(id, $"Pedido recusado (400). {MensagensFalha.Curta(ex.Message)}", TipoFalha.Pedido, ex, status: 400),
-        _ => new(id, $"Erro: {MensagensFalha.Curta(ex.Message)}", TipoFalha.Pedido, ex),
-    };
+        if (ex is FalhaProvedorException f) { f.Etapa ??= etapa; return f; }
+        if (ex is AnthropicIOException or HttpRequestException or TaskCanceledException)
+            return CatalogoFalhas.Nova(id, CodigosFalha.SemConexao, inner: ex, etapa: etapa);
+        int? status = ex switch
+        {
+            AnthropicBadRequestException => 400,
+            AnthropicUnauthorizedException => 401,
+            AnthropicForbiddenException => 403,
+            AnthropicNotFoundException => 404,
+            AnthropicRateLimitException => 429,
+            Anthropic5xxException => StatusNaMensagem(ex.Message) ?? 500,
+            _ => StatusNaMensagem(ex.Message),
+        };
+        var (codigoProv, msg) = CorpoErro.Ler(ex.Message);
+        if (status is null)
+            return CatalogoFalhas.Nova(id, CodigosFalha.ErroInesperado, codigoProvedor: ex.GetType().Name, mensagemProvedor: ex.Message, inner: ex, etapa: etapa);
+        var codigo = CatalogoFalhas.Classificar(status.Value, codigoProv, msg, etapa);
+        return CatalogoFalhas.Nova(id, codigo, status, codigoProv, msg, null, ex, etapa);
+    }
+
+    /// <summary>Status HTTP escrito na mensagem do SDK (ex.: "Status Code: 529"), quando há.</summary>
+    private static int? StatusNaMensagem(string m)
+    {
+        var x = System.Text.RegularExpressions.Regex.Match(m, @"\b(4\d\d|5\d\d)\b");
+        return x.Success ? int.Parse(x.Value, CultureInfo.InvariantCulture) : null;
+    }
 
     /// <summary>Resposta do modelo de volta como assistente no mesmo turno (pensamento intacto; regra do bloco de fallback).</summary>
     private static List<BetaContentBlockParam> Eco(IReadOnlyList<BetaContentBlock> conteudo)
@@ -343,17 +387,33 @@ public sealed class ProvedorAnthropic(string id, string? chave, ILogger logger) 
         return eco;
     }
 
-    public async Task<IReadOnlyList<string>> Modelos(CancellationToken ct)
+    public async Task<IReadOnlyList<string>> Modelos(CancellationToken ct) =>
+        (await ModelosTodos(ct)).Where(m => m.StartsWith("claude", StringComparison.Ordinal)).ToList();
+
+    public async Task<IReadOnlyList<string>> ModelosTodos(CancellationToken ct)
     {
-        var pagina = await Cliente().Models.List(cancellationToken: ct);
-        return pagina.Items.Select(m => m.ID).Where(m => m.StartsWith("claude", StringComparison.Ordinal)).Distinct().ToList();
+        try
+        {
+            var pagina = await Cliente().Models.List(cancellationToken: ct);
+            return pagina.Items.Select(m => m.ID).Distinct().ToList();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested) { throw Classificar(ex, id, EtapasFalha.ListaModelos); }
     }
 
-    /// <summary>A lista de modelos da Anthropic exige chave: basta para conferir.</summary>
-    public async Task TestarChave(string? modelo, CancellationToken ct)
+    public async Task<bool> ChamadaMinima(string modelo, int maxTokens, CancellationToken ct)
     {
-        try { await LimitesChamada.ComTempo(id, c => Modelos(c), ct, TimeSpan.FromSeconds(15)); }
-        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested) { throw Classificar(ex, id); }
+        try
+        {
+            var r = await Cliente().Beta.Messages.Create(new MessageCreateParams
+            {
+                Model = modelo,
+                MaxTokens = maxTokens,
+                Messages = [new BetaUserMessageParam { Content = "Responda só: ok" }],
+            }, cancellationToken: ct);
+            if (r.StopReason == BetaStopReason.Refusal) throw CatalogoFalhas.Nova(id, CodigosFalha.ConteudoBloqueado, etapa: EtapasFalha.ChamadaModelo);
+            return r.StopReason == BetaStopReason.MaxTokens;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested) { throw Classificar(ex, id, EtapasFalha.ChamadaModelo); }
     }
 }
 
@@ -442,7 +502,7 @@ public sealed class ProvedorOpenAI(DefinicaoProvedor definicao, string? chave, I
     public async Task<RespostaIA> Responder(PedidoIA pedido, ExecutarFerramenta executar, CancellationToken ct)
     {
         var client = new ChatClient(pedido.Modelo,
-            new ApiKeyCredential(chave ?? throw new FalhaProvedorException(Nome, "Chave não configurada", TipoFalha.SemChave)), Opcoes());
+            new ApiKeyCredential(chave ?? throw CatalogoFalhas.Nova(Nome, CodigosFalha.SemChave)), Opcoes());
         var controle = new ControleFerramentas(Nome, pedido.Ferramentas);
         var mensagens = new List<ChatMessage> { new SystemChatMessage(pedido.Sistema) };
         foreach (var l in pedido.Historico)
@@ -504,9 +564,9 @@ public sealed class ProvedorOpenAI(DefinicaoProvedor definicao, string? chave, I
             if (!string.IsNullOrEmpty(c.Refusal) || c.FinishReason == ChatFinishReason.ContentFilter)
             {
                 logger.LogInformation("Assistente/{Provedor}: recusa ({Motivo})", Nome, c.FinishReason);
-                throw new FalhaProvedorException(Nome, MensagensFalha.Recusa, TipoFalha.Resposta);
+                throw CatalogoFalhas.Nova(Nome, CodigosFalha.ConteudoBloqueado);
             }
-            if (c.FinishReason == ChatFinishReason.Length) throw new FalhaProvedorException(Nome, MensagensFalha.RespostaCortada, TipoFalha.Resposta);
+            if (c.FinishReason == ChatFinishReason.Length) throw CatalogoFalhas.Nova(Nome, CodigosFalha.RespostaCortada);
             textos.AddRange(c.Content.Where(p => p.Kind == ChatMessageContentPartKind.Text).Select(p => p.Text.Trim()).Where(t => t.Length > 0));
             if (c.ToolCalls.Count == 0)
             {
@@ -525,29 +585,35 @@ public sealed class ProvedorOpenAI(DefinicaoProvedor definicao, string? chave, I
                 mensagens.Add(new ToolChatMessage(chamada.Id, res.Erro ? "ERRO: " + res.Conteudo : res.Conteudo));
             }
         }
-        throw new FalhaProvedorException(Nome, MensagensFalha.VoltasDemais, TipoFalha.Resposta);
+        throw CatalogoFalhas.Nova(Nome, CodigosFalha.VoltasDemais);
     }
 
     /// <summary>Erro do SDK → tipo de falha, com retry-after e "cota do dia" quando o provedor diz. Público para teste.</summary>
-    public static FalhaProvedorException Classificar(Exception ex, string id = Provedores.OpenAI)
+    public static FalhaProvedorException Classificar(Exception ex, string id = Provedores.OpenAI, string? etapa = null)
     {
-        if (ex is FalhaProvedorException f) return f;
-        if (ex is ClientResultException r) return PorStatus(id, r.Status, r.Message, RetryAfter(r), ex);
-        if (ex is HttpRequestException or TaskCanceledException) return new(id, "Sem conexão", TipoFalha.Servidor, ex);
-        return new(id, $"Erro: {MensagensFalha.Curta(ex.Message)}", TipoFalha.Pedido, ex);
+        if (ex is FalhaProvedorException f) { f.Etapa ??= etapa; return f; }
+        if (ex is ClientResultException r)
+        {
+            string? corpo = null;
+            try { corpo = r.GetRawResponse()?.Content?.ToString(); } catch (Exception) { /* sem corpo legível */ }
+            return PorStatus(id, r.Status, string.IsNullOrWhiteSpace(corpo) ? r.Message : corpo, RetryAfter(r) ?? CorpoErro.Espera(corpo), ex, etapa);
+        }
+        if (ex is HttpRequestException or TaskCanceledException) return CatalogoFalhas.Nova(id, CodigosFalha.SemConexao, inner: ex, etapa: etapa);
+        // Resposta que não é JSON da API (página HTML, proxy): o SDK falha ao ler.
+        if (etapa == EtapasFalha.ListaModelos && ex is JsonException or FormatException or InvalidOperationException)
+            return CatalogoFalhas.Nova(id, CodigosFalha.UrlErrada, codigoProvedor: ex.GetType().Name, mensagemProvedor: ex.Message, inner: ex, etapa: etapa);
+        return CatalogoFalhas.Nova(id, CodigosFalha.ErroInesperado, codigoProvedor: ex.GetType().Name, mensagemProvedor: ex.Message, inner: ex, etapa: etapa);
     }
 
-    /// <summary>Código HTTP → tipo de falha e mensagem que vai para a Gestão. Público para teste.</summary>
-    public static FalhaProvedorException PorStatus(string id, int status, string? mensagem, TimeSpan? retry = null, Exception? ex = null) => status switch
+    /// <summary>Código HTTP + corpo → falha do catálogo (§12.2). Público para teste.</summary>
+    public static FalhaProvedorException PorStatus(string id, int status, string? corpo, TimeSpan? retry = null, Exception? ex = null, string? etapa = null)
     {
-        429 => new(id, "Limite de uso atingido", TipoFalha.Limite, ex, retry, CotaDiaria(mensagem), 429),
-        >= 500 => new(id, "Erro no servidor do provedor", TipoFalha.Servidor, ex, retry, status: status),
-        0 => new(id, "Sem conexão", TipoFalha.Servidor, ex),
-        404 => new(id, MensagensFalha.ModeloNaoExiste, TipoFalha.Configuracao, ex, status: 404),
-        401 or 403 => new(id, MensagensFalha.ChaveRecusada, TipoFalha.Configuracao, ex, status: status),
-        402 => new(id, "Sem crédito na conta (402)", TipoFalha.Limite, ex, retry, true, 402),
-        _ => new(id, $"Pedido recusado ({status}). {MensagensFalha.Curta(mensagem)}", TipoFalha.Pedido, ex, status: status),
-    };
+        if (CorpoErro.EhHtml(corpo) && status is not (>= 500 or 429))
+            return CatalogoFalhas.Nova(id, CodigosFalha.UrlErrada, status, null, "A resposta veio como página HTML, não como API.", retry, ex, etapa);
+        var (codigoProv, msg) = CorpoErro.Ler(corpo);
+        var codigo = CatalogoFalhas.Classificar(status, codigoProv, msg, etapa);
+        return CatalogoFalhas.Nova(id, codigo, status == 0 ? null : status, codigoProv, msg, retry, ex, etapa);
+    }
 
     /// <summary>Mensagem de 429 fala de limite diário/cota? Público para teste.</summary>
     public static bool CotaDiaria(string? mensagem) =>
@@ -572,35 +638,35 @@ public sealed class ProvedorOpenAI(DefinicaoProvedor definicao, string? chave, I
         return null;
     }
 
-    public async Task<IReadOnlyList<string>> Modelos(CancellationToken ct)
-    {
-        var client = new OpenAIModelClient(new ApiKeyCredential(chave!), Opcoes());
-        var lista = (await client.GetModelsAsync(ct)).Value;
-        return FiltrarModelosChat(lista.Select(m => m.Id));
-    }
+    public async Task<IReadOnlyList<string>> Modelos(CancellationToken ct) => FiltrarModelosChat(await ModelosTodos(ct));
 
-    /// <summary>
-    /// Lista os modelos com a chave e, havendo modelo na cadeia, faz uma chamada mínima. Resposta cortada no limite de tokens conta
-    /// como sucesso: a chave passou. (No OpenRouter a lista é pública; só a chamada mínima prova a chave.)
-    /// </summary>
-    public async Task TestarChave(string? modelo, CancellationToken ct)
+    public async Task<IReadOnlyList<string>> ModelosTodos(CancellationToken ct)
     {
         try
         {
-            await LimitesChamada.ComTempo(Nome, c => Modelos(c), ct, TimeSpan.FromSeconds(15));
-            if (string.IsNullOrWhiteSpace(modelo)) return;
-            var client = new ChatClient(modelo, new ApiKeyCredential(chave!), Opcoes());
-            await LimitesChamada.ComTempo(Nome, c => client.CompleteChatAsync([new UserChatMessage("Responda só: ok")],
-                new ChatCompletionOptions { MaxOutputTokenCount = 64 }, c), ct, TimeSpan.FromSeconds(20));
+            var client = new OpenAIModelClient(new ApiKeyCredential(chave ?? throw CatalogoFalhas.Nova(Nome, CodigosFalha.SemChave)), Opcoes());
+            var lista = (await client.GetModelsAsync(ct)).Value;
+            return lista.Select(m => CatalogoModelos.Normalizar(m.Id)).Distinct().ToList();
         }
-        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested) { throw Classificar(ex, Nome, EtapasFalha.ListaModelos); }
+    }
+
+    public async Task<bool> ChamadaMinima(string modelo, int maxTokens, CancellationToken ct)
+    {
+        try
         {
-            throw Classificar(ex, Nome);
+            var client = new ChatClient(modelo, new ApiKeyCredential(chave ?? throw CatalogoFalhas.Nova(Nome, CodigosFalha.SemChave)), Opcoes());
+            var c = (await client.CompleteChatAsync([new UserChatMessage("Responda só: ok")], new ChatCompletionOptions { MaxOutputTokenCount = maxTokens }, ct)).Value;
+            if (!string.IsNullOrEmpty(c.Refusal) || c.FinishReason == ChatFinishReason.ContentFilter)
+                throw CatalogoFalhas.Nova(Nome, CodigosFalha.ConteudoBloqueado, etapa: EtapasFalha.ChamadaModelo);
+            return c.FinishReason == ChatFinishReason.Length;
         }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested) { throw Classificar(ex, Nome, EtapasFalha.ChamadaModelo); }
     }
 
     /// <summary>Só modelos de conversa (tira embedding, áudio, imagem…). Público para teste.</summary>
     public static IReadOnlyList<string> FiltrarModelosChat(IEnumerable<string> ids) => ids
-        .Where(id => !NaoChat.Any(n => id.Contains(n, StringComparison.OrdinalIgnoreCase)))
+        .Select(CatalogoModelos.Normalizar)
+        .Where(id => !NaoChat.Any(n => id.Contains(n, StringComparison.OrdinalIgnoreCase)) && CatalogoModelos.Tipo(id) == CatalogoModelos.Conversa)
         .Distinct().OrderBy(id => id, StringComparer.Ordinal).ToList();
 }

@@ -225,7 +225,9 @@ public static class LeituraChave
 public sealed record ChaveInfoDto(bool TemChave, string Origem, string? Final, string? SalvaPor, DateTimeOffset? SalvaEm,
     DateTimeOffset? UltimoTesteEm, bool? UltimoTesteOk, string? UltimoTesteErro);
 
-public sealed record ResultadoChaveDto(string Provedor, bool Ok, bool Gravada, string? Final, string Origem, string? Erro);
+/// <summary>§11.2 + §12.6: <c>Falha</c> = por que não gravou; <c>Aviso</c> = gravou, mas o modelo falhou (sucesso com ressalva).</summary>
+public sealed record ResultadoChaveDto(string Provedor, bool Ok, bool Gravada, string? Final, string Origem, string? Erro, FalhaDto? Falha = null,
+    FalhaDto? Aviso = null, IReadOnlyList<EtapaDiagnosticoDto>? Etapas = null);
 
 public sealed record ChaveApagadaDto(string Provedor, bool Apagada);
 
@@ -234,38 +236,30 @@ public sealed class SalvarChaveRequest
     public string? Chave { get; set; }
 }
 
-/// <summary>Testa uma chave nova contra o provedor (lista de modelos e, se houver modelo, uma chamada mínima).</summary>
-public interface ITestadorChave
-{
-    Task Testar(DefinicaoProvedor definicao, string chave, string? modelo, CancellationToken ct);
-}
-
-/// <summary>Cadastrar, trocar e apagar chaves pela Gestão (CONTRATO-API §11). Nunca devolve nem loga o valor.</summary>
-public sealed class GestaoChavesIA(IChavesIARepositorio repo, CifraChavesAssistente cifra, ChavesIA cache, ITestadorChave testador,
+/// <summary>Cadastrar, trocar e apagar chaves pela Gestão (CONTRATO-API §11 e §12.6). Nunca devolve nem loga o valor.</summary>
+public sealed class GestaoChavesIA(IChavesIARepositorio repo, CifraChavesAssistente cifra, ChavesIA cache, DiagnosticoIA diagnostico,
     IFabricaProvedores fabrica, IEstadoCadeiaRepositorio estado, ILogger<GestaoChavesIA> logger)
 {
-    public const int MinTamanho = 8;
-    public const int MaxTamanho = 500;
+    public const int MinTamanho = DiagnosticoIA.MinTamanho;
+    public const int MaxTamanho = DiagnosticoIA.MaxTamanho;
+
+    /// <summary>Falhou nessas: a chave não está provada e não é gravada.</summary>
+    private static readonly HashSet<string> NaoGrava = [CodigosFalha.ChaveFormato, CodigosFalha.ChaveRecusada, CodigosFalha.SemConexao, CodigosFalha.UrlErrada, CodigosFalha.SemChave];
 
     public async Task<ResultadoChaveDto> Salvar(ConfigIA cfg, string provedor, string? chave, int usuario, CancellationToken ct)
     {
         var def = cfg.ProvedorDe(provedor) ?? throw new AssistenteException(404, "PROVEDOR_NAO_ENCONTRADO", "Esse provedor não está na configuração salva.");
         if (!cifra.Configurado)
             throw new AssistenteException(422, "CIFRA_INDISPONIVEL", "O servidor não tem Atendimento:ChaveToken: não dá para guardar chave cifrada.");
-        var valor = (chave ?? "").Trim();
-        if (valor.Length is < MinTamanho or > MaxTamanho || valor.Any(char.IsWhiteSpace))
-            throw new AssistenteException(422, "CHAVE_INVALIDA", $"A chave precisa ter de {MinTamanho} a {MaxTamanho} caracteres, sem espaços.");
-
+        var valor = DiagnosticoIA.Limpar(chave);
         var modelo = cfg.Cadeia.FirstOrDefault(i => i.Provedor == def.Id && i.Ligado && !string.IsNullOrWhiteSpace(i.Modelo))?.Modelo;
-        try
+        var diag = await diagnostico.Diagnosticar(cfg, def.Id, modelo, valor, false, ct);
+        if (!Provada(diag))
         {
-            await testador.Testar(def, valor, modelo, ct);
-        }
-        catch (FalhaProvedorException f)
-        {
-            logger.LogInformation("Assistente: chave nova de {Provedor} reprovada no teste ({Tipo} {Status})", def.Id, f.Tipo, f.Status);
+            var falha = diag.Falha;
+            logger.LogInformation("Assistente: chave nova de {Provedor} reprovada no teste ({Codigo} {Status} em {Etapa})", def.Id, falha?.Codigo, falha?.Status, falha?.Etapa);
             await cache.Garantir(ct);
-            return new ResultadoChaveDto(def.Id, false, false, null, Origem(def), f.Message);
+            return new ResultadoChaveDto(def.Id, false, false, null, Origem(def), falha?.Titulo ?? "O provedor recusou a chave", falha, null, diag.Etapas);
         }
 
         var acao = await repo.Salvar(def.Id, cifra.Proteger(valor, def.Id), CifraChavesAssistente.Final(valor), usuario, ct);
@@ -278,7 +272,22 @@ public sealed class GestaoChavesIA(IChavesIARepositorio repo, CifraChavesAssiste
             try { await estado.Religar(item.Id, ct); }
             catch (Exception ex) when (ex is not OperationCanceledException) { logger.LogWarning("Assistente: não religou {Item} ({Erro})", item.Id, ex.GetType().Name); }
         }
-        return new ResultadoChaveDto(def.Id, true, true, CifraChavesAssistente.Final(valor), Origem(def), null);
+        // Provada pela lista, mas o modelo falhou: grava e avisa (o modelo se troca na tela).
+        return new ResultadoChaveDto(def.Id, true, true, CifraChavesAssistente.Final(valor), Origem(def), null, null, diag.Ok ? null : diag.Falha, diag.Etapas);
+    }
+
+    /// <summary>
+    /// A chave vale? Lista de modelos aceitou (todos menos OpenRouter, cuja lista é pública: lá a chamada prova, e falha que não é de chave
+    /// também prova). Falhas de formato, chave, conexão ou endereço nunca gravam. Público para teste.
+    /// </summary>
+    public static bool Provada(DiagnosticoDto d)
+    {
+        if (d.Falha is { } f && NaoGrava.Contains(f.Codigo)) return false;
+        var lista = d.Etapas.FirstOrDefault(e => e.Etapa == EtapasFalha.ListaModelos);
+        if (lista is null || lista.Situacao is SituacoesEtapa.Falhou or SituacoesEtapa.Pulada) return false;
+        if (!d.ListaPublica) return true;
+        var chamada = d.Etapas.FirstOrDefault(e => e.Etapa == EtapasFalha.ChamadaModelo);
+        return chamada?.Situacao == SituacoesEtapa.Ok || chamada?.Situacao == SituacoesEtapa.Falhou;
     }
 
     public async Task<ChaveApagadaDto> Apagar(string provedor, int usuario, CancellationToken ct)

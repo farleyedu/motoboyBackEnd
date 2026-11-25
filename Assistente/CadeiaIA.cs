@@ -5,7 +5,7 @@ namespace APIBack.Assistente;
 
 /// <summary>Estado guardado de um item da cadeia (vale para todas as instâncias do servidor).</summary>
 public sealed record EstadoItem(string ItemId, string Provedor, string Modelo, DateTimeOffset? EsgotadoAte, bool Desligado, string? Erro,
-    DateTimeOffset? AtualizadoEm = null);
+    DateTimeOffset? AtualizadoEm = null, FalhaDto? Falha = null, DateTimeOffset? FalhaEm = null);
 
 /// <summary>
 /// Foto do momento: estado de cada item, quantos pedidos cada um já respondeu hoje (dia de São Paulo) e os parâmetros que cada
@@ -131,6 +131,8 @@ public interface IEstadoCadeiaRepositorio
     Task RegistrarNaoSuporta(string provedor, string parametro, CancellationToken ct);
     /// <summary>Esquece o aprendido dos provedores que a Gestão mudou (URL, flags...).</summary>
     Task LimparNaoSuporta(IReadOnlyCollection<string> provedores, CancellationToken ct);
+    /// <summary>Guarda a última falha explicada do item (CONTRATO-API §12.6). Sem a migração 20261209_01, não faz nada.</summary>
+    Task RegistrarFalha(ItemCadeia item, FalhaDto falha, CancellationToken ct) => Task.CompletedTask;
 }
 
 /// <summary>
@@ -172,6 +174,7 @@ public sealed class CadeiaIA(IFabricaProvedores fabrica, IEstadoCadeiaRepositori
         var plano = RegrasCadeia.Planejar(cfg, foto, fabrica.TemChave, agora);
         var pulos = new List<Pulo>(plano.Pulados);
         var falhas = new List<string>();
+        (ItemCadeia Item, FalhaProvedorException Falha)? ultima = null;
         foreach (var item in plano.Tentar)
         {
             if (falhas.Count > 0) antesDeTrocar?.Invoke();
@@ -182,16 +185,18 @@ public sealed class CadeiaIA(IFabricaProvedores fabrica, IEstadoCadeiaRepositori
             }
             catch (FalhaProvedorException f)
             {
-                // Log sem mensagem do provedor (pode trazer conteúdo): só item, provedor, tipo e código.
-                logger.LogWarning("Assistente: item {Item} ({Provedor}) falhou: {Tipo} {Status}", item.Id, item.Provedor, f.Tipo, f.Status);
+                // Log com a mensagem do provedor já limpa (sem chave, cortada); nunca a pergunta nem a resposta.
+                logger.LogWarning("Assistente: item {Item} ({Provedor}/{Modelo}) falhou: {Codigo} {Status} {CodigoProvedor} {Mensagem}",
+                    item.Id, item.Provedor, item.Modelo, f.Codigo, f.Status, f.CodigoProvedor, f.MensagemProvedor);
                 falhas.Add($"{item.Id}: {f.Message}");
                 pulos.Add(new Pulo(item, MotivosPulo.DeFalha(f.Tipo), f.Message));
-                await Registrar(item, f, ct);
+                ultima = (item, f);
+                await Registrar(cfg, item, f, ct);
             }
         }
         var resumo = falhas.Count > 0 ? string.Join(" ", falhas)
             : plano.Pulados.Count > 0 ? "Nenhuma IA da cadeia está disponível agora." : "A cadeia está vazia.";
-        throw new FalhaCadeiaException(resumo, pulos);
+        throw new FalhaCadeiaException(resumo, pulos) { Ultima = ultima };
     }
 
     /// <summary>Um item só, sem troca e sem olhar estado (o testar da Gestão).</summary>
@@ -225,12 +230,16 @@ public sealed class CadeiaIA(IFabricaProvedores fabrica, IEstadoCadeiaRepositori
         }
     }
 
-    private async Task Registrar(ItemCadeia item, FalhaProvedorException f, CancellationToken ct)
+    private async Task Registrar(ConfigIA cfg, ItemCadeia item, FalhaProvedorException f, CancellationToken ct)
     {
         try
         {
             if (f.Tipo is TipoFalha.Limite or TipoFalha.Servidor) await estado.MarcarEsgotado(item, RegrasCadeia.EsgotadoAte(f, relogio.GetUtcNow()), f.Message, CancellationToken.None);
             else if (f.Tipo == TipoFalha.Configuracao) await estado.Desligar(item, f.Message, CancellationToken.None);
+            var def = cfg.ProvedorDe(item.Provedor);
+            var origem = def is null ? null : fabrica.Descrever(def).Origem;
+            await estado.RegistrarFalha(item, CatalogoFalhas.Dto(f, def?.Nome, item.Modelo, relogio.GetUtcNow(), origem) with { Etapa = f.Etapa ?? EtapasFalha.ChamadaModelo },
+                CancellationToken.None);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -243,6 +252,8 @@ public sealed class CadeiaIA(IFabricaProvedores fabrica, IEstadoCadeiaRepositori
 public sealed class FalhaCadeiaException(string mensagem, IReadOnlyList<Pulo> pulos) : Exception(mensagem)
 {
     public IReadOnlyList<Pulo> Pulos { get; } = pulos;
+    /// <summary>A última falha de quem tentou (para o teste da Gestão explicar), ou nulo se ninguém pôde tentar.</summary>
+    public (ItemCadeia Item, FalhaProvedorException Falha)? Ultima { get; init; }
 }
 
 public sealed class EstadoCadeiaRepositorio(NpgsqlDataSource source) : IEstadoCadeiaRepositorio
@@ -251,9 +262,20 @@ public sealed class EstadoCadeiaRepositorio(NpgsqlDataSource source) : IEstadoCa
     {
         await using var c = await source.OpenConnectionAsync(ct);
         static DateTimeOffset? Utc(DateTime? d) => d is { } v ? new DateTimeOffset(DateTime.SpecifyKind(v, DateTimeKind.Utc)) : null;
-        var estados = (await c.QueryAsync<(string ItemId, string Provedor, string Modelo, DateTime? EsgotadoAte, bool Desligado, string? Erro, DateTime AtualizadoEm)>(new CommandDefinition(
-            "SELECT item_id, provedor, modelo, esgotado_ate, desligado, erro, atualizado_em FROM assistente_cadeia_estado", cancellationToken: ct)))
-            .ToDictionary(e => e.ItemId, e => new EstadoItem(e.ItemId, e.Provedor, e.Modelo, Utc(e.EsgotadoAte), e.Desligado, e.Erro, Utc(e.AtualizadoEm)));
+        Dictionary<string, EstadoItem> estados;
+        try
+        {
+            estados = (await c.QueryAsync<(string ItemId, string Provedor, string Modelo, DateTime? EsgotadoAte, bool Desligado, string? Erro, DateTime AtualizadoEm, string? Falha, DateTime? FalhaEm)>(new CommandDefinition(
+                "SELECT item_id, provedor, modelo, esgotado_ate, desligado, erro, atualizado_em, falha::text, falha_em FROM assistente_cadeia_estado", cancellationToken: ct)))
+                .ToDictionary(e => e.ItemId, e => new EstadoItem(e.ItemId, e.Provedor, e.Modelo, Utc(e.EsgotadoAte), e.Desligado, e.Erro, Utc(e.AtualizadoEm), LerFalha(e.Falha), Utc(e.FalhaEm)));
+        }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedColumn)
+        {
+            // Migração 20261209_01 pendente: sem a última falha explicada.
+            estados = (await c.QueryAsync<(string ItemId, string Provedor, string Modelo, DateTime? EsgotadoAte, bool Desligado, string? Erro, DateTime AtualizadoEm)>(new CommandDefinition(
+                "SELECT item_id, provedor, modelo, esgotado_ate, desligado, erro, atualizado_em FROM assistente_cadeia_estado", cancellationToken: ct)))
+                .ToDictionary(e => e.ItemId, e => new EstadoItem(e.ItemId, e.Provedor, e.Modelo, Utc(e.EsgotadoAte), e.Desligado, e.Erro, Utc(e.AtualizadoEm)));
+        }
         var usadas = (await c.QueryAsync<(string ItemId, long N)>(new CommandDefinition(
             "SELECT item_id, COUNT(*) FROM assistente_uso WHERE item_id IS NOT NULL AND criado_em >= @inicioDoDia GROUP BY 1",
             new { inicioDoDia }, cancellationToken: ct))).ToDictionary(r => r.ItemId, r => r.N);
@@ -282,6 +304,36 @@ public sealed class EstadoCadeiaRepositorio(NpgsqlDataSource source) : IEstadoCa
         await using var c = await source.OpenConnectionAsync(ct);
         await c.ExecuteAsync(new CommandDefinition(
             "DELETE FROM assistente_provedor_nao_suporta WHERE provedor = ANY(@ids)", new { ids = provedores.ToArray() }, cancellationToken: ct));
+    }
+
+    private static readonly System.Text.Json.JsonSerializerOptions Json = new(System.Text.Json.JsonSerializerDefaults.Web);
+
+    private static FalhaDto? LerFalha(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return null;
+        try { return System.Text.Json.JsonSerializer.Deserialize<FalhaDto>(json, Json); }
+        catch (System.Text.Json.JsonException) { return null; }
+    }
+
+    public async Task RegistrarFalha(ItemCadeia item, FalhaDto falha, CancellationToken ct)
+    {
+        await using var c = await source.OpenConnectionAsync(ct);
+        try
+        {
+            await c.ExecuteAsync(new CommandDefinition(
+                """
+                INSERT INTO assistente_cadeia_estado (item_id, provedor, modelo, falha, falha_em, atualizado_em)
+                VALUES (@Id, @Provedor, @Modelo, CAST(@falha AS JSONB), NOW(), NOW())
+                ON CONFLICT (item_id) DO UPDATE SET
+                    -- Mudou o item (provedor ou modelo): o estado antigo não vale mais.
+                    esgotado_ate = CASE WHEN assistente_cadeia_estado.provedor = EXCLUDED.provedor AND assistente_cadeia_estado.modelo = EXCLUDED.modelo
+                                        THEN assistente_cadeia_estado.esgotado_ate ELSE NULL END,
+                    desligado = CASE WHEN assistente_cadeia_estado.provedor = EXCLUDED.provedor AND assistente_cadeia_estado.modelo = EXCLUDED.modelo
+                                     THEN assistente_cadeia_estado.desligado ELSE FALSE END,
+                    provedor = EXCLUDED.provedor, modelo = EXCLUDED.modelo, falha = EXCLUDED.falha, falha_em = NOW()
+                """, new { item.Id, item.Provedor, item.Modelo, falha = System.Text.Json.JsonSerializer.Serialize(falha, Json) }, cancellationToken: ct));
+        }
+        catch (PostgresException ex) when (ex.SqlState == PostgresErrorCodes.UndefinedColumn) { /* migração 20261209_01 pendente */ }
     }
 
     public Task MarcarEsgotado(ItemCadeia item, DateTimeOffset ate, string erro, CancellationToken ct) => Gravar(item, ate, false, erro, ct);
@@ -314,7 +366,7 @@ public sealed class EstadoCadeiaRepositorio(NpgsqlDataSource source) : IEstadoCa
 }
 
 /// <summary>Um aviso para a Gestão (CONTRATO-API §10.3).</summary>
-public sealed record AlertaDto(string Tipo, string Mensagem, DateTimeOffset? Desde, string? ItemId);
+public sealed record AlertaDto(string Tipo, string Mensagem, DateTimeOffset? Desde, string? ItemId, string? Codigo = null, IReadOnlyList<string>? Acoes = null);
 
 /// <summary>Alertas da cadeia, sem banco. Público para teste.</summary>
 public static class AlertasCadeia

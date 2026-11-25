@@ -38,6 +38,7 @@ public static class ModulosPorRota
             Is(s, "api", "v2", "comercial") || Is(s, "api", "v2", "atendimento", "chat") || Is(s, "api", "v2", "equipe")) return null;
 
         if (Is(s, "api", "v2", "mesas")) return "Mesas";
+        if (Is(s, "api", "social")) return "Social";
 
         if (Is(s, "api", "v2", "delivery", "ifood") || Is(s, "api", "v2", "ifood", "store")) return "iFood";
         if (Is(s, "api", "v2", "delivery", "impressao")) return "Impressao";

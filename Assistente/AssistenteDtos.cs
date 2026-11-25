@@ -44,18 +44,22 @@ public sealed class AssistenteException(int status, string codigo, string mensag
 public sealed record TokensDto(long Entrada, long Saida, long CacheLidos);
 
 public sealed record TesteIADto(bool Ok, string? Resposta, string? ItemId, string? Provedor, string? Modelo, bool UsouReserva, long Ms, TokensDto? Tokens,
-    IReadOnlyList<string> Ferramentas, string? Erro, IReadOnlyList<ChecagemFerramentaDto>? Checagem);
+    IReadOnlyList<string> Ferramentas, string? Erro, IReadOnlyList<ChecagemFerramentaDto>? Checagem, FalhaDto? Falha = null);
 
-public sealed record ChecagemFerramentaDto(string Ferramenta, string Pergunta, IReadOnlyList<string> Chamou, bool Ok, string? Erro, long Ms);
+public sealed record ChecagemFerramentaDto(string Ferramenta, string Pergunta, IReadOnlyList<string> Chamou, bool Ok, string? Erro, long Ms, FalhaDto? Falha = null);
 
 /// <summary>Estado de um item da cadeia agora (CONTRATO-API §10.3).</summary>
 public sealed record EstadoItemDto(string ItemId, bool Disponivel, string? Motivo, DateTimeOffset? EsgotadoAte, bool Desligado, string? Erro,
-    long UsadasHoje, bool TemChave);
+    long UsadasHoje, bool TemChave, FalhaDto? Falha = null, DateTimeOffset? UltimaFalhaEm = null);
+
+/// <summary>Resumo para o topo da tela (CONTRATO-API §12.7): <c>ok</c> | <c>atencao</c> | <c>parado</c>.</summary>
+public sealed record SaudeDto(string Situacao, string Titulo, IReadOnlyList<string> ItensComProblema);
 
 /// <summary>Chaves e modelos vêm por id de provedor ({ "openai": true, "groq": false, ... }).</summary>
 public sealed record ConfigIADto(ConfigIA Config, bool Padrao, string? AtualizadoPor, DateTimeOffset? AtualizadoEm, bool CifraDisponivel,
     IReadOnlyDictionary<string, ChaveInfoDto> Chaves, IReadOnlyDictionary<string, IReadOnlyList<string>> Modelos, IReadOnlyList<string> SemPreco,
-    IReadOnlyList<EstadoItemDto> Estado, IReadOnlyList<AlertaDto> Alertas, IReadOnlyDictionary<string, IReadOnlySet<string>> NaoSuporta);
+    IReadOnlyList<EstadoItemDto> Estado, IReadOnlyList<AlertaDto> Alertas, IReadOnlyDictionary<string, IReadOnlySet<string>> NaoSuporta,
+    SaudeDto? Saude = null);
 
 public sealed class TestarIARequest
 {

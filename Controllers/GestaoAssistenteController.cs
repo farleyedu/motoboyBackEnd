@@ -12,8 +12,35 @@ namespace APIBack.Controllers;
 [Route("api/gestao/assistente")]
 public sealed class GestaoAssistenteController(
     IAssistenteConfigRepositorio configuracao, IAssistenteService assistente, CadeiaIA cadeia, IEstadoCadeiaRepositorio estado,
-    CacheModelosIA modelos, IAssistenteUsoRepositorio uso, TimeProvider relogio, GestaoChavesIA chaves, ChavesIA cacheChaves) : GestaoControllerBase
+    CacheModelosIA modelos, IAssistenteUsoRepositorio uso, TimeProvider relogio, GestaoChavesIA chaves, ChavesIA cacheChaves,
+    DiagnosticoIA diagnostico) : GestaoControllerBase
 {
+    /// <summary>Modelos que a chave enxerga, com tipo e recomendados (CONTRATO-API §12.4). A chave colada não é gravada.</summary>
+    [HttpPost("provedores/{id}/modelos")]
+    public Task<IActionResult> ListarModelos(string id, [FromBody] ListarModelosRequest? req) => Run(async (_, ct) =>
+    {
+        await cacheChaves.Garantir(ct);
+        return await diagnostico.ListarModelos((await configuracao.Obter(ct)).Config, id, Vazio(req?.Chave), ct);
+    });
+
+    /// <summary>Etapas do provedor + modelo, parando na primeira que falhar (CONTRATO-API §12.5).</summary>
+    [HttpPost("provedores/{id}/diagnosticar")]
+    public Task<IActionResult> Diagnosticar(string id, [FromBody] DiagnosticarRequest? req) => Run(async (_, ct) =>
+    {
+        await cacheChaves.Garantir(ct);
+        return await diagnostico.Diagnosticar((await configuracao.Obter(ct)).Config, id, req?.Modelo, Vazio(req?.Chave), req?.Ferramentas == true, ct);
+    });
+
+    /// <summary>"Verificar tudo": o diagnóstico de cada item ligado (CONTRATO-API §12.7).</summary>
+    [HttpPost("diagnosticar")]
+    public Task<IActionResult> VerificarTudo() => Run(async (_, ct) =>
+    {
+        await cacheChaves.Garantir(ct);
+        return await diagnostico.VerificarTudo((await configuracao.Obter(ct)).Config, ct);
+    });
+
+    private static string? Vazio(string? v) => string.IsNullOrWhiteSpace(v) ? null : v;
+
     /// <summary>Cadastra ou troca a chave de um provedor (CONTRATO-API §11.2). Testa antes; só grava se der certo. Nunca devolve a chave.</summary>
     [HttpPut("provedores/{id}/chave")]
     public Task<IActionResult> SalvarChave(string id, [FromBody] SalvarChaveRequest? req) => Run(async (usuario, ct) =>
@@ -73,14 +100,66 @@ public sealed class GestaoAssistenteController(
         var foto = await cadeia.Foto(ct);
         var agora = relogio.GetUtcNow();
         var esgotada = await uso.CadeiaEsgotada(AssistenteService.InicioDoDia(agora), ct);
+        var porProvedor = listas.ToDictionary(l => l.Id, l => l.Lista);
+        var estadoItens = cfg.Cadeia.Select(i => RegrasCadeia.Disponibilidade(cfg, i, foto, cadeia.TemChave, agora))
+            .Select(d => EstadoComFalha(cfg, d, foto, porProvedor)).ToList();
+        var alertas = AlertasCadeia.Calcular(cfg, foto, cadeia.TemChave, agora, esgotada.Vezes, esgotada.Primeira)
+            .Select(a => ComAcoes(a, estadoItens)).ToList();
         return new ConfigIADto(cfg, salva.Padrao, salva.AtualizadoPor, salva.AtualizadoEm, cacheChaves.CifraDisponivel,
             await chaves.Info(cfg, ct),
-            listas.ToDictionary(l => l.Id, l => l.Lista),
+            porProvedor,
             SemPreco(cfg, await uso.ModelosUsados(ct)),
-            cfg.Cadeia.Select(i => RegrasCadeia.Disponibilidade(cfg, i, foto, cadeia.TemChave, agora))
-                .Select(d => new EstadoItemDto(d.Item.Id, d.Disponivel, d.Motivo, d.EsgotadoAte, d.Desligado, d.Erro, d.UsadasHoje, d.TemChave)).ToList(),
-            AlertasCadeia.Calcular(cfg, foto, cadeia.TemChave, agora, esgotada.Vezes, esgotada.Primeira),
-            foto.NaoSuporta ?? new Dictionary<string, IReadOnlySet<string>>());
+            estadoItens,
+            alertas,
+            foto.NaoSuporta ?? new Dictionary<string, IReadOnlySet<string>>(),
+            Saude(cfg, estadoItens));
+    }
+
+    /// <summary>Estado do item com a última falha explicada (e modelos para trocar). Sem falha guardada, monta uma pelo motivo. Público para teste.</summary>
+    public static EstadoItemDto EstadoComFalha(ConfigIA cfg, DisponibilidadeItem d, FotoCadeia foto, IReadOnlyDictionary<string, IReadOnlyList<string>> modelos)
+    {
+        var guardado = RegrasCadeia.EstadoValido(d.Item, foto);
+        var def = cfg.ProvedorDe(d.Item.Provedor);
+        var falha = guardado?.Falha;
+        if (falha is null && d.Motivo == MotivosPulo.SemChave && def is not null)
+            falha = CatalogoFalhas.Dto(CodigosFalha.SemChave, def.Id, def.Nome, d.Item.Modelo, EtapasFalha.FormatoChave);
+        if (falha is not null && falha.Acoes.Contains(AcoesFalha.TrocarModelo) && falha.ModelosSugeridos is null
+            && modelos.TryGetValue(d.Item.Provedor, out var lista) && lista.Count > 0)
+        {
+            var sug = CatalogoModelos.Sugeridos(d.Item.Provedor, lista, d.Item.Modelo);
+            if (sug.Count > 0) falha = falha with { ModelosSugeridos = sug };
+        }
+        // Item desligado por erro: depois de resolver, dá para religar.
+        if (falha is not null && d.Desligado && !falha.Acoes.Contains(AcoesFalha.Religar))
+            falha = falha with { Acoes = [.. falha.Acoes, AcoesFalha.Religar] };
+        return new EstadoItemDto(d.Item.Id, d.Disponivel, d.Motivo, d.EsgotadoAte, d.Desligado, falha?.Titulo ?? d.Erro, d.UsadasHoje, d.TemChave,
+            falha, guardado?.FalhaEm);
+    }
+
+    /// <summary>Aviso do topo com código e ações (§12.6). Público para teste.</summary>
+    public static AlertaDto ComAcoes(AlertaDto a, IReadOnlyList<EstadoItemDto> estado)
+    {
+        var item = a.ItemId is null ? null : estado.FirstOrDefault(e => e.ItemId == a.ItemId);
+        return a.Tipo switch
+        {
+            AlertasCadeia.ItemDesligado => a with { Codigo = item?.Falha?.Codigo, Acoes = item?.Falha?.Acoes ?? [AcoesFalha.Religar] },
+            AlertasCadeia.SemChave => a with { Codigo = CodigosFalha.SemChave, Acoes = [AcoesFalha.ColarChave] },
+            AlertasCadeia.GratisEsgotados => a with { Codigo = CodigosFalha.CotaDia, Acoes = [AcoesFalha.TrocarProvedor] },
+            _ => a,
+        };
+    }
+
+    /// <summary>Resumo do topo (§12.7): parado = nenhum item ligado disponível; atenção = algum ligado com problema. Público para teste.</summary>
+    public static SaudeDto Saude(ConfigIA cfg, IReadOnlyList<EstadoItemDto> estado)
+    {
+        var ligados = cfg.Cadeia.Where(i => i.Ligado).Select(i => i.Id).ToHashSet();
+        var dosLigados = estado.Where(e => ligados.Contains(e.ItemId)).ToList();
+        if (!cfg.Ligado) return new SaudeDto("parado", "Assistente desligado", []);
+        if (dosLigados.Count == 0) return new SaudeDto("parado", "Nenhuma IA ligada", []);
+        var problema = dosLigados.Where(e => !e.Disponivel).Select(e => e.ItemId).ToList();
+        if (problema.Count == dosLigados.Count) return new SaudeDto("parado", "Nenhuma IA respondendo", problema);
+        if (problema.Count > 0) return new SaudeDto("atencao", problema.Count == 1 ? "1 IA precisa de atenção" : $"{problema.Count} IAs precisam de atenção", problema);
+        return new SaudeDto("ok", "Tudo funcionando", []);
     }
 
     /// <summary>Modelos usados ou da cadeia que não têm preço (itens de provedor grátis não precisam). Público para teste.</summary>
