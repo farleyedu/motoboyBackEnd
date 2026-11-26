@@ -59,9 +59,13 @@ namespace APIBack.Repository
                 var sessionId = await GetSessionIdAsync(connection, transaction, motoboyId, estabelecimentoId);
                 await EmitQueueEventAsync(connection, transaction, estabelecimentoId, motoboyId, current.PedidoId, action, version, sessionId);
             }
+            var saiu = !alreadyMarked && column == "picked_up_at_utc";
+            if (saiu)
+                await GastarCreditoAsync(connection, transaction, estabelecimentoId, motoboyId, new[] { current.PedidoId });
 
             var snapshot = await BuildSnapshotAsync(connection, transaction, estabelecimentoId, motoboyId, version);
             await transaction.CommitAsync();
+            if (saiu) await TirarSemCreditoAsync(estabelecimentoId);
             return snapshot;
         }
 

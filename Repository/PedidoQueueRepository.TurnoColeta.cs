@@ -41,9 +41,12 @@ public sealed partial class PedidoQueueRepository
                 """, new { Est = estabelecimentoId, Motoboy = motoboyId, Ids = request.PedidoIds.ToArray() }, transaction);
             version = await BumpRouteVersionAsync(connection, transaction, estabelecimentoId, motoboyId);
             await EmitQueueEventAsync(connection, transaction, estabelecimentoId, motoboyId, current.PedidoId, "picked_up", version, await GetSessionIdAsync(connection, transaction, motoboyId, estabelecimentoId));
+            await GastarCreditoAsync(connection, transaction, estabelecimentoId, motoboyId, request.PedidoIds);
         }
         var snapshot = await BuildSnapshotAsync(connection, transaction, estabelecimentoId, motoboyId, version);
-        await transaction.CommitAsync(); return snapshot;
+        await transaction.CommitAsync();
+        if (!alreadyPickedUp) await TirarSemCreditoAsync(estabelecimentoId);
+        return snapshot;
     }
 
     public async Task<MotoboyQueueDto> PauseTurnAsync(Guid estabelecimentoId, int motoboyId, Guid sessionId, long sessionEpoch, bool paused)

@@ -61,6 +61,7 @@ namespace APIBack.Service
         public const string CardapioSemWhatsapp = "CARDAPIO_SEM_WHATSAPP";
         public const string CardapioIndisponivel = "CARDAPIO_INDISPONIVEL";
         public const string VagasMotoboyEsgotadas = "VAGAS_MOTOBOY_ESGOTADAS";
+        public const string SemCreditoNoTurno = "SEM_CREDITO_NO_TURNO";
         public const string DeliveryTrackingDisabled = "DELIVERY_TRACKING_DISABLED";
         public const string ModuloInativo = "MODULO_INATIVO";
         public const string RiderPayPlanRequired = "RIDER_PAY_PLAN_REQUIRED";
@@ -130,9 +131,13 @@ namespace APIBack.Service
                     "O dono vê o motivo exato na lista de prontidão da loja.",
                     QuemResolve.Loja, CorrecaoDto.Pagina("/apps/cardapioweb")),
                 new ErroOperacional(VagasMotoboyEsgotadas, 409,
-                    "As vagas de motoboy deste dia operacional acabaram.",
-                    "Peça mais motoboys à Zippy ou aguarde o próximo dia operacional.",
-                    QuemResolve.Zippy, null),
+                    "Os créditos de motoboy deste turno de entrega acabaram.",
+                    "Compre mais motoboys em Assinatura ou espere o próximo turno de entrega.",
+                    QuemResolve.Loja, CorrecaoDto.Pagina("/apps/configuracoes/assinatura")),
+                new ErroOperacional(SemCreditoNoTurno, 409,
+                    "Os créditos de motoboy deste turno de entrega acabaram.",
+                    "Peça à loja para comprar mais motoboys ou espere o próximo turno de entrega.",
+                    QuemResolve.Loja, CorrecaoDto.Pagina("/apps/configuracoes/assinatura")),
                 new ErroOperacional(DeliveryTrackingDisabled, 503,
                     "O rastreamento do delivery ainda não foi ativado neste ambiente.",
                     "A Zippy precisa ligar DeliveryTracking:Enabled no servidor.",

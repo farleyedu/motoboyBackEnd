@@ -20,14 +20,18 @@ namespace APIBack.Service
         private readonly IPedidoQueueRepository _queueRepository;
         private readonly DeliverySyncMetrics? _metrics;
         private readonly APIBack.GestaoLogica.Caixa.IChegadaService? _chegadas;
+        // Créditos do turno de entrega: sem crédito, o motoboy não fica online.
+        private readonly APIBack.Turnos.ITurnoEntregaService? _turnos;
 
         public OperationalSessionService(
             IOperationalSessionRepository repository,
             IJwtService jwtService,
             IOptions<DeliveryTrackingOptions> options,
             IPedidoQueueRepository queueRepository, DeliverySyncMetrics? metrics = null,
-            APIBack.GestaoLogica.Caixa.IChegadaService? chegadas = null)
+            APIBack.GestaoLogica.Caixa.IChegadaService? chegadas = null,
+            APIBack.Turnos.ITurnoEntregaService? turnos = null)
         {
+            _turnos = turnos;
             _metrics = metrics;
             _chegadas = chegadas;
             _queueRepository = queueRepository ?? throw new ArgumentNullException(nameof(queueRepository));
@@ -50,6 +54,8 @@ namespace APIBack.Service
             EnsureAttempt(request.AttemptId);
             var clientInstanceId = request.ClientInstanceId ?? request.AttemptId.ToString("D");
             var platform = RequireClientPlatform(request.ClientPlatform);
+            if (_turnos != null)
+                await _turnos.ExigirEntradaDoUsuarioAsync(userId, estabelecimentoId, request.ResumeSessionId.HasValue);
             var session = request.LoginSessionId.HasValue
                 ? await _repository.StartAuthenticatedMobileSessionAsync(userId, estabelecimentoId, request.AttemptId,
                     clientInstanceId, request.LoginSessionId.Value, null, false, platform, request.ResumeSessionId)
@@ -79,6 +85,9 @@ namespace APIBack.Service
 
             var clientInstanceId = request.ClientInstanceId ?? request.AttemptId.ToString("D");
             var platform = RequireClientPlatform(request.ClientPlatform);
+            // Sem crédito na loja de destino, a troca é recusada antes de encerrar o turno atual.
+            if (_turnos != null)
+                await _turnos.ExigirEntradaDoUsuarioAsync(userId, request.TargetEstablishmentId, retomando: false);
             var session = request.LoginSessionId.HasValue
                 ? await _repository.StartAuthenticatedMobileSessionAsync(userId, request.TargetEstablishmentId, request.AttemptId,
                     clientInstanceId, request.LoginSessionId.Value, request.ExpectedSessionId, true, platform)
@@ -109,8 +118,22 @@ namespace APIBack.Service
                 throw new DeliveryDomainException(422, "INVALID_REQUEST", "motoboyId invalido.");
             }
 
+            // O simulador segue a mesma regra de entrada (os pedidos dele não gastam crédito).
+            if (_turnos != null && request.MotoboyId.HasValue)
+                await _turnos.ExigirEntradaDoMotoboyAsync(request.MotoboyId.Value, estabelecimentoId);
             var session = await _repository.StartSimulatorSessionAsync(
                 actorUserId, estabelecimentoId, request.AttemptId, request.MotoboyId);
+            if (_turnos != null && !request.MotoboyId.HasValue)
+            {
+                // Sem escolha do operador, o motoboy só é conhecido depois: se ele não puder entrar, a sessão é desfeita.
+                try { await _turnos.ExigirEntradaDoMotoboyAsync(session.MotoboyId, estabelecimentoId); }
+                catch (DeliveryDomainException)
+                {
+                    await _repository.EndSessionAsync(session.SessionId, session.MotoboyId, session.SessionEpoch,
+                        APIBack.Turnos.TurnoEntregaService.MotivoSemCredito, confirmPendingWork: false);
+                    throw;
+                }
+            }
             var response = CreateTokenResponse<SimulatorAutoStartResponse>(session);
             response.NextLocationSequence = Math.Max(1, session.NextLocationSequence);
             return response;

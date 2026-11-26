@@ -296,6 +296,11 @@ builder.Services.AddSingleton<IGoogleUsoContador, GoogleUsoContador>();
 builder.Services.AddScoped<ILocalizacaoService, LocalizacaoService>();
 builder.Services.AddScoped<ITrackingService, TrackingService>();
 builder.Services.AddScoped<IOperationalSessionService, OperationalSessionService>();
+// Turnos de entrega (créditos de motoboy) e registro de interesse da loja.
+builder.Services.AddScoped<APIBack.Interesse.IInteresseService, APIBack.Interesse.InteresseService>();
+builder.Services.AddScoped<APIBack.Turnos.ITurnoEntregaService, APIBack.Turnos.TurnoEntregaService>();
+builder.Services.AddScoped<APIBack.Turnos.ITurnoEntregaVarredura>(sp => sp.GetRequiredService<APIBack.Turnos.ITurnoEntregaService>());
+builder.Services.AddHostedService<APIBack.Turnos.TurnoEntregaWorker>();
 builder.Services.AddScoped<IEstabelecimentoFaqService, EstabelecimentoFaqService>();
 builder.Services.AddScoped<ICardapioService, CardapioService>();
 builder.Services.AddScoped<ICardapioPedidoWebRepository, CardapioPedidoWebRepository>();

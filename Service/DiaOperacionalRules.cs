@@ -6,7 +6,7 @@ using APIBack.DTOs.Delivery;
 
 namespace APIBack.Service;
 
-/// <summary>Um único início por dia da semana, usado pelo reset do mapa e pelas vagas.</summary>
+/// <summary>Um único início por dia da semana, usado pelo reset do mapa. Não controla créditos de motoboy (ver Turnos/).</summary>
 public static class DiaOperacionalRules
 {
     public static readonly TimeSpan DuracaoMinima = TimeSpan.FromHours(6);

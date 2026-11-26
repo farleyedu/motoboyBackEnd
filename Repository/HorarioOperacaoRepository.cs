@@ -144,6 +144,33 @@ namespace APIBack.Repository
         {
             if (request.EstabelecimentoId != estabelecimentoId)
                 throw new DeliveryDomainException(409, "ESTABLISHMENT_CHANGED", "A loja selecionada mudou. Reabra o modal e tente novamente.");
+            await AvaliarTurnoAsync(estabelecimentoId, cancellationToken);
+            var estado = await AbrirAsync(estabelecimentoId, actorUserId, request, cancellationToken);
+            await AvaliarTurnoAsync(estabelecimentoId, cancellationToken);
+            return estado;
+        }
+
+        /// <summary>
+        /// Turno de entrega: avaliado antes de mudar o horário (o passado fica como estava) e depois (abrir ou fechar vale
+        /// na hora). Nunca impede a loja de abrir ou fechar; o serviço periódico repete a avaliação.
+        /// </summary>
+        private async Task AvaliarTurnoAsync(Guid estabelecimentoId, CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
+                await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
+                await APIBack.Turnos.TurnoEntregaStore.SincronizarAsync(connection, transaction, estabelecimentoId, _clock, cancellationToken);
+                await transaction.CommitAsync(cancellationToken);
+            }
+            catch (NpgsqlException)
+            {
+                // O horário vale mais que o turno: a próxima consulta reconstrói a partir da última avaliação.
+            }
+        }
+
+        private async Task<StoreOperationDto> AbrirAsync(Guid estabelecimentoId, int actorUserId, OpenStoreTodayRequest request, CancellationToken cancellationToken)
+        {
             await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
             await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
             // Serializa duas aberturas da mesma loja. Um segundo clique não troca o horário que acabou de ser confirmado.
@@ -177,6 +204,14 @@ UPDATE estabelecimentos SET aceita_pedidos = TRUE, data_atualizacao = NOW() WHER
         }
 
         public async Task<StoreOperationDto> FecharAgoraAsync(Guid estabelecimentoId, int actorUserId, CancellationToken cancellationToken = default)
+        {
+            await AvaliarTurnoAsync(estabelecimentoId, cancellationToken);
+            var estado = await FecharAsync(estabelecimentoId, actorUserId, cancellationToken);
+            await AvaliarTurnoAsync(estabelecimentoId, cancellationToken);
+            return estado;
+        }
+
+        private async Task<StoreOperationDto> FecharAsync(Guid estabelecimentoId, int actorUserId, CancellationToken cancellationToken)
         {
             await using var connection = await _dataSource.OpenConnectionAsync(cancellationToken);
             await using var transaction = await connection.BeginTransactionAsync(cancellationToken);
@@ -262,6 +297,7 @@ SELECT id, data, fechado, abre_as, fecha_as, motivo FROM estabelecimento_horario
                 fecha = fechaValue;
             }
 
+            await AvaliarTurnoAsync(estabelecimentoId);
             await using var connection = await _dataSource.OpenConnectionAsync();
             var row = await connection.QuerySingleAsync<(long Id, DateOnly Data, bool Fechado, TimeSpan? Abre, TimeSpan? Fecha, string? Motivo)>(@"
 INSERT INTO estabelecimento_horario_especial (estabelecimento_id, data, fechado, abre_as, fecha_as, motivo)
@@ -277,6 +313,7 @@ RETURNING id, data, fechado, abre_as, fecha_as, motivo;", new
                 Fecha = fecha,
                 Motivo = string.IsNullOrWhiteSpace(request.Motivo) ? null : request.Motivo!.Trim()
             });
+            await AvaliarTurnoAsync(estabelecimentoId);
             return new HorarioEspecialDto
             {
                 Id = row.Id,
@@ -290,10 +327,12 @@ RETURNING id, data, fechado, abre_as, fecha_as, motivo;", new
 
         public async Task<bool> ExcluirEspecialAsync(Guid estabelecimentoId, long id)
         {
+            await AvaliarTurnoAsync(estabelecimentoId);
             await using var connection = await _dataSource.OpenConnectionAsync();
             var affected = await connection.ExecuteAsync(
                 "DELETE FROM estabelecimento_horario_especial WHERE id = @Id AND estabelecimento_id = @EstabelecimentoId;",
                 new { Id = id, EstabelecimentoId = estabelecimentoId });
+            if (affected > 0) await AvaliarTurnoAsync(estabelecimentoId);
             return affected > 0;
         }
 

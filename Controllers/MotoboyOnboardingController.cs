@@ -26,11 +26,14 @@ namespace APIBack.Controllers
     {
         private readonly NpgsqlDataSource _dataSource;
         private readonly IHubContext<DeliveryHub> _hub;
+        private readonly APIBack.Turnos.ITurnoEntregaService _turnos;
 
-        public MotoboyOnboardingController(NpgsqlDataSource dataSource, IHubContext<DeliveryHub> hub)
+        public MotoboyOnboardingController(NpgsqlDataSource dataSource, IHubContext<DeliveryHub> hub,
+            APIBack.Turnos.ITurnoEntregaService turnos)
         {
             _dataSource = dataSource;
             _hub = hub;
+            _turnos = turnos;
         }
 
         [HttpPost("cadastro")]
@@ -676,31 +679,18 @@ UPDATE motoboy_link_requests
             if (!estabelecimentoId.HasValue)
                 return BadRequest(ApiResponse<object>.Fail("Selecione um restaurante."));
             await using var connection = await _dataSource.OpenConnectionAsync();
-            var config = await connection.QuerySingleOrDefaultAsync<ResumoConfiguracaoRow>(@"
-SELECT " + MotoboyLimites.SqlContratados + @" AS MotoboysContratados, d.order_window::text AS JanelaAtual,
-       d.order_window_pending::text AS JanelaPendente,
-       d.order_window_effective_from_utc AS VigoraEm
-  FROM estabelecimentos e
-  LEFT JOIN delivery_settings d ON d.estabelecimento_id=e.id
- WHERE e.id=@EstabelecimentoId;", new { EstabelecimentoId = estabelecimentoId.Value });
-            if (config == null) return NotFound(ApiResponse<object>.Fail("Restaurante não encontrado."));
-            var agora = DateTimeOffset.UtcNow;
-            var janela = config.JanelaPendente != null && config.VigoraEm <= agora
-                ? config.JanelaPendente : config.JanelaAtual;
-            var regra = OrderWindowRules.Parse(janela);
-            var inicio = DiaOperacionalRules.InicioAtual(regra, agora);
-            var proximo = DiaOperacionalRules.ProximoInicio(regra, agora);
-            var ocupados = (await connection.QueryAsync<int>(@"
-SELECT motoboy_id FROM motoboy_vaga_periodo
- WHERE estabelecimento_id=@EstabelecimentoId AND periodo_inicio_utc=@Inicio;",
-                new { EstabelecimentoId = estabelecimentoId.Value, Inicio = inicio })).ToHashSet();
+            var contratados = await connection.QuerySingleOrDefaultAsync<int?>(
+                "SELECT " + MotoboyLimites.SqlContratados + " FROM estabelecimentos e WHERE e.id=@EstabelecimentoId;",
+                new { EstabelecimentoId = estabelecimentoId.Value });
+            if (contratados == null) return NotFound(ApiResponse<object>.Fail("Restaurante não encontrado."));
+            // Créditos do turno de entrega; sem a migração, nada é limitado.
+            var turno = await _turnos.SituacaoAsync(estabelecimentoId.Value, HttpContext.RequestAborted);
             var vinculados = (await connection.QueryAsync<int>(@"
 SELECT DISTINCT COALESCE(m.canonical_motoboy_id,m.id)
   FROM motoboy_estabelecimento me
   JOIN motoboy m ON m.id=me.motoboy_id
  WHERE me.estabelecimento_id=@EstabelecimentoId AND me.ativo=TRUE AND m.is_simulated=FALSE;",
                 new { EstabelecimentoId = estabelecimentoId.Value })).ToArray();
-            var maxVagas = MotoboyLimites.VagasPorDia(config.MotoboysContratados);
             // Pacotes extras vigentes: o atendente ve ate quando cada um vale ("+3 motoboys ate 20/11").
             var pacotesVigentes = (await connection.QueryAsync<(int Quantidade, DateTime FimUtc)>(@"
 SELECT quantidade, fim_utc FROM motoboy_pacotes
@@ -709,14 +699,17 @@ SELECT quantidade, fim_utc FROM motoboy_pacotes
                 .Select(p => new { quantidade = p.Quantidade, fimUtc = new DateTimeOffset(DateTime.SpecifyKind(p.FimUtc, DateTimeKind.Utc)) })
                 .ToArray();
             return Ok(ApiResponse<object>.Ok(new {
-                vagasUsadas = ocupados.Count, vagasLimite = maxVagas,
+                vagasUsadas = turno?.Gastos.Count ?? 0,
+                vagasLimite = turno?.Total ?? MotoboyLimites.VagasPorDia(contratados.Value),
                 vinculosUsados = vinculados.Length,
-                vinculosLimite = MotoboyLimites.Vinculados(config.MotoboysContratados),
-                proximoResetEmUtc = proximo,
+                vinculosLimite = MotoboyLimites.Vinculados(contratados.Value),
+                // O turno novo depende de a loja fechar e abrir: não há mais hora marcada.
+                proximoResetEmUtc = (DateTimeOffset?)null,
                 pacotesVigentes,
                 motoboys = vinculados.Select(id => new {
-                    motoboyId = id, ocupaVaga = ocupados.Contains(id),
-                    podeOcupar = ocupados.Contains(id) || ocupados.Count < maxVagas
+                    motoboyId = id,
+                    ocupaVaga = turno != null && (turno.Gastos.Contains(id) || turno.Reservados.Contains(id)),
+                    podeOcupar = turno?.PodeReceber(id) ?? true
                 }).ToArray()
             }));
         }
@@ -812,14 +805,6 @@ VALUES (@EstabelecimentoId, @MotoboyId, @Actor, @Motivo);",
         {
             public int MotoboyId { get; set; }
             public int UserId { get; set; }
-        }
-
-        private sealed class ResumoConfiguracaoRow
-        {
-            public int MotoboysContratados { get; set; }
-            public string? JanelaAtual { get; set; }
-            public string? JanelaPendente { get; set; }
-            public DateTimeOffset? VigoraEm { get; set; }
         }
 
         private sealed class MotoboyUserRow

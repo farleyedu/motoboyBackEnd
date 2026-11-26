@@ -64,7 +64,9 @@ namespace APIBack.Tests.Unit
         public void Erros_da_zippy_e_da_infra_dizem_quem_resolve()
         {
             Assert.Equal(QuemResolve.Zippy, ErrosOperacionais.Obter("ESTABELECIMENTO_BLOQUEADO").QuemResolve);
-            Assert.Equal(QuemResolve.Zippy, ErrosOperacionais.Obter("VAGAS_MOTOBOY_ESGOTADAS").QuemResolve);
+            // Crédito de motoboy a própria loja compra.
+            Assert.Equal(QuemResolve.Loja, ErrosOperacionais.Obter("VAGAS_MOTOBOY_ESGOTADAS").QuemResolve);
+            Assert.Equal(QuemResolve.Loja, ErrosOperacionais.Obter("SEM_CREDITO_NO_TURNO").QuemResolve);
             Assert.Equal(QuemResolve.Zippy, ErrosOperacionais.Obter("MODULO_INATIVO").QuemResolve);
             Assert.Equal(QuemResolve.Infra, ErrosOperacionais.Obter("DELIVERY_TRACKING_DISABLED").QuemResolve);
         }

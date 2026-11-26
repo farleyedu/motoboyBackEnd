@@ -32,6 +32,8 @@ namespace APIBack.Repository
         {
             public long Id { get; set; }
             public int PedidoId { get; set; }
+            /// <summary>Pedido que veio de transferência já coletado: aceitar é sair para entregar.</summary>
+            public bool Coletado { get; set; }
         }
 
         // ---- parametros -----------------------------------------------------------------
@@ -139,7 +141,7 @@ SELECT EXISTS (
         private static async Task<List<OfferStopRow>> ListOfferedStopsAsync(
             NpgsqlConnection connection, NpgsqlTransaction transaction, Guid estabelecimentoId, int motoboyId) =>
             (await connection.QueryAsync<OfferStopRow>(@"
-SELECT s.id AS Id, s.pedido_id AS PedidoId
+SELECT s.id AS Id, s.pedido_id AS PedidoId, s.picked_up_at_utc IS NOT NULL AS Coletado
   FROM delivery_route_stops s
  WHERE s.motoboy_id = @MotoboyId AND s.estabelecimento_id = @EstabelecimentoId
    AND s.stop_status = 'assigned' AND s.offered_at_utc IS NOT NULL
@@ -191,8 +193,7 @@ SELECT s.id AS Id, s.pedido_id AS PedidoId
                 }
                 stops = stops.Where(s => acceptedPedidoIds.Contains(s.PedidoId)).ToList();
             }
-            foreach (var stop in stops)
-                await GarantirVagaAsync(connection, transaction, estabelecimentoId, motoboyId, stop.PedidoId, ocupar: true);
+            await ExigirCreditoParaAceitarAsync(connection, transaction, estabelecimentoId, motoboyId, stops.Select(s => s.PedidoId));
             await connection.ExecuteAsync(
                 "UPDATE delivery_route_stops SET offered_at_utc = NULL, updated_at_utc = NOW() WHERE id = ANY(@Ids);",
                 new { Ids = stops.Select(s => s.Id).ToArray() }, transaction);
@@ -209,8 +210,13 @@ SELECT s.id AS Id, s.pedido_id AS PedidoId
                 await PublishOrderEventAsync(connection, transaction, estabelecimentoId, 0, stop.PedidoId, "offer_accepted");
             }
 
+            var coletados = stops.Where(s => s.Coletado).Select(s => s.PedidoId).ToArray();
+            if (coletados.Length > 0)
+                await GastarCreditoAsync(connection, transaction, estabelecimentoId, motoboyId, coletados);
+
             var snapshot = await BuildSnapshotAsync(connection, transaction, estabelecimentoId, motoboyId, version);
             await transaction.CommitAsync();
+            if (coletados.Length > 0) await TirarSemCreditoAsync(estabelecimentoId);
             return snapshot;
         }
 

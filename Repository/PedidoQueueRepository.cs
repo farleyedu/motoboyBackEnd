@@ -48,12 +48,16 @@ namespace APIBack.Repository
         // Livro da Gestao: toda conclusao publica a venda na mesma transacao (6C1-A).
         private readonly IAcontecimentosService _livro;
 
+        // Créditos do turno de entrega: depois de um gasto, tira do ar quem sobrou.
+        private readonly APIBack.Turnos.ITurnoEntregaVarredura? _varredura;
+
         public PedidoQueueRepository(NpgsqlDataSource dataSource, Microsoft.Extensions.Options.IOptionsMonitor<APIBack.Integrations.Ifood.IfoodOptions>? ifoodCompletionOptions = null,
-            IAcontecimentosService? livro = null)
+            IAcontecimentosService? livro = null, APIBack.Turnos.ITurnoEntregaVarredura? varredura = null)
         {
             _dataSource = dataSource ?? throw new ArgumentNullException(nameof(dataSource));
             _ifoodCompletionOptions = ifoodCompletionOptions;
             _livro = livro ?? LivroDaTransacao(dataSource);
+            _varredura = varredura;
         }
 
         /// <summary>Livro so para publicar dentro da transacao do pedido (essa sobrecarga nao notifica assinantes).</summary>
@@ -195,7 +199,6 @@ SELECT m.id
             var eligibility = await EnsureEligibleAsync(connection, transaction, motoboyId, estabelecimentoId);
             // Motoboy ocupado: ainda nao respondeu a uma rota enviada antes (outra oferta).
             await EnsureNoOtherPendingOfferAsync(connection, transaction, estabelecimentoId, motoboyId, offerId);
-            await GarantirVagaAsync(connection, transaction, estabelecimentoId, motoboyId, pedidoId, ocupar: !offerId.HasValue);
             var version = await AppendStopAsync(connection, transaction, estabelecimentoId, motoboyId, pedidoId, actorUserId,
                 pickedUpAtUtc: null, transferRequestId: null, offerId: offerId);
             await EmitQueueEventAsync(connection, transaction, estabelecimentoId, motoboyId, pedidoId, offerId.HasValue ? "offered" : "assigned", version, eligibility.SessionId);
@@ -490,6 +493,10 @@ SELECT m.id
                 "UPDATE delivery_route_stops SET stop_status = 'completed', completed_at_utc = NOW(), completed_by = @CompletedBy, updated_at_utc = NOW() WHERE id = @Id;",
                 new { current.Id, CompletedBy = completedBy }, transaction);
             await MotoboyWorkService.RecordDelivery(connection, transaction, estabelecimentoId, motoboyId, current.Id, current.PedidoId);
+            // Com coleta marcada o crédito já foi gasto na saída; concluída sem ela, a entrega é a própria saída.
+            if (!current.PickedUpAtUtc.HasValue)
+                await GastarCreditoAsync(connection, transaction, estabelecimentoId, motoboyId, new[] { current.PedidoId },
+                    emRotaDesde: current.StartedAtUtc ?? current.AssignedAtUtc);
             var entregaNow = await PedidoColumnTypes.LocalNowSqlAsync(connection, transaction, "horario_entrega");
             await connection.ExecuteAsync(
                 $"UPDATE pedido SET status_pedido = @Concluido, horario_entrega = {entregaNow} WHERE id = @PedidoId;",
@@ -547,6 +554,8 @@ SELECT m.id
             Guid estabelecimentoId, int motoboyId, int pedidoId, int? actorUserId,
             DateTimeOffset? pickedUpAtUtc, long? transferRequestId, Guid? offerId = null)
         {
+            // Toda parada nova (atribuição, rota ou transferência) passa por aqui: é onde o crédito é reservado.
+            await ExigirCreditoParaReceberAsync(connection, transaction, estabelecimentoId, motoboyId, pedidoId);
             var hasCurrent = await HasEnRouteAnywhereAsync(connection, transaction, motoboyId);
             var nextPosition = await connection.ExecuteScalarAsync<int>(
                 "SELECT COALESCE(MAX(position), 0) + 1 FROM delivery_route_stops " +
@@ -580,6 +589,9 @@ RETURNING id;",
                 }, transaction);
 
             await MotoboyWorkService.CaptureQuote(connection, transaction, estabelecimentoId, motoboyId, pedidoId, stopId);
+            // Pedido já coletado que entra direto na fila: ele já está na rua com este motoboy.
+            if (!offered && pickedUpAtUtc.HasValue)
+                await GastarCreditoAsync(connection, transaction, estabelecimentoId, motoboyId, new[] { pedidoId });
             if (offered)
             {
                 await connection.ExecuteAsync(
