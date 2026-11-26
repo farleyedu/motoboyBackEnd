@@ -132,7 +132,10 @@ namespace APIBack.Hubs
             // Gestao (6C4): um grupo por area que o papel alcanca. O operador de caixa nao entra no do Financeiro.
             var gestao = APIBack.Security.GestaoPapeis.Resolver(httpContext.TemPermissao, httpContext.IsSuperAdmin()).Areas
                 .Intersect(APIBack.Acontecimentos.GestaoTempoReal.Recursos).ToList();
-            if (!canViewDelivery && !canViewChat && gestao.Count == 0)
+            // Zippy Social (R14): andamento dos videos gerados nas maquinas.
+            var canViewSocial = httpContext.IsSuperAdmin() || httpContext.TemPermissao(
+                APIBack.Social.Nucleo.SocialPermissoes.Modulo, APIBack.Social.Nucleo.SocialPermissoes.Visualizar);
+            if (!canViewDelivery && !canViewChat && !canViewSocial && gestao.Count == 0)
             {
                 Context.Abort();
                 return;
@@ -147,6 +150,11 @@ namespace APIBack.Hubs
             if (canViewChat)
             {
                 await Groups.AddToGroupAsync(Context.ConnectionId, APIBack.Atendimento.ChatRealtimeEvents.Group(estabelecimentoId.Value));
+            }
+
+            if (canViewSocial)
+            {
+                await Groups.AddToGroupAsync(Context.ConnectionId, APIBack.Social.Fila.SocialTempoReal.Grupo(estabelecimentoId.Value));
             }
 
             foreach (var area in gestao)

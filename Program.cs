@@ -187,6 +187,14 @@ builder.Services.Configure<APIBack.Options.SocialR2Options>(builder.Configuratio
 builder.Services.AddSingleton<APIBack.Social.Arquivos.IArmazenamento, APIBack.Social.Arquivos.R2Armazenamento>();
 builder.Services.AddScoped<APIBack.Social.Editor.ISocialEditorService, APIBack.Social.Editor.SocialEditorService>();
 builder.Services.AddScoped<APIBack.Social.Arquivos.ISocialArquivosService, APIBack.Social.Arquivos.SocialArquivosService>();
+// Zippy Social R13: registro dos vídeos gerados (no navegador ou na máquina) e URL do R2 para publicar.
+builder.Services.AddScoped<APIBack.Social.Editor.ISocialRendersService, APIBack.Social.Editor.SocialRendersService>();
+// Zippy Social R14: máquinas com o zippy-render, pareamento, fila (rotas /api/social/worker, sem JWT) e avisos pelo SignalR.
+builder.Services.Configure<APIBack.Options.SocialMaquinasOptions>(builder.Configuration.GetSection(APIBack.Options.SocialMaquinasOptions.Secao));
+builder.Services.AddSingleton<APIBack.Social.Fila.ISocialTempoReal, APIBack.Social.Fila.SocialTempoReal>();
+builder.Services.AddScoped<APIBack.Social.Fila.ISocialMaquinasService, APIBack.Social.Fila.SocialMaquinasService>();
+builder.Services.AddScoped<APIBack.Social.Fila.ISocialLojaLiberada, APIBack.Social.Fila.SocialLojaPelaSituacao>();
+builder.Services.AddScoped<APIBack.Social.Fila.ISocialWorkerService, APIBack.Social.Fila.SocialWorkerService>();
 builder.Services.AddHostedService<APIBack.Social.Arquivos.ArquivosLimpezaWorker>();
 // Zippy Social R10: camada de IA (créditos, cota da Zippy ou chave própria) e serviço de voz. Chaves em Social__Ia__Chaves__<provedor>.
 // Em desenvolvimento, sem chave, usa o provedor falso (áudio em silêncio) para o editor funcionar.
@@ -310,6 +318,10 @@ builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
     options.AddPolicy("print-pairing", context => RateLimitPartition.GetFixedWindowLimiter(
+        context.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = 5, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
+    // Pareamento do zippy-render: sem login, só o código de 6 dígitos.
+    options.AddPolicy(APIBack.Controllers.SocialWorkerController.LimitePareamento, context => RateLimitPartition.GetFixedWindowLimiter(
         context.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
         _ => new FixedWindowRateLimiterOptions { PermitLimit = 5, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
     options.OnRejected = async (context, cancellationToken) =>
