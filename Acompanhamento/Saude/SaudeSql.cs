@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -101,6 +101,7 @@ SELECT id, em, usuario_id, motivo, antes::text, depois::text FROM acompanhamento
             public DateTimeOffset? UltimoPedidoEm { get; set; }
             public string? PlanoContratado { get; set; }
             public bool PagamentoConfirmado { get; set; }
+            public string? SituacaoDaAssinatura { get; set; }
             public decimal ValorAtrasado { get; set; }
             public DateTime? AtrasadoDesde { get; set; }
             public DateTime? ProximoVencimento { get; set; }
@@ -116,7 +117,8 @@ SELECT id, em, usuario_id, motivo, antes::text, depois::text FROM acompanhamento
                 LojaId = LojaId, AcompanhamentoId = AcompanhamentoId, OportunidadeId = OportunidadeId, Nome = Nome, Fase = Fase, FaseDesde = FaseDesde,
                 Situacao = Situacao, TesteTerminaEm = TesteTerminaEm, CriadaEm = CriadaEm, OperacaoIniciadaEm = OperacaoIniciadaEm,
                 PausaAte = Dia(PausaAte), Pedidos7d = Pedidos7d, Pedidos28d = Pedidos28d, DiasComPedido28d = DiasComPedido28d, UltimoPedidoEm = UltimoPedidoEm,
-                PlanoContratado = PlanoContratado, PagamentoConfirmado = PagamentoConfirmado, ValorAtrasado = ValorAtrasado, AtrasadoDesde = Dia(AtrasadoDesde),
+                PlanoContratado = PlanoContratado, PagamentoConfirmado = PagamentoConfirmado, SituacaoDaAssinatura = SituacaoDaAssinatura,
+                ValorAtrasado = ValorAtrasado, AtrasadoDesde = Dia(AtrasadoDesde),
                 ProximoVencimento = Dia(ProximoVencimento), ChamadoPendenteDesde = ChamadoPendenteDesde, ChamadoPrazoVencido = ChamadoPrazoVencido,
                 UltimoPassoEm = UltimoPassoEm, PropostaValidadeAte = Dia(PropostaValidadeAte), Modulos = Modulos ?? Array.Empty<string>(), FaixaGravada = FaixaGravada,
             };
@@ -136,6 +138,7 @@ GREATEST(
         public static async Task<IReadOnlyList<SaudeEntrada>> EntradasDasLojasAsync(NpgsqlConnection cx, DateTimeOffset agora, Guid? lojaId, CancellationToken ct)
         {
             var hoje = FusoComercial.Data(agora).ToDateTime(TimeOnly.MinValue);
+            var inicioHoje = FusoComercial.InicioDeHoje(agora);
             var passo = UltimoPasso
                 .Replace("{NOTA}", "(SELECT MAX(n.criado_em) FROM gestao_nota n WHERE n.estabelecimento_id = e.id),")
                 .Replace("{CHAMADO}", "(SELECT MAX(m.criado_em) FROM chamado_mensagem m JOIN chamado c ON c.id = m.chamado_id WHERE c.estabelecimento_id = e.id AND m.da_zippy)");
@@ -148,6 +151,11 @@ SELECT e.id AS LojaId, ac.id AS AcompanhamentoId, ac.oportunidade_id AS Oportuni
        COALESCE(ped.p7, 0)::int AS Pedidos7d, COALESCE(ped.p28, 0)::int AS Pedidos28d, COALESCE(ped.dias, 0)::int AS DiasComPedido28d, ped.ultimo AS UltimoPedidoEm,
        ass.plano_chave AS PlanoContratado,
        COALESCE(ass.id IS NOT NULL AND EXISTS (SELECT 1 FROM assinatura_ciclo ci WHERE ci.id_assinatura = ass.id AND ci.status = 'pago'), FALSE) AS PagamentoConfirmado,
+       -- Quem desistiu antes de pagar conta como quem nunca assinou.
+       CASE WHEN ass.id IS NOT NULL THEN 'viva'
+            WHEN EXISTS (SELECT 1 FROM assinatura x WHERE x.id_estabelecimento = e.id AND x.status = 'encerrada'
+                          AND x.encerramento_motivo IS DISTINCT FROM 'cancelada_antes_do_pagamento') THEN 'encerrada'
+            ELSE 'nenhuma' END AS SituacaoDaAssinatura,
        COALESCE(fin.atrasado, 0) AS ValorAtrasado, fin.desde::timestamp AS AtrasadoDesde, fin.proximo::timestamp AS ProximoVencimento,
        ch.desde AS ChamadoPendenteDesde, COALESCE(ch.vencido, FALSE) AS ChamadoPrazoVencido,
        " + passo + @" AS UltimoPassoEm
@@ -164,10 +172,11 @@ SELECT e.id AS LojaId, ac.id AS AcompanhamentoId, ac.oportunidade_id AS Oportuni
         WHERE a.id_estabelecimento = e.id AND a.status IN ('pendente', 'ativa')
         ORDER BY (a.status = 'ativa') DESC, a.updated_at DESC LIMIT 1) ass ON TRUE
   LEFT JOIN LATERAL (
-       -- Cartao recorrente antes do vencimento: o Mercado Pago cobra, nao ha o que pedir a loja (mesma regra dos avisos da assinatura).
-       SELECT SUM(cb.valor) FILTER (WHERE cb.status IN ('aberta', 'processando') AND cb.vencimento < @Hoje) AS atrasado,
-              MIN(cb.vencimento) FILTER (WHERE cb.status IN ('aberta', 'processando') AND cb.vencimento < @Hoje) AS desde,
-              MIN(cb.vencimento) FILTER (WHERE cb.status IN ('aberta', 'processando') AND cb.vencimento >= @Hoje
+       -- Divida so de mensalidade (upgrade e extra nao pagos nunca atrasam). Cartao recorrente antes do vencimento: o Mercado Pago
+       -- cobra, nao ha o que pedir a loja (mesma regra dos avisos da assinatura).
+       SELECT SUM(" + AssinaturaSql.SqlValorDivida("cb") + @") FILTER (WHERE " + AssinaturaSql.SqlEmDivida("cb") + @") AS atrasado,
+              MIN(" + AssinaturaSql.SqlDividaDesde("cb") + @") FILTER (WHERE " + AssinaturaSql.SqlEmDivida("cb") + @") AS desde,
+              MIN(cb.vencimento) FILTER (WHERE cb.tipo = 'ciclo' AND cb.status IN ('aberta', 'processando') AND cb.vencimento >= @InicioHoje
                                            AND COALESCE(cb.meio, '') <> 'cartao_recorrente') AS proximo
          FROM comercial_cobranca cb WHERE cb.id_estabelecimento = e.id) fin ON TRUE
   LEFT JOIN LATERAL (
@@ -175,7 +184,7 @@ SELECT e.id AS LojaId, ac.id AS AcompanhamentoId, ac.oportunidade_id AS Oportuni
         WHERE c.estabelecimento_id = e.id AND c.status = 'aberto') ch ON TRUE
  WHERE (@Loja::uuid IS NULL OR e.id = @Loja)
  ORDER BY e.nome_fantasia;";
-            var linhas = await cx.QueryAsync<Linha>(new CommandDefinition(sql, new { Hoje = hoje, Loja = lojaId }, cancellationToken: ct));
+            var linhas = await cx.QueryAsync<Linha>(new CommandDefinition(sql, new { Hoje = hoje, InicioHoje = inicioHoje, Loja = lojaId }, cancellationToken: ct));
             return linhas.Select(l => l.ParaEntrada()).ToList();
         }
 

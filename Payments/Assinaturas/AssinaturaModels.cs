@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 
 namespace APIBack.Payments.Assinaturas
@@ -16,6 +16,13 @@ namespace APIBack.Payments.Assinaturas
         public const string RenovacaoSemAutorizacao = "ASS_RENOVACAO_SEM_AUTORIZACAO"; // 422
         public const string ProdutoInvalido = "ASS_PRODUTO_INVALIDO";           // 422
         public const string JaDecidida = "ASS_SOLICITACAO_JA_DECIDIDA";         // 409
+        public const string Devendo = "ASS_DEVENDO";                            // 409
+        public const string AnualSoGestao = "ASS_ANUAL_SO_GESTAO";              // 409
+        public const string ExtraSemPlano = "ASS_EXTRA_SEM_PLANO";              // 409
+        public const string ModuloDevendo = "ASS_MODULO_DEVENDO";               // 409
+        public const string CanceladaRetome = "ASS_CANCELADA_RETOME";           // 409
+        public const string SemCobranca = "ASS_SEM_COBRANCA";                   // so em acoes.pagar
+        public const string TentativaExpirada = "ASS_TENTATIVA_EXPIRADA";       // 409
     }
 
     public sealed record PlanoDto(string Chave, string Nome, decimal Preco, decimal? PrecoAnual, string? Cor, string? Icone, string? Frase,
@@ -28,7 +35,11 @@ namespace APIBack.Payments.Assinaturas
 
     public sealed record CobrancaDto(Guid Id, string Tipo, string Descricao, decimal Valor, DateTimeOffset Vencimento, string Status, string? Meio,
         DateTimeOffset? PagoEm, string? PagoVia, decimal ValorPago, decimal ValorExcedente, bool Atrasada, int DiasAtraso, bool PodePagar,
-        Guid? IntentId, ComprovanteDto? Comprovante, object? Detalhe, DateTimeOffset CriadoEm);
+        Guid? IntentId, ComprovanteDto? Comprovante, object? Detalhe, DateTimeOffset CriadoEm,
+        /// <summary>Tentativa de upgrade ou extra: depois disto, sem pagamento, ela some.</summary>
+        DateTimeOffset? ExpiraEm = null,
+        /// <summary>Está contando como dívida agora (mensalidade vencida, ou a dívida somada na volta).</summary>
+        bool ContaComoDivida = false);
 
     public sealed record PlanoResumoDto(string Chave, string Nome, string? Cor, string? Icone);
 
@@ -39,7 +50,7 @@ namespace APIBack.Payments.Assinaturas
     public sealed record InadimplenciaDto(DateTimeOffset? Desde, int DiasAtraso, int ToleranciaDias, DateTimeOffset? SuspendeEm, DateTimeOffset? SuspensaEm,
         decimal ValorEmAberto);
 
-    /// <summary>acesso: liberado | tolerancia | suspenso. Financeiro e separado da situacao comercial.</summary>
+    /// <summary>acesso: liberado | tolerancia (devendo). Nunca suspenso: so a Gestao bloqueia. Financeiro e separado da situacao comercial.</summary>
     public sealed record AssinaturaDto(Guid Id, PlanoResumoDto Plano, string Periodicidade, decimal Preco, string Status, string Financeiro, string Acesso,
         DateTimeOffset? PeriodoInicio, DateTimeOffset? PeriodoFim, DateTimeOffset? ProximoVencimento, CobrancaDto? ProximaCobranca,
         string? Metodo, bool RenovacaoAutomatica, string? CartaoFinal, string? CartaoBandeira, string? PreapprovalStatus,
@@ -60,9 +71,18 @@ namespace APIBack.Payments.Assinaturas
     /// <summary>Public key da conta recebedora da ZIPPY (o Card Brick tokeniza o cartao com ela). Nunca e da loja.</summary>
     public sealed record CheckoutDto(string? PublicKey, bool PixDisponivel, bool CartaoDisponivel, string Ambiente, bool LinkDisponivel = false);
 
+    /// <summary>Cartão com cobrança automática (preapproval do MP).</summary>
+    public sealed record CartaoAssinaturaDto(bool Automatico, string? Bandeira, string? Final);
+
+    /// <summary>Bloqueio manual da Gestão: o único bloqueio que existe.</summary>
+    public sealed record BloqueioDto(DateTimeOffset Em, string? Motivo, PessoaDto? Por);
+
+    /// <summary>"Assinatura" é nula quando a loja não tem assinatura viva (inclusive a encerrada: o histórico está nas cobranças).
+    /// ToleranciaDias é sempre 0: não existe prazo para suspender.</summary>
     public sealed record PainelAssinaturaDto(AssinaturaDto? Assinatura, SituacaoResumoDto Situacao, IReadOnlyList<PlanoDto> Planos, IReadOnlyList<ExtraDto> Extras,
         IReadOnlyList<CompraDto> Compras, IReadOnlyList<SolicitacaoDto> Solicitacoes, IReadOnlyList<AvisoDto> Avisos, CheckoutDto Checkout,
-        bool PodeGerenciar, int ToleranciaDias);
+        bool PodeGerenciar, int ToleranciaDias, string Estado, AcoesAssinaturaDto Acoes, string MesVigente, DividaDto? Divida, CartaoAssinaturaDto Cartao,
+        BloqueioDto? Bloqueio);
 
     public sealed class ContratarRequest
     {
@@ -84,6 +104,13 @@ namespace APIBack.Payments.Assinaturas
     public sealed class CancelarRequest
     {
         public string? Motivo { get; set; }
+    }
+
+    /// <summary>POST assinaturas/cartao: liga ou troca o cartão automático.</summary>
+    public sealed class CartaoAutomaticoRequest
+    {
+        public CartaoCheckoutRequest? Cartao { get; set; }
+        public bool AutorizoRenovacao { get; set; }
     }
 
     public sealed class CartaoCheckoutRequest
@@ -143,8 +170,70 @@ namespace APIBack.Payments.Assinaturas
 
     public sealed record AlteracaoDto(PrevisaoMudanca Previsao, bool Confirmada, CobrancaDto? Cobranca, AssinaturaDto? Assinatura);
 
+    // ---------- Gestão (motivo sempre opcional) ----------
+
     public sealed class BaixaManualRequest
     {
         public string? Motivo { get; set; }
     }
+
+    public sealed class GestaoMotivoRequest
+    {
+        public string? Motivo { get; set; }
+    }
+
+    public sealed class GestaoCriarAssinaturaRequest
+    {
+        public string? Plano { get; set; }
+        public string? Periodicidade { get; set; }
+        public bool Cortesia { get; set; }
+        public string? Motivo { get; set; }
+    }
+
+    public sealed class GestaoAlterarAssinaturaRequest
+    {
+        public string? Plano { get; set; }
+        public string? Periodicidade { get; set; }
+        public bool Cortesia { get; set; }
+        /// <summary>agora | proximo_ciclo</summary>
+        public string? Quando { get; set; }
+        public bool Confirmar { get; set; }
+        public string? Motivo { get; set; }
+    }
+
+    public sealed class GestaoCancelarAssinaturaRequest
+    {
+        /// <summary>agora | fim_do_periodo</summary>
+        public string? Quando { get; set; }
+        public string? Motivo { get; set; }
+    }
+
+    public sealed class GestaoExtraRequest
+    {
+        public long? ProdutoAvulsoId { get; set; }
+        public int? Motoboys { get; set; }
+        public int Dias { get; set; }
+        public bool Cortesia { get; set; }
+        public string? Motivo { get; set; }
+    }
+
+    public sealed class GestaoVencimentoRequest
+    {
+        /// <summary>AAAA-MM-DD</summary>
+        public string? Vencimento { get; set; }
+        public string? Motivo { get; set; }
+    }
+
+    public sealed record GestaoExtraCriadoDto(CompraDto? Compra, CobrancaDto? Cobranca, long? PacoteId);
+
+    public sealed record PlanoDaListaDto(string Chave, string Nome);
+
+    public sealed record DividaResumoDto(decimal Valor, DateTimeOffset Desde);
+
+    public sealed record TrocaDaListaDto(string Nome, DateTimeOffset? Em);
+
+    public sealed record GestaoAssinaturaLinhaDto(Guid EstabelecimentoId, string Loja, string Estado, PlanoDaListaDto? Plano, string? Periodicidade, decimal? Preco,
+        DateTimeOffset? ProximoVencimento, string MesVigente, DividaResumoDto? Divida, bool Bloqueada, TrocaDaListaDto? TrocaMarcada, DateTimeOffset? CanceladaAte);
+
+    public sealed record ExcedenteDto(Guid CobrancaId, Guid EstabelecimentoId, string Loja, string Descricao, decimal Valor, DateTimeOffset Quando);
 }

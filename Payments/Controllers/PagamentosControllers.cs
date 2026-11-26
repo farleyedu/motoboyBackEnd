@@ -36,7 +36,7 @@ namespace APIBack.Payments.Controllers
             catch (Exception ex)
             {
                 logger.LogError(ex, "[pag.api] ev=erro_inesperado rota={Rota}", Request.Path.Value);
-                return StatusCode(500, ApiResponse<object>.Fail("Nao foi possivel concluir a operacao de pagamento."));
+                return StatusCode(500, ApiResponse<object>.Fail("Não foi possível concluir a operação de pagamento."));
             }
         }
     }
@@ -73,9 +73,9 @@ namespace APIBack.Payments.Controllers
             {
                 WebhookDesfecho.Aceito => Ok(new { recebido = true, evento = r.EventoId, status = r.StatusProcessamento }),
                 WebhookDesfecho.Duplicado => Ok(new { recebido = true, duplicado = true }),
-                WebhookDesfecho.NaoAutorizado => StatusCode(401, ApiResponse<object>.Fail("Assinatura invalida.", PagamentoCodigos.WebhookAssinaturaInvalida)),
-                WebhookDesfecho.NaoConfigurado => StatusCode(503, ApiResponse<object>.Fail("Webhook nao configurado.", PagamentoCodigos.NaoConfigurado)),
-                _ => BadRequest(ApiResponse<object>.Fail("Aviso invalido.", PagamentoCodigos.RequisicaoInvalida))
+                WebhookDesfecho.NaoAutorizado => StatusCode(401, ApiResponse<object>.Fail("Assinatura inválida.", PagamentoCodigos.WebhookAssinaturaInvalida)),
+                WebhookDesfecho.NaoConfigurado => StatusCode(503, ApiResponse<object>.Fail("Webhook não configurado.", PagamentoCodigos.NaoConfigurado)),
+                _ => BadRequest(ApiResponse<object>.Fail("Aviso inválido.", PagamentoCodigos.RequisicaoInvalida))
             };
         }
     }
@@ -254,14 +254,14 @@ SELECT i.id, i.provedor, i.origem, i.status, i.versao, i.valor, i.valor_pago, i.
         [HttpGet("pagamentos/pix/{token}")]
         public Task<IActionResult> PaginaPix(string token) => Executar(async () =>
         {
-            if (!TokenPublico.FormatoValido(token)) throw PagamentoException.NaoEncontrado("Link de pagamento invalido.");
+            if (!TokenPublico.FormatoValido(token)) throw PagamentoException.NaoEncontrado("Link de pagamento inválido.");
             await using var cx = await _db.OpenConnectionAsync(HttpContext.RequestAborted);
             var achado = await cx.QueryFirstOrDefaultAsync<(Guid Id, Guid Loja, string? Nome)?>(@"
 SELECT i.id, i.id_estabelecimento, COALESCE(NULLIF(w.nome_publico, ''), e.nome_fantasia)
   FROM pagamento_intent i JOIN estabelecimentos e ON e.id = i.id_estabelecimento
   LEFT JOIN cardapio_web_config w ON w.id_estabelecimento = i.id_estabelecimento
  WHERE i.token_publico_hash = @H", new { H = TokenPublico.Hash(token) });
-            if (achado == null) throw PagamentoException.NaoEncontrado("Link de pagamento invalido.");
+            if (achado == null) throw PagamentoException.NaoEncontrado("Link de pagamento inválido.");
             return Publico(await _pix.ObterAsync(achado.Value.Id, achado.Value.Loja, HttpContext.RequestAborted), achado.Value.Nome);
         }, _logger);
 

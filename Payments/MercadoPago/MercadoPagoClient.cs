@@ -27,7 +27,7 @@ namespace APIBack.Payments.MercadoPago
 
         public PagamentoException ParaPagamento() => Indisponivel
             ? new PagamentoException(PagamentoCodigos.MercadoPagoIndisponivel, 503, "Mercado Pago indisponivel no momento. Tente de novo.", inner: this)
-            : new PagamentoException(PagamentoCodigos.MercadoPagoErro, 502, "O Mercado Pago recusou a operacao.",
+            : new PagamentoException(PagamentoCodigos.MercadoPagoErro, 502, "O Mercado Pago recusou a operação.",
                 new Dictionary<string, object?> { ["mpStatus"] = StatusHttp, ["mpErro"] = MpErro }, this);
     }
 
@@ -72,7 +72,7 @@ namespace APIBack.Payments.MercadoPago
 
         public async Task<MpPagamento> CriarOrderAsync(CredencialRecebedora c, MpCriarOrderRequest request, string idempotencyKey, CancellationToken ct = default)
         {
-            if (string.IsNullOrWhiteSpace(idempotencyKey)) throw new ArgumentException("Chave de idempotencia obrigatoria.", nameof(idempotencyKey));
+            if (string.IsNullOrWhiteSpace(idempotencyKey)) throw new ArgumentException("Chave de idempotência obrigatória.", nameof(idempotencyKey));
             var order = await EnviarAsync<MpOrder>(c.AccessToken, HttpMethod.Post, "v1/orders", request, idempotencyKey, "criar_order", ct);
             return order.ParaPagamento(Ambientes.LiveMode(c.Ambiente));
         }

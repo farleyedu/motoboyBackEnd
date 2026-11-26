@@ -55,9 +55,9 @@ namespace APIBack.Payments.MercadoPago
         public async Task<EstornoResult> EstornarAsync(EstornoRequest r, CancellationToken ct = default)
         {
             if (string.IsNullOrWhiteSpace(r.IdempotencyKey) || r.IdempotencyKey.Length > 160)
-                throw PagamentoException.Invalida("Chave de idempotencia obrigatoria.", "idempotencyKey");
+                throw PagamentoException.Invalida("Chave de idempotência obrigatória.", "idempotencyKey");
             if (r.Valor is { } v && (v <= 0 || decimal.Round(v, 2) != v))
-                throw PagamentoException.Regra(PagamentoCodigos.ValorInvalido, "Valor do estorno invalido.");
+                throw PagamentoException.Regra(PagamentoCodigos.ValorInvalido, "Valor do estorno inválido.");
 
             await using var cx = await _db.OpenConnectionAsync(ct);
             PagamentoIntent intent;
@@ -70,7 +70,7 @@ namespace APIBack.Payments.MercadoPago
                 intent = await PagamentoIntentSql.ObterAsync(cx, tx, r.IntentId, true, ct) ?? throw PagamentoException.NaoEncontrado();
                 if (intent.IdEstabelecimento != r.IdEstabelecimento) throw PagamentoException.NaoEncontrado();
                 if (intent.Provedor != "mercadopago")
-                    throw PagamentoException.Regra("PAG_RECURSO_NAO_SUPORTADO", "A InfinitePay nao tem estorno por API. Devolva o valor pelo app da InfinitePay.");
+                    throw PagamentoException.Regra("PAG_RECURSO_NAO_SUPORTADO", "A InfinitePay não tem estorno por API. Devolva o valor pelo app da InfinitePay.");
 
                 var existente = await cx.QueryFirstOrDefaultAsync<(Guid Id, string Status, decimal Valor, Guid IdPagamento)?>(new CommandDefinition(
                     "SELECT id, status, valor, id_pagamento FROM pagamento_estorno WHERE idempotency_key = @K AND id_estabelecimento = @Loja",
@@ -86,7 +86,7 @@ namespace APIBack.Payments.MercadoPago
                 pag = await cx.QueryFirstOrDefaultAsync<PagamentoRegistro>(new CommandDefinition($@"
 SELECT {PagamentoIntentSql.ColunasPagamento} FROM pagamento
  WHERE id_intent = @Id AND status IN ('aprovado', 'estornado_parcial') ORDER BY created_at DESC LIMIT 1 FOR UPDATE", new { intent.Id }, tx, cancellationToken: ct))
-                    ?? throw PagamentoException.Estado("Pagamento aprovado nao encontrado.", intent.Status);
+                    ?? throw PagamentoException.Estado("Pagamento aprovado não encontrado.", intent.Status);
 
                 var vivo = await cx.ExecuteScalarAsync<decimal>(new CommandDefinition(
                     "SELECT COALESCE(SUM(valor), 0) FROM pagamento_estorno WHERE id_pagamento = @P AND status NOT IN ('recusado', 'falhou')",

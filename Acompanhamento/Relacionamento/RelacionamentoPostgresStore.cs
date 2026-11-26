@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -559,12 +559,11 @@ VALUES (@Id, @Chave, @De, @Para, @Para, @Nome, @Status, @U, @Autor, @Motivo, CAS
                 return def.Para;
             }
 
+            /// <summary>Mensalidade vencida. Fatura no prazo, upgrade e extra nao pagos nao contam.</summary>
             public async Task<bool> CobrancaEmAbertoAsync(CancellationToken ct)
             {
                 if (!Estado.EstabelecimentoId.HasValue || !await AcompanhamentoSql.TabelaExisteAsync(_cx, _tx, "comercial_cobranca", ct)) return false;
-                return await _cx.ExecuteScalarAsync<bool>(new CommandDefinition(
-                    "SELECT EXISTS (SELECT 1 FROM comercial_cobranca WHERE id_estabelecimento = @Loja AND status IN ('aberta', 'processando'));",
-                    new { Loja = Estado.EstabelecimentoId }, _tx, cancellationToken: ct));
+                return await APIBack.Payments.Assinaturas.AssinaturaSql.DividaAsync(_cx, _tx, Estado.EstabelecimentoId.Value, DateTimeOffset.UtcNow, ct) != null;
             }
 
             public async Task AvisarAsync(int destinatario, string tipo, string mensagem, int? de, CancellationToken ct)

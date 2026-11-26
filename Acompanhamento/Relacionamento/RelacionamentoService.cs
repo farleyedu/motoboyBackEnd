@@ -580,7 +580,7 @@ namespace APIBack.Acompanhamento.Relacionamento
 
             registro.CobrancaEmAberto = await tx.CobrancaEmAbertoAsync(ct);
             if (registro.Resultado == ResultadosRetencao.Pausada && registro.CobrancaEmAberto)
-                throw new RelacionamentoException(422, "PAUSA_COM_COBRANCA_EM_ABERTO", "Com cobranca em aberto a loja nao entra em pausa: resolva a cobranca antes.");
+                throw new RelacionamentoException(422, "PAUSA_COM_COBRANCA_EM_ABERTO", "Com cobrança em atraso a loja não entra em pausa: resolva a cobrança antes.");
 
             var salvo = await tx.RegistrarRetencaoAsync(registro, ct);
             salvo.FaseAtual = registro.Resultado == ResultadosRetencao.Saiu

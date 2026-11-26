@@ -214,6 +214,14 @@ VALUES (gen_random_uuid(), @L, 'sandbox', 'chat', 'loja', @C, 10, 'x', 'aguardan
         pol.ToleranciaDias = 10;
         Assert.Equal(10, (await gestao.SalvarPoliticasAsync(pol, 1)).ToleranciaDias);
         await Assert.ThrowsAsync<PagamentoException>(() => gestao.SalvarPoliticasAsync(new PoliticasDto { ToleranciaDias = 99 }, 1));
+
+        // "Em aberto" no resumo são as faturas (mensalidades), não as tentativas de pagamento nem upgrade e extra.
+        Assert.Equal(0, (await gestao.ResumoAsync()).CobrancasZippyAbertas);
+        await db.Scalar<int>(@"CREATE TABLE comercial_cobranca (tipo text, status text, valor numeric);
+INSERT INTO comercial_cobranca VALUES ('ciclo', 'aberta', 249), ('ciclo', 'processando', 349), ('ciclo', 'paga', 149), ('upgrade', 'aberta', 100); SELECT 1;");
+        var resumo = await gestao.ResumoAsync();
+        Assert.Equal(2, resumo.CobrancasZippyAbertas);
+        Assert.Equal(598m, resumo.ValorZippyAberto);
     }
 
     private static string Query(string url, string nome) => HttpUtility.ParseQueryString(new Uri(url).Query)[nome]!;

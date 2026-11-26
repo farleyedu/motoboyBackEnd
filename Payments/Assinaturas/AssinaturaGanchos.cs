@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
@@ -37,7 +37,7 @@ namespace APIBack.Payments.Assinaturas
             else if (intent.Status == StatusIntent.Recusado)
             {
                 await AssinaturaSql.AvisarAsync(cx, tx, intent.IdEstabelecimento, cobrancaId, $"{cobrancaId:N}:recusado:{intent.Versao}", "pagamento_recusado",
-                    "O pagamento foi recusado. Tente outro cartao ou pague com Pix.", ct);
+                    "O pagamento foi recusado. Tente outro cartão ou pague com Pix.", ct);
             }
             else if (intent.Status is StatusIntent.Estornado or StatusIntent.Contestado)
             {
@@ -83,10 +83,12 @@ namespace APIBack.Payments.Assinaturas
         private readonly IMercadoPagoPreapprovalClient _mp;
         private readonly IMemoryCache _cache;
         private readonly ILogger<AssinaturaWebhookHandler> _logger;
+        private readonly IMercadoPagoClient _pagamentos;
 
         public AssinaturaWebhookHandler(NpgsqlDataSource db, IMercadoPagoCredencialResolver credenciais, IMercadoPagoPreapprovalClient mp, IMemoryCache cache,
-            ILogger<AssinaturaWebhookHandler> logger)
+            ILogger<AssinaturaWebhookHandler> logger, IMercadoPagoClient pagamentos)
         {
+            _pagamentos = pagamentos;
             _db = db;
             _credenciais = credenciais;
             _mp = mp;
@@ -130,7 +132,7 @@ UPDATE comercial_cobranca SET status = 'aberta', meio = NULL, versao = versao + 
  WHERE id_assinatura = @Id AND status = 'processando' AND meio = 'cartao_recorrente'", new { a.Id }, tx, cancellationToken: ct));
                 if (a.CancelamentoSolicitadoEm == null)
                     await AssinaturaSql.AvisarAsync(cx, tx, a.IdEstabelecimento, null, $"preapproval:{pre.Id}:{pre.Status}", "renovacao_interrompida",
-                        "A renovacao automatica no cartao foi interrompida. As proximas faturas chegam para pagar com Pix ou cartao.", ct);
+                        "A cobrança automática no cartão foi interrompida. As próximas faturas chegam para pagar com Pix ou cartão.", ct);
             }
             await PagamentoAuditoria.RegistrarAsync(cx, tx, a.IdEstabelecimento, "assinatura", a.Id.ToString(), "preapproval_status", ator, null,
                 new { de = a.MpPreapprovalStatus, para = pre.Status, preapproval = pre.Id }, ct);
@@ -155,7 +157,7 @@ UPDATE comercial_cobranca SET status = 'aberta', meio = NULL, versao = versao + 
                 var chave = $"recorrente:{ap.Id}:{ap.Status}:{ap.RetryAttempt ?? 0}";
                 if (ap.Payment?.Status == "rejected" || ap.Status == "recycling")
                     await AssinaturaSql.AvisarAsync(cx, tx, a.IdEstabelecimento, null, chave, "renovacao_recusada",
-                        "O cartao recusou a renovacao. O Mercado Pago vai tentar de novo; se preferir, pague agora com Pix.", ct);
+                        "O cartão recusou a cobrança. O Mercado Pago vai tentar de novo; se preferir, pague agora com Pix.", ct);
                 await tx.CommitAsync(ct);
                 return ("processado", "nao_aprovado");
             }
@@ -186,8 +188,26 @@ SELECT id FROM comercial_cobranca WHERE id_assinatura = @A AND tipo = 'ciclo' AN
             }
             await tx.CommitAsync(ct);
             if (r.Aplicado) _cache.Remove(SituacaoComercialService.CacheKey(a.IdEstabelecimento));
+            if (string.IsNullOrEmpty(a.CartaoFinal) && ap.Payment.Id is { } pagamento) await GravarFinalDoCartaoAsync(cred, a.Id, pagamento, ct);
             _logger.LogInformation("[assinatura] ev=cobranca_recorrente assinatura={A} ap={Ap} aplicado={Ok} excedente={Ex}", a.Id, ap.Id, r.Aplicado, r.Excedente);
             return ("processado", r.Aplicado ? null : "excedente");
+        }
+
+        /// <summary>O final do cartão automático vem do pagamento que o MP fez. É só para mostrar: falha aqui não desfaz nada.</summary>
+        private async Task GravarFinalDoCartaoAsync(CredencialRecebedora cred, Guid assinatura, long pagamento, CancellationToken ct)
+        {
+            try
+            {
+                var final = (await _pagamentos.ObterPagamentoAsync(cred, pagamento, ct)).Card?.LastFourDigits;
+                if (final is not { Length: 4 } || !final.All(char.IsAsciiDigit)) return;
+                await using var cx = await _db.OpenConnectionAsync(ct);
+                await cx.ExecuteAsync(new CommandDefinition("UPDATE assinatura SET cartao_final = @F, updated_at = NOW() WHERE id = @Id",
+                    new { F = final, Id = assinatura }, cancellationToken: ct));
+            }
+            catch (MercadoPagoApiException ex)
+            {
+                _logger.LogWarning("[assinatura] ev=final_do_cartao_indisponivel http={Http}", ex.StatusHttp);
+            }
         }
     }
 }

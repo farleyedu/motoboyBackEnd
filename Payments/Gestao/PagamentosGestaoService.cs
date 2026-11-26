@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -234,14 +234,14 @@ ON CONFLICT (ambiente) DO UPDATE SET client_id = EXCLUDED.client_id,
                 throw PagamentoException.Regra(PagamentoCodigos.MercadoPagoErro, "O Mercado Pago recusou este Access Token. Confira se copiou o token do ambiente certo.");
             }
             catch (MercadoPagoApiException ex) { throw ex.ParaPagamento(); }
-            if (me.Id <= 0) throw new PagamentoException(PagamentoCodigos.MercadoPagoRespostaInconsistente, 502, "O Mercado Pago nao informou o dono do token.");
+            if (me.Id <= 0) throw new PagamentoException(PagamentoCodigos.MercadoPagoRespostaInconsistente, 502, "O Mercado Pago não informou o dono do token.");
 
             // A conta da Zippy nunca e a mesma de uma loja (o dinheiro das mensalidades nao se mistura com vendas).
             await using var cx = await _db.OpenConnectionAsync(ct);
             var deLoja = await cx.ExecuteScalarAsync<bool>(new CommandDefinition(
                 "SELECT EXISTS (SELECT 1 FROM mp_conta_loja WHERE ambiente = @Amb AND mp_user_id = @U AND estado IN ('ativa', 'expirada', 'erro'))",
                 new { Amb = amb, U = me.Id }, cancellationToken: ct));
-            if (deLoja) throw PagamentoException.Regra(ConexaoCodigos.ContaDeOutraLoja, "Esta conta Mercado Pago ja esta conectada a um restaurante. Use a conta da Zippy.");
+            if (deLoja) throw PagamentoException.Regra(ConexaoCodigos.ContaDeOutraLoja, "Esta conta Mercado Pago já está conectada a um restaurante. Use a conta da Zippy.");
 
             await using var tx = await cx.BeginTransactionAsync(ct);
             var atual = await cx.QueryFirstOrDefaultAsync<(Guid Id, long MpUserId)?>(new CommandDefinition(
@@ -401,9 +401,9 @@ UPDATE mp_conta_zippy SET estado = CASE WHEN @Ok THEN 'ativa' ELSE 'erro' END, u
             await using var cx = await _db.OpenConnectionAsync(ct);
             var linha = await cx.QueryFirstOrDefaultAsync<(Guid Id, long MpUserId, string Token, string? Pk)?>(new CommandDefinition(
                 "SELECT id, mp_user_id, access_token_cifrado, public_key FROM mp_conta_zippy WHERE ambiente = @Amb", new { Amb = amb }, cancellationToken: ct));
-            if (linha == null) throw PagamentoException.NaoConfigurado("Conta recebedora da Zippy nao configurada.");
+            if (linha == null) throw PagamentoException.NaoConfigurado("Conta recebedora da Zippy não configurada.");
             var token = _protector.Revelar(linha.Value.Token, SegredoContexto.ZippyAccessToken(linha.Value.Id))
-                        ?? throw PagamentoException.NaoConfigurado("Token da conta Zippy nao abre com a chave mestra atual.");
+                        ?? throw PagamentoException.NaoConfigurado("Token da conta Zippy não abre com a chave mestra atual.");
             return new CredencialRecebedora
             {
                 Contexto = ContextoCredencial.RecebedorZippy, Ambiente = amb, IdContaZippy = linha.Value.Id, MpUserId = linha.Value.MpUserId,
@@ -481,12 +481,19 @@ ON CONFLICT (ambiente) DO UPDATE SET habilitado = EXCLUDED.habilitado, lojas_pod
             var m = mes ?? DateOnly.FromDateTime(DateTime.UtcNow.AddHours(-3));
             var inicioMes = new DateTime(m.Year, m.Month, 1, 3, 0, 0, DateTimeKind.Utc);
             var fimMes = inicioMes.AddMonths(1);
+            // Em aberto sao as faturas (mensalidades) da Zippy, nao as tentativas de pagamento; fatura nao tem ambiente. Sem a tabela, zero.
+            var temFaturas = await cx.ExecuteScalarAsync<bool>(new CommandDefinition("SELECT to_regclass('comercial_cobranca') IS NOT NULL", cancellationToken: ct));
+            const string Faturas = "FROM comercial_cobranca WHERE tipo = 'ciclo' AND status IN ('aberta', 'processando')";
+            var abertas = temFaturas ? $@"
+  (SELECT count(*)::int {Faturas}) AS cobrancas_zippy_abertas,
+  COALESCE((SELECT sum(valor) {Faturas}), 0) AS valor_zippy_aberto," : @"
+  0 AS cobrancas_zippy_abertas,
+  0::numeric AS valor_zippy_aberto,";
+            // A InfinitePay nao tem sandbox: o que ela recebe conta em qualquer ambiente do Mercado Pago (mesmo filtro das listas).
             var r = await cx.QueryFirstAsync<ResumoGestaoDto>(new CommandDefinition(@"
 SELECT
-  COALESCE((SELECT sum(valor_pago) FROM pagamento_intent WHERE ambiente = @Amb AND conta_tipo = 'zippy' AND pago_em >= @Mes AND pago_em < @Fim), 0) AS recebido_zippy_mes,
-  COALESCE((SELECT sum(valor_estornado) FROM pagamento_intent WHERE ambiente = @Amb AND conta_tipo = 'zippy' AND pago_em >= @Mes AND pago_em < @Fim), 0) AS estornado_zippy_mes,
-  (SELECT count(*)::int FROM pagamento_intent WHERE ambiente = @Amb AND conta_tipo = 'zippy' AND status IN ('criado', 'aguardando_pagamento', 'processando')) AS cobrancas_zippy_abertas,
-  COALESCE((SELECT sum(valor) FROM pagamento_intent WHERE ambiente = @Amb AND conta_tipo = 'zippy' AND status IN ('criado', 'aguardando_pagamento', 'processando')), 0) AS valor_zippy_aberto,
+  COALESCE((SELECT sum(valor_pago) FROM pagamento_intent i WHERE (i.ambiente = @Amb OR to_jsonb(i) ->> 'provedor' = 'infinitepay') AND conta_tipo = 'zippy' AND pago_em >= @Mes AND pago_em < @Fim), 0) AS recebido_zippy_mes,
+  COALESCE((SELECT sum(valor_estornado) FROM pagamento_intent i WHERE (i.ambiente = @Amb OR to_jsonb(i) ->> 'provedor' = 'infinitepay') AND conta_tipo = 'zippy' AND pago_em >= @Mes AND pago_em < @Fim), 0) AS estornado_zippy_mes," + abertas + @"
   COALESCE((SELECT sum(valor_pago) FROM pagamento_intent WHERE ambiente = @Amb AND conta_tipo = 'loja' AND pago_em >= @Mes AND pago_em < @Fim), 0) AS vendas_lojas_mes,
   (SELECT count(*)::int FROM pagamento_intent WHERE ambiente = @Amb AND conta_tipo = 'loja' AND pago_em >= @Mes AND pago_em < @Fim) AS transacoes_lojas_mes,
   (SELECT count(*)::int FROM mp_conta_loja WHERE ambiente = @Amb AND estado = 'ativa') AS lojas_conectadas,
@@ -538,7 +545,7 @@ SELECT i.id, i.id_estabelecimento AS estabelecimento_id, e.nome_fantasia AS loja
             // Nunca mistura: a lista e as somas sao SEMPRE de uma conta so (dinheiro da Zippy ou das lojas).
             var tipo = string.IsNullOrWhiteSpace(conta) ? "loja" : conta.Trim();
             if (tipo is not ("loja" or "zippy")) throw PagamentoException.Invalida("Conta deve ser loja ou zippy.", "conta");
-            if (de > ate) throw PagamentoException.Invalida("Periodo invalido.", "de");
+            if (de > ate) throw PagamentoException.Invalida("Período inválido.", "de");
             var org = Limpo(origem);
             if (org != null && !new[] { OrigensPagamento.Cardapio, OrigensPagamento.Chat, OrigensPagamento.Assinatura, OrigensPagamento.CompraExtra }.Contains(org))
                 throw PagamentoException.Invalida("Origem desconhecida.", "origem");
@@ -622,9 +629,9 @@ SELECT id, ambiente, topico, acao, data_id, status, tentativas, ultimo_erro, rec
         {
             await using var cx = await _db.OpenConnectionAsync(ct);
             var atual = await cx.ExecuteScalarAsync<string?>(new CommandDefinition("SELECT status FROM mp_webhook_evento WHERE id = @Id", new { Id = id }, cancellationToken: ct))
-                        ?? throw PagamentoException.NaoEncontrado("Aviso nao encontrado.");
+                        ?? throw PagamentoException.NaoEncontrado("Aviso não encontrado.");
             // Rejeitado (assinatura/dono/valor divergente) nunca volta: e protecao, nao falha.
-            if (atual is not ("falhou" or "ignorado" or "recebido")) throw PagamentoException.Estado("Este aviso nao pode ser reprocessado.", atual);
+            if (atual is not ("falhou" or "ignorado" or "recebido")) throw PagamentoException.Estado("Este aviso não pode ser reprocessado.", atual);
             await cx.ExecuteAsync(new CommandDefinition(
                 "UPDATE mp_webhook_evento SET status = 'recebido', proxima_tentativa_em = NOW() WHERE id = @Id AND status IN ('falhou', 'ignorado', 'recebido')",
                 new { Id = id }, cancellationToken: ct));

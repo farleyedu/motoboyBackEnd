@@ -1,4 +1,5 @@
-using APIBack.Acompanhamento.Saude;
+﻿using APIBack.Acompanhamento.Saude;
+using APIBack.Payments.Assinaturas;
 using Dapper;
 using Npgsql;
 
@@ -24,13 +25,17 @@ namespace APIBack.Service
         public int Pedidos7d { get; set; }
         public int Pedidos28d { get; set; }
         public DateTimeOffset? UltimoPedidoEm { get; set; }
-        /// <summary>Contratos do CRM ainda valendo (nao cancelados) desta loja.</summary>
+        /// <summary>Contratos antigos do CRM (sem uso: a cobranca vem so da assinatura).</summary>
         public int Contratos { get; set; }
         public string? ContratoStatus { get; set; }
-        /// <summary>Mensalidade SaaS + marketing dos contratos valendo. Nulo = sem contrato no CRM.</summary>
+        /// <summary>Mensalidade da assinatura em andamento (anual dividido por 12). Nulo = sem assinatura.</summary>
         public decimal? Mensalidade { get; set; }
         public decimal? MensalidadeSaas { get; set; }
         public int? DiaVencimento { get; set; }
+        public string? EstadoAssinatura { get; set; }
+        /// <summary>pago | em_aberto | atrasado | sem_cobranca</summary>
+        public string? MesVigente { get; set; }
+        public DividaResumoDto? Divida { get; set; }
         public decimal ValorAtrasado { get; set; }
         public DateTime? AtrasadoDesde { get; set; }
         public DateTime? ProximoVencimento { get; set; }
@@ -54,7 +59,7 @@ namespace APIBack.Service
         public decimal Atrasado { get; set; }
         public decimal Saiu { get; set; }
         public decimal APagar { get; set; }
-        /// <summary>Soma das mensalidades dos contratos ativos ou inadimplentes do CRM.</summary>
+        /// <summary>Soma por mes das assinaturas ativas (anual dividido por 12).</summary>
         public decimal ReceitaRecorrente { get; set; }
         public decimal Novas { get; set; }
         public decimal Perdidas { get; set; }
@@ -182,7 +187,7 @@ namespace APIBack.Service
 
     /// <summary>
     /// Leitura e escrita da Gestao central (so super admin). A carteira junta, em uma consulta, a situacao comercial,
-    /// os pedidos dos ultimos 28 dias (sem simulador nem cancelados), os contratos e lancamentos do CRM e as notas abertas.
+    /// os pedidos dos ultimos 28 dias (sem simulador nem cancelados), a assinatura e as cobrancas dela e as notas abertas.
     /// </summary>
     public sealed class GestaoCentralService(NpgsqlDataSource dataSource, TimeProvider? clock = null) : IGestaoCentralService
     {
@@ -201,9 +206,7 @@ SELECT e.id, e.nome_fantasia AS Nome, e.id_empresa AS EmpresaId, emp.nome_fantas
        e.bloqueado_motivo AS BloqueadoMotivo, COALESCE(e.modulos_ativos::text[], ARRAY[]::text[]) AS Modulos,
        " + MotoboyLimites.SqlContratados + @" AS MotoboysContratados,
        COALESCE(ped.p7, 0)::int AS Pedidos7d, COALESCE(ped.p28, 0)::int AS Pedidos28d, ped.ultimo AS UltimoPedidoEm,
-       COALESCE(ct.contratos, 0)::int AS Contratos, ct.status AS ContratoStatus, ct.mensal AS Mensalidade, ct.saas AS MensalidadeSaas,
-       ct.dia AS DiaVencimento,
-       COALESCE(fin.atrasado, 0) AS ValorAtrasado, fin.desde AS AtrasadoDesde, fin.proximo AS ProximoVencimento,
+       COALESCE(ct.contratos, 0)::int AS Contratos, ct.status AS ContratoStatus,
        fin.ultimo_pago AS UltimoPagamentoEm,
        COALESCE(nt.abertas, 0)::int AS NotasAbertas
   FROM estabelecimentos e
@@ -215,28 +218,43 @@ SELECT e.id, e.nome_fantasia AS Nome, e.id_empresa AS EmpresaId, emp.nome_fantas
         WHERE p.id_estabelecimento = e.id AND LEFT(p.data_pedido::text, 10) >= (CURRENT_DATE - 28)::text
           AND COALESCE(p.origem, '') <> 'simulador' AND COALESCE(p.status_pedido, 1) <> 6) ped ON TRUE
   LEFT JOIN LATERAL (
-       SELECT COUNT(*) AS contratos, MIN(c.status::text) AS status,
-              SUM(c.mensalidade_saas + c.mensalidade_marketing) AS mensal, SUM(c.mensalidade_saas) AS saas,
-              MIN(c.dia_vencimento) AS dia
+       SELECT COUNT(*) AS contratos, MIN(c.status::text) AS status
          FROM crm_contrato c
         WHERE c.estabelecimento_id = e.id AND c.status <> 'cancelado') ct ON TRUE
   LEFT JOIN LATERAL (
-       -- Cobranca e pagamento vem da assinatura (comercial_cobranca); o lancamento manual do CRM nao conta como pago nem como atraso.
-       SELECT SUM(cb.valor) FILTER (WHERE cb.status IN ('aberta', 'processando') AND cb.vencimento < @Hoje) AS atrasado,
-              MIN(cb.vencimento) FILTER (WHERE cb.status IN ('aberta', 'processando') AND cb.vencimento < @Hoje) AS desde,
-              MIN(cb.vencimento) FILTER (WHERE cb.status IN ('aberta', 'processando') AND cb.vencimento >= @Hoje) AS proximo,
-              MAX(cb.pago_em) FILTER (WHERE cb.status = 'paga') AS ultimo_pago
-         FROM comercial_cobranca cb
-        WHERE cb.id_estabelecimento = e.id) fin ON TRUE
+       SELECT MAX(cb.pago_em) AS ultimo_pago FROM comercial_cobranca cb WHERE cb.id_estabelecimento = e.id AND cb.status = 'paga') fin ON TRUE
   LEFT JOIN LATERAL (
        SELECT COUNT(*) AS abertas FROM gestao_nota n WHERE n.estabelecimento_id = e.id AND n.concluida_em IS NULL) nt ON TRUE
  ORDER BY e.nome_fantasia;";
-            var rows = await connection.QueryAsync<CarteiraLojaDto>(new CommandDefinition(sql, new { Hoje = Hoje.ToDateTime(TimeOnly.MinValue) }, cancellationToken: ct));
+            var rows = await connection.QueryAsync<CarteiraLojaDto>(new CommandDefinition(sql, cancellationToken: ct));
             // Mesmos nomes de modulo que pacotes e estabelecimentos devolvem (Pedidos, iFood...), nao os do enum (PEDIDOS, IFOOD):
             // a aba Plano e modulos compara as duas listas.
             var lista = rows.Select(r => { r.Modulos = APIBack.Model.Gestao.EstabelecimentoModuleMapper.ToUiModules(string.Empty, r.Modulos).ToArray(); return r; }).ToList();
+            await AnexarAssinaturaAsync(connection, lista, ct);
             await AnexarSaudeAsync(connection, lista, ct);
             return lista;
+        }
+
+        /// <summary>Plano, valor, mes vigente e divida: so da assinatura, com a mesma regra do painel da loja.</summary>
+        private async Task AnexarAssinaturaAsync(NpgsqlConnection connection, List<CarteiraLojaDto> lista, CancellationToken ct)
+        {
+            var assinaturas = await AssinaturaConsulta.CarregarAsync(connection, null, _clock.GetUtcNow(), ct);
+            foreach (var loja in lista)
+            {
+                if (!assinaturas.TryGetValue(loja.Id, out var dados)) continue;
+                loja.EstadoAssinatura = dados.Situacao.Estado;
+                loja.MesVigente = dados.Situacao.MesVigente;
+                if (dados.Divida is { } divida)
+                {
+                    loja.Divida = new DividaResumoDto(divida.Valor, divida.Desde);
+                    loja.ValorAtrasado = divida.Valor;
+                    loja.AtrasadoDesde = FusoComercial.Data(divida.Desde).ToDateTime(TimeOnly.MinValue);
+                }
+                if (dados.ProximoVencimento is { } proximo) loja.ProximoVencimento = FusoComercial.Data(proximo).ToDateTime(TimeOnly.MinValue);
+                if (dados.Assinatura is not { Viva: true } a) continue;
+                loja.Mensalidade = loja.MensalidadeSaas = Periodicidades.PorMes(a.Preco, a.Periodicidade);
+                loja.DiaVencimento = a.Ancora?.Day;
+            }
         }
 
         /// <summary>Mesma decisao do Quadro (SaudeCalculador + limites do banco). Falha de saude nunca derruba a carteira.</summary>
@@ -260,37 +278,45 @@ SELECT e.id, e.nome_fantasia AS Nome, e.id_empresa AS EmpresaId, emp.nome_fantas
         {
             var inicio = new DateOnly(mes.Year, mes.Month, 1);
             var fim = inicio.AddMonths(1);
-            var args = new { Inicio = inicio.ToDateTime(TimeOnly.MinValue), Fim = fim.ToDateTime(TimeOnly.MinValue), Hoje = Hoje.ToDateTime(TimeOnly.MinValue) };
+            var args = new { Inicio = inicio.ToDateTime(TimeOnly.MinValue), Fim = fim.ToDateTime(TimeOnly.MinValue) };
+            // Meia-noite de Brasilia para as datas das cobrancas.
+            var cobrancas = new
+            {
+                Inicio = FusoComercial.InicioDoDia(inicio), Fim = FusoComercial.InicioDoDia(fim), InicioHoje = FusoComercial.InicioDoDia(Hoje),
+                DataInicio = args.Inicio, DataFim = args.Fim
+            };
             await using var connection = await dataSource.OpenConnectionAsync(ct);
-            var dto = await connection.QuerySingleAsync<DinheiroMesDto>(new CommandDefinition(@"
+            // A receber e atrasado contam so mensalidades: upgrade e extra nao pagos nunca sao divida.
+            var dto = await connection.QuerySingleAsync<DinheiroMesDto>(new CommandDefinition($@"
 SELECT
   COALESCE((SELECT SUM(COALESCE(cb.valor_pago, cb.valor)) FROM comercial_cobranca cb WHERE cb.status = 'paga'
              AND cb.pago_em >= @Inicio AND cb.pago_em < @Fim), 0) AS Entrou,
-  COALESCE((SELECT SUM(cb.valor) FROM comercial_cobranca cb WHERE cb.status IN ('aberta', 'processando')
-             AND cb.vencimento >= GREATEST(@Inicio, @Hoje) AND cb.vencimento < @Fim), 0) AS AReceber,
-  COALESCE((SELECT SUM(cb.valor) FROM comercial_cobranca cb WHERE cb.status IN ('aberta', 'processando')
-             AND cb.vencimento < LEAST(@Hoje, @Fim)), 0) AS Atrasado,
+  COALESCE((SELECT SUM(cb.valor) FROM comercial_cobranca cb WHERE cb.tipo = 'ciclo' AND cb.status IN ('aberta', 'processando')
+             AND cb.vencimento >= GREATEST(@Inicio, @InicioHoje) AND cb.vencimento < @Fim), 0) AS AReceber,
+  COALESCE((SELECT SUM({AssinaturaSql.SqlValorDivida("cb")}) FROM comercial_cobranca cb WHERE {AssinaturaSql.SqlEmDivida("cb")}
+             AND {AssinaturaSql.SqlDividaDesde("cb")} < @Fim), 0) AS Atrasado,
   COALESCE((SELECT SUM(COALESCE(z.valor_pago, z.valor)) FROM zippy_conta z WHERE z.status = 'paga'
-             AND z.pago_em >= @Inicio AND z.pago_em < @Fim), 0) AS Saiu,
-  COALESCE((SELECT SUM(z.valor) FROM zippy_conta z WHERE z.status = 'a_pagar' AND z.vencimento < @Fim), 0) AS APagar,
-  COALESCE((SELECT SUM(c.mensalidade_saas + c.mensalidade_marketing) FROM crm_contrato c
-             WHERE c.status IN ('ativo', 'inadimplente')), 0) AS ReceitaRecorrente,
-  COALESCE((SELECT SUM(c.mensalidade_saas + c.mensalidade_marketing) FROM crm_contrato c
-             WHERE c.status <> 'cancelado' AND c.dt_inicio_cobranca >= @Inicio AND c.dt_inicio_cobranca < @Fim), 0) AS Novas,
-  COALESCE((SELECT SUM(c.mensalidade_saas + c.mensalidade_marketing) FROM crm_contrato c
-             WHERE c.status = 'cancelado' AND c.updated_at >= @Inicio AND c.updated_at < @Fim), 0) AS Perdidas;",
-                args, cancellationToken: ct));
+             AND z.pago_em >= @DataInicio AND z.pago_em < @DataFim), 0) AS Saiu,
+  COALESCE((SELECT SUM(z.valor) FROM zippy_conta z WHERE z.status = 'a_pagar' AND z.vencimento < @DataFim), 0) AS APagar,
+  COALESCE((SELECT SUM({PorMes}) FROM assinatura a WHERE a.status = 'ativa'), 0) AS ReceitaRecorrente,
+  COALESCE((SELECT SUM({PorMes}) FROM assinatura a WHERE a.ativada_em >= @Inicio AND a.ativada_em < @Fim), 0) AS Novas,
+  COALESCE((SELECT SUM({PorMes}) FROM assinatura a WHERE a.status = 'encerrada' AND a.ativada_em IS NOT NULL
+             AND a.encerrada_em >= @Inicio AND a.encerrada_em < @Fim), 0) AS Perdidas;",
+                cobrancas, cancellationToken: ct));
             dto.Mes = inicio.ToString("yyyy-MM");
             dto.EntrouPorTipo = (await connection.QueryAsync<DinheiroTipoDto>(new CommandDefinition(@"
 SELECT cb.tipo AS Tipo, SUM(COALESCE(cb.valor_pago, cb.valor)) AS Valor FROM comercial_cobranca cb
  WHERE cb.status = 'paga' AND cb.pago_em >= @Inicio AND cb.pago_em < @Fim
- GROUP BY cb.tipo ORDER BY 2 DESC;", args, cancellationToken: ct))).ToList();
+ GROUP BY cb.tipo ORDER BY 2 DESC;", cobrancas, cancellationToken: ct))).ToList();
             dto.SaiuPorCategoria = (await connection.QueryAsync<DinheiroTipoDto>(new CommandDefinition(@"
 SELECT z.categoria AS Tipo, SUM(COALESCE(z.valor_pago, z.valor)) AS Valor FROM zippy_conta z
  WHERE z.status = 'paga' AND z.pago_em >= @Inicio AND z.pago_em < @Fim
  GROUP BY z.categoria ORDER BY 2 DESC;", args, cancellationToken: ct))).ToList();
             return dto;
         }
+
+        /// <summary>Preco por mes de uma assinatura (alias "a").</summary>
+        private const string PorMes = "CASE WHEN a.periodicidade = 'anual' THEN ROUND(a.preco / 12, 2) ELSE a.preco END";
 
         private const string ContaSelect = @"
 SELECT z.id, z.descricao, z.categoria, z.valor, z.estimado, z.vencimento, z.recorrencia, z.responsavel_id AS ResponsavelId,
@@ -315,17 +341,17 @@ SELECT z.id, z.descricao, z.categoria, z.valor, z.estimado, z.vencimento, z.reco
         private static (string Descricao, string Categoria, string Recorrencia) Validar(SalvarContaRequest request)
         {
             var descricao = request.Descricao?.Trim();
-            if (string.IsNullOrEmpty(descricao)) throw new GestaoCentralException(422, "Diga que conta e esta.");
-            if (request.Valor < 0) throw new GestaoCentralException(422, "O valor nao pode ser negativo.");
+            if (string.IsNullOrEmpty(descricao)) throw new GestaoCentralException(422, "Diga que conta é esta.");
+            if (request.Valor < 0) throw new GestaoCentralException(422, "O valor não pode ser negativo.");
             var recorrencia = string.IsNullOrWhiteSpace(request.Recorrencia) ? "unica" : request.Recorrencia.Trim();
-            if (!Recorrencias.Contains(recorrencia)) throw new GestaoCentralException(422, "Recorrencia invalida.");
+            if (!Recorrencias.Contains(recorrencia)) throw new GestaoCentralException(422, "Recorrência inválida.");
             var categoria = string.IsNullOrWhiteSpace(request.Categoria) ? "outros" : request.Categoria.Trim().ToLowerInvariant();
             return (descricao, categoria, recorrencia);
         }
 
         private static async Task<ZippyContaDto> LerContaAsync(NpgsqlConnection connection, NpgsqlTransaction? tx, long id, CancellationToken ct) =>
             await connection.QuerySingleOrDefaultAsync<ZippyContaDto>(new CommandDefinition(ContaSelect + " WHERE z.id = @Id;", new { Id = id }, tx, cancellationToken: ct))
-            ?? throw new GestaoCentralException(404, "Conta nao encontrada.");
+            ?? throw new GestaoCentralException(404, "Conta não encontrada.");
 
         private static Task LogAsync(NpgsqlConnection connection, NpgsqlTransaction? tx, int usuarioId, Guid? loja, string acao, string? detalhe, CancellationToken ct) =>
             connection.ExecuteAsync(new CommandDefinition(
@@ -371,9 +397,9 @@ UPDATE zippy_conta SET descricao = @Descricao, categoria = @Categoria, valor = @
             await using var tx = await connection.BeginTransactionAsync(ct);
             await connection.ExecuteAsync(new CommandDefinition("SELECT 1 FROM zippy_conta WHERE id = @Id FOR UPDATE;", new { Id = id }, tx, cancellationToken: ct));
             var conta = await LerContaAsync(connection, tx, id, ct);
-            if (conta.Status != "a_pagar") throw new GestaoCentralException(409, "Esta conta ja foi paga ou cancelada.");
+            if (conta.Status != "a_pagar") throw new GestaoCentralException(409, "Esta conta já foi paga ou cancelada.");
             var valor = request.ValorPago ?? conta.Valor;
-            if (valor < 0) throw new GestaoCentralException(422, "O valor nao pode ser negativo.");
+            if (valor < 0) throw new GestaoCentralException(422, "O valor não pode ser negativo.");
             await connection.ExecuteAsync(new CommandDefinition(@"
 UPDATE zippy_conta SET status = 'paga', valor_pago = @Valor, pago_em = NOW(), pago_por = @Usuario, estimado = FALSE WHERE id = @Id;",
                 new { Id = id, Valor = valor, Usuario = usuarioId }, tx, cancellationToken: ct));
@@ -398,7 +424,7 @@ SELECT descricao, categoria, @Valor, TRUE, @Vencimento, recorrencia, responsavel
             await using var connection = await dataSource.OpenConnectionAsync(ct);
             await using var tx = await connection.BeginTransactionAsync(ct);
             var conta = await LerContaAsync(connection, tx, id, ct);
-            if (conta.Status == "paga") throw new GestaoCentralException(409, "Conta paga nao pode ser cancelada.");
+            if (conta.Status == "paga") throw new GestaoCentralException(409, "Conta paga não pode ser cancelada.");
             await connection.ExecuteAsync(new CommandDefinition("UPDATE zippy_conta SET status = 'cancelada' WHERE id = @Id;", new { Id = id }, tx, cancellationToken: ct));
             await LogAsync(connection, tx, usuarioId, null, "conta_cancelada", conta.Descricao, ct);
             await tx.CommitAsync(ct);
@@ -422,7 +448,7 @@ SELECT chave, adiado_ate AS AdiadoAte, dispensado_motivo AS DispensadoMotivo FRO
         private static string Chave(string chave)
         {
             var value = chave?.Trim() ?? string.Empty;
-            if (value.Length is 0 or > 200) throw new GestaoCentralException(422, "Pendencia invalida.");
+            if (value.Length is 0 or > 200) throw new GestaoCentralException(422, "Pendência inválida.");
             return value;
         }
 
@@ -441,7 +467,7 @@ ON CONFLICT (chave) DO UPDATE SET adiado_ate = EXCLUDED.adiado_ate, dispensado_m
         {
             var key = Chave(chave);
             var texto = motivo?.Trim();
-            if (string.IsNullOrEmpty(texto)) throw new GestaoCentralException(422, "Diga por que esta pendencia pode ser ignorada.");
+            if (string.IsNullOrEmpty(texto)) throw new GestaoCentralException(422, "Diga por que esta pendência pode ser ignorada.");
             await using var connection = await dataSource.OpenConnectionAsync(ct);
             await connection.ExecuteAsync(new CommandDefinition(@"
 INSERT INTO gestao_pendencia_estado (chave, adiado_ate, dispensado_motivo, usuario_id, atualizado_em) VALUES (@Chave, NULL, @Motivo, @Usuario, NOW())
@@ -474,7 +500,7 @@ SELECT n.id, n.texto, n.lembrar_em AS LembrarEm, n.concluida_em AS ConcluidaEm, 
 INSERT INTO gestao_nota (estabelecimento_id, texto, lembrar_em, autor_id)
 SELECT @Loja, @Texto, @Lembrar, @Usuario WHERE EXISTS (SELECT 1 FROM estabelecimentos WHERE id = @Loja) RETURNING id;",
                 new { Loja = estabelecimentoId, Texto = texto, Lembrar = request.LembrarEm?.Date, Usuario = usuarioId }, cancellationToken: ct))
-                ?? throw new GestaoCentralException(404, "Loja nao encontrada.");
+                ?? throw new GestaoCentralException(404, "Loja não encontrada.");
             return (await NotasAsync(estabelecimentoId, ct)).First(nota => nota.Id == id);
         }
 
@@ -484,7 +510,7 @@ SELECT @Loja, @Texto, @Lembrar, @Usuario WHERE EXISTS (SELECT 1 FROM estabelecim
             var linhas = await connection.ExecuteAsync(new CommandDefinition(
                 "UPDATE gestao_nota SET concluida_em = NOW() WHERE id = @Id AND estabelecimento_id = @Loja AND concluida_em IS NULL;",
                 new { Id = notaId, Loja = estabelecimentoId }, cancellationToken: ct));
-            if (linhas == 0) throw new GestaoCentralException(404, "Nota nao encontrada ou ja concluida.");
+            if (linhas == 0) throw new GestaoCentralException(404, "Nota não encontrada ou já concluída.");
         }
 
         public async Task<IReadOnlyList<LinhaDoTempoItemDto>> LinhaDoTempoAsync(Guid estabelecimentoId, CancellationToken ct = default)
@@ -500,7 +526,7 @@ SELECT * FROM (
   UNION ALL
   SELECT COALESCE(cb.pago_em, cb.vencimento), 'cobranca',
          CASE WHEN cb.status = 'paga' THEN 'pago' WHEN cb.status = 'cancelada' THEN 'cancelado'
-              WHEN cb.vencimento < NOW() THEN 'atrasado' ELSE 'a_vencer' END,
+              WHEN " + AssinaturaSql.SqlEmDivida("cb") + @" THEN 'atrasado' ELSE 'a_vencer' END,
          CONCAT(cb.descricao, ' · R$ ', TO_CHAR(CASE WHEN cb.status = 'paga' THEN COALESCE(cb.valor_pago, cb.valor) ELSE cb.valor END, 'FM999G990D00')), NULL
     FROM comercial_cobranca cb
    WHERE cb.id_estabelecimento = @Id AND cb.vencimento <= NOW() + INTERVAL '40 days'
@@ -517,7 +543,7 @@ SELECT * FROM (
   UNION ALL
   SELECT g.criado_em, 'gestao', g.acao, g.detalhe, u.nome
     FROM gestao_acao_log g LEFT JOIN usuario u ON u.id = g.usuario_id WHERE g.estabelecimento_id = @Id
-) t ORDER BY Em DESC LIMIT 200;", new { Id = estabelecimentoId }, cancellationToken: ct))).ToList();
+) t ORDER BY Em DESC LIMIT 200;", new { Id = estabelecimentoId, InicioHoje = FusoComercial.InicioDeHoje(_clock.GetUtcNow()) }, cancellationToken: ct))).ToList();
         }
 
         public async Task<IReadOnlyList<UltimoAcessoDto>> UltimosAcessosAsync(CancellationToken ct = default)
@@ -548,7 +574,7 @@ SELECT n.id, n.estabelecimento_id AS EstabelecimentoId, e.nome_fantasia AS Loja,
 INSERT INTO gestao_acao_log (usuario_id, estabelecimento_id, acao, detalhe)
 SELECT @Usuario, e.id, 'entrou_na_loja', NULL FROM estabelecimentos e WHERE e.id = @Loja;",
                 new { Usuario = usuarioId, Loja = estabelecimentoId }, cancellationToken: ct));
-            if (linhas == 0) throw new GestaoCentralException(404, "Loja nao encontrada.");
+            if (linhas == 0) throw new GestaoCentralException(404, "Loja não encontrada.");
         }
 
         public async Task<IReadOnlyList<MotoboyDaLojaDto>> MotoboysDaLojaAsync(Guid estabelecimentoId, CancellationToken ct = default)

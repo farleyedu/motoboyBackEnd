@@ -25,7 +25,7 @@ namespace APIBack.Payments.Controllers
         }
 
         private Guid Loja() => HttpContext.GetEstabelecimentoId() ?? throw PagamentoException.SemPermissao("Selecione uma loja.");
-        private int Usuario() => HttpContext.GetUserId() ?? throw PagamentoException.SemPermissao("Usuario nao autenticado.");
+        private int Usuario() => HttpContext.GetUserId() ?? throw PagamentoException.SemPermissao("Usuário não autenticado.");
 
         [HttpGet]
         [RequirePermission("Financeiro", "visualizar")]

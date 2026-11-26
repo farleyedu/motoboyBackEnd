@@ -67,7 +67,7 @@ namespace APIBack.Payments.MercadoPago
         {
             ContextoCredencial.Loja => "loja",
             ContextoCredencial.RecebedorZippy => "zippy",
-            _ => throw new PagamentoException(PagamentoCodigos.CredencialIncompativel, 500, "A aplicacao MP nao recebe pagamentos.")
+            _ => throw new PagamentoException(PagamentoCodigos.CredencialIncompativel, 500, "A aplicação MP não recebe pagamentos.")
         };
 
         /// <summary>Barra o uso do token errado: origem x contexto e, para loja, a loja e a conta exatas da intencao.</summary>
@@ -82,7 +82,7 @@ namespace APIBack.Payments.MercadoPago
                 _ => false
             };
             if (!ok)
-                throw new PagamentoException(PagamentoCodigos.CredencialIncompativel, 500, "Credencial de pagamento incompativel com a operacao.");
+                throw new PagamentoException(PagamentoCodigos.CredencialIncompativel, 500, "Credencial de pagamento incompatível com a operação.");
         }
     }
 
@@ -132,7 +132,7 @@ SELECT id, client_id, client_secret_cifrado, public_key, webhook_secret_cifrado,
             if (linha != null)
             {
                 var secret = _protector.Revelar(linha.ClientSecretCifrado, SegredoContexto.AplicacaoClientSecret(linha.Id))
-                    ?? throw PagamentoException.NaoConfigurado("Segredo da aplicacao Mercado Pago nao abre com a chave mestra atual.");
+                    ?? throw PagamentoException.NaoConfigurado("Segredo da aplicação Mercado Pago não abre com a chave mestra atual.");
                 return new CredencialAplicacao
                 {
                     Ambiente = amb, ClientId = linha.ClientId, ClientSecret = secret, PublicKey = linha.PublicKey, RedirectUri = linha.RedirectUri,
@@ -153,7 +153,7 @@ SELECT id, client_id, client_secret_cifrado, public_key, webhook_secret_cifrado,
             if (amb == AmbienteAtivo && !string.IsNullOrWhiteSpace(_options.BootstrapWebhookSecret))
                 return new CredencialAplicacao { Ambiente = amb, WebhookSecret = _options.BootstrapWebhookSecret };
 
-            throw PagamentoException.NaoConfigurado("Aplicacao Mercado Pago nao configurada para este ambiente.");
+            throw PagamentoException.NaoConfigurado("Aplicação Mercado Pago não configurada para este ambiente.");
         }
 
         public async Task<CredencialRecebedora> RecebedorZippyAsync(string? ambiente = null, CancellationToken ct = default)
@@ -168,7 +168,7 @@ SELECT id, NULL::uuid AS id_estabelecimento, mp_user_id, access_token_cifrado, N
             {
                 if (linha.Estado != "ativa") throw PagamentoException.NaoConfigurado("Conta recebedora da Zippy inativa.");
                 var token = _protector.Revelar(linha.AccessTokenCifrado, SegredoContexto.ZippyAccessToken(linha.Id))
-                    ?? throw PagamentoException.NaoConfigurado("Token da conta Zippy nao abre com a chave mestra atual.");
+                    ?? throw PagamentoException.NaoConfigurado("Token da conta Zippy não abre com a chave mestra atual.");
                 return new CredencialRecebedora
                 {
                     Contexto = ContextoCredencial.RecebedorZippy, Ambiente = amb, IdContaZippy = linha.Id, MpUserId = linha.MpUserId,
@@ -176,7 +176,7 @@ SELECT id, NULL::uuid AS id_estabelecimento, mp_user_id, access_token_cifrado, N
                 };
             }
 
-            throw PagamentoException.NaoConfigurado("Conta recebedora da Zippy nao configurada para este ambiente.");
+            throw PagamentoException.NaoConfigurado("Conta recebedora da Zippy não configurada para este ambiente.");
         }
 
         public async Task<CredencialRecebedora> LojaAsync(Guid idEstabelecimento, string? ambiente = null, CancellationToken ct = default)
@@ -186,7 +186,7 @@ SELECT id, NULL::uuid AS id_estabelecimento, mp_user_id, access_token_cifrado, N
             var linha = await cx.QueryFirstOrDefaultAsync<LinhaConta>(new CommandDefinition(SqlContaLoja + @"
  WHERE id_estabelecimento = @Loja AND ambiente = @Amb AND estado IN ('ativa', 'expirada', 'erro')", new { Loja = idEstabelecimento, Amb = amb }, cancellationToken: ct));
             if (linha == null)
-                throw PagamentoException.Regra(PagamentoCodigos.ContaLojaNaoConectada, "A loja ainda nao conectou a conta Mercado Pago.");
+                throw PagamentoException.Regra(PagamentoCodigos.ContaLojaNaoConectada, "A loja ainda não conectou a conta Mercado Pago.");
             return await AbrirContaLojaAsync(linha, amb, ct);
         }
 

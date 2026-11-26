@@ -22,7 +22,7 @@ namespace APIBack.Payments.Controllers
             var http = context.HttpContext;
             if (http.GetUserId() == null)
             {
-                context.Result = new ObjectResult(ApiResponse<object>.Fail("Usuario nao autenticado.", PagamentoCodigos.NaoAutenticado)) { StatusCode = 401 };
+                context.Result = new ObjectResult(ApiResponse<object>.Fail("Usuário não autenticado.", PagamentoCodigos.NaoAutenticado)) { StatusCode = 401 };
                 return;
             }
             if (!http.IsSuperAdmin())

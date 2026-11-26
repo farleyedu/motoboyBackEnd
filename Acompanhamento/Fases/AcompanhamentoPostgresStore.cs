@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
@@ -460,12 +460,11 @@ validade_ate::timestamp AS ValidadeAte, atualizada_em AS AtualizadaEm, passagem_
                 return row?.ToDto();
             }
 
+            /// <summary>Mensalidade vencida. Fatura no prazo, upgrade e extra nao pagos nao contam.</summary>
             public async Task<bool> CobrancaEmAbertoAsync(CancellationToken ct)
             {
                 if (!Estado.EstabelecimentoId.HasValue || !await AcompanhamentoSql.TabelaExisteAsync(_cx, _tx, "comercial_cobranca", ct)) return false;
-                return await _cx.ExecuteScalarAsync<bool>(new CommandDefinition(@"
-SELECT EXISTS (SELECT 1 FROM comercial_cobranca WHERE id_estabelecimento = @Loja AND status IN ('aberta', 'processando'));",
-                    new { Loja = Estado.EstabelecimentoId }, _tx, cancellationToken: ct));
+                return await APIBack.Payments.Assinaturas.AssinaturaSql.DividaAsync(_cx, _tx, Estado.EstabelecimentoId.Value, DateTimeOffset.UtcNow, ct) != null;
             }
 
             public async Task<PropostaVersao?> PropostaVigenteAsync(CancellationToken ct) =>
@@ -650,7 +649,8 @@ UPDATE acompanhamento
                         break;
 
                     case EfeitoPassagem.AtivarPlano:
-                        await SituacaoAsync("ativar", a, ct, plano: Limpo(d.Plano)?.ToLowerInvariant());
+                        // "Primeira cobranca no dia seguinte": a assinatura nasce (ou muda) junto.
+                        await SituacaoAsync("ativar", a, ct, plano: Limpo(d.Plano)?.ToLowerInvariant(), primeiraCobranca: a.CobrancaIniciaEm);
                         await ExecAsync(@"
 UPDATE acompanhamento SET teste_concluido_em = COALESCE(teste_concluido_em, NOW()), forma_pagamento = @Forma, cobranca_inicia_em = @Cobranca
  WHERE id = @Id;", new { Id = Estado.Id, Forma = Limpo(d.FormaPagamento)?.ToLowerInvariant(), Cobranca = a.CobrancaIniciaEm }, ct);
@@ -659,7 +659,9 @@ UPDATE acompanhamento SET teste_concluido_em = COALESCE(teste_concluido_em, NOW(
                     case EfeitoPassagem.VoltarAOperar:
                         var plano = await _cx.ExecuteScalarAsync<string?>(new CommandDefinition(
                             "SELECT plano_comercial FROM estabelecimentos WHERE id = @Id;", new { Id = ExigirLoja() }, _tx, cancellationToken: ct));
-                        await SituacaoAsync("ativar", a, ct, plano: string.IsNullOrWhiteSpace(plano) ? "personalizado" : plano);
+                        // A cobranca seguiu durante a reimplantacao: a assinatura nao muda.
+                        await SituacaoAsync("ativar", a, ct, plano: string.IsNullOrWhiteSpace(plano) ? "personalizado" : plano,
+                            assinatura: AssinaturaNaAtivacao.Manter);
                         break;
 
                     case EfeitoPassagem.Reimplantar:
@@ -678,7 +680,7 @@ UPDATE acompanhamento SET teste_concluido_em = COALESCE(teste_concluido_em, NOW(
                     case EfeitoPassagem.Encerrar:
                     case EfeitoPassagem.PararLoja:
                         await EncerrarAbertosAsync(a.Motivo ?? a.Definicao.Nome, a.UsuarioId, propostas: true, passo: true, ct);
-                        await SituacaoAsync("bloquear", a, ct, motivo: a.Motivo ?? "Saída encerrada");
+                        await SituacaoAsync("bloquear", a, ct, motivo: a.Motivo ?? "Saída encerrada", pararCobranca: true);
                         break;
 
                     case EfeitoPassagem.DeclararPausa:
@@ -691,8 +693,8 @@ UPDATE acompanhamento SET teste_concluido_em = COALESCE(teste_concluido_em, NOW(
 
                     case EfeitoPassagem.Perder:
                         await EncerrarAbertosAsync(a.Motivo, a.UsuarioId, propostas: true, passo: true, ct);
-                        if (Estado.EstabelecimentoId.HasValue && Estado.SituacaoLoja != SituacoesComerciais.Bloqueado)
-                            await SituacaoAsync("bloquear", a, ct, motivo: "Perdido: " + a.Motivo);
+                        if (Estado.EstabelecimentoId.HasValue)
+                            await SituacaoAsync("bloquear", a, ct, motivo: "Perdido: " + a.Motivo, pararCobranca: true);
                         await ExecAsync("UPDATE acompanhamento SET retomar_em = @Em, teste_quando_pronta = FALSE WHERE id = @Id;",
                             new { Id = Estado.Id, Em = a.RetomarEm }, ct);
                         await CrmAsync(@"
@@ -803,11 +805,12 @@ SELECT id, nome_empresa AS NomeEmpresa, nome_contato AS NomeContato, telefone, e
             }
 
             private async Task SituacaoAsync(string acao, PassagemAplicacao a, CancellationToken ct, string? plano = null, string? motivo = null,
-                int? dias = null, bool zerarTeste = false)
+                int? dias = null, bool zerarTeste = false, DateOnly? primeiraCobranca = null,
+                AssinaturaNaAtivacao assinatura = AssinaturaNaAtivacao.Acompanhar, bool pararCobranca = false)
             {
                 await SituacaoComercialService.AplicarNaTransacaoAsync(_cx, _tx, ExigirLoja(),
-                    new AcaoSituacaoRequest(acao, motivo ?? a.Motivo, plano, null), a.UsuarioId, OrigensSituacao.Gestao,
-                    SituacaoComercialService.AcoesInternas.Acompanhamento, ct, dias, zerarTeste);
+                    new AcaoSituacaoRequest(acao, motivo ?? a.Motivo, plano, null, pararCobranca), a.UsuarioId, OrigensSituacao.Gestao,
+                    SituacaoComercialService.AcoesInternas.Acompanhamento, ct, dias, zerarTeste, primeiraCobranca, assinatura);
                 _situacaoMudou = true;
             }
 

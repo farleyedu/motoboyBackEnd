@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
@@ -24,10 +24,11 @@ namespace APIBack.Tests.Integration;
 
 /// <summary>
 /// Assinaturas contra PostgreSQL real (TEST_DELIVERY_DATABASE) e um MP falso. Prova: contratar e pagar sao idempotentes (duplo clique),
-/// o Pix cai na conta da ZIPPY, o pagamento ativa o plano uma vez so, Pix tardio vira excedente, a inadimplencia passa por
-/// atraso -> suspensa -> volta sozinha ao pagar, upgrade cobra o proporcional, downgrade espera o fim do ciclo, cancelamento mantem o acesso.
+/// o Pix cai na conta da ZIPPY, o pagamento ativa o plano uma vez so, Pix tardio vira excedente, atraso nunca bloqueia nem suspende,
+/// upgrade cobra o proporcional, downgrade espera o fim do ciclo, cancelamento mantem o acesso. As regras de 26/11 estão em
+/// AssinaturaDatabaseTests.Regras.cs.
 /// </summary>
-public sealed class AssinaturaDatabaseTests
+public sealed partial class AssinaturaDatabaseTests
 {
     private const long MpUserZippy = 777001;
 
@@ -100,35 +101,39 @@ public sealed class AssinaturaDatabaseTests
     }
 
     [DeliveryDatabaseFact]
-    public async Task InadimplenciaSuspendeEPagamentoReativaSozinho()
+    public async Task TrintaDiasDeAtrasoNaoBloqueiamNemSuspendemEPagarQuita()
     {
         await using var db = await Banco.Criar(situacao: "ativo");
         var svc = db.Get<IAssinaturaService>();
         await svc.ContratarAsync(db.Loja, new ContratarRequest { Plano = "rota", IdempotencyKey = "k" }, 7);
         var c = (await svc.CobrancasAsync(db.Loja)).Single();
-        // A fatura venceu ha 3 dias.
-        await db.Execute("UPDATE comercial_cobranca SET vencimento = NOW() - INTERVAL '3 days'");
+        await db.Execute("UPDATE comercial_cobranca SET vencimento = NOW() - INTERVAL '30 days'");
         var worker = db.Worker();
         await worker.RodarAsync(DateTimeOffset.UtcNow, CancellationToken.None);
+        await worker.RodarAsync(DateTimeOffset.UtcNow, CancellationToken.None);
+
         Assert.Equal("em_atraso", await db.Scalar<string>("SELECT financeiro FROM assinatura"));
-        Assert.True(await db.Scalar<bool>("SELECT EXISTS (SELECT 1 FROM comercial_aviso WHERE tipo = 'atraso')"));
-        Assert.True(await db.Scalar<bool>("SELECT EXISTS (SELECT 1 FROM comercial_aviso WHERE tipo = 'vencimento')"));
-
-        await db.Execute("UPDATE comercial_cobranca SET vencimento = NOW() - INTERVAL '8 days'");
-        await worker.RodarAsync(DateTimeOffset.UtcNow, CancellationToken.None);
-        await worker.RodarAsync(DateTimeOffset.UtcNow, CancellationToken.None);
-        Assert.Equal("suspensa", await db.Scalar<string>("SELECT financeiro FROM assinatura"));
-        Assert.Equal(1, await db.Scalar<long>("SELECT count(*) FROM comercial_aviso WHERE tipo = 'suspensa'"));
+        Assert.Equal("ativo", await db.Scalar<string>("SELECT situacao_comercial FROM estabelecimentos"));
+        Assert.Equal(0, await db.Scalar<long>("SELECT count(*) FROM comercial_aviso WHERE tipo IN ('suspensa', 'antes_bloqueio') OR mensagem ILIKE '%suspen%'"));
         var painel = await svc.PainelAsync(db.Loja, true);
-        Assert.Equal("suspenso", painel.Assinatura!.Acesso);
+        Assert.Equal("devendo", painel.Estado);
+        Assert.Equal("atrasado", painel.MesVigente);
+        Assert.Equal(249m, painel.Divida!.Valor);
+        Assert.Equal("tolerancia", painel.Assinatura!.Acesso);
+        Assert.Equal(c.Id, painel.Assinatura.ProximaCobranca!.Id);
+        Assert.True(painel.Assinatura.ProximaCobranca.ContaComoDivida);
+        // A situação lida pelo servidor não pede bloqueio nenhum.
+        var situacao = await db.Situacao().ObterAsync(db.Loja);
+        Assert.Equal("ativo", situacao!.Situacao);
+        Assert.Equal("em_atraso", situacao.Financeiro);
+        Assert.Null(situacao.SuspensaEm);
 
-        // Pagamento confirmado: volta na hora, sem esperar o worker.
         await svc.PagarAsync(db.Loja, c.Id, new PagarCobrancaRequest { Metodo = "pix" }, 7);
         var mpId = db.Mp.Pagamentos.Keys.Single();
         db.Mp.Aprovar(mpId);
         await db.Get<IPagamentoSincronizador>().SincronizarAsync(await db.Get<IMercadoPagoCredencialResolver>().RecebedorZippyAsync(), mpId, "webhook");
         Assert.Equal("em_dia", await db.Scalar<string>("SELECT financeiro FROM assinatura"));
-        Assert.True(await db.Scalar<bool>("SELECT EXISTS (SELECT 1 FROM comercial_aviso WHERE tipo = 'reativada')"));
+        Assert.Equal("em_dia", (await svc.PainelAsync(db.Loja, true)).Estado);
     }
 
     [DeliveryDatabaseFact]
@@ -188,7 +193,8 @@ public sealed class AssinaturaDatabaseTests
     {
         await using var db = await Banco.Criar(situacao: "ativo");
         var svc = db.Get<IAssinaturaService>();
-        var produto = await db.Scalar<long>("SELECT id FROM produtos_avulsos LIMIT 1");
+        var produto = await db.Scalar<long>("SELECT id FROM produtos_avulsos ORDER BY id LIMIT 1");
+        await db.Assinar("rota");
         var c1 = await svc.ComprarAsync(db.Loja, new CompraRequest { ProdutoAvulsoId = produto, Quantidade = 2, IdempotencyKey = "a" }, 7);
         var c2 = await svc.ComprarAsync(db.Loja, new CompraRequest { ProdutoAvulsoId = produto, Quantidade = 2, IdempotencyKey = "a" }, 7);
         var c3 = await svc.ComprarAsync(db.Loja, new CompraRequest { ProdutoAvulsoId = produto, Quantidade = 2, IdempotencyKey = "b" }, 7);
@@ -230,7 +236,7 @@ public sealed class AssinaturaDatabaseTests
         await db.Worker().RodarAsync(DateTimeOffset.UtcNow.AddDays(16), CancellationToken.None);
     }
 
-    private sealed class Banco : IAsyncDisposable
+    private sealed partial class Banco : IAsyncDisposable
     {
         public Guid Loja { get; } = Guid.NewGuid();
         public MpFalso Mp { get; } = new();
@@ -255,7 +261,9 @@ public sealed class AssinaturaDatabaseTests
             await db.Execute(@"
 CREATE TYPE modulo_enum AS ENUM ('GERAL','CARDAPIO','CARDAPIOWEB','PEDIDOS','CLIENTES','IMPRESSAO','IFOOD','WHATSAPP','MAPA','DELIVERY','REMUNERACAO','INTELIGENCIA','FINANCEIRO');
 CREATE TABLE estabelecimentos (id uuid PRIMARY KEY, nome_fantasia text, situacao_comercial text NOT NULL, plano_comercial text, motoboys_base int NOT NULL DEFAULT 0,
-  modulos_ativos modulo_enum[] NOT NULL DEFAULT '{}', operacao_iniciada_em timestamptz, teste_termina_em timestamptz);
+  modulos_ativos modulo_enum[] NOT NULL DEFAULT '{}', operacao_iniciada_em timestamptz, teste_termina_em timestamptz, bloqueado_em timestamptz, bloqueado_por int,
+  bloqueado_motivo text, data_atualizacao timestamptz, data_criacao timestamptz DEFAULT NOW(), id_empresa uuid, url_logo text, status text);
+CREATE TABLE gestao_acao_log (id bigserial PRIMARY KEY, usuario_id int, estabelecimento_id uuid, acao text NOT NULL, detalhe text, criado_em timestamptz NOT NULL DEFAULT NOW());
 CREATE TABLE conversas (id uuid PRIMARY KEY);
 CREATE TABLE clientes (id uuid PRIMARY KEY);
 CREATE TABLE cardapio_pedido_publico (id uuid PRIMARY KEY, id_estabelecimento uuid, status_pagamento text, updated_at timestamptz);
@@ -265,9 +273,9 @@ CREATE TABLE usuario (id int PRIMARY KEY, nome text);
 CREATE TABLE estabelecimento_situacao_log (id bigserial PRIMARY KEY, estabelecimento_id uuid, acao text, situacao_antes text, situacao_depois text, motivo text,
   usuario_id int, detalhes jsonb, criado_em timestamptz DEFAULT NOW());
 CREATE TABLE pacotes_comerciais (chave text PRIMARY KEY, nome text, modulos_ativos modulo_enum[], motoboys_base int, preco numeric(10,2), preco_anual numeric(10,2),
-  cor text, icone text, frase text, arquivado boolean DEFAULT FALSE, ordem int DEFAULT 1);
+  cor text, icone text, frase text, arquivado boolean DEFAULT FALSE, ordem int DEFAULT 1, atualizado_em timestamptz, atualizado_por int, pacotes_motoboy_base int);
 CREATE TABLE produtos_avulsos (id bigserial PRIMARY KEY, nome text, preco numeric(10,2), modulos_ativos modulo_enum[] DEFAULT '{}', motoboys int DEFAULT 0,
-  cor text, arquivado boolean DEFAULT FALSE);
+  cor text, arquivado boolean DEFAULT FALSE, atualizado_em timestamptz);
 CREATE TABLE motoboy_pacotes (id bigserial PRIMARY KEY, estabelecimento_id uuid, quantidade int CHECK (quantidade IN (3, 7)), periodicidade text,
   inicio_utc timestamptz, fim_utc timestamptz, lancado_por int, lancado_em timestamptz DEFAULT NOW(), cancelado_em timestamptz, cancelado_por int);
 INSERT INTO pacotes_comerciais VALUES
@@ -281,6 +289,8 @@ VALUES (@L, 'Loja', @S, NOW() - INTERVAL '5 days', CASE WHEN @S = 'teste' THEN N
             await db.Execute(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Migrations", "Delivery", "20261031_01_mercadopago_nucleo.sql")));
             await db.Execute(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Migrations", "Delivery", "20261102_60_mercadopago_orders.sql")));
             await db.Execute(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Migrations", "Delivery", "20261101_40_assinaturas.sql")));
+            await db.Execute(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Migrations", "Delivery", "20261104_10_pagamentos_multigateway.sql")));
+            await db.Execute(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Migrations", "Delivery", "20261210_01_assinatura_regras.sql")));
 
             var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
             {
@@ -308,6 +318,14 @@ INSERT INTO mp_conta_zippy (id, ambiente, mp_user_id, mp_user_id_mascarado, acce
         }
 
         public async Task Execute(string sql, object? args = null) { await using var cx = await _source.OpenConnectionAsync(); await cx.ExecuteAsync(sql, args); }
+        public ValueTask<NpgsqlConnection> Abrir() => _source.OpenConnectionAsync();
+        public APIBack.Service.PacotesComerciaisService Catalogo() => new(_source);
+        public string RaizDoProjeto()
+        {
+            var pasta = new DirectoryInfo(AppContext.BaseDirectory);
+            while (pasta != null && !File.Exists(Path.Combine(pasta.FullName, "APIBack.csproj"))) pasta = pasta.Parent;
+            return pasta?.FullName ?? AppContext.BaseDirectory;
+        }
         public async Task<T> Scalar<T>(string sql) { await using var cx = await _source.OpenConnectionAsync(); return (await cx.ExecuteScalarAsync<T>(sql))!; }
 
         public async ValueTask DisposeAsync()
@@ -328,6 +346,7 @@ INSERT INTO mp_conta_zippy (id, ambiente, mp_user_id, mp_user_id_mascarado, acce
         public List<Criacao> Criacoes { get; } = new();
         public long Collector { get; set; }
         public bool CancelarFalha { get; set; }
+        public ConcurrentDictionary<string, JsonObject> Preapprovals { get; } = new();
 
         public void Aprovar(long id)
         {
@@ -361,6 +380,23 @@ INSERT INTO mp_conta_zippy (id, ambiente, mp_user_id, mp_user_id_mascarado, acce
                 return MpOrdersFalso.Resposta(Pagamentos[id]);
             }
             var partes = caminho.Split('/');
+            if (caminho.StartsWith("v1/card_tokens/", StringComparison.Ordinal)) return Json(new { last_four_digits = "4242" });
+            if (request.Method == HttpMethod.Post && caminho == "preapproval")
+            {
+                var idPre = "pre" + (Preapprovals.Count + 1);
+                var criado = JsonNode.Parse(corpo!.ToJsonString())!.AsObject();
+                criado["id"] = idPre;
+                criado["status"] = "authorized";
+                Preapprovals[idPre] = criado;
+                return Json(criado);
+            }
+            if (partes.Length == 2 && partes[0] == "preapproval" && Preapprovals.TryGetValue(partes[1], out var existente))
+            {
+                if (request.Method == HttpMethod.Put && corpo!["status"] != null) existente["status"] = corpo["status"]!.GetValue<string>();
+                if (request.Method == HttpMethod.Put && corpo!["auto_recurring"] is JsonObject valor)
+                    existente["auto_recurring"]!["transaction_amount"] = valor["transaction_amount"]!.GetValue<decimal>();
+                return Json(existente);
+            }
             if (partes.Length >= 3 && partes[1] == "orders" && MpOrdersFalso.TentaPagamento(partes[2], out var pid) && Pagamentos.TryGetValue(pid, out var pag))
             {
                 if (request.Method == HttpMethod.Get && partes.Length == 3) return MpOrdersFalso.Resposta(pag);

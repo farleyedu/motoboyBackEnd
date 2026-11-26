@@ -1,5 +1,5 @@
-using System.Threading.Tasks;
-using APIBack.DTOs.Common;
+﻿using System.Threading.Tasks;
+
 using APIBack.Extensions;
 using APIBack.Service;
 using Microsoft.AspNetCore.Http;
@@ -40,20 +40,7 @@ namespace APIBack.Middleware
                         : new System.Collections.Generic.Dictionary<string, object?> { ["motivo"] = situacao.BloqueadoMotivo }));
                 return;
             }
-            // Falta de pagamento (ou assinatura encerrada): so as operacoes novas param. Ler, pagar, suporte e entregas em rota seguem.
-            if (situacao?.Financeiro is "suspensa" or "encerrada" &&
-                APIBack.Payments.Assinaturas.AcessoFinanceiroRules.Bloqueia(context.Request.Path.Value, context.Request.Method,
-                    SituacaoComercialRules.PermitidoQuandoBloqueado(context.Request.Path.Value, context.Request.Method)))
-            {
-                context.Response.StatusCode = StatusCodes.Status403Forbidden;
-                await context.Response.WriteAsJsonAsync(ApiResponse<object>.Fail(
-                    situacao.Financeiro == "encerrada"
-                        ? "A assinatura desta loja terminou. Contrate um plano para voltar a criar pedidos."
-                        : "Operacoes novas suspensas por falta de pagamento. Pague a fatura em aberto e o acesso volta sozinho.",
-                    APIBack.Payments.Assinaturas.AcessoFinanceiroRules.CodigoSuspensa,
-                    new System.Collections.Generic.Dictionary<string, object?> { ["financeiro"] = situacao.Financeiro, ["comoResolver"] = "/apps/configuracoes/plano" }));
-                return;
-            }
+            // Atraso, teste vencido e assinatura terminada NAO travam nada: so a Gestao bloqueia uma loja.
             if (situacao?.Situacao == SituacoesComerciais.Implantacao &&
                 SituacaoComercialRules.OperacaoExigeInicio(context.Request.Path.Value, context.Request.Method))
             {
@@ -61,7 +48,7 @@ namespace APIBack.Middleware
                 // Mensagem curta e as 3 principais pendencias com o caminho de correcao (o front ja trata o 403 e o code).
                 var pendencias = prontidao == null ? null : await TresPrincipaisAsync(prontidao, estabelecimentoId.Value, context);
                 await context.Response.WriteAsJsonAsync(ErrosOperacionais.Corpo(ErrosOperacionais.OperacaoNaoIniciada,
-                    "A operacao desta loja ainda nao foi iniciada.", pendencias));
+                    "A operação desta loja ainda não foi iniciada.", pendencias));
                 return;
             }
 

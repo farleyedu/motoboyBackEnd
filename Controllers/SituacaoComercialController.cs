@@ -39,7 +39,7 @@ namespace APIBack.Controllers
                 return BadRequest(ApiResponse<object>.Fail("Selecione um estabelecimento.", "ESTABELECIMENTO_NAO_SELECIONADO"));
             Response.Headers.CacheControl = "no-store";
             var dto = await _prontidao.ObterAsync(CurrentEstabelecimentoId.Value, visaoGestao: false, HttpContext.RequestAborted);
-            return dto == null ? NotFound(ApiResponse<object>.Fail("Estabelecimento nao encontrado.")) : Ok(ApiResponse<ProntidaoDto>.Ok(dto));
+            return dto == null ? NotFound(ApiResponse<object>.Fail("Estabelecimento não encontrado.")) : Ok(ApiResponse<ProntidaoDto>.Ok(dto));
         }
 
         /// <summary>Prontidao vista pela Gestao: inclui o detalhe da infraestrutura.</summary>
@@ -50,7 +50,7 @@ namespace APIBack.Controllers
             if (!CurrentIsSuperAdmin) return ForbiddenResponse();
             Response.Headers.CacheControl = "no-store";
             var dto = await _prontidao.ObterAsync(id, visaoGestao: true, HttpContext.RequestAborted);
-            return dto == null ? NotFound(ApiResponse<object>.Fail("Estabelecimento nao encontrado.")) : Ok(ApiResponse<ProntidaoDto>.Ok(dto));
+            return dto == null ? NotFound(ApiResponse<object>.Fail("Estabelecimento não encontrado.")) : Ok(ApiResponse<ProntidaoDto>.Ok(dto));
         }
 
         /// <summary>
@@ -106,7 +106,7 @@ namespace APIBack.Controllers
             if (!CurrentEstabelecimentoId.HasValue)
                 return BadRequest(ApiResponse<object>.Fail("Selecione um estabelecimento.", "ESTABELECIMENTO_NAO_SELECIONADO"));
             var dto = await _service.ObterAsync(CurrentEstabelecimentoId.Value, HttpContext.RequestAborted);
-            return dto == null ? NotFound(ApiResponse<object>.Fail("Estabelecimento nao encontrado.")) : Ok(ApiResponse<SituacaoComercialDto>.Ok(dto));
+            return dto == null ? NotFound(ApiResponse<object>.Fail("Estabelecimento não encontrado.")) : Ok(ApiResponse<SituacaoComercialDto>.Ok(dto));
         }
 
         [HttpGet("api/gestao/comercial/testes-vencidos")]
@@ -124,7 +124,7 @@ namespace APIBack.Controllers
             if (!CurrentUserId.HasValue) return UnauthorizedResponse();
             if (!CurrentIsSuperAdmin) return ForbiddenResponse();
             var dto = await _service.ObterAsync(id, HttpContext.RequestAborted);
-            return dto == null ? NotFound(ApiResponse<object>.Fail("Estabelecimento nao encontrado.")) : Ok(ApiResponse<SituacaoComercialDto>.Ok(dto));
+            return dto == null ? NotFound(ApiResponse<object>.Fail("Estabelecimento não encontrado.")) : Ok(ApiResponse<SituacaoComercialDto>.Ok(dto));
         }
 
         [HttpGet("api/gestao/estabelecimentos/{id:guid}/situacao/historico")]

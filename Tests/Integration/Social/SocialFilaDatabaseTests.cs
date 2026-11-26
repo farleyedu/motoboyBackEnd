@@ -54,6 +54,31 @@ public sealed class SocialFilaDatabaseTests
     }
 
     [DeliveryDatabaseFact]
+    public async Task Cortes_trazem_a_maquina_do_video_conforme_quem_pode_ver()
+    {
+        await using var db = await Database.Create();
+        var corte = (await db.Editor.CriarExemploAsync(db.LojaA, Maria, Ct)).CorteIds[0];
+        async Task<MaquinaDoCorteDto?> Maquina(int usuario) =>
+            (await db.Editor.CortesAsync(db.LojaA, usuario, new[] { corte }, Ct)).Single().Maquina;
+        Assert.Null(await Maquina(Maria));
+
+        var m = await db.Parear(db.LojaA, Maria, "pc-da-maria");
+        await db.Sistema($"UPDATE social_videos SET maquina_id = {m.Id}");
+        var dela = (await Maquina(Maria))!;
+        Assert.Equal((m.Id, true), (dela.Id!.Value, dela.Minha));
+        Assert.False(string.IsNullOrWhiteSpace(dela.Nome));
+        Assert.Equal(new MaquinaDoCorteDto(null, null, null, false), await Maquina(Joao));
+
+        await db.Maquinas.MudarAsync(db.LojaA, Maria, m.Id, new(null, true, null), Ct);
+        await db.Sistema("UPDATE social_maquinas SET ultimo_sinal_em = NOW() - INTERVAL '1 hour'");
+        var compartilhada = (await Maquina(Joao))!;
+        Assert.Equal((dela.Nome, false, false), (compartilhada.Nome, compartilhada.Minha, compartilhada.Ligada!.Value));
+
+        await db.Maquinas.RemoverAsync(db.LojaA, Maria, m.Id, Ct);
+        Assert.Null(await Maquina(Maria));
+    }
+
+    [DeliveryDatabaseFact]
     public async Task Gerar_na_maquina_ate_o_fim_sem_duplicar_o_trabalho()
     {
         await using var db = await Database.Create();

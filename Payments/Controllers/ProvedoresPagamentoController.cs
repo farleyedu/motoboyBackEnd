@@ -39,7 +39,7 @@ namespace APIBack.Payments.Controllers
 
         private int UsuarioGerente()
         {
-            var usuario = HttpContext.GetUserId() ?? throw new PagamentoException(PagamentoCodigos.NaoAutenticado, 401, "Usuario nao autenticado.");
+            var usuario = HttpContext.GetUserId() ?? throw new PagamentoException(PagamentoCodigos.NaoAutenticado, 401, "Usuário não autenticado.");
             if (!ConexaoMercadoPagoAcesso.PodeGerenciar(HttpContext))
                 throw PagamentoException.SemPermissao("So o dono ou o gerente da loja pode mudar a configuracao da InfinitePay.");
             return usuario;
@@ -72,7 +72,7 @@ namespace APIBack.Payments.Controllers
         [HttpPut("preferencias")]
         public Task<IActionResult> Salvar([FromBody] PreferenciasProvedorRequest request) => Executar(() =>
         {
-            var usuario = HttpContext.GetUserId() ?? throw new PagamentoException(PagamentoCodigos.NaoAutenticado, 401, "Usuario nao autenticado.");
+            var usuario = HttpContext.GetUserId() ?? throw new PagamentoException(PagamentoCodigos.NaoAutenticado, 401, "Usuário não autenticado.");
             if (!ConexaoMercadoPagoAcesso.PodeGerenciar(HttpContext))
                 throw PagamentoException.SemPermissao("So o dono ou o gerente da loja pode mudar os provedores de pagamento.");
             return _provedores.SalvarAsync(Loja(), usuario, request, HttpContext.RequestAborted);

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using APIBack.Acompanhamento.Fases;
@@ -147,6 +147,8 @@ namespace APIBack.Acompanhamento.Saude
         public string? PlanoContratado { get; init; }
         /// <summary>Algum ciclo da assinatura foi pago (fonte: assinatura_ciclo, nunca lancamento manual do CRM).</summary>
         public bool PagamentoConfirmado { get; init; }
+        /// <summary>viva | encerrada | nenhuma. Nulo = o servidor nao leu (sem alerta).</summary>
+        public string? SituacaoDaAssinatura { get; init; }
         public decimal ValorAtrasado { get; init; }
         public DateOnly? AtrasadoDesde { get; init; }
         public DateOnly? ProximoVencimento { get; init; }

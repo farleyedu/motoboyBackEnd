@@ -78,7 +78,7 @@ namespace APIBack.Payments.Controllers
 
         private Task<IActionResult> Gerenciar<T>(Func<Guid, int, Task<T>> acao) => Executar(() =>
         {
-            var usuario = HttpContext.GetUserId() ?? throw new PagamentoException(PagamentoCodigos.NaoAutenticado, 401, "Usuario nao autenticado.");
+            var usuario = HttpContext.GetUserId() ?? throw new PagamentoException(PagamentoCodigos.NaoAutenticado, 401, "Usuário não autenticado.");
             if (!ConexaoMercadoPagoAcesso.PodeGerenciar(HttpContext))
                 throw PagamentoException.SemPermissao("Só o dono ou o gerente da loja pode mudar a conexão com o Mercado Pago.");
             return acao(Loja(), usuario);
@@ -110,7 +110,7 @@ namespace APIBack.Payments.Controllers
             // Sem endereco do painel configurado: pagina minima (o codigo do MP ja foi usado e nao aparece aqui).
             var ok = destino.Contains("mercadopago=ok", StringComparison.Ordinal);
             return Content(ok ? "Mercado Pago conectado. Pode fechar esta janela e voltar ao Zippy."
-                : "Nao foi possivel conectar o Mercado Pago. Volte ao Zippy e tente de novo.", "text/plain; charset=utf-8");
+                : "Não foi possível conectar o Mercado Pago. Volte ao Zippy e tente de novo.", "text/plain; charset=utf-8");
         }
     }
 }

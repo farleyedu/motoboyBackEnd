@@ -41,7 +41,21 @@ public class SituacaoComercialMiddlewareTests
         Assert.True(nextCalled);
     }
 
-    private static async Task<(DefaultHttpContext Context, bool NextCalled)> Run(string path, string method, string situacao)
+    // Regra de ouro: atraso, teste vencido e assinatura terminada não travam nada. Só a Gestão bloqueia.
+    [Theory]
+    [InlineData("/api/pedido", "ativo", "em_atraso")]
+    [InlineData("/api/v2/delivery/pedidos", "ativo", "em_atraso")]
+    [InlineData("/api/pedido", "ativo", "encerrada")]
+    [InlineData("/api/v2/delivery/pedidos", "teste", "em_atraso")]
+    [InlineData("/api/v2/motoboys/me/session/start", "ativo", "encerrada")]
+    public async Task Atraso_de_trinta_dias_ou_assinatura_terminada_nao_bloqueiam_pedido(string path, string situacao, string financeiro)
+    {
+        var (context, nextCalled) = await Run(path, "POST", situacao, financeiro);
+        Assert.True(nextCalled);
+        Assert.Equal(200, context.Response.StatusCode);
+    }
+
+    private static async Task<(DefaultHttpContext Context, bool NextCalled)> Run(string path, string method, string situacao, string? financeiro = null)
     {
         var context = new DefaultHttpContext();
         context.Items["EstabelecimentoId"] = Store;
@@ -52,7 +66,7 @@ public class SituacaoComercialMiddlewareTests
         var middleware = new SituacaoComercialMiddleware(_ => { nextCalled = true; return Task.CompletedTask; });
         var service = new Mock<ISituacaoComercialService>();
         service.Setup(s => s.ObterAsync(Store, context.RequestAborted))
-            .ReturnsAsync(new SituacaoComercialDto(Store, situacao, null, null, null, 3, 3, 3, 10, null, null));
+            .ReturnsAsync(new SituacaoComercialDto(Store, situacao, null, null, null, 3, 3, 3, 10, null, null, null, financeiro));
         await middleware.InvokeAsync(context, service.Object);
         return (context, nextCalled);
     }

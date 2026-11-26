@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -15,8 +15,9 @@ namespace APIBack.Payments.Assinaturas
 {
     /// <summary>
     /// Rotina das assinaturas (uma instancia por vez, advisory lock): gera a fatura do proximo ciclo, vira o ciclo no fim do periodo
-    /// (aplicando o downgrade agendado ou encerrando a cancelada), aplica o plano pago no teste quando o ciclo comeca, recalcula a
-    /// inadimplencia, manda os avisos, expira compras avulsas e acerta o preapproval no MP. Cada passo e idempotente.
+    /// (aplicando o downgrade agendado ou encerrando a cancelada), aplica o plano pago no teste quando o ciclo comeca, marca o atraso,
+    /// manda os avisos, expira tentativas e compras avulsas e acerta o preapproval no MP. Nunca bloqueia loja: só a Gestão bloqueia.
+    /// Cada passo e idempotente.
     /// </summary>
     public sealed class AssinaturaWorker : BackgroundService
     {
@@ -36,7 +37,7 @@ namespace APIBack.Payments.Assinaturas
         }
 
         /// <summary>Antecedencia da fatura do proximo ciclo.</summary>
-        public static int DiasAntecedencia(string periodicidade) => periodicidade == Periodicidades.Anual ? 15 : 7;
+        public static int DiasAntecedencia(string periodicidade) => AssinaturaOperacoes.DiasAntecedencia(periodicidade);
 
         protected override async Task ExecuteAsync(CancellationToken stoppingToken)
         {
@@ -63,7 +64,10 @@ namespace APIBack.Payments.Assinaturas
                 foreach (var loja in await cx.QueryAsync<Guid>(new CommandDefinition(@"
 SELECT a.id_estabelecimento FROM assinatura a JOIN estabelecimentos e ON e.id = a.id_estabelecimento
  WHERE a.status = 'pendente' AND a.id_ciclo_atual IS NULL AND e.situacao_comercial IN ('teste', 'ativo')", cancellationToken: ct)))
-                    await AssinaturaService.GarantirPrimeiroCicloAsync(cx, loja, ct);
+                    await AssinaturaOperacoes.GarantirPrimeiroCicloAsync(cx, loja, ct);
+
+                using (var scope = _scopes.CreateScope())
+                    await AssinaturaOperacoes.ExpirarTentativasAsync(_db, scope.ServiceProvider.GetRequiredService<IPixChargeService>(), _logger, null, agora, ct);
 
                 foreach (var id in await cx.QueryAsync<Guid>(new CommandDefinition(
                     "SELECT id FROM assinatura WHERE status = 'ativa' AND periodo_fim IS NOT NULL ORDER BY periodo_fim", cancellationToken: ct)))
@@ -73,8 +77,10 @@ SELECT a.id_estabelecimento FROM assinatura a JOIN estabelecimentos e ON e.id = 
                 }
 
                 await AplicarCiclosPagosAsync(cx, agora, ct);
-                await InadimplenciaEAvisosAsync(cx, politica, agora, ct);
+                await AtrasoEAvisosAsync(cx, politica, agora, ct);
                 await ExpirarComprasAsync(cx, agora, ct);
+                using (var scope = _scopes.CreateScope())
+                    await AssinaturaOperacoes.CancelarPagamentosDeCanceladasAsync(_db, scope.ServiceProvider.GetRequiredService<IPixChargeService>(), _logger, null, ct);
                 await SincronizarPreapprovalsAsync(cx, agora, ct);
                 await AtualizarSaudeAsync(cx, agora, ct);
             }
@@ -84,90 +90,20 @@ SELECT a.id_estabelecimento FROM assinatura a JOIN estabelecimentos e ON e.id = 
             }
         }
 
-        /// <summary>Fatura do ciclo seguinte, alguns dias antes do fim. Cancelada nao renova; downgrade agendado vale no ciclo novo.</summary>
         public static async Task GerarProximoCicloAsync(NpgsqlConnection cx, Guid assinaturaId, DateTimeOffset agora, CancellationToken ct)
         {
             await using var tx = await cx.BeginTransactionAsync(ct);
-            var a = await AssinaturaSql.PorIdAsync(cx, tx, assinaturaId, true, ct);
-            if (a is not { Status: StatusAssinatura.Ativa, PeriodoFim: { } fimAtual, IdCicloAtual: { } cicloAtualId } || a.CancelamentoSolicitadoEm != null || a.Ancora == null)
-                return;
-            var periodicidade = a.MudancaPeriodicidade ?? a.Periodicidade;
-            if (fimAtual - agora > TimeSpan.FromDays(DiasAntecedencia(a.Periodicidade))) return;
-            var atual = await AssinaturaSql.CicloAsync(cx, tx, cicloAtualId, ct);
-            if (atual == null) return;
-            var numero = atual.Numero + 1;
-            var existe = await cx.ExecuteScalarAsync<bool>(new CommandDefinition(
-                "SELECT EXISTS (SELECT 1 FROM assinatura_ciclo WHERE id_assinatura = @A AND numero >= @N)", new { A = a.Id, N = numero }, tx, cancellationToken: ct));
-            if (existe) return;
-
-            var plano = a.MudancaPlano ?? a.PlanoChave;
-            var preco = a.MudancaPlano != null ? a.MudancaPreco ?? a.Preco : a.Preco;
-            (DateOnly Inicio, DateOnly Fim) datas = periodicidade == a.Periodicidade
-                ? CicloDatas.Ciclo(a.Ancora.Value, numero - a.AncoraCiclo + 1, periodicidade)
-                : CicloDatas.Ciclo(FusoComercial.Data(fimAtual), 1, periodicidade);
-            var nome = (await AssinaturaSql.PlanoAsync(cx, tx, plano, ct))?.Nome ?? plano;
-            // Cartao recorrente so cobra o mesmo intervalo: trocar mensal/anual volta para pagamento manual.
-            var meio = a.MpPreapprovalStatus == "authorized" && a.RenovacaoAutomatica && periodicidade == a.Periodicidade ? "cartao_recorrente" : null;
-            await AssinaturaSql.CriarCicloAsync(cx, tx, a, numero, plano, nome, periodicidade, preco, datas.Inicio, datas.Fim, meio, ct);
+            await AssinaturaOperacoes.GerarProximoCicloAsync(cx, tx, assinaturaId, agora, ct);
             await tx.CommitAsync(ct);
         }
 
-        /// <summary>Fim do periodo: encerra a cancelada ou passa para o ciclo seguinte (pago ou nao: a inadimplencia cuida do resto).</summary>
         public async Task VirarCicloAsync(NpgsqlConnection cx, Guid assinaturaId, DateTimeOffset agora, CancellationToken ct)
         {
             await using var tx = await cx.BeginTransactionAsync(ct);
-            var a = await AssinaturaSql.PorIdAsync(cx, tx, assinaturaId, true, ct);
-            if (a is not { Status: StatusAssinatura.Ativa, PeriodoFim: { } fim, IdCicloAtual: { } cicloAtualId } || fim > agora) return;
-
-            if (a.CancelamentoSolicitadoEm != null)
-            {
-                await cx.ExecuteAsync(new CommandDefinition(@"
-UPDATE assinatura SET status = 'encerrada', encerrada_em = NOW(), encerramento_motivo = 'fim_do_periodo', renovacao_automatica = FALSE,
-       versao = versao + 1, updated_at = NOW() WHERE id = @Id", new { a.Id }, tx, cancellationToken: ct));
-                await PagamentoAuditoria.RegistrarAsync(cx, tx, a.IdEstabelecimento, "assinatura", a.Id.ToString(), "encerrada", "sistema", null,
-                    new { motivo = a.CancelamentoMotivo, fim }, ct);
-                await AssinaturaSql.AvisarAsync(cx, tx, a.IdEstabelecimento, null, $"encerrada:{a.Id:N}", "encerrada",
-                    "Sua assinatura terminou. O historico continua aqui; contrate um plano para voltar a criar pedidos.", ct);
-                await tx.CommitAsync(ct);
-                _cache.Remove(SituacaoComercialService.CacheKey(a.IdEstabelecimento));
-                return;
-            }
-
-            var atual = await AssinaturaSql.CicloAsync(cx, tx, cicloAtualId, ct);
-            var proximo = await cx.QueryFirstOrDefaultAsync<CicloRow>(new CommandDefinition(
-                $"SELECT {AssinaturaSql.ColunasCiclo} FROM assinatura_ciclo WHERE id_assinatura = @A AND numero > @N AND status <> 'cancelado' ORDER BY numero LIMIT 1 FOR UPDATE",
-                new { A = a.Id, N = atual?.Numero ?? 0 }, tx, cancellationToken: ct));
-            if (proximo == null) { await tx.CommitAsync(ct); return; } // a geracao roda antes; tenta de novo na proxima volta
-
-            var trocouPeriodicidade = proximo.Periodicidade != a.Periodicidade;
-            await cx.ExecuteAsync(new CommandDefinition(@"
-UPDATE assinatura SET id_ciclo_atual = @C, periodo_inicio = @Ini, periodo_fim = @Fim, plano_chave = @Plano, periodicidade = @Per, preco = @Preco,
-       ancora = CASE WHEN @Troca THEN @Ancora ELSE ancora END, ancora_ciclo = CASE WHEN @Troca THEN @N ELSE ancora_ciclo END,
-       -- O cartao recorrente cobra no intervalo antigo: trocar mensal/anual desliga (o sincronizador cancela no MP).
-       renovacao_automatica = CASE WHEN @Troca THEN FALSE ELSE renovacao_automatica END,
-       mudanca_plano = NULL, mudanca_periodicidade = NULL, mudanca_preco = NULL, mudanca_pedida_em = NULL, mudanca_pedida_por = NULL,
-       versao = versao + 1, updated_at = NOW()
- WHERE id = @A", new
-            {
-                C = proximo.Id, Ini = proximo.Inicio, Fim = proximo.Fim, Plano = proximo.PlanoChave, Per = proximo.Periodicidade, Preco = proximo.Preco,
-                Troca = trocouPeriodicidade, Ancora = FusoComercial.Data(proximo.Inicio), N = proximo.Numero, A = a.Id
-            }, tx, cancellationToken: ct));
-            if (proximo.PlanoChave != a.PlanoChave)
-            {
-                // Downgrade agendado: modulos do plano novo a partir de agora. Nada e apagado; o que saiu so fica travado.
-                await AssinaturaSql.AplicarPlanoAsync(cx, tx, a.IdEstabelecimento, proximo.PlanoChave, "sistema", null, ct);
-                await cx.ExecuteAsync(new CommandDefinition("UPDATE assinatura_ciclo SET aplicado_em = NOW() WHERE id = @Id", new { proximo.Id }, tx, cancellationToken: ct));
-                await PagamentoAuditoria.RegistrarAsync(cx, tx, a.IdEstabelecimento, "assinatura", a.Id.ToString(), "downgrade_aplicado", "sistema", null,
-                    new { de = a.PlanoChave, para = proximo.PlanoChave, proximo.Periodicidade, proximo.Preco }, ct);
-            }
-            else
-            {
-                await cx.ExecuteAsync(new CommandDefinition("UPDATE assinatura_ciclo SET aplicado_em = COALESCE(aplicado_em, NOW()) WHERE id = @Id", new { proximo.Id }, tx, cancellationToken: ct));
-            }
-            await PagamentoAuditoria.RegistrarAsync(cx, tx, a.IdEstabelecimento, "assinatura", a.Id.ToString(), "ciclo_virado", "sistema", null,
-                new { ciclo = proximo.Numero, proximo.Inicio, proximo.Fim }, ct);
+            var mudou = await AssinaturaOperacoes.VirarCicloAsync(cx, tx, assinaturaId, agora, ct);
+            var loja = mudou ? (await AssinaturaSql.PorIdAsync(cx, tx, assinaturaId, false, ct))?.IdEstabelecimento : null;
             await tx.CommitAsync(ct);
-            _cache.Remove(SituacaoComercialService.CacheKey(a.IdEstabelecimento));
+            if (loja.HasValue) _cache.Remove(SituacaoComercialService.CacheKey(loja.Value));
         }
 
         /// <summary>Primeiro ciclo pago durante o teste: o plano entra quando o ciclo comeca (o teste vira ativo).</summary>
@@ -182,22 +118,22 @@ SELECT ci.id, ci.id_estabelecimento, ci.plano_chave FROM assinatura_ciclo ci JOI
                 await using var tx = await cx.BeginTransactionAsync(ct);
                 var marcou = await cx.ExecuteAsync(new CommandDefinition("UPDATE assinatura_ciclo SET aplicado_em = NOW() WHERE id = @Id AND aplicado_em IS NULL",
                     new { Id = p.Ciclo }, tx, cancellationToken: ct));
-                if (marcou == 1) await AssinaturaSql.AplicarPlanoAsync(cx, tx, p.Loja, p.Plano, "sistema", null, ct);
+                if (marcou == 1) await AssinaturaSql.AplicarPlanoSeMudouAsync(cx, tx, p.Loja, p.Plano, "sistema", null, ct);
                 await tx.CommitAsync(ct);
                 _cache.Remove(SituacaoComercialService.CacheKey(p.Loja));
             }
         }
 
-        private async Task InadimplenciaEAvisosAsync(NpgsqlConnection cx, PoliticaInadimplencia politica, DateTimeOffset agora, CancellationToken ct)
+        private async Task AtrasoEAvisosAsync(NpgsqlConnection cx, PoliticaInadimplencia politica, DateTimeOffset agora, CancellationToken ct)
         {
             var assinaturas = (await cx.QueryAsync<(Guid Id, Guid Loja)>(new CommandDefinition(@"
 SELECT DISTINCT a.id, a.id_estabelecimento FROM assinatura a
   LEFT JOIN comercial_cobranca c ON c.id_assinatura = a.id AND c.tipo = 'ciclo' AND c.status IN ('aberta', 'processando')
- WHERE a.status IN ('pendente', 'ativa') AND (c.id IS NOT NULL OR a.financeiro <> 'em_dia')", cancellationToken: ct))).ToList();
+ WHERE c.id IS NOT NULL OR a.financeiro <> 'em_dia'", cancellationToken: ct))).ToList();
             foreach (var (id, loja) in assinaturas)
             {
                 await using var tx = await cx.BeginTransactionAsync(ct);
-                var mudou = await AssinaturaSql.RecalcularFinanceiroAsync(cx, tx, id, politica, agora, ct);
+                var mudou = await AssinaturaSql.RecalcularFinanceiroAsync(cx, tx, id, agora, ct);
                 await tx.CommitAsync(ct);
                 if (mudou) _cache.Remove(SituacaoComercialService.CacheKey(loja));
             }
@@ -217,7 +153,7 @@ SELECT id, id_estabelecimento, descricao, valor, vencimento, meio FROM comercial
 
         /// <summary>
         /// Saude das lojas, depois de todos os passos de pagamento (so le assinatura e cobranca; nunca altera a verdade do pagamento nem
-        /// suspende por prazo de teste). Grava a faixa e o historico quando ela muda e registra os marcos do fim do teste sem repetir.
+        /// bloqueia por prazo). Grava a faixa e o historico quando ela muda e registra os marcos do fim do teste sem repetir.
         /// Falha aqui so e registrada: o ciclo das assinaturas ja terminou.
         /// </summary>
         private async Task AtualizarSaudeAsync(NpgsqlConnection cx, DateTimeOffset agora, CancellationToken ct)
@@ -264,10 +200,13 @@ UPDATE estabelecimentos e SET modulos_ativos = ARRAY(
         /// <summary>Preapproval no MP segue a assinatura: cancelado quando ela foi cancelada, valor novo depois de troca de plano, e conciliacao das cobrancas.</summary>
         private async Task SincronizarPreapprovalsAsync(NpgsqlConnection cx, DateTimeOffset agora, CancellationToken ct)
         {
+            // O valor a cobrar é o da próxima mensalidade em aberto no cartão; sem ela, o da troca marcada ou o atual.
             var lista = (await cx.QueryAsync<(Guid Id, string Preapproval, string? Status, decimal Preco, decimal? Valor, bool Cancelada, bool Renova)>(new CommandDefinition(@"
-SELECT id, mp_preapproval_id, mp_preapproval_status, preco, preapproval_valor,
-       (cancelamento_solicitado_em IS NOT NULL OR status = 'encerrada'), renovacao_automatica
-  FROM assinatura WHERE mp_preapproval_id IS NOT NULL AND COALESCE(mp_preapproval_status, '') IN ('authorized', 'pending', 'paused')", cancellationToken: ct))).ToList();
+SELECT a.id, a.mp_preapproval_id, a.mp_preapproval_status,
+       COALESCE((SELECT c.valor FROM comercial_cobranca c WHERE c.id_assinatura = a.id AND c.meio = 'cartao_recorrente' AND c.status = 'processando'
+                  ORDER BY c.vencimento LIMIT 1), a.mudanca_preco, a.preco),
+       a.preapproval_valor, (a.cancelamento_solicitado_em IS NOT NULL OR a.status = 'encerrada'), a.renovacao_automatica
+  FROM assinatura a WHERE a.mp_preapproval_id IS NOT NULL AND COALESCE(a.mp_preapproval_status, '') IN ('authorized', 'pending', 'paused')", cancellationToken: ct))).ToList();
             if (lista.Count == 0) return;
             using var scope = _scopes.CreateScope();
             var mp = scope.ServiceProvider.GetRequiredService<IMercadoPagoPreapprovalClient>();
@@ -280,7 +219,8 @@ SELECT id, mp_preapproval_id, mp_preapproval_status, preco, preapproval_valor,
             {
                 try
                 {
-                    if (a.Cancelada || !a.Renova)
+                    // Cortesia (R$ 0) não tem o que cobrar no cartão.
+                    if (a.Cancelada || !a.Renova || a.Preco <= 0)
                     {
                         var pre = await mp.CancelarAsync(cred, a.Preapproval, ct);
                         await cx.ExecuteAsync(new CommandDefinition("UPDATE assinatura SET mp_preapproval_status = @S, updated_at = NOW() WHERE id = @Id",

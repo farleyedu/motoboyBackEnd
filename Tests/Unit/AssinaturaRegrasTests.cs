@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Linq;
 using APIBack.Payments.Assinaturas;
 using Xunit;
@@ -118,63 +118,95 @@ public sealed class AssinaturaRegrasTests
     }
 
     [Theory]
-    [InlineData(-1, "em_dia", 0)]     // ainda nao venceu
-    [InlineData(0, "em_atraso", 0)]   // venceu hoje: tolerancia
-    [InlineData(3, "em_atraso", 3)]
-    [InlineData(6, "em_atraso", 6)]
-    [InlineData(7, "suspensa", 7)]    // passou a tolerancia de 7 dias
-    [InlineData(20, "suspensa", 20)]
-    public void InadimplenciaComToleranciaDeSeteDias(int diasDepois, string esperado, int atraso)
+    [InlineData(-1, "em_dia", 0)]     // ainda não venceu
+    [InlineData(0, "em_dia", 0)]      // vence hoje: ainda está no prazo
+    [InlineData(1, "em_atraso", 1)]   // devendo a partir do dia seguinte
+    [InlineData(30, "em_atraso", 30)] // trinta dias: continua só em atraso, nada suspende
+    [InlineData(400, "em_atraso", 400)]
+    public void DevendoSoAPartirDoDiaSeguinte(int diasDepois, string esperado, int atraso)
     {
         var venc = D(2026, 4, 1);
-        var r = Inadimplencia.Avaliar(venc, venc.AddDays(diasDepois), 7);
+        var r = Inadimplencia.Avaliar(venc, venc.AddDays(diasDepois));
         Assert.Equal(esperado, r.Financeiro);
         Assert.Equal(atraso, r.DiasAtraso);
+        Assert.Equal(EstadoFinanceiro.EmDia, Inadimplencia.Avaliar(null, venc).Financeiro);
     }
 
     [Fact]
-    public void SemDividaEstaEmDiaEToleranciaConfiguravel()
-    {
-        Assert.Equal(EstadoFinanceiro.EmDia, Inadimplencia.Avaliar(null, D(2026, 4, 1), 7).Financeiro);
-        Assert.Equal(EstadoFinanceiro.Suspensa, Inadimplencia.Avaliar(D(2026, 4, 1), D(2026, 4, 4), 3).Financeiro);
-        Assert.Equal(EstadoFinanceiro.Suspensa, Inadimplencia.Avaliar(D(2026, 4, 1), D(2026, 4, 1), 0).Financeiro);
-    }
-
-    [Fact]
-    public void AvisosNoVencimentoNoTerceiroDiaENaVesperaDoBloqueio()
+    public void AvisosInformamSemAmeacar()
     {
         var id = Guid.NewGuid();
         var venc = D(2026, 4, 1);
-        var politica = new PoliticaInadimplencia(7, new[] { 3, 1 }, new[] { 1, 3, 6 });
-        string[] Tipos(int dia) => Inadimplencia.AvisosDevidos(id, "Plano", 149m, venc, venc.AddDays(dia), politica).Select(a => a.Chave.Split(':', 2)[1]).ToArray();
+        var politica = new PoliticaInadimplencia(7, new[] { 3, 1 }, new[] { 1, 3, 30 });
+        var todos = Enumerable.Range(-3, 45).SelectMany(d => Inadimplencia.AvisosDevidos(id, "Plano", 149m, venc, venc.AddDays(d), politica)).ToList();
+        string[] Chaves(int dia) => Inadimplencia.AvisosDevidos(id, "Plano", 149m, venc, venc.AddDays(dia), politica).Select(a => a.Chave.Split(':', 2)[1]).ToArray();
 
-        Assert.Contains("antes:3", Tipos(-3));
-        Assert.Contains("vencimento", Tipos(0));
-        Assert.Contains("atraso:3", Tipos(3));
-        Assert.Contains("antes_bloqueio", Tipos(6));
-        // Depois de suspensa nao ha mais aviso de atraso (o aviso de suspensao sai pela transicao).
-        Assert.DoesNotContain("atraso:3", Tipos(8));
-        Assert.DoesNotContain("antes_bloqueio", Tipos(8));
+        Assert.Contains("antes:3", Chaves(-3));
+        Assert.Contains("vencimento", Chaves(0));
+        Assert.Contains("atraso:3", Chaves(3));
+        Assert.Contains("atraso:30", Chaves(30));
+        Assert.All(todos, a =>
+        {
+            Assert.DoesNotContain("suspen", a.Mensagem, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("bloque", a.Mensagem, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain("param", a.Mensagem, StringComparison.OrdinalIgnoreCase);
+        });
         // Chaves estaveis: rodar de novo no mesmo dia devolve as mesmas (o banco ignora repetidas).
-        Assert.Equal(Tipos(3), Tipos(3));
-        // O 3o dia sai mesmo se a politica nao listar.
-        var sem3 = new PoliticaInadimplencia(7, Array.Empty<int>(), Array.Empty<int>());
-        Assert.Contains(Inadimplencia.AvisosDevidos(id, "Plano", 149m, venc, venc.AddDays(3), sem3), a => a.Chave.EndsWith("atraso:3"));
+        Assert.Equal(Chaves(3), Chaves(3));
     }
 
-    [Theory]
-    [InlineData("/api/pedido", "POST", true)]                          // pedido novo para
-    [InlineData("/api/v2/delivery/pedidos", "POST", true)]
-    [InlineData("/api/pedido", "GET", false)]                          // historico continua
-    [InlineData("/api/v2/comercial/cobrancas/x/pagar", "POST", false)] // pagar continua
-    [InlineData("/api/v2/chamados", "POST", false)]                    // suporte continua
-    [InlineData("/api/v2/delivery/pedidos/10/entregue", "POST", false)]// entrega iniciada termina
-    [InlineData("/api/v2/delivery/pedidos/10/saiu", "POST", false)]
-    [InlineData("/api/v2/motoboys/me/session/stops/current/deliver", "POST", false)]
-    [InlineData("/hubs/delivery/negotiate", "POST", false)]
-    [InlineData("/api/v2/delivery/configuracoes", "PUT", false)]
-    public void SuspensaoParaSoOperacaoNova(string path, string metodo, bool bloqueia) =>
-        Assert.Equal(bloqueia, AcessoFinanceiroRules.Bloqueia(path, metodo, APIBack.Service.SituacaoComercialRules.PermitidoQuandoBloqueado(path, metodo)));
+    [Fact]
+    public void ExemploDoUpgradeDe349Para549ComMeioMes()
+    {
+        var p = Proporcional.Calcular(349m, "mensal", 549m, "mensal", D(2026, 4, 1), D(2026, 5, 1), D(2026, 4, 16), false);
+        Assert.Equal(100.00m, p.ValorAgora);
+    }
+
+    [Fact]
+    public void ProximaFaturaPagaSomaADiferencaDelaNoUpgrade()
+    {
+        // 100 do resto do mês + 200 da próxima fatura, paga a R$ 349.
+        var p = Proporcional.Calcular(349m, "mensal", 549m, "mensal", D(2026, 4, 1), D(2026, 5, 1), D(2026, 4, 16), false, proximoPago: 349m);
+        Assert.Equal(300.00m, p.ValorAgora);
+    }
+
+    [Fact]
+    public void AnualDePlanoMenorEsperaOFimDoMesPago()
+    {
+        var menor = Proporcional.Calcular(349m, "mensal", 1490m, "anual", D(2026, 4, 1), D(2026, 5, 1), D(2026, 4, 16), false, precoMensalNovo: 149m);
+        Assert.Equal(TiposMudanca.Downgrade, menor.Tipo);
+        Assert.Equal(D(2026, 5, 1), menor.AplicaEm);
+        // O mesmo plano no anual, ou um maior, começa no pagamento com desconto dos dias não usados.
+        var maior = Proporcional.Calcular(149m, "mensal", 3490m, "anual", D(2026, 4, 1), D(2026, 5, 1), D(2026, 4, 16), false, precoMensalNovo: 349m);
+        Assert.Equal(TiposMudanca.ParaAnual, maior.Tipo);
+        Assert.Equal(3415.50m, maior.ValorAgora);
+    }
+
+    [Fact]
+    public void AnualParaOutroAnualUsaOsDiasDoAno()
+    {
+        var sobe = Proporcional.Calcular(1490m, "anual", 3490m, "anual", D(2026, 1, 1), D(2027, 1, 1), D(2026, 7, 2), false);
+        Assert.Equal(TiposMudanca.Upgrade, sobe.Tipo);
+        Assert.Equal(1002.74m, sobe.ValorAgora); // 2000 x 183/365
+        var desce = Proporcional.Calcular(3490m, "anual", 1490m, "anual", D(2026, 1, 1), D(2027, 1, 1), D(2026, 7, 2), false);
+        Assert.Equal(TiposMudanca.Downgrade, desce.Tipo);
+        Assert.Equal(D(2027, 1, 1), desce.AplicaEm);
+    }
+
+    [Fact]
+    public void SemMesPagoNaoHaCreditoNoAnual()
+    {
+        var p = Proporcional.Calcular(149m, "mensal", 1490m, "anual", D(2026, 4, 1), D(2026, 5, 1), D(2026, 4, 1), true, cicloPago: false);
+        Assert.Equal(0m, p.Credito);
+        Assert.Equal(1490m, p.ValorAgora);
+    }
+
+    [Fact]
+    public void PrecoAnualZeroNaoTemOpcaoAnual()
+    {
+        Assert.Null(new PlanoCatalogoRow { Preco = 149m, PrecoAnual = 0m }.PrecoDe(Periodicidades.Anual));
+        Assert.Equal(1490m, new PlanoCatalogoRow { Preco = 149m, PrecoAnual = 1490m }.PrecoDe(Periodicidades.Anual));
+    }
 
     [Fact]
     public void ReferenciaDoPreapprovalNaoColideComONucleo()

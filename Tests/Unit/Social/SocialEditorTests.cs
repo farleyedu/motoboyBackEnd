@@ -120,6 +120,46 @@ public sealed class SocialEditorTests
     }
 
     [Fact]
+    public void Maquina_do_corte_so_mostra_nome_para_quem_pode_ver()
+    {
+        var agora = new DateTime(2026, 11, 26, 12, 0, 0, DateTimeKind.Utc);
+        Assert.Null(EditorRegras.Maquina(null, null, null, false, null, 1, agora));
+        Assert.Equal(new MaquinaDoCorteDto(5, "PC da Ana", true, true),
+            EditorRegras.Maquina(5, 1, "PC da Ana", false, agora.AddSeconds(-10), 1, agora));
+        Assert.Equal(new MaquinaDoCorteDto(5, "PC da Ana", false, false),
+            EditorRegras.Maquina(5, 1, "PC da Ana", true, agora.AddHours(-1), 2, agora));
+        Assert.Equal(new MaquinaDoCorteDto(null, null, null, false),
+            EditorRegras.Maquina(5, 1, "PC da Ana", false, agora, 2, agora));
+    }
+
+    [Theory]
+    [InlineData("Production")]
+    [InlineData("Staging")]
+    public async Task Exemplo_responde_404_fora_do_desenvolvimento(string ambiente)
+    {
+        var controller = new SocialEditorController(null!, null!, new Ambiente(ambiente));
+        Assert.IsType<NotFoundObjectResult>(await controller.Exemplo());
+    }
+
+    [Fact]
+    public async Task Exemplo_em_desenvolvimento_segue_pedindo_login()
+    {
+        var controller = new SocialEditorController(null!, null!, new Ambiente("Development"))
+        {
+            ControllerContext = new ControllerContext { HttpContext = new DefaultHttpContext() }
+        };
+        Assert.IsType<UnauthorizedObjectResult>(await controller.Exemplo());
+    }
+
+    private sealed class Ambiente(string nome) : Microsoft.Extensions.Hosting.IHostEnvironment
+    {
+        public string EnvironmentName { get; set; } = nome;
+        public string ApplicationName { get; set; } = "testes";
+        public string ContentRootPath { get; set; } = ".";
+        public Microsoft.Extensions.FileProviders.IFileProvider ContentRootFileProvider { get; set; } = null!;
+    }
+
+    [Fact]
     public void Rota_sem_o_modulo_Social_recebe_403()
     {
         var atributo = typeof(SocialEditorController).GetCustomAttributes<RequireModuleAttribute>(true).Single();

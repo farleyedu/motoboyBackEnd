@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Net.Http;
 using System.Net.Http.Headers;
@@ -65,6 +65,12 @@ namespace APIBack.Payments.Assinaturas
         [JsonPropertyName("payment")] public MpAuthorizedPaymentPagamento? Payment { get; set; }
     }
 
+    /// <summary>Token de cartão consultado antes do preapproval: só os 4 últimos dígitos interessam.</summary>
+    public sealed class MpTokenCartao
+    {
+        [JsonPropertyName("last_four_digits")] public string? LastFourDigits { get; set; }
+    }
+
     internal sealed class MpBuscaAuthorized
     {
         [JsonPropertyName("results")] public List<MpAuthorizedPayment> Results { get; set; } = new();
@@ -82,6 +88,7 @@ namespace APIBack.Payments.Assinaturas
         Task<MpPreapproval> AlterarValorAsync(CredencialRecebedora zippy, string id, decimal valor, CancellationToken ct = default);
         Task<MpAuthorizedPayment> ObterCobrancaAsync(CredencialRecebedora zippy, long authorizedPaymentId, CancellationToken ct = default);
         Task<IReadOnlyList<MpAuthorizedPayment>> ListarCobrancasAsync(CredencialRecebedora zippy, string preapprovalId, CancellationToken ct = default);
+        Task<MpTokenCartao> ObterTokenCartaoAsync(CredencialRecebedora zippy, string token, CancellationToken ct = default);
     }
 
     public sealed class MercadoPagoPreapprovalClient : IMercadoPagoPreapprovalClient
@@ -116,11 +123,14 @@ namespace APIBack.Payments.Assinaturas
             (await EnviarAsync<MpBuscaAuthorized>(Zippy(z), HttpMethod.Get,
                 $"authorized_payments/search?preapproval_id={Uri.EscapeDataString(preapprovalId)}&limit=20", null, null, "buscar_authorized_payments", ct)).Results;
 
+        public Task<MpTokenCartao> ObterTokenCartaoAsync(CredencialRecebedora z, string token, CancellationToken ct = default) =>
+            EnviarAsync<MpTokenCartao>(Zippy(z), HttpMethod.Get, $"v1/card_tokens/{Uri.EscapeDataString(token)}", null, null, "obter_token_cartao", ct);
+
         private static string Zippy(CredencialRecebedora c)
         {
             // Mensalidade so cai na conta da Zippy, nunca na da loja.
             if (c.Contexto != ContextoCredencial.RecebedorZippy)
-                throw new PagamentoException(PagamentoCodigos.CredencialIncompativel, 500, "Assinatura so usa a conta recebedora da Zippy.");
+                throw new PagamentoException(PagamentoCodigos.CredencialIncompativel, 500, "Assinatura só usa a conta recebedora da Zippy.");
             return c.AccessToken;
         }
 

@@ -1,4 +1,4 @@
-using APIBack.Payments.MercadoPago;
+﻿using APIBack.Payments.MercadoPago;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace APIBack.Payments.Assinaturas
@@ -10,6 +10,7 @@ namespace APIBack.Payments.Assinaturas
         {
             services.AddScoped<IMercadoPagoPreapprovalClient, MercadoPagoPreapprovalClient>();
             services.AddScoped<IAssinaturaService, AssinaturaService>();
+            services.AddScoped<IGestaoAssinaturaService, GestaoAssinaturaService>();
             services.AddScoped<IPagamentoEfeitoHandler, AssinaturaPagamentoEfeito>();
             services.AddScoped<IPagamentoEfeitoHandler, CompraExtraPagamentoEfeito>();
             services.AddScoped<AssinaturaWebhookHandler>();

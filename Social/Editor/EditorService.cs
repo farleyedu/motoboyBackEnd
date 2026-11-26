@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using APIBack.Social.Arquivos;
+using APIBack.Social.Fila;
 using APIBack.Social.Nucleo;
 using Dapper;
 using Npgsql;
@@ -9,7 +10,10 @@ namespace APIBack.Social.Editor;
 
 public sealed record CorteDto(long Id, long VideoId, string VideoTitulo, string Titulo, decimal Ini, decimal Fim, decimal Duracao,
     int? Nota, string? Decisao, decimal? MomentoForteS, int Ordem, bool Exemplo, bool EhGta, string? MiniaturaUrl, int? ReceitaVersao,
-    JsonElement Dados);
+    JsonElement Dados, MaquinaDoCorteDto? Maquina = null);
+
+/// <summary>Máquina onde está o vídeo original (C01). Quem não pode vê-la recebe só <c>nome: null, minha: false</c>.</summary>
+public sealed record MaquinaDoCorteDto(long? Id, string? Nome, bool? Ligada, bool Minha);
 
 public sealed record ReceitaDto(int Versao, JsonElement Receita);
 public sealed record SalvarReceitaRequest(int VersaoBase, JsonElement Receita);
@@ -68,6 +72,19 @@ public static class EditorRegras
         return texto;
     }
 
+    /// <summary>
+    /// A mesma regra da lista de máquinas (R14): a pessoa vê as dela e as compartilhadas com a equipe.
+    /// <c>null</c> quando o vídeo não está em nenhuma máquina (ou ela foi removida).
+    /// </summary>
+    public static MaquinaDoCorteDto? Maquina(long? id, int? dono, string? nome, bool compartilhada, DateTime? ultimoSinal,
+        int usuario, DateTime agora)
+    {
+        if (id is null || dono is null) return null;
+        var minha = dono == usuario;
+        if (!minha && !compartilhada) return new(null, null, null, false);
+        return new(id, nome, FilaRegras.EstaOnline(ultimoSinal, agora), minha);
+    }
+
     public static JsonElement Json(string? texto)
     {
         using var doc = JsonDocument.Parse(string.IsNullOrWhiteSpace(texto) ? "{}" : texto);
@@ -91,7 +108,7 @@ public static class EditorRegras
 
 public interface ISocialEditorService
 {
-    Task<IReadOnlyList<CorteDto>> CortesAsync(Guid loja, IReadOnlyList<long> ids, CancellationToken ct);
+    Task<IReadOnlyList<CorteDto>> CortesAsync(Guid loja, int usuario, IReadOnlyList<long> ids, CancellationToken ct);
     Task SalvarDadosAsync(Guid loja, long corteId, JsonElement dados, CancellationToken ct);
     Task<ReceitaDto> ReceitaAsync(Guid loja, long corteId, CancellationToken ct);
     Task<ReceitaDto> SalvarReceitaAsync(Guid loja, int usuario, long corteId, SalvarReceitaRequest req, CancellationToken ct);
@@ -121,6 +138,11 @@ public sealed class SocialEditorService(NpgsqlDataSource fonte, IArmazenamento a
         public string? MiniaturaKey { get; set; }
         public int? ReceitaVersao { get; set; }
         public string Dados { get; set; } = "{}";
+        public long? MaquinaId { get; set; }
+        public int? MaquinaDono { get; set; }
+        public string? MaquinaNome { get; set; }
+        public bool MaquinaCompartilhada { get; set; }
+        public DateTime? MaquinaSinal { get; set; }
     }
 
     private sealed class ReceitaLinha
@@ -131,16 +153,20 @@ public sealed class SocialEditorService(NpgsqlDataSource fonte, IArmazenamento a
         public DateTime Em { get; set; }
     }
 
-    public async Task<IReadOnlyList<CorteDto>> CortesAsync(Guid loja, IReadOnlyList<long> ids, CancellationToken ct)
+    public async Task<IReadOnlyList<CorteDto>> CortesAsync(Guid loja, int usuario, IReadOnlyList<long> ids, CancellationToken ct)
     {
         var linhas = await SocialBanco.NaLoja(fonte, loja, ct, (c, tx) => c.QueryAsync<CorteLinha>(new CommandDefinition("""
             SELECT co.id AS "Id", co.video_id AS "VideoId", v.titulo AS "VideoTitulo", co.titulo AS "Titulo", co.ini AS "Ini",
                    co.fim AS "Fim", co.nota_regras AS "Nota", co.decisao AS "Decisao", co.momento_forte_s AS "MomentoForteS",
                    co.ordem AS "Ordem", v.exemplo AS "Exemplo", v.eh_gta AS "EhGta",
-                   COALESCE(co.miniatura_key, v.miniatura_key) AS "MiniaturaKey", r.versao AS "ReceitaVersao", co.dados::text AS "Dados"
+                   COALESCE(co.miniatura_key, v.miniatura_key) AS "MiniaturaKey", r.versao AS "ReceitaVersao", co.dados::text AS "Dados",
+                   m.id AS "MaquinaId", m.usuario_id AS "MaquinaDono", m.nome AS "MaquinaNome",
+                   COALESCE(m.compartilhada_equipe, FALSE) AS "MaquinaCompartilhada", m.ultimo_sinal_em AS "MaquinaSinal"
               FROM social_cortes co
               JOIN social_videos v ON v.id = co.video_id AND v.estabelecimento_id = co.estabelecimento_id
               LEFT JOIN social_receitas r ON r.corte_id = co.id AND r.estabelecimento_id = co.estabelecimento_id
+              LEFT JOIN social_maquinas m ON m.id = v.maquina_id AND m.estabelecimento_id = co.estabelecimento_id
+                   AND m.removida_em IS NULL
              WHERE co.estabelecimento_id = @loja AND co.id = ANY(@ids)
             """, new { loja, ids = ids.ToArray() }, tx, cancellationToken: ct)));
         var porId = linhas.ToDictionary(l => l.Id);
@@ -150,7 +176,9 @@ public sealed class SocialEditorService(NpgsqlDataSource fonte, IArmazenamento a
             var miniatura = l.MiniaturaKey is not null && armazenamento.Configurado && ArmazenamentoChaves.DaLoja(loja, l.MiniaturaKey)
                 ? armazenamento.UrlParaLer(l.MiniaturaKey, EditorRegras.ValidadeMiniatura) : null;
             return new CorteDto(l.Id, l.VideoId, l.VideoTitulo, l.Titulo, l.Ini, l.Fim, l.Fim - l.Ini, l.Nota, l.Decisao, l.MomentoForteS,
-                l.Ordem, l.Exemplo, l.EhGta, miniatura, l.ReceitaVersao, EditorRegras.Json(l.Dados));
+                l.Ordem, l.Exemplo, l.EhGta, miniatura, l.ReceitaVersao, EditorRegras.Json(l.Dados),
+                EditorRegras.Maquina(l.MaquinaId, l.MaquinaDono, l.MaquinaNome, l.MaquinaCompartilhada, l.MaquinaSinal,
+                    usuario, DateTime.UtcNow));
         }).ToList();
     }
 

@@ -50,7 +50,7 @@ namespace APIBack.Payments.MercadoPago
         public static PagamentoException Invalida(string mensagem, string? campo = null) =>
             new(PagamentoCodigos.RequisicaoInvalida, 400, mensagem, campo == null ? null : new Dictionary<string, object?> { ["campo"] = campo });
 
-        public static PagamentoException NaoEncontrado(string mensagem = "Pagamento nao encontrado.") =>
+        public static PagamentoException NaoEncontrado(string mensagem = "Pagamento não encontrado.") =>
             new(PagamentoCodigos.NaoEncontrado, 404, mensagem);
 
         public static PagamentoException SemPermissao(string mensagem = "Sem permissao para este pagamento.") =>

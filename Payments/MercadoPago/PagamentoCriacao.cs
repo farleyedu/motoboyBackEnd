@@ -163,14 +163,14 @@ SELECT pix_ativo, cartao_ativo, presencial_ativo, pix_validade_minutos, cartao_p
 
         public static void Validar(NovaCobrancaRequest r)
         {
-            if (r.IdEstabelecimento == Guid.Empty) throw PagamentoException.Invalida("Loja obrigatoria.", "estabelecimentoId");
+            if (r.IdEstabelecimento == Guid.Empty) throw PagamentoException.Invalida("Loja obrigatória.", "estabelecimentoId");
             CredencialRegras.ContextoDaOrigem(r.Origem);
             if (r.Valor <= 0 || r.Valor > 999_999.99m || decimal.Round(r.Valor, 2) != r.Valor)
                 throw PagamentoException.Regra(PagamentoCodigos.ValorInvalido, "Valor deve ser positivo, com no maximo 2 casas e ate R$ 999.999,99.");
             var descricao = r.Descricao?.Trim() ?? string.Empty;
-            if (descricao.Length is < 1 or > 140) throw PagamentoException.Invalida("Descricao obrigatoria (ate 140 caracteres).", "descricao");
+            if (descricao.Length is < 1 or > 140) throw PagamentoException.Invalida("Descrição obrigatória (até 140 caracteres).", "descricao");
             if (string.IsNullOrWhiteSpace(r.IdempotencyKey) || r.IdempotencyKey.Length > 160)
-                throw PagamentoException.Invalida("Chave de idempotencia obrigatoria (ate 160 caracteres).", "idempotencyKey");
+                throw PagamentoException.Invalida("Chave de idempotência obrigatória (até 160 caracteres).", "idempotencyKey");
             r.Descricao = descricao;
         }
 
@@ -212,7 +212,7 @@ RETURNING id", new
 
             if (intent.Valor != r.Valor || intent.Origem != r.Origem || intent.PedidoId != r.PedidoId || intent.PrePedidoId != r.PrePedidoId ||
                 intent.ConversaId != r.ConversaId || intent.Ambiente != cred.Ambiente)
-                throw new PagamentoException(PagamentoCodigos.IdempotenciaConflito, 409, "Esta chave de idempotencia ja foi usada com outros dados.");
+                throw new PagamentoException(PagamentoCodigos.IdempotenciaConflito, 409, "Esta chave de idempotência já foi usada com outros dados.");
             return intent;
         }
 
@@ -293,7 +293,7 @@ UPDATE pagamento_tentativa SET status = 'falhou', erro_codigo = @C, erro_mensage
             if (CredencialRegras.ContextoDaOrigem(r.Origem) == ContextoCredencial.Loja)
             {
                 var prefs = await PreferenciasPagamento.LerAsync(cx, r.IdEstabelecimento, ct);
-                if (!prefs.PixAtivo) throw PagamentoException.Regra(PagamentoCodigos.PixDesativado, "A loja nao aceita Pix online.");
+                if (!prefs.PixAtivo) throw PagamentoException.Regra(PagamentoCodigos.PixDesativado, "A loja não aceita Pix online.");
                 validade = r.ValidadeMinutos ?? prefs.PixValidadeMinutos;
             }
             if (validade is < 5 or > 1440) throw PagamentoException.Invalida("Validade do Pix entre 5 e 1440 minutos.", "validadeMinutos");
@@ -319,9 +319,9 @@ UPDATE pagamento_tentativa SET status = 'falhou', erro_codigo = @C, erro_mensage
                     return reaproveitado;
                 }
                 if (intent.Status is StatusIntent.Expirado or StatusIntent.Cancelado)
-                    throw PagamentoException.Estado("Esta cobranca ja foi encerrada. Gere outra (nova chave de idempotencia).", intent.Status);
+                    throw PagamentoException.Estado("Esta cobrança já foi encerrada. Gere outra (nova chave de idempotência).", intent.Status);
                 if (intent.Status == StatusIntent.Processando)
-                    throw PagamentoException.Estado("Ha um pagamento com cartao em analise para este pedido.", intent.Status);
+                    throw PagamentoException.Estado("Há um pagamento com cartão em análise para este pedido.", intent.Status);
 
                 // Tentativa 'criando' sobra de uma chamada sem resposta: repete com a MESMA chave (o MP devolve o mesmo pagamento).
                 var pendente = await cx.QueryFirstOrDefaultAsync<(Guid Id, string Chave)?>(new CommandDefinition(@"
@@ -365,7 +365,7 @@ SELECT id, idempotency_key FROM pagamento_tentativa WHERE id_intent = @Id AND me
             {
                 await _base.MarcarTentativaFalhaAsync(tentativaId, motivo ?? "sem_qr_code", "Resposta do MP inconsistente.", ct);
                 _logger.LogError("[mp.pix] ev=resposta_inconsistente intent={Intent} mp={Mp} motivo={Motivo}", intent.Id, mp.Id, motivo ?? "sem_qr_code");
-                throw new PagamentoException(PagamentoCodigos.MercadoPagoRespostaInconsistente, 502, "O Mercado Pago devolveu um Pix que nao confere.");
+                throw new PagamentoException(PagamentoCodigos.MercadoPagoRespostaInconsistente, 502, "O Mercado Pago devolveu um Pix que não confere.");
             }
 
             await using (var tx = await cx.BeginTransactionAsync(ct))
@@ -395,7 +395,7 @@ SELECT id, idempotency_key FROM pagamento_tentativa WHERE id_intent = @Id AND me
             await using var tx = await cx.BeginTransactionAsync(ct);
             var intent = await PagamentoIntentSql.ObterAsync(cx, tx, intentId, true, ct);
             if (intent == null || intent.IdEstabelecimento != idEstabelecimento) throw PagamentoException.NaoEncontrado();
-            if (!StatusIntent.Aberto(intent.Status)) throw PagamentoException.Estado("So cobranca em aberto tem link de pagamento.", intent.Status);
+            if (!StatusIntent.Aberto(intent.Status)) throw PagamentoException.Estado("Só cobrança em aberto tem link de pagamento.", intent.Status);
             var token = await TrocarTokenAsync(cx, tx, intent, ct);
             await tx.CommitAsync(ct);
             return token;
@@ -410,7 +410,7 @@ SELECT id, idempotency_key FROM pagamento_tentativa WHERE id_intent = @Id AND me
             {
                 intent = await PagamentoIntentSql.ObterAsync(cx, tx, intentId, true, ct);
                 if (intent == null || intent.IdEstabelecimento != idEstabelecimento) throw PagamentoException.NaoEncontrado();
-                if (StatusIntent.FamiliaPaga(intent.Status)) throw new PagamentoException(PagamentoCodigos.JaPago, 409, "Este pagamento ja foi feito; use o estorno.");
+                if (StatusIntent.FamiliaPaga(intent.Status)) throw new PagamentoException(PagamentoCodigos.JaPago, 409, "Este pagamento já foi feito; use o estorno.");
                 ultimo = await PagamentoIntentSql.UltimoPagamentoAsync(cx, tx, intentId, ct);
                 if (!StatusIntent.Aberto(intent.Status) && intent.Status != StatusIntent.Recusado)
                 {
@@ -427,7 +427,7 @@ SELECT id, idempotency_key FROM pagamento_tentativa WHERE id_intent = @Id AND me
             }
 
             var cred = await _base.CredencialAsync(intent, ct);
-            var orderId = ultimo.MpOrderId ?? throw PagamentoException.Estado("Este Pix nao foi criado como order do Mercado Pago.", intent.Status);
+            var orderId = ultimo.MpOrderId ?? throw PagamentoException.Estado("Este Pix não foi criado como order do Mercado Pago.", intent.Status);
             MpPagamento mp;
             try
             {
@@ -445,7 +445,7 @@ SELECT id, idempotency_key FROM pagamento_tentativa WHERE id_intent = @Id AND me
 
             await _sync.AplicarAsync(cred, mp, null, ator, ct);
             var final = await ObterInternoAsync(cx, intentId, null, ct);
-            if (StatusIntent.FamiliaPaga(final.Status)) throw new PagamentoException(PagamentoCodigos.JaPago, 409, "Este pagamento ja foi feito; use o estorno.");
+            if (StatusIntent.FamiliaPaga(final.Status)) throw new PagamentoException(PagamentoCodigos.JaPago, 409, "Este pagamento já foi feito; use o estorno.");
             return final;
         }
 
@@ -516,17 +516,17 @@ SELECT public_key, estado FROM mp_conta_loja WHERE id_estabelecimento = @Loja AN
         public async Task<CardPaymentResult> CriarAsync(CardPaymentRequest r, CancellationToken ct = default)
         {
             if (r.Origem == OrigensPagamento.Chat)
-                throw PagamentoException.Regra(PagamentoCodigos.CartaoNaoPermitidoNoChat, "A cobranca pelo chat e so por Pix.");
+                throw PagamentoException.Regra(PagamentoCodigos.CartaoNaoPermitidoNoChat, "A cobrança pelo chat é só por Pix.");
             PagamentoCriacaoBase.Validar(r);
-            if (string.IsNullOrWhiteSpace(r.Token) || r.Token.Length > 200) throw PagamentoException.Invalida("Token do cartao obrigatorio.", "token");
-            if (string.IsNullOrWhiteSpace(r.PaymentMethodId) || r.PaymentMethodId.Length > 40) throw PagamentoException.Invalida("Bandeira obrigatoria.", "paymentMethodId");
-            if (string.IsNullOrWhiteSpace(r.Pagador?.Email)) throw PagamentoException.Invalida("E-mail do pagador obrigatorio no cartao.", "pagador.email");
+            if (string.IsNullOrWhiteSpace(r.Token) || r.Token.Length > 200) throw PagamentoException.Invalida("Token do cartão obrigatório.", "token");
+            if (string.IsNullOrWhiteSpace(r.PaymentMethodId) || r.PaymentMethodId.Length > 40) throw PagamentoException.Invalida("Bandeira obrigatória.", "paymentMethodId");
+            if (string.IsNullOrWhiteSpace(r.Pagador?.Email)) throw PagamentoException.Invalida("E-mail do pagador obrigatório no cartão.", "pagador.email");
 
             await using var cx = await _base.Db.OpenConnectionAsync(ct);
             if (CredencialRegras.ContextoDaOrigem(r.Origem) == ContextoCredencial.Loja)
             {
                 var prefs = await PreferenciasPagamento.LerAsync(cx, r.IdEstabelecimento, ct);
-                if (!prefs.CartaoAtivo) throw PagamentoException.Regra(PagamentoCodigos.CartaoDesativado, "A loja nao aceita cartao online.");
+                if (!prefs.CartaoAtivo) throw PagamentoException.Regra(PagamentoCodigos.CartaoDesativado, "A loja não aceita cartão online.");
                 if (r.Parcelas < 1 || r.Parcelas > prefs.CartaoParcelasMax) throw PagamentoException.Invalida($"Parcelas entre 1 e {prefs.CartaoParcelasMax}.", "parcelas");
             }
             else if (r.Parcelas is < 1 or > 12) throw PagamentoException.Invalida("Parcelas entre 1 e 12.", "parcelas");
@@ -539,12 +539,12 @@ SELECT public_key, estado FROM mp_conta_loja WHERE id_estabelecimento = @Loja AN
             await using (var tx = await cx.BeginTransactionAsync(ct))
             {
                 intent = await _base.ObterOuCriarIntentAsync(cx, tx, r, cred, ct);
-                if (StatusIntent.FamiliaPaga(intent.Status)) throw new PagamentoException(PagamentoCodigos.JaPago, 409, "Este pedido ja foi pago.");
-                if (intent.Status is StatusIntent.Expirado or StatusIntent.Cancelado) throw PagamentoException.Estado("Esta cobranca ja foi encerrada.", intent.Status);
-                if (intent.Status == StatusIntent.Processando) throw PagamentoException.Estado("Ha um pagamento com cartao em analise para este pedido.", intent.Status);
+                if (StatusIntent.FamiliaPaga(intent.Status)) throw new PagamentoException(PagamentoCodigos.JaPago, 409, "Este pedido já foi pago.");
+                if (intent.Status is StatusIntent.Expirado or StatusIntent.Cancelado) throw PagamentoException.Estado("Esta cobrança já foi encerrada.", intent.Status);
+                if (intent.Status == StatusIntent.Processando) throw PagamentoException.Estado("Há um pagamento com cartão em análise para este pedido.", intent.Status);
                 var ultimo = await PagamentoIntentSql.UltimoPagamentoAsync(cx, tx, intent.Id, ct);
                 if (ultimo is { Metodo: MetodosPagamento.Pix, Status: StatusPagamento.Pendente })
-                    throw PagamentoException.Estado("Ha um Pix em aberto para este pedido; cancele-o antes de pagar com cartao.", intent.Status);
+                    throw PagamentoException.Estado("Há um Pix em aberto para este pedido; cancele-o antes de pagar com cartão.", intent.Status);
                 tentativa = await _base.ObterOuCriarTentativaAsync(cx, tx, intent.Id, MetodosPagamento.Cartao, string.Format(chave, intent.Id), ct);
                 await tx.CommitAsync(ct);
             }
@@ -554,7 +554,7 @@ SELECT public_key, estado FROM mp_conta_loja WHERE id_estabelecimento = @Loja AN
                 await _sync.SincronizarAsync(cred, tentativa.MpPaymentId.Value, "sistema", ct);
                 return await ResultadoAsync(cx, intent.Id, ct);
             }
-            if (tentativa.Status == "falhou") throw PagamentoException.Estado("Este cartao ja foi tentado; gere um novo token.", intent.Status);
+            if (tentativa.Status == "falhou") throw PagamentoException.Estado("Este cartão já foi tentado; gere um novo token.", intent.Status);
 
             // issuer_id nao existe na Orders API: o MP deduz o emissor pelo token.
             var pedido = _base.NovaOrderMp(intent, r);
@@ -586,7 +586,7 @@ SELECT public_key, estado FROM mp_conta_loja WHERE id_estabelecimento = @Loja AN
                 if (s.Resultado == ResultadoSincronizacao.Rejeitado)
                 {
                     _logger.LogError("[mp.cartao] ev=resposta_inconsistente intent={Intent} mp={Mp} motivo={Motivo}", intent.Id, mp.Id, s.Motivo);
-                    throw new PagamentoException(PagamentoCodigos.MercadoPagoRespostaInconsistente, 502, "O Mercado Pago devolveu um pagamento que nao confere.");
+                    throw new PagamentoException(PagamentoCodigos.MercadoPagoRespostaInconsistente, 502, "O Mercado Pago devolveu um pagamento que não confere.");
                 }
             }
 

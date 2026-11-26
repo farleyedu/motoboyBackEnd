@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using APIBack.Attributes;
@@ -11,7 +11,7 @@ using Microsoft.Extensions.Logging;
 namespace APIBack.Payments.Assinaturas
 {
     /// <summary>
-    /// Assinatura da loja do token (CONTRATOS.md §8.4). Liberadas mesmo com a loja suspensa ou bloqueada (/api/v2/comercial), para regularizar.
+    /// Assinatura da loja do token (CONTRATOS.md §8.4). Liberadas mesmo com a loja bloqueada pela Gestão (/api/v2/comercial), para regularizar.
     /// Ver e pedir compra: qualquer usuario da loja. Contratar, trocar, cancelar, pagar, comprar e aprovar: Configuracoes:assinatura (gerente/dono).
     /// </summary>
     [ApiController]
@@ -61,6 +61,21 @@ namespace APIBack.Payments.Assinaturas
         [RequirePermission(Modulo, Acao)]
         public Task<IActionResult> Retomar() => Executar(() => _service.RetomarAsync(Loja(), Usuario(), HttpContext.RequestAborted), _logger);
 
+        /// <summary>Desfaz a troca marcada para o próximo vencimento.</summary>
+        [HttpPost("assinaturas/desfazer-troca")]
+        [RequirePermission(Modulo, Acao)]
+        public Task<IActionResult> DesfazerTroca() => Executar(() => _service.DesfazerTrocaAsync(Loja(), Usuario(), HttpContext.RequestAborted), _logger);
+
+        /// <summary>Liga ou troca o cartão com cobrança automática.</summary>
+        [HttpPost("assinaturas/cartao")]
+        [RequirePermission(Modulo, Acao)]
+        public Task<IActionResult> LigarCartao([FromBody] CartaoAutomaticoRequest body) =>
+            Executar(() => _service.LigarCartaoAsync(Loja(), body ?? new CartaoAutomaticoRequest(), Usuario(), HttpContext.RequestAborted), _logger);
+
+        [HttpDelete("assinaturas/cartao")]
+        [RequirePermission(Modulo, Acao)]
+        public Task<IActionResult> DesligarCartao() => Executar(() => _service.DesligarCartaoAsync(Loja(), Usuario(), HttpContext.RequestAborted), _logger);
+
         [HttpGet("cobrancas")]
         public Task<IActionResult> Cobrancas()
         {
@@ -106,18 +121,24 @@ namespace APIBack.Payments.Assinaturas
     public sealed class GestaoAssinaturasController : PagamentoControllerBase
     {
         private readonly IAssinaturaService _service;
+        private readonly IGestaoAssinaturaService _gestao;
         private readonly ILogger<GestaoAssinaturasController> _logger;
 
-        public GestaoAssinaturasController(IAssinaturaService service, ILogger<GestaoAssinaturasController> logger)
+        public GestaoAssinaturasController(IAssinaturaService service, IGestaoAssinaturaService gestao, ILogger<GestaoAssinaturasController> logger)
         {
             _service = service;
+            _gestao = gestao;
             _logger = logger;
         }
+
+        /// <summary>Toda ação daqui exige super admin; quem fez fica registrado.</summary>
+        private Task<IActionResult> Gestao<T>(Func<int?, Task<T>> acao) =>
+            Executar(() => { ExigirGestao(); return acao(HttpContext.GetUserId()); }, _logger);
 
         private void ExigirGestao()
         {
             if (!HttpContext.GetUserId().HasValue) throw new PagamentoException(PagamentoCodigos.NaoAutenticado, 401, "Entre de novo.");
-            if (!HttpContext.IsSuperAdmin()) throw PagamentoException.SemPermissao("So a Gestao da Zippy.");
+            if (!HttpContext.IsSuperAdmin()) throw PagamentoException.SemPermissao("Só a Gestão da Zippy.");
         }
 
         [HttpGet("api/gestao/estabelecimentos/{id:guid}/assinatura")]
@@ -129,7 +150,53 @@ namespace APIBack.Payments.Assinaturas
             Executar(() => { ExigirGestao(); return _service.CobrancasAsync(id, HttpContext.RequestAborted); }, _logger);
 
         [HttpPost("api/gestao/comercial/cobrancas/{id:guid}/baixa-manual")]
-        public Task<IActionResult> BaixaManual(Guid id, [FromBody] BaixaManualRequest body) =>
-            Executar(() => { ExigirGestao(); return _service.BaixaManualAsync(id, body ?? new BaixaManualRequest(), HttpContext.GetUserId(), HttpContext.RequestAborted); }, _logger);
+        public Task<IActionResult> BaixaManual(Guid id, [FromBody] BaixaManualRequest? body) =>
+            Gestao(u => _service.BaixaManualAsync(id, body ?? new BaixaManualRequest(), u, HttpContext.RequestAborted));
+
+        [HttpGet("api/gestao/assinaturas")]
+        public Task<IActionResult> Lista([FromQuery] string? estado, [FromQuery] string? mesVigente, [FromQuery] string? busca)
+        {
+            Response.Headers.CacheControl = "no-store";
+            return Gestao(_ => _gestao.ListarAsync(estado, mesVigente, busca, HttpContext.RequestAborted));
+        }
+
+        [HttpGet("api/gestao/assinaturas/excedentes")]
+        public Task<IActionResult> Excedentes()
+        {
+            Response.Headers.CacheControl = "no-store";
+            return Gestao(_ => _gestao.ExcedentesAsync(HttpContext.RequestAborted));
+        }
+
+        [HttpPost("api/gestao/estabelecimentos/{id:guid}/assinatura")]
+        public Task<IActionResult> Criar(Guid id, [FromBody] GestaoCriarAssinaturaRequest body) =>
+            Gestao(u => _gestao.CriarAsync(id, body ?? new GestaoCriarAssinaturaRequest(), u, HttpContext.RequestAborted));
+
+        [HttpPost("api/gestao/estabelecimentos/{id:guid}/assinatura/alterar")]
+        public Task<IActionResult> Alterar(Guid id, [FromBody] GestaoAlterarAssinaturaRequest body) =>
+            Gestao(u => _gestao.AlterarAsync(id, body ?? new GestaoAlterarAssinaturaRequest(), u, HttpContext.RequestAborted));
+
+        [HttpPost("api/gestao/estabelecimentos/{id:guid}/assinatura/cancelar")]
+        public Task<IActionResult> Cancelar(Guid id, [FromBody] GestaoCancelarAssinaturaRequest? body) =>
+            Gestao(u => _gestao.CancelarAsync(id, body ?? new GestaoCancelarAssinaturaRequest(), u, HttpContext.RequestAborted));
+
+        [HttpPost("api/gestao/estabelecimentos/{id:guid}/assinatura/retomar")]
+        public Task<IActionResult> Retomar(Guid id, [FromBody] GestaoMotivoRequest? body) =>
+            Gestao(u => _gestao.RetomarAsync(id, body ?? new GestaoMotivoRequest(), u, HttpContext.RequestAborted));
+
+        [HttpPost("api/gestao/estabelecimentos/{id:guid}/extras")]
+        public Task<IActionResult> Extra(Guid id, [FromBody] GestaoExtraRequest body) =>
+            Gestao(u => _gestao.ExtraAsync(id, body ?? new GestaoExtraRequest(), u, HttpContext.RequestAborted));
+
+        [HttpPost("api/gestao/comercial/cobrancas/{id:guid}/cancelar")]
+        public Task<IActionResult> CancelarCobranca(Guid id, [FromBody] GestaoMotivoRequest? body) =>
+            Gestao(u => _gestao.CancelarCobrancaAsync(id, body ?? new GestaoMotivoRequest(), u, HttpContext.RequestAborted));
+
+        [HttpPost("api/gestao/comercial/cobrancas/{id:guid}/vencimento")]
+        public Task<IActionResult> Vencimento(Guid id, [FromBody] GestaoVencimentoRequest body) =>
+            Gestao(u => _gestao.VencimentoAsync(id, body ?? new GestaoVencimentoRequest(), u, HttpContext.RequestAborted));
+
+        [HttpPost("api/gestao/comercial/cobrancas/{id:guid}/excedente-devolvido")]
+        public Task<IActionResult> ExcedenteDevolvido(Guid id, [FromBody] GestaoMotivoRequest? body) =>
+            Gestao(u => _gestao.ExcedenteDevolvidoAsync(id, body ?? new GestaoMotivoRequest(), u, HttpContext.RequestAborted));
     }
 }

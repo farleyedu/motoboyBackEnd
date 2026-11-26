@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -121,7 +121,9 @@ SELECT id AS Id, nome AS Nome, preco AS Preco, modulos_ativos::text[] AS Modulos
         // Nome, preco e cara do plano: so o catalogo muda. O valor cobrado de cada loja continua sendo o do contrato.
         await connection.ExecuteAsync(new CommandDefinition(@"
 UPDATE pacotes_comerciais
-   SET nome = COALESCE(NULLIF(TRIM(@Nome), ''), nome), preco = COALESCE(@Preco, preco), preco_anual = COALESCE(@PrecoAnual, preco_anual),
+   SET nome = COALESCE(NULLIF(TRIM(@Nome), ''), nome), preco = COALESCE(@Preco, preco),
+       -- Preco anual 0 significa sem opcao anual.
+       preco_anual = CASE WHEN @PrecoAnual::numeric = 0 THEN NULL ELSE COALESCE(@PrecoAnual, preco_anual) END,
        motoboys_base = COALESCE(@MotoboysBase, motoboys_base), cor = COALESCE(@Cor, cor), icone = COALESCE(@Icone, icone),
        frase = COALESCE(@Frase, frase), atualizado_em = NOW(), atualizado_por = @UsuarioId
  WHERE chave = @Chave;",
@@ -137,9 +139,16 @@ UPDATE pacotes_comerciais
             await connection.ExecuteAsync(new CommandDefinition(
                 "UPDATE pacotes_comerciais SET modulos_ativos=@Modulos::modulo_enum[] WHERE chave=@Chave;", new { Chave = chave, Modulos = modulos }, tx, cancellationToken: ct));
             if (ids.Length > 0)
-                await connection.ExecuteAsync(new CommandDefinition(@"
-UPDATE estabelecimentos SET modulos_ativos=@Modulos::modulo_enum[], data_atualizacao=NOW()
- WHERE id=ANY(@Ids) AND plano_comercial=@Chave;", new { Ids = ids, Chave = chave, Modulos = modulos }, tx, cancellationToken: ct));
+            {
+                // Modulos de extras ativos continuam: o plano muda, o que a loja comprou nao some.
+                var temExtras = await connection.ExecuteScalarAsync<bool>(new CommandDefinition(
+                    "SELECT to_regclass('compra_extra') IS NOT NULL;", transaction: tx, cancellationToken: ct));
+                var extras = temExtras ? @" || COALESCE((SELECT array_agg(m)::modulo_enum[] FROM compra_extra ce, unnest(ce.modulos_ativos) m
+             WHERE ce.id_estabelecimento = e.id AND ce.status = 'ativa' AND ce.vigencia_fim > NOW()), ARRAY[]::modulo_enum[])" : "";
+                await connection.ExecuteAsync(new CommandDefinition($@"
+UPDATE estabelecimentos e SET modulos_ativos = ARRAY(SELECT DISTINCT unnest(@Modulos::modulo_enum[]{extras})), data_atualizacao=NOW()
+ WHERE e.id=ANY(@Ids) AND e.plano_comercial=@Chave;", new { Ids = ids, Chave = chave, Modulos = modulos }, tx, cancellationToken: ct));
+            }
         }
 
         var result = await connection.QuerySingleAsync<Row>(new CommandDefinition(SelectSql + " WHERE p.chave=@Chave;", new { Chave = chave }, tx, cancellationToken: ct));
@@ -170,7 +179,7 @@ UPDATE estabelecimentos SET modulos_ativos=@Modulos::modulo_enum[], data_atualiz
             chave = $"{baseChave}_{i}";
         await connection.ExecuteAsync(new CommandDefinition(@"
 INSERT INTO pacotes_comerciais (chave, nome, modulos_ativos, pacotes_motoboy_base, motoboys_base, preco, preco_anual, cor, icone, frase, atualizado_por, ordem)
-VALUES (@Chave, @Nome, @Modulos::modulo_enum[], 1, @MotoboysBase, @Preco, @PrecoAnual, @Cor, @Icone, @Frase, @UsuarioId, 50);",
+VALUES (@Chave, @Nome, @Modulos::modulo_enum[], 1, @MotoboysBase, @Preco, NULLIF(@PrecoAnual::numeric, 0), @Cor, @Icone, @Frase, @UsuarioId, 50);",
             new { Chave = chave, Nome = nome, Modulos = modulos, request.MotoboysBase, request.Preco, request.PrecoAnual, request.Cor, request.Icone, request.Frase, UsuarioId = usuarioId },
             cancellationToken: ct));
         return ToDto(await connection.QuerySingleAsync<Row>(new CommandDefinition(SelectSql + " WHERE p.chave=@Chave;", new { Chave = chave }, cancellationToken: ct)));
@@ -192,6 +201,17 @@ VALUES (@Chave, @Nome, @Modulos::modulo_enum[], 1, @MotoboysBase, @Preco, @Preco
         var lojas = await connection.ExecuteScalarAsync<int>(new CommandDefinition(
             "SELECT COUNT(*) FROM estabelecimentos WHERE plano_comercial=@C;", new { C = chave }, cancellationToken: ct));
         if (lojas > 0) throw new SituacaoComercialException(409, "PACOTE_EM_USO", $"{lojas} loja(s) usam este plano. Arquive em vez de excluir.");
+        // Assinatura em andamento (mesmo sem pagamento) ou com troca marcada para este plano tambem segura.
+        if (await connection.ExecuteScalarAsync<bool>(new CommandDefinition("SELECT to_regclass('assinatura') IS NOT NULL;", cancellationToken: ct)))
+        {
+            var assinaturas = await connection.ExecuteScalarAsync<int>(new CommandDefinition(@"
+SELECT COUNT(*) FROM assinatura a WHERE a.status IN ('pendente', 'ativa')
+   AND (a.plano_chave=@C OR a.mudanca_plano=@C
+        OR EXISTS (SELECT 1 FROM assinatura_ciclo ci WHERE ci.id_assinatura = a.id AND ci.plano_chave=@C AND ci.status <> 'cancelado' AND ci.fim > NOW()));",
+                new { C = chave }, cancellationToken: ct));
+            if (assinaturas > 0)
+                throw new SituacaoComercialException(409, "PACOTE_EM_USO", $"{assinaturas} assinatura(s) usam este plano. Arquive em vez de excluir.");
+        }
         await connection.ExecuteAsync(new CommandDefinition("DELETE FROM pacotes_comerciais WHERE chave=@C;", new { C = chave }, cancellationToken: ct));
     }
 
@@ -206,12 +226,14 @@ VALUES (@Chave, @Nome, @Modulos::modulo_enum[], 1, @MotoboysBase, @Preco, @Preco
         var nome = request.Nome?.Trim();
         if (string.IsNullOrEmpty(nome)) throw new SituacaoComercialException(422, "NOME_OBRIGATORIO", "Dê um nome ao avulso.");
         ValidarPreco(request.Preco, null, request.Motoboys);
-        var modulos = request.Modulos is { Count: > 0 } ? Modulos(request.Modulos) : Array.Empty<string>();
+        // Sem informar modulos (nulo ou lista vazia), a edicao mantem os atuais.
+        var informados = request.Modulos is { Count: > 0 } ? Modulos(request.Modulos) : null;
+        var modulos = informados ?? Array.Empty<string>();
         await using var connection = await source.OpenConnectionAsync(ct);
         var novoId = id.HasValue
             ? await connection.ExecuteScalarAsync<long?>(new CommandDefinition(@"
-UPDATE produtos_avulsos SET nome=@Nome, preco=@Preco, modulos_ativos=@Modulos::modulo_enum[], motoboys=@Motoboys, cor=@Cor, atualizado_em=NOW()
- WHERE id=@Id RETURNING id;", new { Id = id, Nome = nome, request.Preco, Modulos = modulos, request.Motoboys, request.Cor }, cancellationToken: ct))
+UPDATE produtos_avulsos SET nome=@Nome, preco=@Preco, modulos_ativos=COALESCE(@Modulos::modulo_enum[], modulos_ativos), motoboys=@Motoboys, cor=@Cor, atualizado_em=NOW()
+ WHERE id=@Id RETURNING id;", new { Id = id, Nome = nome, request.Preco, Modulos = informados, request.Motoboys, request.Cor }, cancellationToken: ct))
             : await connection.ExecuteScalarAsync<long?>(new CommandDefinition(@"
 INSERT INTO produtos_avulsos (nome, preco, modulos_ativos, motoboys, cor) VALUES (@Nome, @Preco, @Modulos::modulo_enum[], @Motoboys, @Cor) RETURNING id;",
                 new { Nome = nome, request.Preco, Modulos = modulos, request.Motoboys, request.Cor }, cancellationToken: ct));

@@ -25,7 +25,7 @@ public sealed class SocialEditorDatabaseTests
         var exemplo = await db.Editor.CriarExemploAsync(db.LojaA, 1, Ct);
         Assert.False(exemplo.JaExistia);
         Assert.Equal(6, exemplo.CorteIds.Count);
-        var cortes = await db.Editor.CortesAsync(db.LojaA, exemplo.CorteIds, Ct);
+        var cortes = await db.Editor.CortesAsync(db.LojaA, 1, exemplo.CorteIds, Ct);
         Assert.Equal("Explosão + risada forte", cortes[0].Titulo);
         Assert.Equal(40, cortes[0].Duracao);
         Assert.Equal(92, cortes[0].Nota);
@@ -39,7 +39,7 @@ public sealed class SocialEditorDatabaseTests
         Assert.Equal(exemplo.CorteIds, de_novo.CorteIds);
 
         await db.Editor.ApagarVideoAsync(db.LojaA, exemplo.VideoId, Ct);
-        Assert.Empty(await db.Editor.CortesAsync(db.LojaA, exemplo.CorteIds, Ct));
+        Assert.Empty(await db.Editor.CortesAsync(db.LojaA, 1, exemplo.CorteIds, Ct));
     }
 
     [DeliveryDatabaseFact]
@@ -67,7 +67,7 @@ public sealed class SocialEditorDatabaseTests
         var atual = await db.Editor.ReceitaAsync(db.LojaA, corte, Ct);
         Assert.Equal(35, atual.Versao);
         Assert.Equal(34, atual.Receita.GetProperty("n").GetInt32());
-        Assert.Equal(35, (await db.Editor.CortesAsync(db.LojaA, new[] { corte }, Ct)).Single().ReceitaVersao);
+        Assert.Equal(35, (await db.Editor.CortesAsync(db.LojaA, 1, new[] { corte }, Ct)).Single().ReceitaVersao);
 
         var historico = await db.Editor.HistoricoAsync(db.LojaA, corte, Ct);
         Assert.Equal(30, historico.Count);
@@ -86,14 +86,14 @@ public sealed class SocialEditorDatabaseTests
         await db.Editor.SalvarReceitaAsync(db.LojaA, 1, corte, new(0, Receita(corte)), Ct);
         var arquivo = await db.Arquivos.CriarAsync(db.LojaA, 1, new("imagem", "logo.png", "image/png", 100, Hash('a')), Ct);
 
-        Assert.Empty(await db.Editor.CortesAsync(db.LojaB, new[] { corte }, Ct));
+        Assert.Empty(await db.Editor.CortesAsync(db.LojaB, 2, new[] { corte }, Ct));
         async Task NaoAcha(Func<Task> f) => Assert.Equal(404, (await Assert.ThrowsAsync<SocialException>(f)).Status);
         await NaoAcha(() => db.Editor.ReceitaAsync(db.LojaB, corte, Ct));
         await NaoAcha(() => db.Editor.SalvarReceitaAsync(db.LojaB, 2, corte, new(1, Receita(corte)), Ct));
         await NaoAcha(() => db.Editor.SalvarDadosAsync(db.LojaB, corte, Json("{}"), Ct));
         await NaoAcha(() => db.Editor.HistoricoAsync(db.LojaB, corte, Ct));
         await NaoAcha(() => db.Editor.VersaoAsync(db.LojaB, corte, 1, Ct));
-        var video = (await db.Editor.CortesAsync(db.LojaA, new[] { corte }, Ct))[0].VideoId;
+        var video = (await db.Editor.CortesAsync(db.LojaA, 1, new[] { corte }, Ct))[0].VideoId;
         await NaoAcha(() => db.Editor.ApagarVideoAsync(db.LojaB, video, Ct));
         await NaoAcha(() => db.Arquivos.ObterAsync(db.LojaB, arquivo.ArquivoId, Ct));
         await NaoAcha(() => db.Arquivos.ConfirmarAsync(db.LojaB, arquivo.ArquivoId, Ct));
@@ -189,7 +189,7 @@ public sealed class SocialEditorDatabaseTests
         await using var db = await Database.Create();
         var corte = (await db.Editor.CriarExemploAsync(db.LojaA, 1, Ct)).CorteIds[0];
         await db.Editor.SalvarDadosAsync(db.LojaA, corte, Json("""{"falas":[{"quem":"Lucas","t":1.5,"txt":"olha isso"}]}"""), Ct);
-        Assert.Contains("Lucas", (await db.Editor.CortesAsync(db.LojaA, new[] { corte }, Ct))[0].Dados.GetRawText());
+        Assert.Contains("Lucas", (await db.Editor.CortesAsync(db.LojaA, 1, new[] { corte }, Ct))[0].Dados.GetRawText());
 
         var grande = Json($$"""{"x":"{{new string('a', EditorRegras.LimiteDadosBytes)}}"}""");
         Assert.Equal(413, (await Assert.ThrowsAsync<SocialException>(() => db.Editor.SalvarDadosAsync(db.LojaA, corte, grande, Ct))).Status);
@@ -244,7 +244,9 @@ public sealed class SocialEditorDatabaseTests
                 INSERT INTO estabelecimentos VALUES (@A, 'Loja A'), (@B, 'Loja B');
                 INSERT INTO usuario VALUES (1, 'Maria'), (2, 'João');
                 """, new { A = db.LojaA, B = db.LojaB });
-            await db.Execute(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Migrations", "Delivery", "20261208_01_social_editor_base.sql")));
+            // o GET /cortes lê a máquina do vídeo: entram também as migrations dos renders e das máquinas
+            foreach (var m in new[] { "20261208_01_social_editor_base.sql", "20261208_04_social_renders.sql", "20261208_05_social_fila_maquinas.sql" })
+                await db.Execute(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Migrations", "Delivery", m)));
             db.Editor = new SocialEditorService(db.Source, db.Storage);
             db.Arquivos = new SocialArquivosService(db.Source, db.Storage);
             return db;

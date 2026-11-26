@@ -1,9 +1,10 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using APIBack.Payments.Assinaturas;
 using Dapper;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Caching.Memory;
@@ -161,13 +162,25 @@ namespace APIBack.Service
         DateTimeOffset? BloqueadoEm,
         string? BloqueadoMotivo,
         int? DiasTesteRestantes = null,
-        // Estado financeiro da assinatura (separado da situacao): em_dia | em_atraso | suspensa | encerrada; nulo = sem assinatura.
-        // suspensa e encerrada param so as operacoes novas (AcessoFinanceiroRules).
+        // Estado financeiro da assinatura (separado da situacao): em_dia | em_atraso | encerrada; nulo = sem assinatura.
+        // So informa: nada e bloqueado por pagamento. SuspensaEm continua no contrato e e sempre nulo.
         string? Financeiro = null,
         DateTimeOffset? SuspensaEm = null);
 
-    /// <summary>acao: iniciar_operacao | ativar | bloquear | desbloquear.</summary>
-    public sealed record AcaoSituacaoRequest(string? Acao, string? Motivo, string? Plano, int? MotoboysBase);
+    /// <summary>
+    /// acao: iniciar_operacao | ativar | bloquear | desbloquear. Motivo sempre opcional.
+    /// bloquear: PararCobranca (padrao false) encerra a assinatura. ativar: Cortesia (padrao false, que gera cobranca).
+    /// </summary>
+    public sealed record AcaoSituacaoRequest(string? Acao, string? Motivo, string? Plano, int? MotoboysBase, bool PararCobranca = false, bool Cortesia = false);
+
+    /// <summary>O que "ativar" faz com a assinatura.</summary>
+    public enum AssinaturaNaAtivacao
+    {
+        /// <summary>Cria ou atualiza a assinatura (a assinatura e a unica fonte de cobranca).</summary>
+        Acompanhar,
+        /// <summary>Nao mexe: a cobranca ja seguia (volta de uma reimplantacao).</summary>
+        Manter
+    }
 
     public sealed record MotoboyPacoteDto(
         long Id, int Quantidade, string Periodicidade, DateTimeOffset InicioUtc, DateTimeOffset FimUtc,
@@ -307,7 +320,7 @@ SELECT e.situacao_comercial = 'teste'
         {
             var prontidao = await _prontidao.ObterAsync(estabelecimentoId, visaoGestao, ct);
             if (prontidao == null)
-                throw new SituacaoComercialException(404, "ESTABELECIMENTO_NAO_ENCONTRADO", "Estabelecimento nao encontrado.");
+                throw new SituacaoComercialException(404, "ESTABELECIMENTO_NAO_ENCONTRADO", "Estabelecimento não encontrado.");
             // Quem ja passou da implantacao recebe o erro proprio (OPERACAO_JA_INICIADA) no passo seguinte.
             if (prontidao.Situacao != SituacoesComerciais.Implantacao || prontidao.PodeComecarAOperar) return;
             var erro = ErrosOperacionais.Obter(ErrosOperacionais.ProntidaoIncompleta);
@@ -327,7 +340,7 @@ SELECT e.situacao_comercial = 'teste'
             await AplicarNaTransacaoAsync(connection, tx, estabelecimentoId, request, usuarioId, origem, AcoesInternas.Nenhuma, ct);
 
             var resultado = await LerAsync(connection, tx, estabelecimentoId, ct)
-                ?? throw new SituacaoComercialException(404, "ESTABELECIMENTO_NAO_ENCONTRADO", "Estabelecimento nao encontrado.");
+                ?? throw new SituacaoComercialException(404, "ESTABELECIMENTO_NAO_ENCONTRADO", "Estabelecimento não encontrado.");
             await tx.CommitAsync(ct);
             _cache.Remove(Key(estabelecimentoId));
             return resultado;
@@ -348,7 +361,8 @@ SELECT e.situacao_comercial = 'teste'
         /// </summary>
         public static async Task<(string Antes, string Depois)> AplicarNaTransacaoAsync(
             NpgsqlConnection connection, NpgsqlTransaction tx, Guid estabelecimentoId, AcaoSituacaoRequest request, int? usuarioId,
-            string origem, AcoesInternas internas, CancellationToken ct, int? dias = null, bool zerarTeste = false)
+            string origem, AcoesInternas internas, CancellationToken ct, int? dias = null, bool zerarTeste = false,
+            DateOnly? primeiraCobranca = null, AssinaturaNaAtivacao assinatura = AssinaturaNaAtivacao.Acompanhar)
         {
             var acao = (request.Acao ?? string.Empty).Trim().ToLowerInvariant();
 
@@ -366,7 +380,7 @@ SELECT modulos_ativos::text[] AS ModulosAtivos, motoboys_base AS MotoboysBase
             }
 
             var atual = await LerAsync(connection, tx, estabelecimentoId, ct, forUpdate: true)
-                ?? throw new SituacaoComercialException(404, "ESTABELECIMENTO_NAO_ENCONTRADO", "Estabelecimento nao encontrado.");
+                ?? throw new SituacaoComercialException(404, "ESTABELECIMENTO_NAO_ENCONTRADO", "Estabelecimento não encontrado.");
             var antes = atual.Situacao;
             string depois;
             var motivo = string.IsNullOrWhiteSpace(request.Motivo) ? null : request.Motivo.Trim();
@@ -375,7 +389,7 @@ SELECT modulos_ativos::text[] AS ModulosAtivos, motoboys_base AS MotoboysBase
             {
                 case "iniciar_operacao":
                     if (antes != SituacoesComerciais.Implantacao)
-                        throw new SituacaoComercialException(409, ErrosOperacionais.OperacaoJaIniciada, "A operacao so pode ser iniciada a partir da implantacao.");
+                        throw new SituacaoComercialException(409, ErrosOperacionais.OperacaoJaIniciada, "A operação só pode ser iniciada a partir da implantação.");
                     depois = SituacoesComerciais.Teste;
                     await connection.ExecuteAsync(new CommandDefinition(@"
 UPDATE estabelecimentos
@@ -399,40 +413,56 @@ UPDATE estabelecimentos
                     var plano = planoSolicitado;
                     // O plano existe no catalogo (validado acima) ou e personalizado: a Gestao pode criar planos novos.
                     if (pacote == null && plano != "personalizado")
-                        throw new SituacaoComercialException(422, "PLANO_INVALIDO", "Escolha um plano do catalogo ou personalizado.");
+                        throw new SituacaoComercialException(422, "PLANO_INVALIDO", "Escolha um plano do catálogo ou personalizado.");
                     // Sem valor informado vale a base do plano escolhido (Turbo 3, Frota 5); "personalizado" mantem a atual.
                     var motoboysBase = request.MotoboysBase ?? pacote?.MotoboysBase ?? atual.MotoboysBase;
                     if (motoboysBase < 0)
                         throw new SituacaoComercialException(422, "MOTOBOYS_INVALIDOS", "A base de motoboys não pode ser negativa.");
                     depois = SituacoesComerciais.Ativo;
-                    await connection.ExecuteAsync(new CommandDefinition(@"
+                    // A assinatura acompanha o plano ativado (sem isto a proxima fatura desfaria a mudanca). Vem antes, para o
+                    // que a Gestao informou aqui (base de motoboys) ser o que fica.
+                    if (assinatura == AssinaturaNaAtivacao.Acompanhar)
+                        await AssinaturaOperacoes.AtivarPelaGestaoAsync(connection, tx, estabelecimentoId, plano, periodicidade: null, request.Cortesia,
+                            primeiraCobranca ?? FusoComercial.Data(DateTimeOffset.UtcNow), usuarioId, ct);
+                    // Modulos de extras ainda validos continuam, mesmo com outro plano.
+                    var temExtras = await connection.ExecuteScalarAsync<bool>(new CommandDefinition(
+                        "SELECT to_regclass('compra_extra') IS NOT NULL;", transaction: tx, cancellationToken: ct));
+                    var comExtras = temExtras
+                        ? @"ARRAY(SELECT DISTINCT unnest(@Modulos::modulo_enum[] || COALESCE((SELECT array_agg(m)::modulo_enum[]
+              FROM compra_extra ce, unnest(ce.modulos_ativos) m
+             WHERE ce.id_estabelecimento = estabelecimentos.id AND ce.status = 'ativa' AND ce.vigencia_fim > NOW()), ARRAY[]::modulo_enum[])))"
+                        : "@Modulos::modulo_enum[]";
+                    var modulos = pacote == null ? "modulos_ativos" : comExtras;
+                    await connection.ExecuteAsync(new CommandDefinition($@"
 UPDATE estabelecimentos
    SET situacao_comercial = 'ativo', plano_comercial = @Plano, motoboys_base = @MotoboysBase,
-       modulos_ativos = COALESCE(@Modulos::modulo_enum[], modulos_ativos),
+       modulos_ativos = {modulos},
        operacao_iniciada_em = COALESCE(operacao_iniciada_em, NOW()),
        bloqueado_em = NULL, bloqueado_por = NULL, bloqueado_motivo = NULL
  WHERE id = @Id;", new { Id = estabelecimentoId, Plano = plano, MotoboysBase = motoboysBase, Modulos = pacote?.ModulosAtivos }, tx, cancellationToken: ct));
                     break;
 
                 case "bloquear":
-                    if (antes == SituacoesComerciais.Bloqueado)
-                        throw new SituacaoComercialException(409, "JA_BLOQUEADO", "O estabelecimento ja esta bloqueado.");
-                    if (motivo == null)
-                        throw new SituacaoComercialException(422, "MOTIVO_OBRIGATORIO", "Informe o motivo do bloqueio.");
+                    // Loja ja bloqueada: ainda da para parar a cobranca dela.
+                    if (antes == SituacoesComerciais.Bloqueado && !request.PararCobranca)
+                        throw new SituacaoComercialException(409, "JA_BLOQUEADO", "O estabelecimento já está bloqueado.");
                     depois = SituacoesComerciais.Bloqueado;
-                    await connection.ExecuteAsync(new CommandDefinition(@"
+                    if (antes != SituacoesComerciais.Bloqueado)
+                        await connection.ExecuteAsync(new CommandDefinition(@"
 UPDATE estabelecimentos
    SET situacao_comercial = 'bloqueado', bloqueado_em = NOW(), bloqueado_por = @Usuario, bloqueado_motivo = @Motivo
  WHERE id = @Id;", new { Id = estabelecimentoId, Usuario = usuarioId, Motivo = motivo }, tx, cancellationToken: ct));
+                    if (request.PararCobranca)
+                        await AssinaturaOperacoes.PararCobrancaAsync(connection, tx, estabelecimentoId, usuarioId, motivo, ct);
                     break;
 
                 case "desbloquear":
                     if (antes != SituacoesComerciais.Bloqueado)
-                        throw new SituacaoComercialException(409, "NAO_BLOQUEADO", "O estabelecimento nao esta bloqueado.");
-                    // Volta para onde estava antes do ultimo bloqueio (teste ou ativo).
+                        throw new SituacaoComercialException(409, "NAO_BLOQUEADO", "O estabelecimento não está bloqueado.");
+                    // Volta para onde estava antes do ultimo bloqueio (teste ou ativo). Pagar nao desbloqueia: so esta acao.
                     var anterior = await connection.ExecuteScalarAsync<string?>(new CommandDefinition(@"
 SELECT situacao_antes FROM estabelecimento_situacao_log
- WHERE estabelecimento_id = @Id AND acao = 'bloquear'
+ WHERE estabelecimento_id = @Id AND acao = 'bloquear' AND situacao_antes <> 'bloqueado'
  ORDER BY criado_em DESC, id DESC LIMIT 1;", new { Id = estabelecimentoId }, tx, cancellationToken: ct));
                     depois = anterior is SituacoesComerciais.Teste or SituacoesComerciais.Implantacao ? anterior : SituacoesComerciais.Ativo;
                     await connection.ExecuteAsync(new CommandDefinition(@"
@@ -445,7 +475,7 @@ UPDATE estabelecimentos
                     // Reimplantar (operando) ou reabrir a loja de quem voltou (bloqueada): checklist novo, sem novo teste.
                     // Teste iniciado e nao concluido (loja perdida no teste) e apagado: ela testa de novo.
                     if (antes is not (SituacoesComerciais.Ativo or SituacoesComerciais.Bloqueado or SituacoesComerciais.Implantacao))
-                        throw new SituacaoComercialException(409, "SITUACAO_INVALIDA", "A loja nao pode voltar para a implantacao agora.");
+                        throw new SituacaoComercialException(409, "SITUACAO_INVALIDA", "A loja não pode voltar para a implantação agora.");
                     depois = SituacoesComerciais.Implantacao;
                     await connection.ExecuteAsync(new CommandDefinition(@"
 UPDATE estabelecimentos
@@ -457,7 +487,7 @@ UPDATE estabelecimentos
 
                 case "prorrogar_teste" when internas == AcoesInternas.Acompanhamento:
                     if (antes != SituacoesComerciais.Teste)
-                        throw new SituacaoComercialException(409, "SITUACAO_INVALIDA", "So o teste pode ser prorrogado.");
+                        throw new SituacaoComercialException(409, "SITUACAO_INVALIDA", "Só o teste pode ser prorrogado.");
                     if (dias is not (7 or 15))
                         throw new SituacaoComercialException(422, "DIAS_INVALIDOS", "Prorrogue por 7 ou 15 dias.");
                     depois = SituacoesComerciais.Teste;
@@ -469,7 +499,7 @@ UPDATE estabelecimentos
                     break;
 
                 default:
-                    throw new SituacaoComercialException(422, "ACAO_INVALIDA", "Acao invalida. Use iniciar_operacao, ativar, bloquear ou desbloquear.");
+                    throw new SituacaoComercialException(422, "ACAO_INVALIDA", "Ação inválida. Use iniciar_operacao, ativar, bloquear ou desbloquear.");
             }
 
             await connection.ExecuteAsync(new CommandDefinition(@"
@@ -478,7 +508,12 @@ VALUES (@Id, @Acao, @Antes, @Depois, @Motivo, @Usuario, CAST(@Detalhes AS jsonb)
                 new
                 {
                     Id = estabelecimentoId, Acao = acao, Antes = antes, Depois = depois, Motivo = motivo, Usuario = usuarioId,
-                    Detalhes = JsonSerializer.Serialize(new { request.Plano, request.MotoboysBase, origem, ator = usuarioId, dias })
+                    Detalhes = JsonSerializer.Serialize(new
+                    {
+                        request.Plano, request.MotoboysBase, origem, ator = usuarioId, dias,
+                        pararCobranca = acao == "bloquear" ? request.PararCobranca : (bool?)null,
+                        cortesia = acao == "ativar" ? request.Cortesia : (bool?)null
+                    })
                 }, tx, cancellationToken: ct));
 
             return (antes, depois);
@@ -572,22 +607,20 @@ SELECT e.id, e.situacao_comercial AS SituacaoComercial, e.operacao_iniciada_em A
                 string.Equals(row.SituacaoComercial, SituacoesComerciais.Teste, StringComparison.Ordinal)
                     ? ProntidaoRegras.DiasRestantes(Utc(row.TesteTerminaEm), DateTimeOffset.UtcNow)
                     : null,
-                financeiro?.Financeiro,
-                Utc(financeiro?.SuspensaEm));
+                financeiro);
         }
 
         /// <summary>
         /// Estado financeiro da assinatura da loja (Payments/Assinaturas): a viva, ou "encerrada" se a ultima terminou e nao ha outra.
-        /// Antes da migracao 20261101_40 nao ha tabela: ninguem fica suspenso. Dentro de transacao nao consulta (um erro abortaria a transacao).
+        /// So informa. Antes da migracao 20261101_40 nao ha tabela. Dentro de transacao nao consulta (um erro abortaria a transacao).
         /// </summary>
-        private static async Task<(string Financeiro, DateTime? SuspensaEm)?> FinanceiroAsync(NpgsqlConnection connection, NpgsqlTransaction? tx, Guid id, CancellationToken ct)
+        private static async Task<string?> FinanceiroAsync(NpgsqlConnection connection, NpgsqlTransaction? tx, Guid id, CancellationToken ct)
         {
             if (tx != null) return null;
             try
             {
-                return await connection.QueryFirstOrDefaultAsync<(string, DateTime?)?>(new CommandDefinition(@"
-SELECT CASE WHEN status = 'encerrada' THEN 'encerrada' ELSE financeiro END,
-       CASE WHEN status = 'encerrada' THEN encerrada_em ELSE suspensa_em END
+                return await connection.QueryFirstOrDefaultAsync<string?>(new CommandDefinition(@"
+SELECT CASE WHEN status = 'encerrada' THEN 'encerrada' ELSE financeiro END
   FROM assinatura WHERE id_estabelecimento = @Id AND (status IN ('pendente', 'ativa') OR encerramento_motivo = 'fim_do_periodo')
  ORDER BY (status IN ('pendente', 'ativa')) DESC, created_at DESC LIMIT 1;", new { Id = id }, cancellationToken: ct));
             }
@@ -666,7 +699,7 @@ SELECT e.id, e.nome_fantasia, emp.nome_fantasia, e.situacao_comercial, e.operaca
             await using var connection = await _dataSource.OpenConnectionAsync(ct);
             var existe = await connection.ExecuteScalarAsync<bool>(new CommandDefinition(
                 "SELECT EXISTS (SELECT 1 FROM estabelecimentos WHERE id = @Id);", new { Id = estabelecimentoId }, cancellationToken: ct));
-            if (!existe) throw new SituacaoComercialException(404, "ESTABELECIMENTO_NAO_ENCONTRADO", "Estabelecimento nao encontrado.");
+            if (!existe) throw new SituacaoComercialException(404, "ESTABELECIMENTO_NAO_ENCONTRADO", "Estabelecimento não encontrado.");
             var row = await connection.QuerySingleAsync<MotoboyPacoteRow>(new CommandDefinition(@"
 INSERT INTO motoboy_pacotes (estabelecimento_id, quantidade, periodicidade, inicio_utc, fim_utc, lancado_por)
 VALUES (@EstabelecimentoId, @Quantidade, @Periodicidade, @Inicio, @Fim, @Usuario)

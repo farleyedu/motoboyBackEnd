@@ -55,7 +55,7 @@ namespace APIBack.Payments.MercadoPago
 
         public string Proteger(string segredo, string contexto)
         {
-            if (_chave == null) throw PagamentoException.NaoConfigurado("Chave mestra de pagamentos nao configurada.");
+            if (_chave == null) throw PagamentoException.NaoConfigurado("Chave mestra de pagamentos não configurada.");
             if (string.IsNullOrEmpty(segredo)) throw new ArgumentException("Segredo vazio.", nameof(segredo));
 
             var nonce = RandomNumberGenerator.GetBytes(12);

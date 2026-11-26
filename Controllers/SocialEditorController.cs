@@ -6,6 +6,7 @@ using APIBack.Social.Arquivos;
 using APIBack.Social.Editor;
 using APIBack.Social.Nucleo;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Hosting;
 
 namespace APIBack.Controllers;
 
@@ -16,7 +17,8 @@ namespace APIBack.Controllers;
 [ApiController]
 [Route("api/social")]
 [RequireModule(SocialPermissoes.Modulo)]
-public sealed class SocialEditorController(ISocialEditorService editor, ISocialArquivosService arquivos) : ControllerBase
+public sealed class SocialEditorController(ISocialEditorService editor, ISocialArquivosService arquivos, IHostEnvironment ambiente)
+    : ControllerBase
 {
     // Folga sobre os limites do conteúdo (1 MB de dados, 512 KB de receita) para o envelope do pedido.
     private const long CorpoDados = EditorRegras.LimiteDadosBytes + 64 * 1024;
@@ -25,7 +27,7 @@ public sealed class SocialEditorController(ISocialEditorService editor, ISocialA
     [HttpGet("cortes")]
     [RequirePermission(SocialPermissoes.Modulo, SocialPermissoes.Visualizar)]
     public Task<IActionResult> Cortes([FromQuery] string? ids) =>
-        Run((loja, _, ct) => editor.CortesAsync(loja, EditorRegras.Ids(ids), ct));
+        Run((loja, usuario, ct) => editor.CortesAsync(loja, usuario, EditorRegras.Ids(ids), ct));
 
     [HttpPut("cortes/{id:long}/dados")]
     [RequirePermission(SocialPermissoes.Modulo, SocialPermissoes.Editar)]
@@ -71,7 +73,10 @@ public sealed class SocialEditorController(ISocialEditorService editor, ISocialA
 
     [HttpPost("videos/exemplo")]
     [RequirePermission(SocialPermissoes.Modulo, SocialPermissoes.Editar)]
-    public Task<IActionResult> Exemplo() => Run((loja, usuario, ct) => editor.CriarExemploAsync(loja, usuario, ct));
+    public Task<IActionResult> Exemplo() => ambiente.IsDevelopment()
+        ? Run((loja, usuario, ct) => editor.CriarExemploAsync(loja, usuario, ct))
+        // Cortes de exemplo são só para desenvolvimento: em produção a rota responde 404 (C01).
+        : Task.FromResult<IActionResult>(NotFound(ApiResponse<object>.Fail("Não encontrado.", "NAO_ENCONTRADO")));
 
     [HttpDelete("videos/{id:long}")]
     [RequirePermission(SocialPermissoes.Modulo, SocialPermissoes.Editar)]

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Linq;
@@ -18,7 +18,7 @@ namespace APIBack.Acompanhamento.Saude
     public static class SaudeCalculador
     {
         /// <summary>Muda quando uma regra do calculo muda (nao os limites, que tem versao propria).</summary>
-        public const int Versao = 1;
+        public const int Versao = 2;
 
         private static readonly CultureInfo Br = new("pt-BR");
 
@@ -53,6 +53,15 @@ namespace APIBack.Acompanhamento.Saude
                         faltam == 0 ? "cobrança vence hoje" : $"cobrança vence em {Dias(faltam)} ({venc:dd/MM})",
                         "cobranca da assinatura", "a cobranca ser paga", faltam));
             }
+
+            // ---- assinatura (alertas para a Gestao decidir; nada bloqueia sozinho)
+            var emUso = situacao == SituacoesComerciais.Ativo || (situacao == SituacoesComerciais.Teste && e.Pedidos7d > 0);
+            if (e.SituacaoDaAssinatura == "encerrada" && emUso)
+                motivos.Add(new MotivoSaude("assinatura_encerrada_em_uso", Fx.PrecisaDeAjuda, "pagamento",
+                    "assinatura encerrada e a loja ainda em uso", "assinatura", "a loja assinar de novo, ou a equipe decidir"));
+            else if (e.SituacaoDaAssinatura == "nenhuma" && situacao == SituacoesComerciais.Ativo)
+                motivos.Add(new MotivoSaude("ativa_sem_assinatura", Fx.PrecisaDeAjuda, "pagamento",
+                    "loja ativa sem assinatura", "assinatura", "criar a assinatura (com cobranca ou cortesia)"));
 
             // ---- fim do teste (nunca suspende; so informa e escala)
             if (situacao == SituacoesComerciais.Teste)
