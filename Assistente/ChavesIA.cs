@@ -277,8 +277,9 @@ public sealed class GestaoChavesIA(IChavesIARepositorio repo, CifraChavesAssiste
     }
 
     /// <summary>
-    /// A chave vale? Lista de modelos aceitou (todos menos OpenRouter, cuja lista é pública: lá a chamada prova, e falha que não é de chave
-    /// também prova). Falhas de formato, chave, conexão ou endereço nunca gravam. Público para teste.
+    /// A chave vale? Lista de modelos aceitou (todos menos OpenRouter, cuja lista é pública: lá a chamada prova, e falha na chamada que não
+    /// é de chave também conta; sem item ligado com modelo, só o formato é conferido). Falhas de formato, chave, conexão ou endereço nunca
+    /// gravam. Público para teste.
     /// </summary>
     public static bool Provada(DiagnosticoDto d)
     {
@@ -287,7 +288,7 @@ public sealed class GestaoChavesIA(IChavesIARepositorio repo, CifraChavesAssiste
         if (lista is null || lista.Situacao is SituacoesEtapa.Falhou or SituacoesEtapa.Pulada) return false;
         if (!d.ListaPublica) return true;
         var chamada = d.Etapas.FirstOrDefault(e => e.Etapa == EtapasFalha.ChamadaModelo);
-        return chamada?.Situacao == SituacoesEtapa.Ok || chamada?.Situacao == SituacoesEtapa.Falhou;
+        return d.Ok || chamada?.Situacao == SituacoesEtapa.Falhou;
     }
 
     public async Task<ChaveApagadaDto> Apagar(string provedor, int usuario, CancellationToken ct)

@@ -92,14 +92,6 @@ public sealed class ProvedoresIATests
         Assert.Equal(TipoFalha.Pedido, ProvedorAnthropic.Classificar(new InvalidOperationException("x")).Tipo);
     }
 
-    [Theory]
-    [InlineData("Rate limit reached for requests per day (RPD): Limit 1000", true)]
-    [InlineData("You exceeded your current quota, please check your plan", true)]
-    [InlineData("Rate limit exceeded: free-models-per-day", true)]
-    [InlineData("Rate limit reached for requests per minute", false)]
-    [InlineData(null, false)]
-    public void CotaDoDia(string? mensagem, bool diaria) => Assert.Equal(diaria, ProvedorOpenAI.CotaDiaria(mensagem));
-
     [Fact]
     public void RetryAfterEmSegundosOuData()
     {

@@ -80,14 +80,6 @@ public sealed class FalhaProvedorException(string provedor, string mensagem, Tip
 
 public static class MensagensFalha
 {
-    public const string ChaveRecusada = "Chave recusada";
-    public const string ModeloNaoExiste = "Modelo não existe";
-    public const string RespostaVazia = "Resposta vazia";
-    public const string RespostaCortada = "Resposta cortada (limite de tokens)";
-    public const string Recusa = "Recusou o conteúdo";
-    public const string FerramentaErrada = "Errou a chamada de ferramenta duas vezes";
-    public const string VoltasDemais = "Ferramentas demais na mesma pergunta";
-    public const string TempoEsgotado = "Passou do tempo limite";
     public const int MaxTamanho = 300;
 
     /// <summary>Corta a mensagem do provedor (pode trazer corpo da resposta) para guardar e mostrar.</summary>
@@ -300,7 +292,7 @@ public sealed class ProvedorAnthropic(string id, string? chave, ILogger logger) 
             }
             catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
             {
-                throw Classificar(ex, id);
+                throw Classificar(ex, id, chave: chave);
             }
 
             entrada += r.Usage.InputTokens + (r.Usage.CacheCreationInputTokens ?? 0) + (r.Usage.CacheReadInputTokens ?? 0);
@@ -338,7 +330,7 @@ public sealed class ProvedorAnthropic(string id, string? chave, ILogger logger) 
 
     private static Effort EsforcoAnthropic(string e) => e switch { "medium" => Effort.Medium, "high" => Effort.High, _ => Effort.Low };
 
-    public static FalhaProvedorException Classificar(Exception ex, string id = Provedores.Anthropic, string? etapa = null)
+    public static FalhaProvedorException Classificar(Exception ex, string id = Provedores.Anthropic, string? etapa = null, string? chave = null)
     {
         if (ex is FalhaProvedorException f) { f.Etapa ??= etapa; return f; }
         if (ex is AnthropicIOException or HttpRequestException or TaskCanceledException)
@@ -353,10 +345,11 @@ public sealed class ProvedorAnthropic(string id, string? chave, ILogger logger) 
             Anthropic5xxException => StatusNaMensagem(ex.Message) ?? 500,
             _ => StatusNaMensagem(ex.Message),
         };
-        var (codigoProv, msg) = CorpoErro.Ler(ex.Message);
+        var texto = Redacao.Ocultar(ex.Message, chave);
+        var (codigoProv, msg) = CorpoErro.Ler(texto);
         if (status is null)
-            return CatalogoFalhas.Nova(id, CodigosFalha.ErroInesperado, codigoProvedor: ex.GetType().Name, mensagemProvedor: ex.Message, inner: ex, etapa: etapa);
-        var codigo = CatalogoFalhas.Classificar(status.Value, codigoProv, msg, etapa);
+            return CatalogoFalhas.Nova(id, CodigosFalha.ErroInesperado, codigoProvedor: ex.GetType().Name, mensagemProvedor: texto, inner: ex, etapa: etapa);
+        var codigo = CatalogoFalhas.Classificar(status.Value, codigoProv, msg, etapa, texto);
         return CatalogoFalhas.Nova(id, codigo, status, codigoProv, msg, null, ex, etapa);
     }
 
@@ -397,7 +390,7 @@ public sealed class ProvedorAnthropic(string id, string? chave, ILogger logger) 
             var pagina = await Cliente().Models.List(cancellationToken: ct);
             return pagina.Items.Select(m => m.ID).Distinct().ToList();
         }
-        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested) { throw Classificar(ex, id, EtapasFalha.ListaModelos); }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested) { throw Classificar(ex, id, EtapasFalha.ListaModelos, chave); }
     }
 
     public async Task<bool> ChamadaMinima(string modelo, int maxTokens, CancellationToken ct)
@@ -413,7 +406,7 @@ public sealed class ProvedorAnthropic(string id, string? chave, ILogger logger) 
             if (r.StopReason == BetaStopReason.Refusal) throw CatalogoFalhas.Nova(id, CodigosFalha.ConteudoBloqueado, etapa: EtapasFalha.ChamadaModelo);
             return r.StopReason == BetaStopReason.MaxTokens;
         }
-        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested) { throw Classificar(ex, id, EtapasFalha.ChamadaModelo); }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested) { throw Classificar(ex, id, EtapasFalha.ChamadaModelo, chave); }
     }
 }
 
@@ -448,7 +441,6 @@ internal sealed class CabecalhosExtras(IReadOnlyDictionary<string, string> cabec
 public sealed class ProvedorOpenAI(DefinicaoProvedor definicao, string? chave, ILogger logger) : IProvedorIA
 {
     private static readonly string[] NaoChat = ["embedding", "whisper", "tts", "dall-e", "moderation", "image", "audio", "realtime", "transcribe", "search", "davinci", "babbage"];
-    private static readonly string[] SinaisCotaDiaria = ["per day", "per-day", "daily", "rpd", "requests per day", "insufficient_quota", "free-models-per-day", "quota"];
 
     public const string ParamStrict = "strict";
     public const string ParamEsforco = "reasoning_effort";
@@ -551,7 +543,7 @@ public sealed class ProvedorOpenAI(DefinicaoProvedor definicao, string? chave, I
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
                 {
-                    throw Classificar(ex, Nome);
+                    throw Classificar(ex, Nome, chave: chave);
                 }
             }
 
@@ -589,20 +581,20 @@ public sealed class ProvedorOpenAI(DefinicaoProvedor definicao, string? chave, I
     }
 
     /// <summary>Erro do SDK → tipo de falha, com retry-after e "cota do dia" quando o provedor diz. Público para teste.</summary>
-    public static FalhaProvedorException Classificar(Exception ex, string id = Provedores.OpenAI, string? etapa = null)
+    public static FalhaProvedorException Classificar(Exception ex, string id = Provedores.OpenAI, string? etapa = null, string? chave = null)
     {
         if (ex is FalhaProvedorException f) { f.Etapa ??= etapa; return f; }
         if (ex is ClientResultException r)
         {
             string? corpo = null;
             try { corpo = r.GetRawResponse()?.Content?.ToString(); } catch (Exception) { /* sem corpo legível */ }
-            return PorStatus(id, r.Status, string.IsNullOrWhiteSpace(corpo) ? r.Message : corpo, RetryAfter(r) ?? CorpoErro.Espera(corpo), ex, etapa);
+            return PorStatus(id, r.Status, Redacao.Ocultar(string.IsNullOrWhiteSpace(corpo) ? r.Message : corpo, chave), RetryAfter(r) ?? CorpoErro.Espera(corpo), ex, etapa);
         }
         if (ex is HttpRequestException or TaskCanceledException) return CatalogoFalhas.Nova(id, CodigosFalha.SemConexao, inner: ex, etapa: etapa);
         // Resposta que não é JSON da API (página HTML, proxy): o SDK falha ao ler.
         if (etapa == EtapasFalha.ListaModelos && ex is JsonException or FormatException or InvalidOperationException)
-            return CatalogoFalhas.Nova(id, CodigosFalha.UrlErrada, codigoProvedor: ex.GetType().Name, mensagemProvedor: ex.Message, inner: ex, etapa: etapa);
-        return CatalogoFalhas.Nova(id, CodigosFalha.ErroInesperado, codigoProvedor: ex.GetType().Name, mensagemProvedor: ex.Message, inner: ex, etapa: etapa);
+            return CatalogoFalhas.Nova(id, CodigosFalha.UrlErrada, codigoProvedor: ex.GetType().Name, mensagemProvedor: Redacao.Ocultar(ex.Message, chave), inner: ex, etapa: etapa);
+        return CatalogoFalhas.Nova(id, CodigosFalha.ErroInesperado, codigoProvedor: ex.GetType().Name, mensagemProvedor: Redacao.Ocultar(ex.Message, chave), inner: ex, etapa: etapa);
     }
 
     /// <summary>Código HTTP + corpo → falha do catálogo (§12.2). Público para teste.</summary>
@@ -611,13 +603,9 @@ public sealed class ProvedorOpenAI(DefinicaoProvedor definicao, string? chave, I
         if (CorpoErro.EhHtml(corpo) && status is not (>= 500 or 429))
             return CatalogoFalhas.Nova(id, CodigosFalha.UrlErrada, status, null, "A resposta veio como página HTML, não como API.", retry, ex, etapa);
         var (codigoProv, msg) = CorpoErro.Ler(corpo);
-        var codigo = CatalogoFalhas.Classificar(status, codigoProv, msg, etapa);
+        var codigo = CatalogoFalhas.Classificar(status, codigoProv, msg, etapa, corpo);
         return CatalogoFalhas.Nova(id, codigo, status == 0 ? null : status, codigoProv, msg, retry, ex, etapa);
     }
-
-    /// <summary>Mensagem de 429 fala de limite diário/cota? Público para teste.</summary>
-    public static bool CotaDiaria(string? mensagem) =>
-        mensagem is not null && SinaisCotaDiaria.Any(s => mensagem.Contains(s, StringComparison.OrdinalIgnoreCase));
 
     private static TimeSpan? RetryAfter(ClientResultException r)
     {
@@ -648,7 +636,7 @@ public sealed class ProvedorOpenAI(DefinicaoProvedor definicao, string? chave, I
             var lista = (await client.GetModelsAsync(ct)).Value;
             return lista.Select(m => CatalogoModelos.Normalizar(m.Id)).Distinct().ToList();
         }
-        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested) { throw Classificar(ex, Nome, EtapasFalha.ListaModelos); }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested) { throw Classificar(ex, Nome, EtapasFalha.ListaModelos, chave); }
     }
 
     public async Task<bool> ChamadaMinima(string modelo, int maxTokens, CancellationToken ct)
@@ -661,7 +649,7 @@ public sealed class ProvedorOpenAI(DefinicaoProvedor definicao, string? chave, I
                 throw CatalogoFalhas.Nova(Nome, CodigosFalha.ConteudoBloqueado, etapa: EtapasFalha.ChamadaModelo);
             return c.FinishReason == ChatFinishReason.Length;
         }
-        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested) { throw Classificar(ex, Nome, EtapasFalha.ChamadaModelo); }
+        catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested) { throw Classificar(ex, Nome, EtapasFalha.ChamadaModelo, chave); }
     }
 
     /// <summary>Só modelos de conversa (tira embedding, áudio, imagem…). Público para teste.</summary>

@@ -55,6 +55,7 @@ public static class RegrasCadeia
 {
     public const int LimiteSemValor = 1000;
     public static readonly TimeSpan EsperaPadrao = TimeSpan.FromMinutes(5);
+    public static readonly TimeSpan EsperaMinuto = TimeSpan.FromMinutes(1);
     public static readonly TimeSpan EsperaMaxima = TimeSpan.FromHours(24);
 
     /// <summary>O estado guardado só vale se o item ainda é o mesmo provedor + modelo (mudou na Gestão = estado zerado).</summary>
@@ -111,12 +112,18 @@ public static class RegrasCadeia
         };
     }
 
-    /// <summary>Até quando o item fica esgotado depois de uma falha transitória: retry-after; meia-noite se cota do dia; 5 min.</summary>
+    /// <summary>
+    /// Até quando o item fica esgotado depois de uma falha transitória: meia-noite se cota do dia (OpenRouter: 00:00 UTC); senão o
+    /// retry-after; senão 1 min (limite por minuto) ou 5 min.
+    /// </summary>
     public static DateTimeOffset EsgotadoAte(FalhaProvedorException f, DateTimeOffset agora)
     {
-        if (f.CotaDiaria) return AssistenteService.InicioDoDia(AssistenteService.DiaLocal(agora).AddDays(1));
+        if (f.CotaDiaria)
+            return f.Provedor == Provedores.OpenRouter
+                ? new DateTimeOffset(agora.UtcDateTime.Date.AddDays(1), TimeSpan.Zero)
+                : AssistenteService.InicioDoDia(AssistenteService.DiaLocal(agora).AddDays(1));
         if (f.RetryAfter is { } ra && ra > TimeSpan.Zero) return agora + (ra > EsperaMaxima ? EsperaMaxima : ra);
-        return agora + EsperaPadrao;
+        return agora + (f.Codigo == CodigosFalha.LimiteMinuto ? EsperaMinuto : EsperaPadrao);
     }
 }
 

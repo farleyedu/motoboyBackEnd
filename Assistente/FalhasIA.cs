@@ -123,9 +123,11 @@ public static class CatalogoFalhas
     }
 
     private static readonly string[] SinaisCotaDia = ["per day", "per-day", "perday", "daily", "rpd", "requests per day", "free-models-per-day", "tokens per day"];
+    private static readonly string[] SinaisCotaMinuto = ["per minute", "per-minute", "perminute", "rpm", "tpm"];
     private static readonly string[] SinaisChave = ["api_key_invalid", "api key not valid", "invalid api key", "incorrect api key", "invalid x-api-key",
         "invalid_api_key", "invalid authentication", "authentication_error", "invalid_authentication", "no auth credentials", "unauthenticated"];
-    private static readonly string[] SinaisCredito = ["insufficient_quota", "credit balance", "insufficient credits", "billing", "payment required", "exceeded your current quota"];
+    // Só o que é falta de dinheiro. "exceeded your current quota"/"billing" não entram: o Gemini usa essas frases na cota grátis.
+    private static readonly string[] SinaisCredito = ["insufficient_quota", "credit balance", "insufficient credits", "payment required"];
     private static readonly string[] SinaisRegiao = ["location is not supported", "unsupported_country", "user location", "not available in your country", "region is not supported"];
     private static readonly string[] SinaisGrande = ["context length", "context_length", "maximum context", "too many tokens", "request_too_large", "prompt is too long", "context window"];
     private static readonly string[] SinaisSemFerramentas = ["does not support tools", "tool use is not supported", "tools are not supported", "support tool use",
@@ -140,15 +142,24 @@ public static class CatalogoFalhas
 
     private static bool Tem(string texto, string[] sinais) => sinais.Any(s => texto.Contains(s, StringComparison.Ordinal));
 
+    /// <summary>429: cota do dia ou limite curto. O nome da cota (Gemini: <c>…PerDay…</c>) só vem no corpo inteiro.</summary>
+    private static string Classificar429(string texto)
+    {
+        if (Tem(texto, SinaisCotaDia)) return CodigosFalha.CotaDia;
+        if (Tem(texto, SinaisCotaMinuto)) return CodigosFalha.LimiteMinuto;
+        return texto.Contains("resource_exhausted", StringComparison.Ordinal) && texto.Contains("quota", StringComparison.Ordinal)
+            ? CodigosFalha.CotaDia : CodigosFalha.LimiteMinuto;
+    }
+
     /// <summary>Status HTTP + corpo → código do §12.2. O corpo vence quando é mais específico que o status.</summary>
-    public static string Classificar(int status, string? codigoProvedor, string? mensagem, string? etapa)
+    public static string Classificar(int status, string? codigoProvedor, string? mensagem, string? etapa, string? corpo = null)
     {
         var t = $"{codigoProvedor} {mensagem}".ToLowerInvariant();
         if (status == 0) return CodigosFalha.SemConexao;
         if (Tem(t, SinaisChave) || status == 401) return CodigosFalha.ChaveRecusada;
         if (status == 402 || Tem(t, SinaisCredito)) return CodigosFalha.SemCredito;
         if (Tem(t, SinaisRegiao)) return CodigosFalha.RegiaoBloqueada;
-        if (status == 429) return Tem(t, SinaisCotaDia) || t.Contains("resource_exhausted") && t.Contains("quota") ? CodigosFalha.CotaDia : CodigosFalha.LimiteMinuto;
+        if (status == 429) return Classificar429($"{t} {corpo}".ToLowerInvariant());
         if (status == 413 || Tem(t, SinaisGrande)) return CodigosFalha.PedidoGrande;
         if (Tem(t, SinaisSemFerramentas)) return CodigosFalha.ModeloSemFerramentas;
         if (Tem(t, SinaisSemAcesso)) return CodigosFalha.ModeloSemAcesso;
@@ -283,11 +294,14 @@ public static class Redacao
         @"(sk-ant-[\w\-]{6,}|sk-or-[\w\-]{6,}|sk-proj-[\w\-]{6,}|sk-[\w\-]{16,}|gsk_[\w\-]{6,}|AIza[\w\-]{16,}|AQ\.[\w\-\.]{16,}|(?<=key=)[^&\s""']+|(?<=Bearer )[\w\-\.]{8,})",
         RegexOptions.Compiled);
 
+    /// <summary>Troca a chave em uso por <c>•••</c> (vale para formato desconhecido). Use antes de cortar o texto.</summary>
+    public static string? Ocultar(string? texto, string? chave) =>
+        texto is null || string.IsNullOrEmpty(chave) ? texto : texto.Replace(chave, "•••", StringComparison.Ordinal);
+
     public static string? Limpar(string? texto, string? chave = null)
     {
         if (string.IsNullOrWhiteSpace(texto)) return null;
-        var t = string.IsNullOrEmpty(chave) ? texto : texto.Replace(chave, "•••", StringComparison.Ordinal);
-        t = Chaves.Replace(t, "•••").Trim();
+        var t = Chaves.Replace(Ocultar(texto, chave)!, "•••").Trim();
         return MensagensFalha.Curta(t);
     }
 }

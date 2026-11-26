@@ -6,7 +6,8 @@ namespace APIBack.Assistente;
 
 public sealed record EtapaDiagnosticoDto(string Etapa, string Situacao, long? Ms, string Texto, FalhaDto? Falha);
 
-public sealed record DiagnosticoDto(string Provedor, string? Modelo, string OrigemChave, bool Ok, IReadOnlyList<EtapaDiagnosticoDto> Etapas, FalhaDto? Falha,
+/// <summary><c>OrigemChave</c> nula = a chave testada foi a colada na tela.</summary>
+public sealed record DiagnosticoDto(string Provedor, string? Modelo, string? OrigemChave, bool Ok, IReadOnlyList<EtapaDiagnosticoDto> Etapas, FalhaDto? Falha,
     bool? Religado = null, bool ListaPublica = false);
 
 public sealed record DiagnosticoItemDto(string ItemId, string Provedor, string? Modelo, bool Ok, FalhaDto? Falha, IReadOnlyList<EtapaDiagnosticoDto> Etapas, bool? Religado);
@@ -100,7 +101,7 @@ public sealed class DiagnosticoIA(ICriadorProvedores criador, IEstadoCadeiaRepos
         var publica = def.Id == Provedores.OpenRouter;
         var agora = relogio.GetUtcNow();
         var (valor, origem) = Chave(def, chaveColada);
-        var origemDto = chaveColada is null ? origem : "colada";
+        var origemDto = chaveColada is null ? origem : null;
 
         DiagnosticoDto Parar(FalhaDto falha)
         {

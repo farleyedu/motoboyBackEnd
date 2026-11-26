@@ -120,9 +120,13 @@ public sealed class GestaoAssistenteController(
     {
         var guardado = RegrasCadeia.EstadoValido(d.Item, foto);
         var def = cfg.ProvedorDe(d.Item.Provedor);
-        var falha = guardado?.Falha;
-        if (falha is null && d.Motivo == MotivosPulo.SemChave && def is not null)
-            falha = CatalogoFalhas.Dto(CodigosFalha.SemChave, def.Id, def.Nome, d.Item.Modelo, EtapasFalha.FormatoChave);
+        // Só item parado por falha leva a falha: a guardada de ontem não pode aparecer num item que voltou.
+        var falha = d.Motivo switch
+        {
+            MotivosPulo.DesligadoErro or MotivosPulo.Esgotado => guardado?.Falha,
+            MotivosPulo.SemChave when def is not null => CatalogoFalhas.Dto(CodigosFalha.SemChave, def.Id, def.Nome, d.Item.Modelo, EtapasFalha.FormatoChave),
+            _ => null,
+        };
         if (falha is not null && falha.Acoes.Contains(AcoesFalha.TrocarModelo) && falha.ModelosSugeridos is null
             && modelos.TryGetValue(d.Item.Provedor, out var lista) && lista.Count > 0)
         {
@@ -133,7 +137,7 @@ public sealed class GestaoAssistenteController(
         if (falha is not null && d.Desligado && !falha.Acoes.Contains(AcoesFalha.Religar))
             falha = falha with { Acoes = [.. falha.Acoes, AcoesFalha.Religar] };
         return new EstadoItemDto(d.Item.Id, d.Disponivel, d.Motivo, d.EsgotadoAte, d.Desligado, falha?.Titulo ?? d.Erro, d.UsadasHoje, d.TemChave,
-            falha, guardado?.FalhaEm);
+            falha, falha is null || d.Motivo == MotivosPulo.SemChave ? null : guardado?.FalhaEm);
     }
 
     /// <summary>Aviso do topo com código e ações (§12.6). Público para teste.</summary>

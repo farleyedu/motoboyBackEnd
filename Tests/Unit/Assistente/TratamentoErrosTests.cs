@@ -27,7 +27,7 @@ public sealed class TratamentoErrosTests
         var c = new ControleFerramentas("groq", Defs);
         Assert.Contains("não existe", c.Conferir("apagar_loja", Args("{}")));
         var ex = Assert.Throws<FalhaProvedorException>(() => c.Conferir("apagar_loja", Args("{}")));
-        Assert.Equal((TipoFalha.Resposta, MensagensFalha.FerramentaErrada), (ex.Tipo, ex.Message));
+        Assert.Equal((TipoFalha.Resposta, CatalogoFalhas.De(CodigosFalha.FerramentaErrada).Titulo), (ex.Tipo, ex.Message));
     }
 
     [Fact]
@@ -61,23 +61,23 @@ public sealed class TratamentoErrosTests
     public void RespostaVaziaSemFerramentaPulaOItem()
     {
         var ex = Assert.Throws<FalhaProvedorException>(() => new ControleFerramentas("gemini", Defs).ExigirConteudo("  "));
-        Assert.Equal((TipoFalha.Resposta, MensagensFalha.RespostaVazia), (ex.Tipo, ex.Message));
+        Assert.Equal((TipoFalha.Resposta, CatalogoFalhas.De(CodigosFalha.RespostaVazia).Titulo), (ex.Tipo, ex.Message));
     }
 
     // ------------------------------------------------------------------ códigos HTTP
 
     [Theory]
-    [InlineData(401, TipoFalha.Configuracao, "Chave recusada")]
-    [InlineData(403, TipoFalha.Configuracao, "Chave recusada")]
-    [InlineData(404, TipoFalha.Configuracao, "Modelo não existe")]
-    [InlineData(429, TipoFalha.Limite, "Limite de uso atingido")]
-    [InlineData(500, TipoFalha.Servidor, "Erro no servidor do provedor")]
-    [InlineData(503, TipoFalha.Servidor, "Erro no servidor do provedor")]
-    [InlineData(402, TipoFalha.Limite, "Sem crédito na conta (402)")]
-    public void StatusViraTipoEMensagem(int status, TipoFalha tipo, string mensagem)
+    [InlineData(401, TipoFalha.Configuracao, CodigosFalha.ChaveRecusada)]
+    [InlineData(403, TipoFalha.Configuracao, CodigosFalha.SemPermissao)]
+    [InlineData(404, TipoFalha.Configuracao, CodigosFalha.ModeloNaoExiste)]
+    [InlineData(429, TipoFalha.Limite, CodigosFalha.LimiteMinuto)]
+    [InlineData(500, TipoFalha.Servidor, CodigosFalha.ErroInternoProvedor)]
+    [InlineData(503, TipoFalha.Servidor, CodigosFalha.ModeloSobrecarregado)]
+    [InlineData(402, TipoFalha.Configuracao, CodigosFalha.SemCredito)]
+    public void StatusViraTipoECodigo(int status, TipoFalha tipo, string codigo)
     {
         var f = ProvedorOpenAI.PorStatus("groq", status, "detalhe");
-        Assert.Equal((tipo, mensagem, status), (f.Tipo, f.Message, f.Status!.Value));
+        Assert.Equal((tipo, codigo, CatalogoFalhas.De(codigo).Titulo, status), (f.Tipo, f.Codigo, f.Message, f.Status!.Value));
     }
 
     [Fact]
@@ -85,7 +85,7 @@ public sealed class TratamentoErrosTests
     {
         var f = ProvedorOpenAI.PorStatus("groq", 400, new string('x', 1000));
         Assert.Equal(TipoFalha.Pedido, f.Tipo);
-        Assert.True(f.Message.Length <= MensagensFalha.MaxTamanho + 30);
+        Assert.True(f.MensagemProvedor!.Length <= MensagensFalha.MaxTamanho);
     }
 
     [Fact]
@@ -99,7 +99,7 @@ public sealed class TratamentoErrosTests
     {
         var ex = await Assert.ThrowsAsync<FalhaProvedorException>(() =>
             LimitesChamada.ComTempo("groq", async t => { await Task.Delay(5000, t); return 1; }, default, TimeSpan.FromMilliseconds(50)));
-        Assert.Equal((TipoFalha.Servidor, MensagensFalha.TempoEsgotado), (ex.Tipo, ex.Message));
+        Assert.Equal((TipoFalha.Servidor, CatalogoFalhas.De(CodigosFalha.TempoEsgotado).Titulo), (ex.Tipo, ex.Message));
     }
 
     [Fact]
@@ -194,15 +194,15 @@ public sealed class TratamentoErrosTests
             i => new PedidoIA(i.Modelo, "low", 1000, "s", Defs, [], "c", "t"), (_, _, _) => Task.FromResult(new ResultadoFerramenta("", false)), null, default);
 
     [Theory]
-    [InlineData(MensagensFalha.RespostaVazia)]
-    [InlineData(MensagensFalha.RespostaCortada)]
-    [InlineData(MensagensFalha.Recusa)]
-    [InlineData(MensagensFalha.FerramentaErrada)]
-    [InlineData(MensagensFalha.VoltasDemais)]
-    public async Task RespostaRuimPulaParaOProximoSemMarcar(string motivo)
+    [InlineData(CodigosFalha.RespostaVazia)]
+    [InlineData(CodigosFalha.RespostaCortada)]
+    [InlineData(CodigosFalha.ConteudoBloqueado)]
+    [InlineData(CodigosFalha.FerramentaErrada)]
+    [InlineData(CodigosFalha.VoltasDemais)]
+    public async Task RespostaRuimPulaParaOProximoSemMarcar(string codigo)
     {
         var e = new Estado();
-        var r = await Rodar(new Fabrica(new Falso(Provedores.Groq, new FalhaProvedorException(Provedores.Groq, motivo, TipoFalha.Resposta)), new Falso(Provedores.OpenAI)), e);
+        var r = await Rodar(new Fabrica(new Falso(Provedores.Groq, CatalogoFalhas.Nova(Provedores.Groq, codigo)), new Falso(Provedores.OpenAI)), e);
         Assert.Equal(("o", true), (r.ItemId, r.Trocou));
         Assert.Empty(e.Esgotados);
         Assert.Empty(e.Desligados);
@@ -210,8 +210,8 @@ public sealed class TratamentoErrosTests
     }
 
     [Theory]
-    [InlineData(401, "Chave recusada")]
-    [InlineData(404, "Modelo não existe")]
+    [InlineData(401, "Chave recusada pelo provedor")]
+    [InlineData(404, "Esse modelo não existe para esta chave")]
     public async Task ChaveOuModeloErradoDesligaComOMotivo(int status, string motivo)
     {
         var e = new Estado();
@@ -234,7 +234,7 @@ public sealed class TratamentoErrosTests
     public async Task TempoEsgotadoMarcaEsgotado()
     {
         var e = new Estado();
-        await Rodar(new Fabrica(new Falso(Provedores.Groq, new FalhaProvedorException(Provedores.Groq, MensagensFalha.TempoEsgotado, TipoFalha.Servidor)), new Falso(Provedores.OpenAI)), e);
+        await Rodar(new Fabrica(new Falso(Provedores.Groq, CatalogoFalhas.Nova(Provedores.Groq, CodigosFalha.TempoEsgotado)), new Falso(Provedores.OpenAI)), e);
         Assert.Equal(["g"], e.Esgotados);
     }
 
