@@ -397,7 +397,10 @@ public static class AlertasCadeia
             alertas.Add(new AlertaDto(ItemDesligado, $"{Nome(x)} ({x.Item.Modelo}) desligado: {x.Estado?.Erro ?? "erro"}.", x.Estado?.AtualizadoEm, x.Item.Id));
 
         var gratis = itens.Where(x => x.Def?.Gratis == true).ToList();
-        if (gratis.Count > 0 && gratis.All(x => !x.D.Disponivel && MotivosGratisAcabou.Contains(x.D.Motivo)))
+        // "Acabaram" só quando alguma bateu limite de uso: só sem chave ou desligada já tem aviso próprio.
+        var algumaAcabou = gratis.Any(x => x.D.Motivo == MotivosPulo.LimiteDia
+            || x.D.Motivo == MotivosPulo.Esgotado && x.Estado?.Falha?.Codigo is null or CodigosFalha.CotaDia or CodigosFalha.LimiteMinuto);
+        if (algumaAcabou && gratis.All(x => !x.D.Disponivel && MotivosGratisAcabou.Contains(x.D.Motivo)))
         {
             var temPago = itens.Any(x => x.Def?.Gratis != true && x.D.Disponivel);
             var desde = gratis.Select(x => x.Estado?.AtualizadoEm).Where(d => d is not null).DefaultIfEmpty(null).Max();

@@ -291,6 +291,10 @@ public sealed class TratamentoErrosTests
     }
 
     [Fact]
+    public void SoSemChaveNaoDizQueAcabaram() =>
+        Assert.DoesNotContain(AlertasCadeia.Calcular(CfgAlertas, FotoCadeia.Vazia, _ => false, Agora, 0, null), a => a.Tipo == AlertasCadeia.GratisEsgotados);
+
+    [Fact]
     public void UmGratisAindaDisponivelNaoAlerta()
     {
         var foto = FotoCom(new EstadoItem("g", Provedores.Groq, "m-g", Agora.AddHours(5), false, "Limite", Agora));
