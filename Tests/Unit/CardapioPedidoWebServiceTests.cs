@@ -147,8 +147,76 @@ namespace APIBack.Tests.Unit
             f.Repo.Verify(r => r.MarcarAguardandoAceiteAsync(pedido.Id, "+5534991230001", Conversa), Times.Once);
             f.Repo.Verify(r => r.DefinirCodigoAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<TimeSpan>()), Times.Never);
             var texto = Assert.Single(f.Enviadas);
-            Assert.Contains("Total: R$ 64,90", texto);
+            Assert.Contains("Total: *R$ 64,90*", texto);
             Assert.Contains("2x X-Bacon (+ Bacon extra)", texto);
+        }
+
+        [Fact]
+        public async Task Unpaid_online_order_says_the_payment_is_missing_and_never_that_it_reached_the_restaurant()
+        {
+            var f = new Fixture();
+            var pedido = Pedido();
+            pedido.PagamentoOnline = true;
+            f.Repo.Setup(r => r.ObterConversaPorTelefoneAsync(Estabelecimento, It.IsAny<IReadOnlyList<string>>()))
+                .ReturnsAsync(new ConversaPorTelefone(Conversa, DateTimeOffset.UtcNow.AddHours(5), null));
+            f.Repo.Setup(r => r.MarcarAguardandoAceiteAsync(pedido.Id, "+5534991230001", Conversa)).ReturnsAsync(true);
+
+            await f.Build().IniciarConfirmacaoAsync(pedido, "Pizza Bom");
+
+            var texto = Assert.Single(f.Enviadas);
+            Assert.Contains("Falta o pagamento", texto);
+            Assert.DoesNotContain("Já enviamos", texto);
+            f.Repo.Verify(r => r.MarcarAvisoDePagamentoPendenteAsync(pedido.Id), Times.Once);
+        }
+
+        [Fact]
+        public async Task Paying_before_sending_the_code_confirms_both_things_in_one_message()
+        {
+            var f = new Fixture();
+            var pedido = Pedido(CardapioPedidoStatus.AguardandoAceite, conversa: Conversa);
+            pedido.PagamentoOnline = true;
+            pedido.IdIntentPago = Guid.NewGuid();
+            f.Repo.Setup(r => r.ConfirmarPorCodigoAsync(Estabelecimento, "4821", "+5534991230001", Conversa)).ReturnsAsync(pedido);
+
+            await f.Build().TentarConfirmarPorMensagemAsync(Conversa, "Código: 4821");
+
+            var texto = Assert.Single(f.Enviadas);
+            Assert.Contains("Pagamento aprovado", texto);
+            Assert.DoesNotContain("Falta o pagamento", texto);
+            f.Repo.Verify(r => r.MarcarAvisoDePagamentoPendenteAsync(It.IsAny<Guid>()), Times.Never);
+        }
+
+        [Fact]
+        public async Task Approved_payment_tells_the_client_the_order_went_to_the_store()
+        {
+            var f = new Fixture();
+            var pedido = Pedido(CardapioPedidoStatus.AguardandoAceite, conversa: Conversa);
+            f.Repo.Setup(r => r.ReservarAvisosDePagamentoAsync(20, null)).ReturnsAsync(new[] { pedido });
+
+            Assert.Equal(1, await f.Build().AvisarPagamentosAprovadosAsync());
+
+            var texto = Assert.Single(f.Enviadas);
+            Assert.Contains("Pagamento aprovado", texto);
+            Assert.Contains("CDP-ABC12345", texto);
+            Assert.Contains("R$ 64,90", texto);
+        }
+
+        [Fact]
+        public async Task Accepting_sends_the_pending_payment_notice_before_the_confirmation()
+        {
+            var f = new Fixture();
+            var pedido = Pedido(CardapioPedidoStatus.AguardandoAceite, tipoEntrega: "retirada", conversa: Conversa);
+            pedido.PagamentoOnline = true;
+            pedido.IdIntentPago = Guid.NewGuid();
+            f.Repo.Setup(r => r.ObterAsync(Estabelecimento, pedido.Id)).ReturnsAsync(pedido);
+            f.Repo.Setup(r => r.MarcarAceitoAsync(Estabelecimento, pedido.Id, null)).ReturnsAsync(true);
+            f.Repo.Setup(r => r.ReservarAvisosDePagamentoAsync(20, pedido.Id)).ReturnsAsync(new[] { pedido });
+
+            await f.Build().AceitarAsync(Estabelecimento, 1, pedido.Id);
+
+            Assert.Equal(2, f.Enviadas.Count);
+            Assert.Contains("Pagamento aprovado", f.Enviadas[0]);
+            Assert.Contains("confirmou seu pedido", f.Enviadas[1]);
         }
 
         [Fact]
@@ -384,7 +452,7 @@ namespace APIBack.Tests.Unit
             Assert.True(tratada);
             var texto = Assert.Single(f.Enviadas);
             Assert.Contains("Recebemos seu pedido", texto);
-            Assert.Contains("Total: R$ 64,90", texto);
+            Assert.Contains("Total: *R$ 64,90*", texto);
         }
 
         [Fact]
@@ -443,6 +511,25 @@ namespace APIBack.Tests.Unit
             f.Repo.Verify(
                 r => r.ConfirmarPorCodigoAsync(It.IsAny<Guid>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<Guid>()),
                 Times.Exactly(CardapioConfirmacaoRules.MaxTentativasErradas));
+        }
+
+        [Theory]
+        [InlineData("pendente", false)]
+        [InlineData("em_rota", true)]
+        [InlineData("concluido", false)]
+        public async Task Depois_do_aceite_o_cliente_ve_o_andamento_e_o_mapa_so_com_motoboy(string statusReal, bool comLink)
+        {
+            var f = new Fixture();
+            var pedido = Pedido(CardapioPedidoStatus.Aceito);
+            pedido.IdPedido = 77;
+            f.Repo.Setup(r => r.ObterAsync(pedido.Id)).ReturnsAsync(pedido);
+            f.Repo.Setup(r => r.ObterStatusPedidoRealAsync(Estabelecimento, 77)).ReturnsAsync(statusReal);
+            f.Rastreio.Setup(r => r.EnsureTokenAsync(77)).ReturnsAsync("token-do-pedido");
+
+            var status = await f.Build().ObterStatusAsync(pedido.Id);
+
+            Assert.Equal(statusReal, status!.StatusEntrega);
+            Assert.Equal(comLink ? "token-do-pedido" : null, status.RastreioToken);
         }
 
         [Fact]

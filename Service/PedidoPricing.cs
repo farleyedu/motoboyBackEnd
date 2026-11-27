@@ -42,6 +42,7 @@ namespace APIBack.Service
     {
         public const int MaxLines = 100;
         public const int MaxQuantity = 100;
+        public const int MaxObservacaoItem = 300;
 
         public static PricedOrder Price(
             IReadOnlyList<PedidoItemRequest>? items,
@@ -73,7 +74,7 @@ namespace APIBack.Service
                     errors.Add($"{label}: a quantidade deve ficar entre 1 e {MaxQuantity}.");
                     continue;
                 }
-                var observacao = Trim(item.Observacao, 300, label + ".observacao", errors);
+                var observacao = Trim(item.Observacao, MaxObservacaoItem, label + ".observacao", errors);
 
                 if (item.ProdutoId.HasValue && item.ProdutoId.Value != Guid.Empty)
                 {

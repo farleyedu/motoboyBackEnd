@@ -35,6 +35,15 @@ namespace APIBack.DTOs.Cardapio
         /// <summary>O cliente ainda pode desistir sozinho (antes do aceite). Pago: o dinheiro volta integralmente.</summary>
         public bool PodeCancelar { get; set; }
         public string? MotivoCancelamento { get; set; }
+        /// <summary>
+        /// Entrega ja aceita: onde o pedido real esta (pendente, atribuido, aguardando_motoboy, em_rota, concluido, cancelado,
+        /// encerrado_auto). Nulo antes do aceite e na retirada.
+        /// </summary>
+        public string? StatusEntrega { get; set; }
+        /// <summary>Token do link publico de rastreio (/rastreio/{token}), so enquanto ha motoboy com o pedido.</summary>
+        public string? RastreioToken { get; set; }
+        /// <summary>Forma escolhida no checkout: a tela diz se esta pago online ou como pagar na entrega ou retirada.</summary>
+        public string? FormaPagamento { get; set; }
     }
 
     /// <summary>O pagamento online como o cliente ve. Nunca traz QR, copia e cola nem dado do cartao alem do final.</summary>

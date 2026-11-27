@@ -40,7 +40,7 @@ namespace APIBack.Tests.Unit
         public void Texto_ao_cliente_do_link_fala_em_pix_ou_cartao_e_nunca_em_pix_exclusivo()
         {
             var texto = CobrancaChatRegras.TextoLink("Pedido 12", 45.5m, null, "https://checkout.infinitepay.io/abc");
-            Assert.Contains("Pix ou cartao", texto);
+            Assert.Contains("Pix ou cartão", texto);
             Assert.Contains("https://checkout.infinitepay.io/abc", texto);
             Assert.DoesNotContain("Pague com Pix", texto);
             Assert.DoesNotContain("copia", texto, StringComparison.OrdinalIgnoreCase);

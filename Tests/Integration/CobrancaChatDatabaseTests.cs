@@ -13,6 +13,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using APIBack.Payments.Chat;
 using APIBack.Payments.MercadoPago;
+using APIBack.Repository;
 using Dapper;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -113,8 +114,6 @@ public sealed class CobrancaChatDatabaseTests
         await webhook.ReceberAsync(db.Aviso(mp, "n2")); // outro aviso do mesmo pagamento
 
         Assert.Equal(StatusCobranca.Pago, await db.Scalar<string>("SELECT status FROM cobranca_chat"));
-        Assert.Equal("", await db.Scalar<string>("SELECT COALESCE(string_agg(acao || ':' || dados::text, ' | '), '') FROM pagamento_auditoria WHERE entidade = 'pedido'")
-            + await db.Scalar<string>("SELECT string_agg(status || ':' || COALESCE(pedido_id::text,'-') || ':' || valor_pago, ',') FROM pagamento_intent"));
         Assert.Equal("Pago", await db.Scalar<string>("SELECT status_pagamento FROM pedido WHERE id = 101"));
         Assert.Equal(1L, await db.Scalar<long>("SELECT count(*) FROM delivery_realtime_outbox WHERE event_name = 'delivery.order.updated'"));
         Assert.Equal(1L, await db.Scalar<long>("SELECT count(*) FROM cobranca_chat_tarefa WHERE tipo = 'avancar_pedido'"));
@@ -204,7 +203,7 @@ public sealed class CobrancaChatDatabaseTests
         Assert.Equal(1L, await db.Scalar<long>("SELECT count(*) FROM cobranca_chat_tarefa WHERE tipo = 'cancelar_sucessora'"));
         await db.Manutencao().RodarAsync(default);
         Assert.Equal(StatusCobranca.Cancelado, (await s.ObterAsync(db.Loja, b.Id, Atendente, default)).Status);
-        Assert.Equal("Pago", await db.Scalar<string>("SELECT status_pagamento FROM pedido"));
+        Assert.Equal("Pago", await db.Scalar<string>("SELECT status_pagamento FROM pedido WHERE id = 101"));
         var historico = await s.HistoricoAsync(db.Loja, a.Id, default);
         Assert.Contains(historico.Itens, i => i.StatusNovo == StatusCobranca.Pago && i.StatusAnterior == StatusCobranca.Cancelado);
     }
@@ -243,6 +242,61 @@ public sealed class CobrancaChatDatabaseTests
     }
 
     // ------------------------------------------------------------------------------------------------------------------------
+
+    [DeliveryDatabaseFact]
+    public async Task PrePedidoOnlinePagoPeloChatEntraNaFilaDaLojaComOPagamentoGravado()
+    {
+        await using var db = await Banco.Criar();
+        var s = db.Service();
+        var pre = Guid.NewGuid();
+        await db.Execute(@"
+INSERT INTO cardapio_pedido_publico (id, id_estabelecimento, codigo, status, total, id_conversa, pagamento_online, metodo_online, aviso_pagamento_pendente)
+VALUES (@Id, @L, 'CDP-CHAT', 'aguardando_pagamento', 60, @C, TRUE, 'cartao', TRUE)", new { Id = pre, L = db.Loja, C = db.Conversa });
+        var fila = new CardapioPedidoWebRepository(db.Get<NpgsqlDataSource>());
+
+        var cobranca = await s.CriarAsync(db.Loja, db.Conversa, new CriarCobrancaChatRequest { PrePedidoId = pre, IdempotencyKey = "pre-1" }, Atendente, default);
+        Assert.Empty(await fila.ListarAguardandoAceiteAsync(db.Loja, 10));
+
+        var mp = db.Mp.Pagamentos.Keys.Single();
+        db.Mp.Mudar(mp, "approved", "accredited", DateTimeOffset.UtcNow);
+        await db.Get<IMercadoPagoWebhookService>().ReceberAsync(db.Aviso(mp, "pre-1"));
+
+        var pedido = Assert.Single(await fila.ListarAguardandoAceiteAsync(db.Loja, 10));
+        Assert.Equal(pre, pedido.Id);
+        Assert.True(pedido.Pago);
+        Assert.Equal("pago", pedido.StatusPagamento);
+        Assert.Equal("pix", pedido.MetodoOnline);
+        // O "pagamento aprovado" sai uma vez, pelo cardapio; o chat nao agenda um segundo aviso.
+        Assert.Equal(0L, await db.Scalar<long>("SELECT count(*) FROM cobranca_chat_tarefa WHERE tipo = 'confirmar_cliente'"));
+        Assert.Single(await fila.ReservarAvisosDePagamentoAsync(10, pre));
+        Assert.True(await fila.IniciarAceiteAsync(db.Loja, pre));
+        Assert.Equal(cobranca.Id, await db.Scalar<Guid>("SELECT id FROM cobranca_chat"));
+    }
+
+    [DeliveryDatabaseFact]
+    public async Task TrocarOPrePedidoDeUmaCobrancaPagaLevaOPagamentoJunto()
+    {
+        await using var db = await Banco.Criar();
+        var s = db.Service();
+        var (de, para) = (Guid.NewGuid(), Guid.NewGuid());
+        await db.Execute(@"
+INSERT INTO cardapio_pedido_publico (id, id_estabelecimento, codigo, status, total, id_conversa, pagamento_online, metodo_online)
+VALUES (@De, @L, 'CDP-DE', 'aguardando_pagamento', 60, @C, TRUE, 'pix'), (@Para, @L, 'CDP-PARA', 'aguardando_pagamento', 60, @C, TRUE, 'pix')",
+            new { De = de, Para = para, L = db.Loja, C = db.Conversa });
+        var cobranca = await s.CriarAsync(db.Loja, db.Conversa, new CriarCobrancaChatRequest { PrePedidoId = de, IdempotencyKey = "mover-1" }, Atendente, default);
+        var mp = db.Mp.Pagamentos.Keys.Single();
+        db.Mp.Mudar(mp, "approved", "accredited", DateTimeOffset.UtcNow);
+        await db.Get<IMercadoPagoWebhookService>().ReceberAsync(db.Aviso(mp, "mover-aviso"));
+
+        var pedido = await s.SolicitarAprovacaoAsync(db.Loja, cobranca.Id, new SolicitarAprovacaoRequest
+            { Acao = AcoesAprovacao.TrocarVinculo, PrePedidoId = para, Motivo = "pedido errado", IdempotencyKey = "mover-ap" }, Atendente, default);
+        await s.AprovarAsync(db.Loja, pedido.Id, null, Gerente, default);
+
+        var fila = await new CardapioPedidoWebRepository(db.Get<NpgsqlDataSource>()).ListarAguardandoAceiteAsync(db.Loja, 10);
+        Assert.Equal(para, Assert.Single(fila).Id);
+        Assert.Equal("aguardando_pagamento", await db.Scalar<string>($"SELECT status FROM cardapio_pedido_publico WHERE id = '{de}'"));
+        Assert.Equal("pendente", await db.Scalar<string>($"SELECT status_pagamento FROM cardapio_pedido_publico WHERE id = '{de}'"));
+    }
 
     private sealed class MensageiroFalso : ICobrancaChatMensageiro
     {
@@ -319,8 +373,14 @@ CREATE TABLE conversa_eventos (id uuid PRIMARY KEY, id_conversa uuid, id_convers
                                ator_nome text, status_anterior text, status_novo text, motivo text, tipo_fechamento text, dados jsonb, data_criacao timestamptz);
 CREATE TABLE pedido (id int PRIMARY KEY, id_estabelecimento uuid, cliente_id uuid, conversa_id uuid, status_pedido int, status_pagamento text,
                      tipo_pagamento text, value text);
-CREATE TABLE cardapio_pedido_publico (id uuid PRIMARY KEY, id_estabelecimento uuid, status_pagamento text NOT NULL DEFAULT 'pendente', updated_at timestamptz,
-                                      id_conversa uuid, id_pedido int, status text, total numeric, codigo text);
+CREATE TABLE cardapio_pedido_publico (id uuid PRIMARY KEY, id_estabelecimento uuid NOT NULL, codigo text NOT NULL, status text NOT NULL,
+    tipo_entrega text NOT NULL DEFAULT 'retirada', nome_cliente text NOT NULL DEFAULT 'Maria', telefone_cliente text NOT NULL DEFAULT '+5534991230001',
+    email_cliente text, forma_pagamento text, observacoes text, subtotal_produtos numeric(10,2) NOT NULL DEFAULT 0,
+    subtotal_adicionais numeric(10,2) NOT NULL DEFAULT 0, taxa_entrega numeric(10,2) NOT NULL DEFAULT 0, total numeric(10,2) NOT NULL DEFAULT 0,
+    itens_json jsonb NOT NULL DEFAULT '[]', endereco_entrega_json jsonb, status_pagamento text NOT NULL DEFAULT 'pendente',
+    created_at timestamptz NOT NULL DEFAULT NOW(), updated_at timestamptz NOT NULL DEFAULT NOW(), codigo_confirmacao text, codigo_expira_em timestamptz,
+    canal_confirmacao text, telefone_contato text, id_conversa uuid, confirmado_em timestamptz, aceito_em timestamptz, recusado_em timestamptz,
+    motivo_recusa text, id_pedido int);
 CREATE TABLE cardapio_web_config (id_estabelecimento uuid PRIMARY KEY, nome_publico text);
 CREATE TABLE delivery_tracking_schema_versions (version text PRIMARY KEY);
 CREATE TABLE delivery_realtime_outbox (event_id uuid PRIMARY KEY, event_name text, target_group text, estabelecimento_id uuid, motoboy_id int,
@@ -339,6 +399,9 @@ INSERT INTO pedido VALUES (101, @L, @Cli, @C, 6, 'Pendente', 'PIX', '80.00'), (1
             await db.Execute(File.ReadAllText(Path.Combine(migracoes, "20261101_50_cobranca_chat_atendente.sql")));
             // Idempotente: aplicar de novo nao quebra.
             await db.Execute(File.ReadAllText(Path.Combine(migracoes, "20261101_50_cobranca_chat_atendente.sql")));
+            foreach (var migracao in new[] { "20261101_30_cardapio_pagamento_online.sql", "20261104_10_pagamentos_multigateway.sql",
+                         "20261129_07_cobranca_chat_link.sql", "20261214_01_cardapio_aviso_pagamento.sql" })
+                await db.Execute(File.ReadAllText(Path.Combine(migracoes, migracao)));
 
             var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
             {

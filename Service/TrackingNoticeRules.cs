@@ -30,20 +30,22 @@ namespace APIBack.Service
     /// <summary>Parametros dos avisos ao cliente por estabelecimento.</summary>
     public sealed class NoticeSettings
     {
-        public const string DefaultReceivedTemplate =
-            "Ola, {cliente}! Recebemos seu pedido na {loja}:\n{itens}\nTotal: {total}\nEntrega em: {endereco}\n\nJa enviamos para o restaurante.";
+        /// <summary>O "recebemos" sem dizer onde o pedido esta: o pagamento online ainda por fazer completa a frase.</summary>
+        public const string DefaultReceivedBody =
+            "Olá, {cliente}! Recebemos seu pedido na *{loja}*.\n\n🧾 *Itens:*\n{itens}\n\n💰 Total: *{total}*\n📍 Entrega: {endereco}";
+        public const string DefaultReceivedTemplate = DefaultReceivedBody + "\n\nJá enviamos para o restaurante.";
         public const string DefaultAcceptedTemplate =
-            "{cliente}, a {loja} confirmou seu pedido! Ja estamos cuidando dele.";
+            "✅ {cliente}, a *{loja}* confirmou seu pedido!\n\nJá estamos cuidando dele.";
         public const string DefaultDispatchTemplate =
-            "Ola, {cliente}! Seu pedido {numero} saiu do {loja} com {motoboy}. Acompanhe a entrega: {link}";
+            "Olá, {cliente}! 🛵\nSeu pedido *#{numero}* da *{loja}* saiu para entrega com *{motoboy}*.\n\n📍 Acompanhe a entrega:\n{link}";
         public const string DefaultArrivingTemplate =
-            "{cliente}, seu pedido {numero} esta chegando: o motoboy chega em cerca de {minutos} min. Acompanhe: {link}";
+            "🛵 {cliente}, seu pedido *#{numero}* está chegando!\n\n🕒 O motoboy chega em cerca de *{minutos} min*.\n\n📍 Acompanhe:\n{link}";
         public const string DefaultArrivedTemplate =
-            "{cliente}, {motoboy} chegou com o seu pedido!";
+            "🛵 {cliente}, *{motoboy}* chegou com o seu pedido!";
         public const string DefaultConfirmacaoAtendenteTemplate =
-            "Ola, {cliente}! Confirmando seu pedido na {loja}:\n{itens}\nTotal: {total}\nEndereco: {endereco}\n\nSe algo estiver errado, responda esta mensagem.";
+            "Olá, {cliente}! Confirmando seu pedido na *{loja}*.\n\n🧾 *Itens:*\n{itens}\n\n💰 Total: *{total}*\n📍 Endereço: {endereco}\n\nSe algo estiver errado, é só responder esta mensagem.";
         public const string DefaultProntoRetiradaTemplate =
-            "{cliente}, seu pedido na {loja} esta pronto! Pode vir retirar.";
+            "✅ {cliente}, seu pedido na *{loja}* está *pronto*!\n\nPode vir retirar.";
 
         public bool ReceivedEnabled { get; init; } = true;
         public bool AcceptedEnabled { get; init; } = true;
@@ -63,6 +65,8 @@ namespace APIBack.Service
         public string? TemplateProntoRetirada { get; init; }
 
         public string ReceivedText => string.IsNullOrWhiteSpace(TemplateReceived) ? DefaultReceivedTemplate : TemplateReceived!;
+        /// <summary>"Recebemos" de pedido online ainda sem pagamento: texto da loja, ou o padrao sem "ja enviamos".</summary>
+        public string ReceivedAwaitingPaymentText => string.IsNullOrWhiteSpace(TemplateReceived) ? DefaultReceivedBody : TemplateReceived!;
         public string AcceptedText => string.IsNullOrWhiteSpace(TemplateAccepted) ? DefaultAcceptedTemplate : TemplateAccepted!;
         public string DispatchText => string.IsNullOrWhiteSpace(TemplateDispatch) ? DefaultDispatchTemplate : TemplateDispatch!;
         public string ArrivingText => string.IsNullOrWhiteSpace(TemplateArriving) ? DefaultArrivingTemplate : TemplateArriving!;

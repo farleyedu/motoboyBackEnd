@@ -221,7 +221,7 @@ namespace APIBack.Service
             }
         }
 
-        internal const string ManualDispatchTemplate = "Oi {cliente}! Seu pedido #{numero} da {loja} saiu para entrega.";
+        internal const string ManualDispatchTemplate = "Oi, {cliente}! 🛵\nSeu pedido *#{numero}* da *{loja}* saiu para entrega.";
 
         internal static IReadOnlyDictionary<string, string?> BuildValues(NoticeCandidate candidate, int? minutes, string? link) =>
             new Dictionary<string, string?>

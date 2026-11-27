@@ -45,15 +45,7 @@ SELECT id, status, pagamento_online, id_intent_pago
 
             if (paga && pre.IdIntentPago == null)
             {
-                var metodo = await cx.ExecuteScalarAsync<string?>(new CommandDefinition(
-                    "SELECT metodo FROM pagamento WHERE id_intent = @Id ORDER BY created_at DESC LIMIT 1", new { intent.Id }, tx, cancellationToken: ct));
-                if (metodo == null && intent.Provedor == APIBack.Payments.Provedores.ProvedoresPagamento.InfinitePay)
-                {
-                    // O processador gravou o capture_method confirmado por /payment_check na mesma transacao; o toque no botao nao conta.
-                    metodo = await cx.ExecuteScalarAsync<string?>(new CommandDefinition(
-                        "SELECT CASE capture_method WHEN 'pix' THEN 'pix' WHEN 'credit_card' THEN 'cartao' END FROM infinitepay_checkout WHERE id_intent = @Id",
-                        new { intent.Id }, tx, cancellationToken: ct));
-                }
+                var metodo = await MetodoPagoAsync(cx, tx, intent, ct);
                 // So o pedido online confirmado e ainda sem decisao anda: recusado/cancelado fica onde esta (e o dinheiro volta abaixo).
                 await cx.ExecuteAsync(new CommandDefinition(@"
 UPDATE cardapio_pedido_publico
@@ -97,6 +89,21 @@ UPDATE cardapio_pedido_publico
             }
 
             if (intent.ValorEstornado > 0) await ConcluirReembolsosAsync(cx, tx, intent.Id, ct);
+        }
+
+        /// <summary>Como a intencao foi paga de fato (pix ou cartao); nulo quando o provedor ainda nao disse.</summary>
+        public static async Task<string?> MetodoPagoAsync(NpgsqlConnection cx, NpgsqlTransaction tx, PagamentoIntent intent, CancellationToken ct)
+        {
+            var metodo = await cx.ExecuteScalarAsync<string?>(new CommandDefinition(
+                "SELECT metodo FROM pagamento WHERE id_intent = @Id ORDER BY created_at DESC LIMIT 1", new { intent.Id }, tx, cancellationToken: ct));
+            if (metodo == null && intent.Provedor == APIBack.Payments.Provedores.ProvedoresPagamento.InfinitePay)
+            {
+                // O processador gravou o capture_method confirmado por /payment_check na mesma transacao; o toque no botao nao conta.
+                metodo = await cx.ExecuteScalarAsync<string?>(new CommandDefinition(
+                    "SELECT CASE capture_method WHEN 'pix' THEN 'pix' WHEN 'credit_card' THEN 'cartao' END FROM infinitepay_checkout WHERE id_intent = @Id",
+                    new { intent.Id }, tx, cancellationToken: ct));
+            }
+            return metodo;
         }
 
         /// <summary>Reembolso cujo estorno o Mercado Pago ja confirmou (pagamento_estorno concluido) passa a reembolsado.</summary>

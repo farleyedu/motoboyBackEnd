@@ -35,7 +35,7 @@ namespace APIBack.Tests.Unit
             var r = Motor.Decidir(Entrada(), null, Agora);
 
             var texto = Texto(r);
-            Assert.Contains("Olá! Aqui é a Pizza Bom Centro.", texto);
+            Assert.Contains("Olá! 👋 Aqui é a *Pizza Bom Centro*.", texto);
             Assert.Contains("https://zippy.app/cardapio/97c5d396", texto);
             Assert.Equal("cardapio_web", r.Fluxo);
             Assert.StartsWith("servico_unico", r.Regra);
@@ -47,7 +47,7 @@ namespace APIBack.Tests.Unit
         {
             var r = Motor.Decidir(Entrada(primeira: false), null, Agora);
 
-            Assert.DoesNotContain("Olá! Aqui é a", Texto(r));
+            Assert.DoesNotContain("Aqui é a", Texto(r));
             Assert.Contains("https://zippy.app", Texto(r));
         }
 
@@ -255,7 +255,7 @@ namespace APIBack.Tests.Unit
             var texto = Texto(Motor.Decidir(entrada, null, Agora));
 
             Assert.Contains("Fala, chefe!", texto);
-            Assert.DoesNotContain("Olá! Aqui é a", texto);
+            Assert.DoesNotContain("Aqui é a", texto);
         }
 
         // ---- robustez -----------------------------------------------------------------------------------------------------
@@ -299,7 +299,7 @@ namespace APIBack.Tests.Unit
 
             var r = Motor.Decidir(entrada, null, Agora);
 
-            Assert.Contains("Abrimos hoje às 18:00", Texto(r));
+            Assert.Contains("Abrimos *hoje às 18:00*", Texto(r));
             Assert.Contains("https://zippy.app/cardapio/97c5d396", Texto(r));
             Assert.EndsWith("cardapio_fechado_fora_horario", r.Regra);
             Assert.DoesNotContain(r.Acoes, a => a is AcaoChamarAtendente);

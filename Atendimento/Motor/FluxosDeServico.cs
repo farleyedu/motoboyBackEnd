@@ -21,7 +21,7 @@ namespace APIBack.Atendimento.Motor
                 return new ResultadoFluxo(
                     new AcaoMotor[]
                     {
-                        new AcaoResponder("O nosso cardápio online ainda não está disponível por aqui. Vou chamar alguém da equipe para te ajudar."),
+                        new AcaoResponder("O nosso cardápio online ainda não está disponível por aqui. 😕\n\nVou chamar alguém da equipe para te ajudar."),
                         new AcaoChamarAtendente("cardapio sem link configurado")
                     },
                     ProximoPasso: null, Regra: "cardapio_sem_link");
@@ -31,10 +31,10 @@ namespace APIBack.Atendimento.Motor
             {
                 // Loja fechada ou com pedidos pausados: o cliente ainda pode ver o cardapio, mas o pedido nao entra.
                 var padrao = fechada.Motivo == PedidosAbertosRules.Pausado
-                    ? "No momento a loja pausou os pedidos. Você pode ver o cardápio aqui, mas só consegue pedir quando voltarmos:\n{link}"
+                    ? "⏸️ No momento a loja *pausou os pedidos*.\n\nVocê pode ver o cardápio, mas só consegue pedir quando voltarmos:\n{link}"
                     : string.IsNullOrWhiteSpace(fechada.AbreEm)
-                        ? "Estamos fechados agora e não estamos aceitando pedidos. Você pode ver o cardápio aqui:\n{link}"
-                        : "Estamos fechados agora. Abrimos {abre}. Você pode ver o cardápio aqui:\n{link}";
+                        ? "🕒 Estamos *fechados* agora e não estamos aceitando pedidos.\n\nVocê pode ver o cardápio aqui:\n{link}"
+                        : "🕒 Estamos *fechados* agora.\nAbrimos *{abre}*.\n\nVocê pode ver o cardápio aqui:\n{link}";
                 return new ResultadoFluxo(
                     new AcaoMotor[] { new AcaoResponder(entrada.Escolher(entrada.Textos?.CardapioFechado, padrao)) },
                     ProximoPasso: null, Regra: "cardapio_fechado_" + (fechada.Motivo ?? "fechado"));
@@ -45,7 +45,7 @@ namespace APIBack.Atendimento.Motor
                 {
                     new AcaoResponder(entrada.Escolher(
                         entrada.Textos?.Cardapio,
-                        "Este é o nosso cardápio, é só escolher os itens e finalizar:\n{link}\n\nDepois de enviar o pedido eu confirmo por aqui mesmo."))
+                        "📋 *Este é o nosso cardápio:*\n{link}\n\nÉ só escolher os itens e finalizar. Depois de enviar o pedido, eu confirmo por aqui mesmo."))
                 },
                 ProximoPasso: null, Regra: "link_do_cardapio");
         }
@@ -63,7 +63,7 @@ namespace APIBack.Atendimento.Motor
         public ResultadoFluxo Iniciar(EntradaMotor entrada) => new(
             new AcaoMotor[]
             {
-                new AcaoResponder("Vou chamar alguém da equipe para falar sobre o seu pedido."),
+                new AcaoResponder("📦 Vou chamar alguém da equipe para falar sobre o seu pedido."),
                 new AcaoChamarAtendente("duvida sobre pedido")
             },
             ProximoPasso: null, Regra: "encaminhar_pedido");
@@ -83,7 +83,7 @@ namespace APIBack.Atendimento.Motor
             {
                 new AcaoResponder(entrada.Escolher(
                     entrada.Textos?.Agendamento,
-                    "O agendamento por aqui estará disponível em breve. Vou chamar alguém da equipe para te ajudar agora.")),
+                    "📅 O agendamento por aqui estará disponível em breve.\n\nVou chamar alguém da equipe para te ajudar agora.")),
                 new AcaoChamarAtendente("agendamento (fluxo ainda nao implementado)")
             },
             ProximoPasso: null, Regra: "agendamento_em_breve");

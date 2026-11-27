@@ -122,18 +122,19 @@ namespace APIBack.Payments.Chat
         /// <summary>Mensagens de texto (dentro da janela). Copia e cola vai sozinho numa segunda mensagem, facil de copiar no celular.</summary>
         public static IReadOnlyList<string> Textos(string formato, string descricao, decimal valor, DateTime? expiraEm, string? link, string? copiaECola)
         {
-            var validade = expiraEm.HasValue ? $"\nValido ate {Hora(expiraEm)}." : string.Empty;
-            var cabecalho = $"*{descricao}*\nValor: {Moeda(valor)}";
+            var validade = Validade(expiraEm);
+            var cabecalho = Cabecalho(descricao, valor);
             var lista = new List<string>();
             if (formato is "link" or "ambos")
             {
                 if (string.IsNullOrEmpty(link)) throw PagamentoException.Estado("Link de pagamento indisponivel.");
-                lista.Add($"{cabecalho}\nPague com Pix pelo link: {link}{validade}");
+                var copiaDepois = formato == "ambos" ? "\n\nSe preferir, use o *Pix copia e cola* da próxima mensagem." : string.Empty;
+                lista.Add($"{cabecalho}\n\n📲 Pague com Pix pelo link:\n{link}{validade}{copiaDepois}");
             }
             if (formato is "copia_e_cola" or "ambos")
             {
                 if (string.IsNullOrEmpty(copiaECola)) throw PagamentoException.Estado("Codigo Pix indisponivel.");
-                if (formato == "copia_e_cola") lista.Add($"{cabecalho}\nCopie o codigo Pix abaixo e cole no app do seu banco.{validade}");
+                if (formato == "copia_e_cola") lista.Add($"{cabecalho}\n\n📲 *Pix copia e cola*\nCopie o código da próxima mensagem e cole no app do seu banco.{validade}");
                 lista.Add(copiaECola);
             }
             return lista;
@@ -154,12 +155,15 @@ namespace APIBack.Payments.Chat
         public static string TextoLink(string descricao, decimal valor, DateTime? expiraEm, string link)
         {
             if (string.IsNullOrEmpty(link)) throw PagamentoException.Estado("Link de pagamento indisponivel.");
-            var validade = expiraEm.HasValue ? $"\nValido ate {Hora(expiraEm)}." : string.Empty;
-            return $"*{descricao}*\nValor: {Moeda(valor)}\nPague pelo link (Pix ou cartao): {link}{validade}";
+            return $"{Cabecalho(descricao, valor)}\n\n📲 Pague pelo link (Pix ou cartão):\n{link}{Validade(expiraEm)}";
         }
 
+        private static string Cabecalho(string descricao, decimal valor) => $"💳 *{descricao}*\nValor: *{Moeda(valor)}*";
+
+        private static string Validade(DateTime? expiraEm) => expiraEm.HasValue ? $"\n\n🕒 Válido até *{Hora(expiraEm)}*." : string.Empty;
+
         public static string TextoConfirmacao(string descricao, decimal valor) =>
-            $"Pagamento de {Moeda(valor)} recebido. Obrigado! ({descricao})";
+            $"✅ *Pagamento recebido!*\n\n{descricao}\nValor: *{Moeda(valor)}*\n\nObrigado! 😊";
 
         /// <summary>Numero de variaveis distintas ({{n}}) no corpo do modelo.</summary>
         public static int ContarVariaveis(string? corpo) =>

@@ -818,6 +818,12 @@ UPDATE pagamento_intent SET pedido_id = @P, pre_pedido_id = @Pre, updated_at = N
             c.Tipo = TiposCobranca.Vinculada;
             if (pedidoAntes.HasValue) await CobrancaChatEfeitos.RecalcularPedidoAsync(cx, tx, c, pedidoAntes.Value, pagouAgora: false, ct);
             (c.PedidoId, c.PrePedidoId) = (a.PedidoId, a.PrePedidoId);
+            // No cardapio o dinheiro tambem muda de dono: o pre-pedido de origem deixa de estar pago e o de destino passa a estar.
+            if (preAntes != a.PrePedidoId)
+            {
+                if (preAntes.HasValue) await CobrancaChatEfeitos.DesvincularPrePedidoAsync(cx, tx, c.IdEstabelecimento, preAntes.Value, intent.Id, ct);
+                if (a.PrePedidoId.HasValue) await CobrancaChatEfeitos.PrePedidoAsync(cx, tx, c, intent, ct);
+            }
             if (a.PedidoId.HasValue) await CobrancaChatEfeitos.RecalcularPedidoAsync(cx, tx, c, a.PedidoId.Value, pagouAgora: true, ct);
             await CobrancaChatRepositorio.MarcarAsync(cx, tx, c, "usuario", ator.UsuarioId,
                 new { trocaVinculo = new { de = new { pedidoId = pedidoAntes, prePedidoId = preAntes }, para = new { a.PedidoId, a.PrePedidoId } }, aprovacaoId = a.Id }, ct);

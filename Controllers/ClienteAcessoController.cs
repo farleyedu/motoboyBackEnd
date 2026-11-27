@@ -17,9 +17,7 @@ public sealed class ClienteAcessoController(IClienteAcessoService acesso, IClien
     [HttpPost("autenticar")]
     public Task<IActionResult> Authenticate(ClienteAutenticarRequest body) => Execute(async () =>
     {
-        var key = "cliente-acesso:" + (HttpContext.Connection.RemoteIpAddress?.ToString() ?? "local");
-        var count = cache.GetOrCreate(key, entry => { entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromMinutes(10); return new int[1]; })!;
-        if (Interlocked.Increment(ref count[0]) > 180)
+        if (!LimitePublicoDoCardapio.Permitir(HttpContext, cache, "cliente-acesso", 180, TimeSpan.FromMinutes(10)))
             throw new DeliveryDomainException(429, "RATE_LIMIT", "Muitas tentativas. Aguarde alguns minutos.");
         return await acesso.AuthenticateAsync(body.EstabelecimentoId, body.Telefone);
     });

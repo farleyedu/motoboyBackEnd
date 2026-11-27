@@ -116,7 +116,7 @@ namespace APIBack.Service
             ["total"] = QuickReplyRenderer.FormatMoney(pedido.Total),
             ["endereco"] = EhEntrega(pedido)
                 ? TextoDoEndereco(LerEndereco(pedido.EnderecoEntregaJson)) ?? "-"
-                : "Retirada no balcao",
+                : "Retirada no balcão",
         };
 
         // =====================================================================
@@ -132,7 +132,8 @@ namespace APIBack.Service
             if (conversa is { JanelaAberta: true })
             {
                 var settings = await _rastreio.GetSettingsAsync(pedido.IdEstabelecimento);
-                var texto = QuickReplyRenderer.Render(settings.ReceivedText, ValoresDoPedido(pedido, nomeLoja)).Texto;
+                var faltaPagar = FaltaPagar(pedido);
+                var texto = TextoDeRecebido(pedido, settings, nomeLoja);
                 // O envio so e aceito com a janela de 24h aberta: aceitar o envio e a prova de que o numero ja falou com a loja.
                 // A redacao e configuravel (settings.ReceivedEnabled so controla o texto padrao vs custom); o envio em si
                 // nao pode ser desligado aqui, pois tambem prova a janela aberta pro fluxo de codigo (cenario A/B).
@@ -141,6 +142,8 @@ namespace APIBack.Service
                     var telefone = PhoneKey.ToE164(pedido.TelefoneCliente) ?? pedido.TelefoneCliente;
                     if (await _repository.MarcarAguardandoAceiteAsync(pedido.Id, telefone, conversa.ConversaId))
                     {
+                        // Marcado depois do envio: o "pagamento aprovado" nunca chega antes do "recebemos".
+                        if (faltaPagar) await MarcarAvisoDePagamentoPendenteAsync(pedido.Id);
                         return new CardapioConfirmacaoDto { Modo = "mensagem_enviada" };
                     }
                 }
@@ -215,9 +218,15 @@ namespace APIBack.Service
             var vencido = pedido.Status == CardapioPedidoStatus.AguardandoCodigo
                 && (!pedido.CodigoExpiraEm.HasValue || pedido.CodigoExpiraEm.Value <= DateTimeOffset.UtcNow);
             var status = vencido ? CardapioPedidoStatus.Expirado : pedido.Status;
+            var (statusEntrega, rastreio) = await AndamentoDaEntregaAsync(pedido);
 
             return new CardapioPedidoPublicoStatusDto
             {
+                StatusEntrega = statusEntrega,
+                RastreioToken = rastreio,
+                FormaPagamento = pedido.PagamentoOnline
+                    ? CardapioPagamentoRules.FormaPagamentoDoPedido(pedido.MetodoOnline)
+                    : pedido.FormaPagamento,
                 Id = pedido.Id,
                 Codigo = pedido.Codigo,
                 Status = status,
@@ -233,6 +242,25 @@ namespace APIBack.Service
                     or CardapioPedidoStatus.AguardandoPagamento or CardapioPedidoStatus.AguardandoAceite,
                 MotivoCancelamento = status == CardapioPedidoStatus.Cancelado ? pedido.MotivoCancelamento : null
             };
+        }
+
+        /// <summary>Depois do aceite o cliente acompanha o pedido real; o link do mapa so existe com motoboy a caminho.</summary>
+        private async Task<(string? Status, string? Rastreio)> AndamentoDaEntregaAsync(CardapioPedidoPublico pedido)
+        {
+            if (pedido.Status != CardapioPedidoStatus.Aceito || pedido.IdPedido is not { } idPedido || !EhEntrega(pedido)) return (null, null);
+
+            var status = await _repository.ObterStatusPedidoRealAsync(pedido.IdEstabelecimento, idPedido);
+            if (status is not ("atribuido" or "em_rota")) return (status, null);
+            try
+            {
+                return (status, await _rastreio.EnsureTokenAsync(idPedido));
+            }
+            catch (Exception ex)
+            {
+                // Sem o link o cliente continua acompanhando pelas etapas.
+                _logger.LogWarning(ex, "Link de rastreio do pedido {Pedido} indisponivel.", idPedido);
+                return (status, null);
+            }
         }
 
         // =====================================================================
@@ -275,9 +303,53 @@ namespace APIBack.Service
 
             var nomeLoja = await NomeDaLojaAsync(estabelecimentoId);
             var settings = await _rastreio.GetSettingsAsync(estabelecimentoId);
-            var mensagem = QuickReplyRenderer.Render(settings.ReceivedText, ValoresDoPedido(pedido, nomeLoja)).Texto;
-            await TentarEnviarAsync(conversaId, estabelecimentoId, mensagem);
+            var mensagem = TextoDeRecebido(pedido, settings, nomeLoja);
+            if (await TentarEnviarAsync(conversaId, estabelecimentoId, mensagem) && FaltaPagar(pedido))
+                await MarcarAvisoDePagamentoPendenteAsync(pedido.Id);
             return true;
+        }
+
+        private static bool FaltaPagar(CardapioPedidoPublico pedido) => pedido.PagamentoOnline && !pedido.Pago;
+
+        /// <summary>
+        /// O "recebemos" conforme o pagamento: presencial segue o texto de sempre; online sem pagar nao diz que ja foi ao
+        /// restaurante; online pago antes da confirmacao ja avisa que o pagamento foi aprovado.
+        /// </summary>
+        private static string TextoDeRecebido(CardapioPedidoPublico pedido, NoticeSettings settings, string nomeLoja)
+        {
+            var faltaPagar = FaltaPagar(pedido);
+            var texto = QuickReplyRenderer.Render(
+                faltaPagar ? settings.ReceivedAwaitingPaymentText : settings.ReceivedText, ValoresDoPedido(pedido, nomeLoja)).Texto;
+            if (faltaPagar) return $"{texto}\n\n{CardapioPagamentoRules.LinhaFaltaPagar}";
+            return pedido.PagamentoOnline ? $"{texto}\n\n{CardapioPagamentoRules.LinhaPagamentoAprovado}" : texto;
+        }
+
+        private async Task MarcarAvisoDePagamentoPendenteAsync(Guid id)
+        {
+            try
+            {
+                await _repository.MarcarAvisoDePagamentoPendenteAsync(id);
+            }
+            catch (Exception ex)
+            {
+                // A confirmacao do pedido ja valeu: so o aviso de pagamento aprovado fica sem sair.
+                _logger.LogWarning(ex, "Aviso de pagamento do pedido do cardapio {Pedido} nao ficou marcado.", id);
+            }
+        }
+
+        public async Task<int> AvisarPagamentosAprovadosAsync(Guid? somente = null)
+        {
+            var pagos = await _repository.ReservarAvisosDePagamentoAsync(20, somente) ?? Array.Empty<CardapioPedidoPublico>();
+            var avisados = 0;
+            foreach (var pedido in pagos)
+            {
+                if (!pedido.IdConversa.HasValue) continue;
+                var nomeLoja = await NomeDaLojaAsync(pedido.IdEstabelecimento);
+                if (await TentarEnviarAsync(pedido.IdConversa.Value, pedido.IdEstabelecimento,
+                        CardapioPagamentoRules.PagamentoAprovado(pedido.NomeCliente, nomeLoja, pedido.Codigo, pedido.Total)))
+                    avisados++;
+            }
+            return avisados;
         }
 
         private sealed class ContadorDeFalhas
@@ -368,6 +440,19 @@ namespace APIBack.Service
 
             // So quem muda o status de fato avisa o cliente: dois cliques nao mandam duas mensagens.
             if (!await _repository.MarcarAceitoAsync(estabelecimentoId, id, pedidoId)) return resultado;
+
+            // A loja aceitou antes de o aviso de pagamento sair: ele vai primeiro, para a conversa ficar na ordem.
+            if (pedido.PagamentoOnline)
+            {
+                try
+                {
+                    await AvisarPagamentosAprovadosAsync(pedido.Id);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(ex, "Aviso de pagamento do pedido aceito {Pedido} nao saiu.", pedido.Id);
+                }
+            }
 
             if (pedido.IdConversa.HasValue)
             {

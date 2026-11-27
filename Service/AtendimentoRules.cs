@@ -179,10 +179,10 @@ namespace APIBack.Service
         public static string Mensagem(SituacaoPedidos situacao)
         {
             if (situacao.Aberto) return string.Empty;
-            if (situacao.Motivo == Pausado) return "A loja pausou os pedidos por enquanto. Tente novamente em instantes.";
+            if (situacao.Motivo == Pausado) return "A loja pausou os pedidos por um momento. Tente novamente em instantes.";
             return string.IsNullOrWhiteSpace(situacao.AbreEm)
-                ? "A loja está fechada agora e não está aceitando pedidos."
-                : $"A loja está fechada agora. Abrimos {situacao.AbreEm}.";
+                ? "A loja está fechada agora e não está aceitando pedidos. Volte mais tarde."
+                : $"A loja está fechada agora. Abrimos {situacao.AbreEm}. Até lá!";
         }
     }
 

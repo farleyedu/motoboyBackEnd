@@ -104,6 +104,7 @@ builder.Services.AddSingleton<IAuthDecisionCache, AuthDecisionCache>();
 builder.Services.AddScoped<APIBack.Service.IProntidaoService, APIBack.Service.ProntidaoService>();
 builder.Services.AddScoped<APIBack.Service.IOperacaoLojaService, APIBack.Service.OperacaoLojaService>();
 builder.Services.AddScoped<APIBack.Service.ISituacaoComercialService, APIBack.Service.SituacaoComercialService>();
+builder.Services.AddScoped<APIBack.Service.IModulosDaLojaService, APIBack.Service.ModulosDaLojaService>();
 builder.Services.AddScoped<APIBack.Service.IGestaoCentralService, APIBack.Service.GestaoCentralService>();
 builder.Services.AddSingleton<APIBack.Service.IChamadoAnexoStorage, APIBack.Service.CloudinaryChamadoAnexoStorage>();
 builder.Services.AddScoped<APIBack.Service.IChamadoAnexoService, APIBack.Service.ChamadoAnexoService>();

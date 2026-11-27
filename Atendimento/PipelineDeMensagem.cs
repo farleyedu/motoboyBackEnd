@@ -54,10 +54,10 @@ namespace APIBack.Atendimento
     public sealed class PipelineDeMensagem : IPipelineDeMensagem
     {
         private const string AvisoEmpresaPausada =
-            "Estamos enfrentando uma instabilidade temporária no atendimento. Assim que possível, retornaremos por aqui.";
+            "🛠️ Estamos com uma *instabilidade temporária* no atendimento.\n\nAssim que possível, voltamos a falar com você por aqui.";
         internal const string PedidoIdentificacao =
-            "Olá! Este número aparece tanto na nossa equipe quanto como contato comercial. " +
-            "Para continuar, confirme como você quer ser atendido: responda EQUIPE ou CLIENTE.";
+            "Olá! 👋 Este número aparece tanto na nossa equipe quanto como contato comercial.\n\n" +
+            "Como você quer ser atendido? Responda *EQUIPE* ou *CLIENTE*.";
 
         private readonly IExecucaoAtendimentoRepository? _execucoes;
         private readonly APIBack.Service.ISituacaoComercialService? _situacoes;

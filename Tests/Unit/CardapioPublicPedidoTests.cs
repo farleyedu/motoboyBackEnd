@@ -713,6 +713,47 @@ namespace APIBack.Tests.Unit
         }
 
         [Fact]
+        public async Task Retentativa_de_pedido_que_ficou_pendente_inicia_a_confirmacao_em_vez_de_dizer_que_foi_enviado()
+        {
+            var f = new Fixture();
+            var existente = new CardapioPedidoPublico
+            {
+                Id = Guid.NewGuid(), IdEstabelecimento = Estabelecimento, Codigo = "CDP-BBB", Status = CardapioPedidoStatus.Pendente,
+                Total = 69m, ChaveIdempotencia = "chk-2", TipoEntrega = "entrega"
+            };
+            f.PedidosWeb.Setup(r => r.ObterPorChaveAsync(Estabelecimento, "chk-2")).ReturnsAsync(existente);
+            f.Confirmacao.Setup(c => c.IniciarConfirmacaoAsync(existente, It.IsAny<string>()))
+                .ReturnsAsync(new CardapioConfirmacaoDto { Modo = "codigo", Codigo = "4821" });
+            f.Confirmacao.Setup(c => c.ObterStatusAsync(existente.Id)).ReturnsAsync(new CardapioPedidoPublicoStatusDto
+            {
+                Id = existente.Id, Status = CardapioPedidoStatus.AguardandoCodigo,
+                Confirmacao = new CardapioConfirmacaoDto { Modo = "codigo", Codigo = "4821" }
+            });
+            var request = Pedido();
+            request.ChaveIdempotencia = "chk-2";
+
+            var criado = await f.Build().CriarPedidoAsync(request);
+
+            Assert.True(criado.Reaproveitado);
+            Assert.Equal(CardapioPedidoStatus.AguardandoCodigo, criado.Status);
+            Assert.Equal("4821", criado.Confirmacao.Codigo);
+            Assert.Null(f.Gravado);
+            f.Confirmacao.Verify(c => c.IniciarConfirmacaoAsync(existente, It.IsAny<string>()), Times.Once);
+        }
+
+        [Fact]
+        public async Task Observacao_de_item_maior_que_a_do_pedido_real_e_recusada_antes_de_chegar_ao_restaurante()
+        {
+            var f = new Fixture();
+            var request = Pedido();
+            request.Itens![0].Observacao = new string('a', PedidoPricing.MaxObservacaoItem + 1);
+
+            await Assert.ThrowsAsync<RequestValidationException>(() => f.Build().CriarPedidoAsync(request));
+
+            Assert.Null(f.Gravado);
+        }
+
+        [Fact]
         public async Task Pagamento_online_desligado_na_loja_e_recusado_e_o_presencial_continua()
         {
             var f = new Fixture();

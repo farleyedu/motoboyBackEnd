@@ -31,6 +31,12 @@ namespace APIBack.Service.Interface
         /// </summary>
         Task<bool> TentarConfirmarPorMensagemAsync(Guid conversaId, string? texto);
 
+        /// <summary>
+        /// Manda "pagamento aprovado" a quem foi avisado de que faltava pagar e ja pagou. Cada pedido recebe uma vez.
+        /// Devolve quantas mensagens sairam.
+        /// </summary>
+        Task<int> AvisarPagamentosAprovadosAsync(Guid? somente = null);
+
         Task<IReadOnlyList<CardapioPedidoAguardandoDto>> ListarAguardandoAsync(Guid estabelecimentoId);
         Task<AceitarCardapioPedidoResultDto> AceitarAsync(Guid estabelecimentoId, int actorUserId, Guid id);
         Task RecusarAsync(Guid estabelecimentoId, Guid id, string? motivo);

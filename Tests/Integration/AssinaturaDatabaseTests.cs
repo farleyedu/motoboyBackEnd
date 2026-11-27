@@ -291,6 +291,7 @@ VALUES (@L, 'Loja', @S, NOW() - INTERVAL '5 days', CASE WHEN @S = 'teste' THEN N
             await db.Execute(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Migrations", "Delivery", "20261101_40_assinaturas.sql")));
             await db.Execute(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Migrations", "Delivery", "20261104_10_pagamentos_multigateway.sql")));
             await db.Execute(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Migrations", "Delivery", "20261210_01_assinatura_regras.sql")));
+            await db.Execute(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Migrations", "Delivery", "20261213_01_modulos_da_gestao.sql")));
 
             var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
             {

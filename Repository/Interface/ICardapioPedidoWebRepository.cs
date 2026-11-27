@@ -46,6 +46,15 @@ namespace APIBack.Repository.Interface
         Task<CardapioPedidoPublico?> ConfirmarPorCodigoAsync(Guid estabelecimentoId, string codigo, string telefoneContato, Guid conversaId);
         Task<bool> CodigoDeOutroTelefoneAsync(Guid estabelecimentoId, string codigo, string telefoneContato);
 
+        /// <summary>O cliente foi avisado de que falta pagar: quando o dinheiro entrar, ele recebe "pagamento aprovado".</summary>
+        Task MarcarAvisoDePagamentoPendenteAsync(Guid id);
+
+        /// <summary>
+        /// Reserva (desmarcando, uma vez so entre instancias) os pre-pedidos ja pagos que ainda esperam o aviso. Recusado ou
+        /// cancelado nunca volta aqui: a propria recusa ja fala do dinheiro.
+        /// </summary>
+        Task<IReadOnlyList<CardapioPedidoPublico>> ReservarAvisosDePagamentoAsync(int limite, Guid? somenteId = null);
+
         /// <summary>O que o restaurante decide: confirmados (presencial) ou confirmados e pagos (online), e os aceites em andamento.</summary>
         Task<IReadOnlyList<CardapioPedidoPublico>> ListarAguardandoAceiteAsync(Guid estabelecimentoId, int limite);
 

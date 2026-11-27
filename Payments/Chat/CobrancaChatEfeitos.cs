@@ -4,6 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using APIBack.Hubs;
 using APIBack.Payments.MercadoPago;
+using APIBack.Repository;
 using Dapper;
 using Npgsql;
 
@@ -39,8 +40,7 @@ namespace APIBack.Payments.Chat
             var pagouAgora = StatusIntent.FamiliaPaga(intent.Status) && !StatusIntent.FamiliaPaga(statusAnteriorIntent);
             var estorno = intent.Status is StatusIntent.EstornadoParcial or StatusIntent.Estornado;
 
-            if (c.PrePedidoId.HasValue)
-                await PrePedidoAsync(cx, tx, c, intent, ct);
+            var cardapioAvisa = c.PrePedidoId.HasValue && await PrePedidoAsync(cx, tx, c, intent, ct);
 
             if (pagouAgora)
             {
@@ -52,7 +52,8 @@ namespace APIBack.Payments.Chat
                     await CobrancaChatRepositorio.AgendarTarefaAsync(cx, tx, c.Id, c.IdEstabelecimento, TiposTarefa.CancelarSucessora, ct);
 
                 var config = await CobrancaChatRepositorio.ConfigAsync(cx, c.IdEstabelecimento, ct);
-                if (config.ConfirmarPagamentoCliente)
+                // Quem esperava "pagamento aprovado" do cardapio recebe so ele, e nao tambem o aviso do chat.
+                if (config.ConfirmarPagamentoCliente && !cardapioAvisa)
                     await CobrancaChatRepositorio.AgendarTarefaAsync(cx, tx, c.Id, c.IdEstabelecimento, TiposTarefa.ConfirmarCliente, ct);
             }
 
@@ -126,19 +127,54 @@ VALUES (@Id, @Nome, @Grupo, @Loja, @Versao, CAST(@Payload AS jsonb), NOW())", ne
         }
 
         /// <summary>
-        /// Pre-pedido do cardapio cobrado pelo chat: espelha o status de pagamento e, se ele esperava o pagamento, libera para o aceite do
-        /// restaurante (nunca aceita sozinho nem cria o pedido real: isso continua com o atendente/fluxo do cardapio).
+        /// Pre-pedido do cardapio cobrado pelo chat. Quando o dinheiro entra num pedido online ainda sem pagamento, esta intencao vira
+        /// "a" intencao dele (e por ela que a fila da loja, o aceite, a recusa e o reembolso o enxergam) e quem esperava o pagamento vai
+        /// para o aceite do restaurante (nunca aceita sozinho nem cria o pedido real: isso continua com o atendente/fluxo do cardapio).
+        /// Devolve true quando o proprio cardapio vai avisar o cliente de que o pagamento foi aprovado.
         /// </summary>
-        private static async Task PrePedidoAsync(NpgsqlConnection cx, NpgsqlTransaction tx, CobrancaChatLinha c, PagamentoIntent intent, CancellationToken ct)
+        public static async Task<bool> PrePedidoAsync(NpgsqlConnection cx, NpgsqlTransaction tx, CobrancaChatLinha c, PagamentoIntent intent, CancellationToken ct)
         {
+            var cardapioAvisa = false;
+            if (intent.Status == StatusIntent.Pago)
+            {
+                var metodo = await CardapioPagamentoSql.MetodoPagoAsync(cx, tx, intent, ct);
+                // Recusado, cancelado, aceito ou ja pago por outra intencao ficam como estao.
+                cardapioAvisa = await cx.ExecuteScalarAsync<bool?>(new CommandDefinition(@"
+UPDATE cardapio_pedido_publico
+   SET id_intent_pago = @Intent, id_intent_atual = @Intent, pago_em = COALESCE(pago_em, NOW()),
+       metodo_online = CASE WHEN @Metodo IN ('pix', 'cartao') THEN @Metodo ELSE metodo_online END,
+       confirmado_em = CASE WHEN status = 'aguardando_pagamento' THEN NOW() ELSE confirmado_em END,
+       status = CASE WHEN status = 'aguardando_pagamento' THEN 'aguardando_aceite' ELSE status END,
+       updated_at = NOW()
+ WHERE id = @Id AND id_estabelecimento = @Loja AND pagamento_online AND id_intent_pago IS NULL
+   AND status IN ('pendente', 'aguardando_codigo', 'expirado', 'aguardando_pagamento', 'aguardando_aceite')
+RETURNING aviso_pagamento_pendente AND status = 'aguardando_aceite'",
+                    new { Intent = intent.Id, Metodo = metodo, Id = c.PrePedidoId, Loja = c.IdEstabelecimento }, tx, cancellationToken: ct)) ?? false;
+            }
+
+            // O espelho segue so a intencao que importa: uma cobranca vencida nao "despaga" quem pagou por outra.
             await cx.ExecuteAsync(new CommandDefinition(@"
 UPDATE cardapio_pedido_publico SET status_pagamento = @S, updated_at = NOW()
- WHERE id = @Id AND id_estabelecimento = @Loja AND status_pagamento IS DISTINCT FROM @S",
-                new { S = PagamentoStatusRules.StatusPagamentoPrePedido(intent.Status), Id = c.PrePedidoId, Loja = c.IdEstabelecimento }, tx, cancellationToken: ct));
-            if (intent.Status == StatusIntent.Pago)
-                await cx.ExecuteAsync(new CommandDefinition(@"
-UPDATE cardapio_pedido_publico SET status = 'aguardando_aceite', updated_at = NOW()
- WHERE id = @Id AND id_estabelecimento = @Loja AND status = 'aguardando_pagamento'", new { Id = c.PrePedidoId, Loja = c.IdEstabelecimento }, tx, cancellationToken: ct));
+ WHERE id = @Id AND id_estabelecimento = @Loja AND status_pagamento IS DISTINCT FROM @S
+   AND (id_intent_pago IS NULL OR id_intent_pago = @Intent)",
+                new { S = PagamentoStatusRules.StatusPagamentoPrePedido(intent.Status), Intent = intent.Id, Id = c.PrePedidoId, Loja = c.IdEstabelecimento },
+                tx, cancellationToken: ct));
+
+            // Reembolso pedido pelo cardapio (recusa, cancelamento) de um pagamento feito pelo chat tambem precisa concluir.
+            if (intent.ValorEstornado > 0) await CardapioPagamentoSql.ConcluirReembolsosAsync(cx, tx, intent.Id, ct);
+            return cardapioAvisa;
         }
+
+        /// <summary>
+        /// O dinheiro saiu deste pre-pedido (cobranca movida para outro pedido): ele volta a esperar pagamento, se ainda nao foi decidido.
+        /// </summary>
+        public static Task DesvincularPrePedidoAsync(NpgsqlConnection cx, NpgsqlTransaction tx, Guid loja, Guid prePedidoId, Guid intentId, CancellationToken ct) =>
+            cx.ExecuteAsync(new CommandDefinition(@"
+UPDATE cardapio_pedido_publico
+   SET id_intent_pago = NULL, id_intent_atual = NULL, pago_em = NULL, status_pagamento = 'pendente',
+       status = CASE WHEN status = 'aguardando_aceite' AND pagamento_online THEN 'aguardando_pagamento' ELSE status END,
+       updated_at = NOW()
+ WHERE id = @Id AND id_estabelecimento = @Loja AND id_intent_pago = @Intent",
+                new { Id = prePedidoId, Loja = loja, Intent = intentId }, tx, cancellationToken: ct));
     }
 }

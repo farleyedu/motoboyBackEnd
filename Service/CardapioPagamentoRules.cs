@@ -173,11 +173,22 @@ namespace APIBack.Service
             };
         }
 
+        // ---- Sequencia das mensagens do pedido online: falta pagar -> pagamento aprovado -> loja confirmou -------------
+
+        public const string LinhaFaltaPagar =
+            "⏳ *Falta o pagamento.*\nConclua na página do pedido. Assim que for aprovado, enviamos para o restaurante.";
+
+        /// <summary>Vai junto do "recebemos" quando o cliente pagou antes de confirmar o numero.</summary>
+        public const string LinhaPagamentoAprovado = "✅ *Pagamento aprovado.*";
+
+        public static string PagamentoAprovado(string nomeCliente, string loja, string codigo, decimal valor) =>
+            $"✅ *Pagamento aprovado!*\n\n{PrimeiroNome(nomeCliente)}, seu pedido *{codigo}* foi enviado para a *{loja}*.\n" +
+            $"💰 Valor pago: *{CardapioConfirmacaoRules.Dinheiro(valor)}*\n\n⏳ Agora é só aguardar a confirmação.";
+
         public static string PedidoRecusadoComEstorno(string nomeCliente, string loja, string? motivo, decimal valor)
         {
-            var porque = string.IsNullOrWhiteSpace(motivo) ? string.Empty : $" Motivo: {motivo.Trim()}.";
-            return $"{PrimeiroNome(nomeCliente)}, infelizmente a {loja} não conseguiu aceitar seu pedido agora.{porque} " +
-                   $"O valor pago ({CardapioConfirmacaoRules.Dinheiro(valor)}) será devolvido integralmente pelo mesmo meio de pagamento.";
+            return $"{CardapioConfirmacaoRules.AvisoDeRecusa(PrimeiroNome(nomeCliente), loja, motivo)}\n\n" +
+                   $"💰 O valor pago (*{CardapioConfirmacaoRules.Dinheiro(valor)}*) será devolvido integralmente pelo mesmo meio de pagamento.";
         }
 
         private static string Chave(string? texto)

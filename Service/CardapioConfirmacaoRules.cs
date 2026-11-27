@@ -107,6 +107,16 @@ namespace APIBack.Service
             return variantes;
         }
 
+        /// <summary>
+        /// As formas em que o mesmo numero pode estar gravado no pre-pedido ("+55..." com e sem o nono digito): o WhatsApp
+        /// costuma entregar o numero sem o 9 que o cliente digitou. Numero fora do padrao brasileiro vale como veio.
+        /// </summary>
+        public static IReadOnlyList<string> TelefonesEquivalentes(string telefone)
+        {
+            var variantes = VariantesTelefone(telefone);
+            return variantes.Count == 0 ? new[] { telefone } : variantes.Select(v => "+" + v).ToArray();
+        }
+
         public static string? NormalizarMotivo(string? motivo)
         {
             var trimmed = motivo?.Trim();
@@ -125,15 +135,21 @@ namespace APIBack.Service
         }
 
         public static string CodigoInvalido() =>
-            "Não encontrei esse código ou ele expirou. Volte ao cardápio e finalize o pedido de novo para gerar um código novo.";
+            "⚠️ Não encontrei esse código ou ele *expirou*.\n\nVolte ao cardápio e finalize o pedido de novo para gerar um código novo.";
 
         public static string CodigoDeOutroTelefone() =>
-            "Este pedido foi iniciado com outro WhatsApp. Confirme usando o mesmo número informado no cardápio ou troque o WhatsApp do pedido para gerar um código novo.";
+            "⚠️ Este pedido foi iniciado com *outro WhatsApp*.\n\nConfirme usando o mesmo número informado no cardápio ou troque o WhatsApp do pedido para gerar um código novo.";
 
         public static string PedidoRecusado(string nomeCliente, string loja, string? motivo)
         {
-            var porque = string.IsNullOrWhiteSpace(motivo) ? string.Empty : $" Motivo: {motivo.Trim()}.";
-            return $"{PrimeiroNome(nomeCliente)}, infelizmente a {loja} não conseguiu aceitar seu pedido agora.{porque} Sentimos muito pelo transtorno.";
+            return $"{AvisoDeRecusa(PrimeiroNome(nomeCliente), loja, motivo)}\n\nSentimos muito pelo transtorno.";
+        }
+
+        /// <summary>Abertura comum da recusa (com e sem estorno): quem, qual loja e o motivo, quando a loja informou.</summary>
+        internal static string AvisoDeRecusa(string nome, string loja, string? motivo)
+        {
+            var porque = string.IsNullOrWhiteSpace(motivo) ? string.Empty : $"\n\nMotivo: {motivo.Trim().TrimEnd('.')}.";
+            return $"{nome}, infelizmente a *{loja}* não conseguiu aceitar seu pedido agora. 😕{porque}";
         }
 
         public static string Dinheiro(decimal valor)

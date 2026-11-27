@@ -16,7 +16,8 @@ namespace APIBack.Atendimento.Motor
     {
         public const string BotaoMenuAtendente = "menu_atendente";
         public const string PrefixoBotaoServico = "svc_";
-        public const string TextoPadraoAtendente = "Certo! Já avisei a nossa equipe e em instantes alguém continua por aqui.";
+        public const string TextoPadraoAtendente = "🙋 Já avisei a nossa equipe!\nEm instantes alguém continua o atendimento por aqui.";
+        private const string SolicitacaoRegistrada = "✅ *Solicitação registrada!*";
         private const string PassoMenu = "menu";
         private static readonly TimeSpan IntervaloAvisoForaDoHorario = TimeSpan.FromHours(6);
 
@@ -47,7 +48,7 @@ namespace APIBack.Atendimento.Motor
             if (texto is "obrigado" or "obrigada" or "valeu" or "muito obrigado" or "muito obrigada" or "ok obrigado" or "tchau" or "boa noite obrigado")
             {
                 estado.NaoEntendidas = 0;
-                return Finalizar(new() { new AcaoResponder("Por nada! Se precisar de algo, é só escrever por aqui.") }, estado, "base", "fim", "comando:agradecimento");
+                return Finalizar(new() { new AcaoResponder("Por nada! 😊 Se precisar de algo, é só escrever por aqui.") }, estado, "base", "fim", "comando:agradecimento");
             }
 
             // O cardapio fechado ja explica a situacao na propria resposta; evita dois avisos iguais.
@@ -62,29 +63,29 @@ namespace APIBack.Atendimento.Motor
             }
             if (entrada.TipoMensagem is not (null or "text" or "interactive" or "button"))
                 return EncaminharOuOrientar(entrada, estado, acoes,
-                    "Recebi sua mensagem, mas o atendimento automático ainda não interpreta áudio, fotos, documentos ou localização. Se puder, descreva em texto o que precisa.", "midia:" + entrada.TipoMensagem);
+                    "Recebi sua mensagem, mas por aqui ainda não consigo abrir *áudios, fotos, documentos ou localização*.\n\n📝 Se puder, escreva em texto o que precisa.", "midia:" + entrada.TipoMensagem);
 
             if (estado.Passo == "motivo_suporte" && texto is not ("menu" or "inicio" or "voltar" or "0"))
-                return EncaminharOuOrientar(entrada, estado, acoes, "Sua solicitação foi registrada para a equipe.", "suporte:" + ContextoSuporte(pedidos, entrada.Texto));
+                return EncaminharOuOrientar(entrada, estado, acoes, SolicitacaoRegistrada, "suporte:" + ContextoSuporte(pedidos, entrada.Texto));
 
             if (EhSuporte(texto) || entrada.Interpretado == "ajuda_pedido")
             {
                 if (entrada.Interpretado == "ajuda_pedido" || texto is "cancelar" or "reclamacao" or "problema")
                 {
                     estado.Servico = null; estado.Passo = "motivo_suporte"; estado.NaoEntendidas = 0;
-                    acoes.Add(new AcaoResponder("Conte o que aconteceu ou o que você deseja alterar no pedido. Cancelamentos e alterações precisam da confirmação da equipe."));
+                    acoes.Add(new AcaoResponder("📝 *Conte o que aconteceu* ou o que você deseja alterar no pedido.\n\nCancelamentos e alterações precisam da confirmação da equipe."));
                     return Finalizar(acoes, estado, "base", "motivo_suporte", "suporte:coletar_motivo");
                 }
-                return EncaminharOuOrientar(entrada, estado, acoes, "Sua solicitação foi registrada para a equipe.", "suporte:" + ContextoSuporte(pedidos, entrada.Texto));
+                return EncaminharOuOrientar(entrada, estado, acoes, SolicitacaoRegistrada, "suporte:" + ContextoSuporte(pedidos, entrada.Texto));
             }
 
             if (entrada.Interpretado == "info_loja" || ContemTermo(texto, "horario") || ContemTermo(texto, "aberto") || ContemTermo(texto, "fechado"))
             {
                 var info = entrada.Pedidos is { Aberto: false } situacao
-                    ? situacao.Motivo == APIBack.Service.PedidosAbertosRules.Pausado ? "A loja pausou os pedidos no momento."
-                        : string.IsNullOrWhiteSpace(situacao.AbreEm) ? "A loja está fechada no momento." : $"A loja está fechada. Abrimos {situacao.AbreEm}."
-                    : "A loja está recebendo pedidos agora.";
-                acoes.Add(new AcaoResponder(info + (entrada.CardapioUrl == null ? "" : $"\nCardápio: {entrada.CardapioUrl}")));
+                    ? situacao.Motivo == APIBack.Service.PedidosAbertosRules.Pausado ? "⏸️ A loja *pausou os pedidos* no momento."
+                        : string.IsNullOrWhiteSpace(situacao.AbreEm) ? "🕒 A loja está *fechada* no momento." : $"🕒 A loja está *fechada*.\nAbrimos *{situacao.AbreEm}*."
+                    : "✅ A loja está *recebendo pedidos* agora.";
+                acoes.Add(new AcaoResponder(info + (entrada.CardapioUrl == null ? "" : $"\n\n📋 *Cardápio:*\n{entrada.CardapioUrl}")));
                 return Finalizar(acoes, Limpo(estado), "base", "informacoes", "comando:informacoes");
             }
 
@@ -108,7 +109,7 @@ namespace APIBack.Atendimento.Motor
                 var opcoes = new List<Botao> { new("meus_pedidos", ativo ? "Acompanhar pedido" : "Pedido anterior") };
                 if (servicos.Contains("cardapio_web")) opcoes.Add(new("novo_pedido", "Fazer novo pedido"));
                 if (hibrido) opcoes.Add(new(BotaoMenuAtendente, "Falar com a equipe"));
-                acoes.Add(new AcaoBotoes(Saudar(entrada, ativo ? "Você tem pedido em andamento. Como posso ajudar?" : "Encontrei seu pedido recente. Como posso ajudar?"), opcoes));
+                acoes.Add(new AcaoBotoes(Saudar(entrada, ativo ? "📦 Você tem um *pedido em andamento*.\nComo posso ajudar?" : "📦 Encontrei seu *pedido recente*.\nComo posso ajudar?"), opcoes));
                 return Finalizar(acoes, Limpo(estado), "base", "menu_contexto", "menu:pedido_recente");
             }
 
@@ -122,7 +123,7 @@ namespace APIBack.Atendimento.Motor
                     return Finalizar(acoes, Limpo(estado), "base", "atendente", "comando:atendente");
                 }
 
-                acoes.Add(new AcaoResponder("Por aqui eu consigo te ajudar com as opções abaixo."));
+                acoes.Add(new AcaoResponder("Por aqui eu consigo te ajudar com as opções abaixo 👇"));
                 return Finalizar(MaisMenu(acoes, entrada, servicos, estado, saudar: false), estado, "base", PassoMenu, "comando:atendente_indisponivel");
             }
 
@@ -165,16 +166,16 @@ namespace APIBack.Atendimento.Motor
             {
                 estado.NaoEntendidas++;
                 if (estado.NaoEntendidas >= 2 && hibrido)
-                    return EncaminharOuOrientar(entrada, estado, acoes, "Não consegui entender sua solicitação. A equipe vai continuar o atendimento.", "nao_entendido:duas_tentativas");
-                acoes.Add(new AcaoResponder("Não entendi essa mensagem. Escolha uma opção abaixo ou escreva o que precisa, como cardápio ou meu pedido."));
+                    return EncaminharOuOrientar(entrada, estado, acoes, "Não consegui entender sua solicitação. 🤔", "nao_entendido:duas_tentativas");
+                acoes.Add(new AcaoResponder("Não entendi essa mensagem. 🤔\n\nEscolha uma opção abaixo ou escreva o que precisa, como *cardápio* ou *meu pedido*."));
                 return Finalizar(MaisMenu(acoes, entrada, servicos, estado, false), estado, "base", PassoMenu, "entrada:nao_entendida");
             }
             switch (servicos.Count)
             {
                 case 0:
                     acoes.Add(new AcaoResponder(Saudar(entrada, hibrido
-                        ? entrada.Escolher(entrada.Textos?.SemServico, "No momento não tenho um atendimento automático por aqui. A equipe continuará por aqui quando disponível.")
-                        : "Este número está sem opções automáticas disponíveis no momento. Tente novamente mais tarde.")));
+                        ? entrada.Escolher(entrada.Textos?.SemServico, "No momento não há atendimento automático por aqui.\n\n🙋 A equipe continua a conversa assim que estiver disponível.")
+                        : "No momento este número está sem opções automáticas.\n\nTente novamente mais tarde, por favor.")));
                     if (hibrido) acoes.Add(new AcaoChamarAtendente("numero sem servico ligado"));
                     return Finalizar(acoes, Limpo(estado), "base", "sem_servico", "numero_sem_servico");
                 case 1:
@@ -193,8 +194,8 @@ namespace APIBack.Atendimento.Motor
             var respostas = resultado.Acoes.ToList();
             if (entrada.ModoCanal != ModoAtendimento.Hibrido && respostas.Any(a => a is AcaoChamarAtendente))
                 respostas = new() { new AcaoResponder(servico == "agendamento"
-                    ? "O agendamento automático ainda não está disponível neste número."
-                    : "Não consegui concluir esta solicitação automaticamente. Este número está configurado apenas para o bot; tente novamente mais tarde.") };
+                    ? "📅 O agendamento automático ainda não está disponível neste número."
+                    : "Não consegui concluir sua solicitação por aqui. 😕\n\nEste número tem apenas atendimento automático. Tente novamente mais tarde.") };
             if (entrada.ForaDoHorario && entrada.Pedidos is { Aberto: false } && servico != "cardapio_web")
                 AvisarForaDoHorario(entrada, estado, DateTime.UtcNow, acoes);
             if (entrada.PrimeiraMensagem && respostas.Count > 0 && respostas[0] is AcaoResponder primeira)
@@ -237,7 +238,7 @@ namespace APIBack.Atendimento.Motor
             else
             {
                 var lista = string.Join("\n", opcoes.Select((o, i) => $"{i + 1} - {o.Titulo}"));
-                acoes.Add(new AcaoResponder($"{cabecalho}\n{lista}\nResponda com o número da opção."));
+                acoes.Add(new AcaoResponder($"{cabecalho}\n\n{lista}\n\nResponda com o *número* da opção."));
             }
 
             estado.Servico = null;
@@ -286,8 +287,8 @@ namespace APIBack.Atendimento.Motor
 
             acoes.Add(new AcaoResponder(string.IsNullOrWhiteSpace(entrada.MensagemForaDoHorario)
                 ? (string.IsNullOrWhiteSpace(entrada.Pedidos?.AbreEm)
-                    ? "No momento estamos fechados."
-                    : $"No momento estamos fechados. Abrimos {entrada.Pedidos!.AbreEm}.")
+                    ? "🕒 No momento estamos *fechados*."
+                    : $"🕒 No momento estamos *fechados*.\nAbrimos *{entrada.Pedidos!.AbreEm}*.")
                 : entrada.MensagemForaDoHorario!));
             estado.ForaDoHorarioAvisadoEm = agoraUtc;
         }
@@ -304,8 +305,8 @@ namespace APIBack.Atendimento.Motor
 
         private static string Saudar(EntradaMotor entrada, string corpo)
         {
-            var saudacao = string.IsNullOrWhiteSpace(entrada.Saudacao) ? $"Olá! Aqui é a {entrada.NomeLoja}." : entrada.Saudacao!.Trim();
-            return $"{saudacao}\n{corpo}";
+            var saudacao = string.IsNullOrWhiteSpace(entrada.Saudacao) ? $"Olá! 👋 Aqui é a *{entrada.NomeLoja}*." : entrada.Saudacao!.Trim();
+            return $"{saudacao}\n\n{corpo}";
         }
 
         internal static bool ContemTermo(string texto, string termo) =>
@@ -325,10 +326,10 @@ namespace APIBack.Atendimento.Motor
             {
                 novo.AguardandoEquipe = true;
                 acoes.Add(new AcaoChamarAtendente(motivo));
-                acoes.Add(new AcaoResponder(mensagem + "\n" + TextoPadraoAtendente));
+                acoes.Add(new AcaoResponder(mensagem + "\n\n" + TextoPadraoAtendente));
             }
-            else acoes.Add(new AcaoResponder(mensagem.Replace("Sua solicitação foi registrada para a equipe.", "Alterações e cancelamentos precisam ser confirmados pela loja.")
-                + "\nEste número atende apenas automaticamente. Escreva menu para ver as opções disponíveis."));
+            else acoes.Add(new AcaoResponder(mensagem.Replace(SolicitacaoRegistrada, "Alterações e cancelamentos precisam ser *confirmados pela loja*.")
+                + "\n\nEste número tem apenas atendimento automático.\nEscreva *menu* para ver as opções disponíveis."));
             return Finalizar(acoes, novo, "base", "suporte", motivo);
         }
 
@@ -342,16 +343,16 @@ namespace APIBack.Atendimento.Motor
                 var novo = Limpo(estado); novo.Passo = "escolher_pedido";
                 novo.Dados["pedidos"] = string.Join("|", candidatos.Select(p => p.Chave));
                 var opcoes = candidatos.Select(p => new Botao("pedido:" + p.Chave, "Pedido " + p.Numero)).ToList();
-                if (opcoes.Count <= 3) acoes.Add(new AcaoBotoes("Qual pedido você quer acompanhar?", opcoes));
-                else acoes.Add(new AcaoResponder("Qual pedido você quer acompanhar? Responda com o número da opção:\n" + string.Join("\n", candidatos.Select((p, i) => $"{i + 1} - Pedido {p.Numero}"))));
+                if (opcoes.Count <= 3) acoes.Add(new AcaoBotoes("📦 Qual pedido você quer acompanhar?", opcoes));
+                else acoes.Add(new AcaoResponder("📦 Qual pedido você quer acompanhar?\n\n" + string.Join("\n", candidatos.Select((p, i) => $"{i + 1} - Pedido {p.Numero}")) + "\n\nResponda com o *número* da opção."));
                 return Finalizar(acoes, novo, "delivery", "escolher_pedido", "pedido:selecionar");
             }
             escolhido ??= candidatos.FirstOrDefault();
             if (escolhido == null)
-                return EncaminharOuOrientar(entrada, estado, acoes, "Não encontrei pedido ativo ou recente vinculado a este número nesta loja.", "pedido:nao_encontrado");
-            var texto = $"Pedido #{escolhido.Numero}: {escolhido.Status}.";
-            if (!string.IsNullOrWhiteSpace(escolhido.Previsao)) texto += $"\nPrevisão informada pela loja: {escolhido.Previsao}.";
-            if (!string.IsNullOrWhiteSpace(escolhido.Link)) texto += $"\nAcompanhe: {escolhido.Link}";
+                return EncaminharOuOrientar(entrada, estado, acoes, "🔎 Não encontrei pedido ativo ou recente deste número aqui na loja.", "pedido:nao_encontrado");
+            var texto = $"📦 *Pedido #{escolhido.Numero}*\nStatus: *{escolhido.Status}*";
+            if (!string.IsNullOrWhiteSpace(escolhido.Previsao)) texto += $"\n🕒 Previsão informada pela loja: *{escolhido.Previsao}*";
+            if (!string.IsNullOrWhiteSpace(escolhido.Link)) texto += $"\n\n📍 Acompanhe a entrega:\n{escolhido.Link}";
             acoes.Add(new AcaoResponder(texto));
             if (entrada.ModoCanal == ModoAtendimento.Hibrido)
                 acoes.Add(new AcaoBotoes("Precisa de ajuda com esse pedido?", new[] { new Botao("ajuda_pedido", "Preciso de ajuda") }));
@@ -368,32 +369,35 @@ namespace APIBack.Atendimento.Motor
 
         private static string DescreverEntrega(ContextoEntregaMotor? entrega)
         {
-            if (entrega == null) return "A taxa depende do endereço. Abra o cardápio e confirme o ponto de entrega para calcular o valor exato.";
+            if (entrega == null) return "🛵 A taxa de entrega depende do endereço.\n\nAbra o cardápio e confirme o ponto de entrega para calcular o *valor exato*.";
             if (entrega.TaxaCalculada)
             {
-                if (!entrega.DentroDoRaio) return "Esse endereço está fora da área de entrega configurada pela loja.";
+                if (!entrega.DentroDoRaio) return "😕 Esse endereço está *fora da área de entrega* da loja.";
                 var taxa = entrega.FreteGratisAplicado || entrega.TaxaEntrega == 0
                     ? "grátis"
                     : $"R$ {entrega.TaxaEntrega:0.00}".Replace('.', ',');
                 var zona = string.IsNullOrWhiteSpace(entrega.ZonaAplicada) ? string.Empty : $" ({entrega.ZonaAplicada})";
                 var distancia = entrega.DistanciaKm.HasValue ? $", a {entrega.DistanciaKm.Value:0.0} km".Replace('.', ',') : string.Empty;
-                return $"Para o endereço informado, a entrega fica {taxa}{zona}{distancia}.";
+                return $"🛵 Para o endereço informado, a entrega fica *{taxa}*{zona}{distancia}.";
             }
 
             var partes = entrega.Zonas.OrderBy(z => z.RaioAteKm)
-                .Select(z => $"{z.Nome}: até {z.RaioAteKm:0.#} km por R$ {z.Taxa:0.00}".Replace('.', ','))
+                .Select(z => $"• {z.Nome}: até {Numero(z.RaioAteKm, "0.#")} km por *R$ {Numero(z.Taxa, "0.00")}*")
                 .ToList();
             if (partes.Count == 0)
             {
-                var baseTaxa = $"A taxa começa em R$ {entrega.TaxaEntregaFixa:0.00}".Replace('.', ',');
-                if (entrega.TaxaEntregaPorKm > 0) baseTaxa += $" mais R$ {entrega.TaxaEntregaPorKm:0.00} por km".Replace('.', ',');
-                partes.Add(baseTaxa);
+                var baseTaxa = $"A taxa começa em *R$ {Numero(entrega.TaxaEntregaFixa, "0.00")}*";
+                if (entrega.TaxaEntregaPorKm > 0) baseTaxa += $" mais *R$ {Numero(entrega.TaxaEntregaPorKm, "0.00")}* por km";
+                partes.Add(baseTaxa + ".");
             }
             var complemento = entrega.FreteGratisAcimaDe is { } gratis && gratis > 0
-                ? $" Frete grátis em pedidos a partir de R$ {gratis:0.00}.".Replace('.', ',')
+                ? $"\n\n🎁 *Frete grátis* em pedidos a partir de *R$ {Numero(gratis, "0.00")}*."
                 : string.Empty;
-            return string.Join("\n", partes) + complemento + " O valor exato aparece após confirmar o endereço no cardápio.";
+            return "🛵 *Taxa de entrega*\n" + string.Join("\n", partes) + complemento + "\n\nO valor exato aparece após confirmar o endereço no cardápio.";
         }
+
+        // So o numero ganha virgula decimal: o nome da zona e a pontuacao da frase ficam como estao.
+        private static string Numero(decimal valor, string formato) => valor.ToString(formato, CultureInfo.InvariantCulture).Replace('.', ',');
 
         /// <summary>Minusculas, sem acento, sem pontuacao nas pontas e com espacos simples: base de toda comparacao de texto.</summary>
         public static string Normalizar(string? texto)

@@ -119,7 +119,7 @@ UPDATE cardapio_pedido_publico
        codigo_expira_em = NULL,
        updated_at = NOW()
  WHERE id = @Id
-   AND status = 'aguardando_codigo';", new { Id = id, Telefone = telefoneCliente })
+   AND status IN ('aguardando_codigo', 'expirado');", new { Id = id, Telefone = telefoneCliente })
             );
             return affected > 0;
         }
@@ -149,9 +149,13 @@ UPDATE cardapio_pedido_publico
  WHERE id_estabelecimento = @EstabelecimentoId
    AND status = 'aguardando_codigo'
    AND codigo_confirmacao = @Codigo
-   AND telefone_cliente = @Telefone
+   AND telefone_cliente = ANY(@Equivalentes)
    AND codigo_expira_em > NOW()
-RETURNING {Colunas};", new { EstabelecimentoId = estabelecimentoId, Codigo = codigo, Telefone = telefoneContato, ConversaId = conversaId }));
+RETURNING {Colunas};", new
+            {
+                EstabelecimentoId = estabelecimentoId, Codigo = codigo, Telefone = telefoneContato, ConversaId = conversaId,
+                Equivalentes = CardapioConfirmacaoRules.TelefonesEquivalentes(telefoneContato).ToArray()
+            }));
 
         public Task<bool> CodigoDeOutroTelefoneAsync(Guid estabelecimentoId, string codigo, string telefoneContato) =>
             GuardAsync(async connection => await connection.ExecuteScalarAsync<bool>(@"
@@ -162,8 +166,31 @@ SELECT EXISTS (
        AND status = 'aguardando_codigo'
        AND codigo_confirmacao = @Codigo
        AND codigo_expira_em > NOW()
-       AND telefone_cliente <> @Telefone
-);", new { EstabelecimentoId = estabelecimentoId, Codigo = codigo, Telefone = telefoneContato }));
+       AND telefone_cliente <> ALL(@Equivalentes)
+);", new
+            {
+                EstabelecimentoId = estabelecimentoId, Codigo = codigo,
+                Equivalentes = CardapioConfirmacaoRules.TelefonesEquivalentes(telefoneContato).ToArray()
+            }));
+
+        public Task MarcarAvisoDePagamentoPendenteAsync(Guid id) =>
+            GuardAsync(connection => connection.ExecuteAsync(@"
+UPDATE cardapio_pedido_publico SET aviso_pagamento_pendente = TRUE
+ WHERE id = @Id AND pagamento_online;", new { Id = id }));
+
+        public async Task<IReadOnlyList<CardapioPedidoPublico>> ReservarAvisosDePagamentoAsync(int limite, Guid? somenteId = null) =>
+            (await GuardAsync(connection => connection.QueryAsync<CardapioPedidoPublico>($@"
+UPDATE cardapio_pedido_publico
+   SET aviso_pagamento_pendente = FALSE
+ WHERE id IN (SELECT id FROM cardapio_pedido_publico
+               WHERE aviso_pagamento_pendente
+                 AND id_intent_pago IS NOT NULL AND status_pagamento = 'pago'
+                 AND status IN ('aguardando_aceite', 'aceitando', 'aceito')
+                 AND (CAST(@Somente AS uuid) IS NULL OR id = @Somente)
+               ORDER BY pago_em
+               LIMIT @Limite
+                 FOR UPDATE SKIP LOCKED)
+RETURNING {Colunas};", new { Limite = Math.Clamp(limite, 1, 100), Somente = somenteId }))).ToList();
 
         public async Task<IReadOnlyList<CardapioPedidoPublico>> ListarAguardandoAceiteAsync(Guid estabelecimentoId, int limite) =>
             (await GuardAsync(connection => connection.QueryAsync<CardapioPedidoPublico>($@"

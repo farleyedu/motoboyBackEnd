@@ -134,6 +134,10 @@ namespace APIBack.Service
             {
                 ValidationUtils.AddError(errors, "itens", "Informe ao menos um item no pedido.");
             }
+            else if (itensRequest.Count > PedidoPricing.MaxLines)
+            {
+                ValidationUtils.AddError(errors, "itens", $"O pedido aceita no maximo {PedidoPricing.MaxLines} itens.");
+            }
 
             var estabelecimento = await ResolverEstabelecimentoAsync(request.EstabelecimentoId, request.EstabelecimentoSlug);
             var produtosIds = itensRequest
@@ -169,6 +173,13 @@ namespace APIBack.Service
                 {
                     ValidationUtils.AddError(errors, $"{fieldPrefix}.produtoId", "Produto nao encontrado ou indisponivel para venda.");
                     continue;
+                }
+
+                // Mesmo limite do pedido real: passar daqui so falharia quando o restaurante fosse aceitar.
+                if (ValidationUtils.TrimToNull(itemRequest.Observacao) is { Length: > PedidoPricing.MaxObservacaoItem })
+                {
+                    ValidationUtils.AddError(errors, $"{fieldPrefix}.observacao",
+                        $"A observacao de '{produto.Nome}' deve ter no maximo {PedidoPricing.MaxObservacaoItem} caracteres.");
                 }
 
                 var selectedIds = (itemRequest.AdicionalItemIds ?? new List<Guid>())
@@ -314,7 +325,7 @@ namespace APIBack.Service
             if (chave != null && chave.Length <= 80 && _pedidosWeb != null)
             {
                 var existente = await _pedidosWeb.ObterPorChaveAsync(estabelecimento.Id, chave);
-                if (existente != null) return await RespostaDoExistenteAsync(existente);
+                if (existente != null) return await RespostaDoExistenteAsync(existente, estabelecimento);
             }
             if (chave is { Length: > 80 })
             {
@@ -506,12 +517,12 @@ namespace APIBack.Service
                 // Duas retentativas ao mesmo tempo: a outra criou primeiro.
                 var corrida = await _pedidosWeb.ObterPorChaveAsync(estabelecimento.Id, chave);
                 if (corrida == null) throw;
-                return await RespostaDoExistenteAsync(corrida);
+                // Quem criou e quem manda a confirmacao: aqui so se le, para o cliente nao receber a mensagem duas vezes.
+                return await RespostaDoExistenteAsync(corrida, estabelecimento, retomar: false);
             }
 
             // Janela de 24h aberta: mandamos a mensagem e o pedido ja vai ao restaurante. Fechada: o cliente recebe um codigo.
-            var confirmacao = await _confirmacao.IniciarConfirmacaoAsync(
-                entity, string.IsNullOrWhiteSpace(estabelecimento.NomePublico) ? estabelecimento.NomeFantasia : estabelecimento.NomePublico!);
+            var confirmacao = await _confirmacao.IniciarConfirmacaoAsync(entity, NomeParaOCliente(estabelecimento));
 
             return new CardapioPedidoPublicoCriadoDto
             {
@@ -569,9 +580,17 @@ namespace APIBack.Service
                     "Esse meio de pagamento online não está disponível agora. Escolha outra forma de pagamento.");
         }
 
-        /// <summary>Resposta de uma retentativa: o pre-pedido ja existente, no ponto em que esta (sem mandar mensagem de novo).</summary>
-        private async Task<CardapioPedidoPublicoCriadoDto> RespostaDoExistenteAsync(CardapioPedidoPublico existente)
+        /// <summary>
+        /// Resposta de uma retentativa: o pre-pedido ja existente, no ponto em que esta (sem mandar mensagem de novo). Se a
+        /// primeira tentativa gravou o pedido e caiu antes de iniciar a confirmacao ("pendente"), ela e iniciada agora:
+        /// senao o cliente veria "enviado ao restaurante" para um pedido que o restaurante nunca recebe.
+        /// </summary>
+        private async Task<CardapioPedidoPublicoCriadoDto> RespostaDoExistenteAsync(
+            CardapioPedidoPublico existente, CardapioEstabelecimentoPublico estabelecimento, bool retomar = true)
         {
+            var retomada = retomar && existente.Status == CardapioPedidoStatus.Pendente
+                ? await _confirmacao.IniciarConfirmacaoAsync(existente, NomeParaOCliente(estabelecimento))
+                : null;
             var status = await _confirmacao.ObterStatusAsync(existente.Id);
             return new CardapioPedidoPublicoCriadoDto
             {
@@ -594,12 +613,15 @@ namespace APIBack.Service
                     DentroDoRaio = true,
                     Total = existente.Total
                 },
-                Confirmacao = status?.Confirmacao ?? new CardapioConfirmacaoDto { Modo = "mensagem_enviada" },
+                Confirmacao = status?.Confirmacao ?? retomada ?? new CardapioConfirmacaoDto { Modo = "mensagem_enviada" },
                 PagamentoOnline = existente.PagamentoOnline,
                 MetodoOnline = existente.MetodoOnline,
                 Reaproveitado = true
             };
         }
+
+        private static string NomeParaOCliente(CardapioEstabelecimentoPublico estabelecimento) =>
+            string.IsNullOrWhiteSpace(estabelecimento.NomePublico) ? estabelecimento.NomeFantasia : estabelecimento.NomePublico!;
 
         private static void ValidarTexto(
             Dictionary<string, List<string>> errors, string campo, string rotulo, string? valor, int maximo, bool obrigatorio)

@@ -39,17 +39,9 @@ namespace APIBack.Controllers
             _cache = cache;
         }
 
-        /// <summary>Verdadeiro quando este IP ainda pode buscar endereco.</summary>
-        private bool PodeBuscarEndereco()
-        {
-            var chave = "busca-endereco:" + (HttpContext.Connection.RemoteIpAddress?.ToString() ?? "desconhecido");
-            var usadas = _cache.GetOrCreate(chave, entrada =>
-            {
-                entrada.AbsoluteExpirationRelativeToNow = JanelaDeBuscas;
-                return new int[1];
-            })!;
-            return System.Threading.Interlocked.Increment(ref usadas[0]) <= MaximoDeBuscasPorJanela;
-        }
+        /// <summary>Verdadeiro quando este cliente ainda pode buscar endereco.</summary>
+        private bool PodeBuscarEndereco() =>
+            LimitePublicoDoCardapio.Permitir(HttpContext, _cache, "busca-endereco", MaximoDeBuscasPorJanela, JanelaDeBuscas);
 
         [HttpPost("localizar-endereco")]
         public async Task<IActionResult> LocalizarEndereco([FromBody] LocalizarCardapioEnderecoRequest? request)
@@ -101,13 +93,7 @@ namespace APIBack.Controllers
             [FromQuery] Guid? estabelecimentoId = null,
             [FromQuery] string? estabelecimentoSlug = null)
         {
-            var chave = "identificar-cliente:" + (HttpContext.Connection.RemoteIpAddress?.ToString() ?? "desconhecido");
-            var usadas = _cache.GetOrCreate(chave, entrada =>
-            {
-                entrada.AbsoluteExpirationRelativeToNow = JanelaDeIdentificacoes;
-                return new int[1];
-            })!;
-            if (System.Threading.Interlocked.Increment(ref usadas[0]) > MaximoDeIdentificacoesPorJanela)
+            if (!LimitePublicoDoCardapio.Permitir(HttpContext, _cache, "identificar-cliente", MaximoDeIdentificacoesPorJanela, JanelaDeIdentificacoes))
             {
                 return StatusCode(429, ApiResponse<object>.Fail("Muitas tentativas. Tente de novo em alguns minutos."));
             }

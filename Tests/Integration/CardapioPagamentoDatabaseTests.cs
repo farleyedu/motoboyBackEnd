@@ -64,8 +64,15 @@ public sealed class CardapioPagamentoDatabaseTests
         Assert.Equal(CardapioPedidoStatus.AguardandoPagamento, await db.Status(pre));
         Assert.Empty(await db.Get<ICardapioPedidoWebRepository>().ListarAguardandoAceiteAsync(db.Loja, 10));
 
+        // O cliente foi avisado de que faltava pagar: antes do dinheiro nao ha aviso; depois, um so.
+        var pedidos = db.Get<ICardapioPedidoWebRepository>();
+        await pedidos.MarcarAvisoDePagamentoPendenteAsync(pre);
+        Assert.Empty(await pedidos.ReservarAvisosDePagamentoAsync(10));
+
         await db.Pagar(pix1Id: await db.UltimoMp());
         Assert.Equal(CardapioPedidoStatus.AguardandoAceite, await db.Status(pre));
+        Assert.Equal(pre, Assert.Single(await pedidos.ReservarAvisosDePagamentoAsync(10, pre)).Id);
+        Assert.Empty(await pedidos.ReservarAvisosDePagamentoAsync(10));
         Assert.Equal("pago", await db.Scalar<string>($"SELECT status_pagamento FROM cardapio_pedido_publico WHERE id = '{pre}'"));
         Assert.Single(await db.Get<ICardapioPedidoWebRepository>().ListarAguardandoAceiteAsync(db.Loja, 10));
 
@@ -249,7 +256,7 @@ CREATE TABLE cardapio_pedido_publico (
     codigo_confirmacao text, codigo_expira_em timestamptz, canal_confirmacao text, telefone_contato text, id_conversa uuid, confirmado_em timestamptz,
     aceito_em timestamptz, recusado_em timestamptz, motivo_recusa text, id_pedido int);
 INSERT INTO estabelecimentos VALUES (@L, 'Loja Teste');", new { L = db.Loja });
-            foreach (var migration in new[] { "20261031_01_mercadopago_nucleo.sql", "20261102_60_mercadopago_orders.sql", "20261101_30_cardapio_pagamento_online.sql" })
+            foreach (var migration in new[] { "20261031_01_mercadopago_nucleo.sql", "20261102_60_mercadopago_orders.sql", "20261101_30_cardapio_pagamento_online.sql", "20261104_10_pagamentos_multigateway.sql", "20261214_01_cardapio_aviso_pagamento.sql" })
                 await db.Execute(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "Migrations", "Delivery", migration)));
 
             var config = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
